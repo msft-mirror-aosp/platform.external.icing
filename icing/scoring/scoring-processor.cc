@@ -14,7 +14,9 @@
 
 #include "icing/scoring/scoring-processor.h"
 
+#include <limits>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -43,7 +45,9 @@ constexpr double kDefaultScoreInAscendingOrder =
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
                          const DocumentStore* document_store,
-                         const SchemaStore* schema_store) {
+                         const SchemaStore* schema_store,
+                         int64_t current_time_ms,
+                         const JoinChildrenFetcher* join_children_fetcher) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -56,7 +60,8 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
                              is_descending_order
                                  ? kDefaultScoreInDescendingOrder
                                  : kDefaultScoreInAscendingOrder,
-                             document_store, schema_store));
+                             document_store, schema_store, current_time_ms,
+                             join_children_fetcher));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
@@ -65,7 +70,8 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
 std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator, int num_to_score,
     std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
-        query_term_iterators) {
+        query_term_iterators,
+    QueryStatsProto::SearchStats* search_stats) {
   std::vector<ScoredDocumentHit> scored_document_hits;
   scorer_->PrepareToScore(query_term_iterators);
 
@@ -80,6 +86,18 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
         hit_demotion_factor;
     scored_document_hits.emplace_back(
         doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);
+  }
+
+  if (search_stats != nullptr) {
+    search_stats->set_num_documents_scored(scored_document_hits.size());
+    DocHitInfoIterator::CallStats iterator_call_stats =
+        doc_hit_info_iterator->GetCallStats();
+    search_stats->set_num_fetched_hits_lite_index(
+        iterator_call_stats.num_leaf_advance_calls_lite_index);
+    search_stats->set_num_fetched_hits_main_index(
+        iterator_call_stats.num_leaf_advance_calls_main_index);
+    search_stats->set_num_fetched_hits_integer_index(
+        iterator_call_stats.num_leaf_advance_calls_integer_index);
   }
 
   return scored_document_hits;

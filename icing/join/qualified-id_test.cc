@@ -135,6 +135,24 @@ TEST(QualifiedIdTest, InvalidQualifiedIdWithWrongNumberOfSeparators) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
+TEST(QualifiedIdTest, InvalidQualifiedIdWithStringTerminator) {
+  const char invalid_qualified_id1[] = "names\0pace#uri";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id1, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  const char invalid_qualified_id2[] = "namespace#ur\0i";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id2, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  const char invalid_qualified_id3[] = "\0namespace#uri";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id3, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  const char invalid_qualified_id4[] = "namespace#uri\0";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id4, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
 }  // namespace
 
 }  // namespace lib
