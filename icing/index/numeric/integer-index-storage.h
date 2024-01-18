@@ -75,7 +75,7 @@ namespace lib {
 class IntegerIndexStorage : public PersistentStorage {
  public:
   struct Info {
-    static constexpr int32_t kMagic = 0xc4bf0ccc;
+    static constexpr int32_t kMagic = 0x6470e547;
 
     int32_t magic;
     int32_t num_data;
@@ -99,10 +99,12 @@ class IntegerIndexStorage : public PersistentStorage {
 
     explicit Bucket(int64_t key_lower, int64_t key_upper,
                     PostingListIdentifier posting_list_identifier =
-                        PostingListIdentifier::kInvalid)
+                        PostingListIdentifier::kInvalid,
+                    int32_t num_data = 0)
         : key_lower_(key_lower),
           key_upper_(key_upper),
-          posting_list_identifier_(posting_list_identifier) {}
+          posting_list_identifier_(posting_list_identifier),
+          num_data_(num_data) {}
 
     bool operator<(const Bucket& other) const {
       return key_lower_ < other.key_lower_;
@@ -130,12 +132,16 @@ class IntegerIndexStorage : public PersistentStorage {
       posting_list_identifier_ = posting_list_identifier;
     }
 
+    int32_t num_data() const { return num_data_; }
+    void set_num_data(int32_t num_data) { num_data_ = num_data; }
+
    private:
     int64_t key_lower_;
     int64_t key_upper_;
     PostingListIdentifier posting_list_identifier_;
+    int32_t num_data_;
   } __attribute__((packed));
-  static_assert(sizeof(Bucket) == 20, "");
+  static_assert(sizeof(Bucket) == 24, "");
   static_assert(sizeof(Bucket) == FileBackedVector<Bucket>::kElementTypeSize,
                 "Bucket type size is inconsistent with FileBackedVector "
                 "element type size");
@@ -146,15 +152,31 @@ class IntegerIndexStorage : public PersistentStorage {
                 "Max # of buckets cannot fit into FileBackedVector");
 
   struct Options {
-    explicit Options(bool pre_mapping_fbv_in)
-        : pre_mapping_fbv(pre_mapping_fbv_in) {}
+    // - According to the benchmark result, the more # of buckets, the higher
+    //   latency for range query. Therefore, this number cannot be too small to
+    //   avoid splitting bucket too aggressively.
+    // - We use `num_data_threshold_for_bucket_split / 2 + 5` as the cutoff
+    //   threshold after splitting. This number cannot be too small (e.g. 10)
+    //   because in this case we will have similar # of data in a single bucket
+    //   before and after splitting, which contradicts the purpose of splitting.
+    // - For convenience, let's set 64 as the minimum value.
+    static constexpr int32_t kMinNumDataThresholdForBucketSplit = 64;
+
+    explicit Options(int32_t num_data_threshold_for_bucket_split_in,
+                     bool pre_mapping_fbv_in)
+        : num_data_threshold_for_bucket_split(
+              num_data_threshold_for_bucket_split_in),
+          pre_mapping_fbv(pre_mapping_fbv_in) {}
 
     explicit Options(std::vector<Bucket> custom_init_sorted_buckets_in,
                      std::vector<Bucket> custom_init_unsorted_buckets_in,
+                     int32_t num_data_threshold_for_bucket_split_in,
                      bool pre_mapping_fbv_in)
         : custom_init_sorted_buckets(std::move(custom_init_sorted_buckets_in)),
           custom_init_unsorted_buckets(
               std::move(custom_init_unsorted_buckets_in)),
+          num_data_threshold_for_bucket_split(
+              num_data_threshold_for_bucket_split_in),
           pre_mapping_fbv(pre_mapping_fbv_in) {}
 
     bool IsValid() const;
@@ -172,6 +194,14 @@ class IntegerIndexStorage : public PersistentStorage {
     std::vector<Bucket> custom_init_sorted_buckets;
     std::vector<Bucket> custom_init_unsorted_buckets;
 
+    // Threshold for invoking bucket splitting. If # of data in a bucket exceeds
+    // this number after adding new data, then it will invoke bucket splitting
+    // logic.
+    //
+    // Note: num_data_threshold_for_bucket_split should be >=
+    //   kMinNumDataThresholdForBucketSplit.
+    int32_t num_data_threshold_for_bucket_split;
+
     // Flag indicating whether memory map max possible file size for underlying
     // FileBackedVector before growing the actual file size.
     bool pre_mapping_fbv;
@@ -188,28 +218,25 @@ class IntegerIndexStorage : public PersistentStorage {
       WorkingPathType::kDirectory;
   static constexpr std::string_view kFilePrefix = "integer_index_storage";
 
-  // # of data threshold for bucket merging during optimization (TransferIndex).
-  // If total # data of adjacent buckets exceed this value, then flush the
-  // accumulated data. Otherwise merge buckets and their data.
-  //
-  // Calculated by: 0.7 * (kMaxPostingListSize / sizeof(IntegerIndexData)),
-  // where kMaxPostingListSize = (kPageSize - sizeof(IndexBlock::BlockHeader)).
-  static constexpr int32_t kNumDataThresholdForBucketMerge = 240;
+  // Default # of data threshold for bucket splitting during indexing (AddKeys).
+  // When # of data in a bucket reaches this number, we will try to split data
+  // into multiple buckets according to their keys.
+  static constexpr int32_t kDefaultNumDataThresholdForBucketSplit = 65536;
 
-  // # of data threshold for bucket splitting during indexing (AddKeys).
-  // When the posting list of a bucket is full, we will try to split data into
-  // multiple buckets according to their keys. In order to achieve good
-  // (amortized) time complexity, we want # of data in new buckets to be at most
-  // half # of elements in a full posting list.
+  // # of data threshold for bucket merging during optimization (TransferIndex)
+  // = kNumDataThresholdRatioForBucketMerge *
+  //   options.num_data_threshold_for_bucket_split
   //
-  // Calculated by: 0.5 * (kMaxPostingListSize / sizeof(IntegerIndexData)),
-  // where kMaxPostingListSize = (kPageSize - sizeof(IndexBlock::BlockHeader)).
-  static constexpr int32_t kNumDataThresholdForBucketSplit = 170;
+  // If total # data of adjacent buckets exceed this threshold, then flush the
+  // accumulated data. Otherwise merge buckets and their data.
+  static constexpr double kNumDataThresholdRatioForBucketMerge = 0.7;
 
   // Length threshold to sort and merge unsorted buckets into sorted buckets. If
   // the length of unsorted_buckets exceed the threshold, then call
   // SortBuckets().
-  static constexpr int32_t kUnsortedBucketsLengthThreshold = 50;
+  // TODO(b/259743562): decide if removing unsorted buckets given that we
+  //   changed bucket splitting threshold and # of buckets are small now.
+  static constexpr int32_t kUnsortedBucketsLengthThreshold = 5;
 
   // Creates a new IntegerIndexStorage instance to index integers (for a single
   // property). If any of the underlying file is missing, then delete the whole
@@ -272,6 +299,8 @@ class IntegerIndexStorage : public PersistentStorage {
   //
   // Returns:
   //   - OK on success
+  //   - RESOURCE_EXHAUSTED_ERROR if # of integers in this storage exceed
+  //     INT_MAX after adding new_keys
   //   - Any FileBackedVector or PostingList errors
   libtextclassifier3::Status AddKeys(DocumentId document_id,
                                      SectionId section_id,
@@ -314,6 +343,8 @@ class IntegerIndexStorage : public PersistentStorage {
   int32_t num_data() const { return info().num_data; }
 
  private:
+  static constexpr int8_t kNumDataAfterSplitAdjustment = 5;
+
   explicit IntegerIndexStorage(
       const Filesystem& filesystem, std::string&& working_path,
       Options&& options,
@@ -329,7 +360,9 @@ class IntegerIndexStorage : public PersistentStorage {
         metadata_mmapped_file_(std::move(metadata_mmapped_file)),
         sorted_buckets_(std::move(sorted_buckets)),
         unsorted_buckets_(std::move(unsorted_buckets)),
-        flash_index_storage_(std::move(flash_index_storage)) {}
+        flash_index_storage_(std::move(flash_index_storage)),
+        is_info_dirty_(false),
+        is_storage_dirty_(false) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
   InitializeNewFiles(
@@ -360,20 +393,20 @@ class IntegerIndexStorage : public PersistentStorage {
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk() override;
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
 
   // Flushes contents of metadata file.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk() override;
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
 
   // Computes and returns Info checksum.
   //
   // Returns:
   //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
 
   // Computes and returns all storages checksum. Checksums of sorted_buckets_,
   // unsorted_buckets_ will be combined together by XOR.
@@ -382,7 +415,8 @@ class IntegerIndexStorage : public PersistentStorage {
   // Returns:
   //   - Crc of all storages on success
   //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override;
 
   // Helper function to add keys in range [it_start, it_end) into the given
   // bucket. It handles the bucket and its corresponding posting list(s) to make
@@ -442,6 +476,17 @@ class IntegerIndexStorage : public PersistentStorage {
                                           kInfoMetadataFileOffset);
   }
 
+  void SetInfoDirty() { is_info_dirty_ = true; }
+  // When storage is dirty, we have to set info dirty as well. So just expose
+  // SetDirty to set both.
+  void SetDirty() {
+    is_info_dirty_ = true;
+    is_storage_dirty_ = true;
+  }
+
+  bool is_info_dirty() const { return is_info_dirty_; }
+  bool is_storage_dirty() const { return is_storage_dirty_; }
+
   Options options_;
 
   PostingListIntegerIndexSerializer* posting_list_serializer_;  // Does not own.
@@ -450,6 +495,9 @@ class IntegerIndexStorage : public PersistentStorage {
   std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets_;
   std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
+
+  bool is_info_dirty_;
+  bool is_storage_dirty_;
 };
 
 }  // namespace lib
