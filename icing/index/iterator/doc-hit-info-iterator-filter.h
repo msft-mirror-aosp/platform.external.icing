@@ -56,11 +56,9 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   explicit DocHitInfoIteratorFilter(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Options& options, int64_t current_time_ms);
+      const Options& options);
 
   libtextclassifier3::Status Advance() override;
-
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
   int32_t GetNumBlocksInspected() const override;
 
@@ -82,7 +80,6 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   const Options options_;
   std::unordered_set<NamespaceId> target_namespace_ids_;
   std::unordered_set<SchemaTypeId> target_schema_type_ids_;
-  int64_t current_time_ms_;
 };
 
 }  // namespace lib

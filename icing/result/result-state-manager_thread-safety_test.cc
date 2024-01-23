@@ -26,6 +26,7 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -47,6 +48,12 @@ using ::testing::Ge;
 using ::testing::Not;
 using ::testing::SizeIs;
 using PageResultInfo = std::pair<uint64_t, PageResult>;
+
+ScoringSpecProto CreateScoringSpec() {
+  ScoringSpecProto scoring_spec;
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  return scoring_spec;
+}
 
 ResultSpecProto CreateResultSpec(int num_per_page) {
   ResultSpecProto result_spec;
@@ -91,23 +98,15 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
         SchemaStore::Create(&filesystem_, test_dir_, clock_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(
-        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(
-            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
+                              schema_store_.get()));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -153,7 +152,7 @@ TEST_F(ResultStateManagerThreadSafetyTest,
 
   constexpr int kNumPerPage = 100;
   ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments,
-                                          *document_store_);
+                                          *document_store_, clock_.get());
 
   // Retrieve the first page.
   // Documents are ordered by score *ascending*, so the first page should
@@ -164,9 +163,9 @@ TEST_F(ResultStateManagerThreadSafetyTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_,
-          clock_->GetSystemTimeMilliseconds()));
+          /*query_terms=*/{}, SearchSpecProto::default_instance(),
+          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
+          *result_retriever_));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -188,8 +187,7 @@ TEST_F(ResultStateManagerThreadSafetyTest,
                                   normalizer_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         PageResultInfo page_result_info,
-        result_state_manager.GetNextPage(next_page_token, *result_retriever,
-                                         clock_->GetSystemTimeMilliseconds()));
+        result_state_manager.GetNextPage(next_page_token, *result_retriever));
     page_results[thread_id] =
         std::make_optional<PageResultInfo>(std::move(page_result_info));
   };
@@ -255,7 +253,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
 
   constexpr int kNumPerPage = 100;
   ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments,
-                                          *document_store_);
+                                          *document_store_, clock_.get());
 
   // Retrieve the first page.
   // Documents are ordered by score *ascending*, so the first page should
@@ -266,9 +264,9 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_,
-          clock_->GetSystemTimeMilliseconds()));
+          /*query_terms=*/{}, SearchSpecProto::default_instance(),
+          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
+          *result_retriever_));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -291,8 +289,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
                                   normalizer_.get()));
 
     libtextclassifier3::StatusOr<PageResultInfo> page_result_info_or =
-        result_state_manager.GetNextPage(next_page_token, *result_retriever,
-                                         clock_->GetSystemTimeMilliseconds());
+        result_state_manager.GetNextPage(next_page_token, *result_retriever);
     if (page_result_info_or.ok()) {
       page_results[thread_id] = std::make_optional<PageResultInfo>(
           std::move(page_result_info_or).ValueOrDie());
@@ -369,7 +366,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
   constexpr int kNumThreads = 50;
   constexpr int kNumPerPage = 30;
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/kNumDocuments * kNumThreads, *document_store_);
+      /*max_total_hits=*/kNumDocuments * kNumThreads, *document_store_,
+      clock_.get());
 
   // Create kNumThreads threads to:
   // - Call CacheAndRetrieveFirstPage() once to create its own ResultState.
@@ -396,10 +394,9 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
             std::make_unique<
                 PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
                 std::move(scored_document_hits_copy), /*is_descending=*/false),
-            /*parent_adjustment_info=*/nullptr,
-            /*child_adjustment_info=*/nullptr, CreateResultSpec(kNumPerPage),
-            *document_store_, *result_retriever,
-            clock_->GetSystemTimeMilliseconds()));
+            /*query_terms=*/{}, SearchSpecProto::default_instance(),
+            CreateScoringSpec(), CreateResultSpec(kNumPerPage),
+            *document_store_, *result_retriever));
     EXPECT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
     for (int i = 0; i < kNumPerPage; ++i) {
       EXPECT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -418,10 +415,9 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
     // each thread should retrieve 1, 2, 3, ..., kNumThreads pages.
     int num_subsequent_pages_to_retrieve = thread_id;
     for (int i = 0; i < num_subsequent_pages_to_retrieve; ++i) {
-      ICING_ASSERT_OK_AND_ASSIGN(PageResultInfo page_result_info,
-                                 result_state_manager.GetNextPage(
-                                     next_page_token, *result_retriever,
-                                     clock_->GetSystemTimeMilliseconds()));
+      ICING_ASSERT_OK_AND_ASSIGN(
+          PageResultInfo page_result_info,
+          result_state_manager.GetNextPage(next_page_token, *result_retriever));
       EXPECT_THAT(page_result_info.second.results, SizeIs(kNumPerPage));
       for (int j = 0; j < kNumPerPage; ++j) {
         EXPECT_THAT(page_result_info.second.results[j].score(),

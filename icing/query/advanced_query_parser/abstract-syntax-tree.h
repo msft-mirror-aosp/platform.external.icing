@@ -17,7 +17,6 @@
 
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -53,29 +52,18 @@ class Node {
 
 class TerminalNode : public Node {
  public:
-  explicit TerminalNode(std::string value, std::string_view raw_value,
-                        bool is_prefix)
-      : value_(std::move(value)),
-        raw_value_(raw_value),
-        is_prefix_(is_prefix) {}
+  explicit TerminalNode(std::string value) : value_(std::move(value)) {}
 
-  const std::string& value() const& { return value_; }
-  std::string value() && { return std::move(value_); }
-
-  bool is_prefix() const { return is_prefix_; }
-
-  std::string_view raw_value() const { return raw_value_; }
+  const std::string& value() const { return value_; }
 
  private:
   std::string value_;
-  std::string_view raw_value_;
-  bool is_prefix_;
 };
 
 class FunctionNameNode : public TerminalNode {
  public:
   explicit FunctionNameNode(std::string value)
-      : TerminalNode(std::move(value), /*raw_value=*/"", /*is_prefix=*/false) {}
+      : TerminalNode(std::move(value)) {}
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitFunctionName(this);
   }
@@ -83,9 +71,7 @@ class FunctionNameNode : public TerminalNode {
 
 class StringNode : public TerminalNode {
  public:
-  explicit StringNode(std::string value, std::string_view raw_value,
-                      bool is_prefix = false)
-      : TerminalNode(std::move(value), raw_value, is_prefix) {}
+  explicit StringNode(std::string value) : TerminalNode(std::move(value)) {}
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitString(this);
   }
@@ -93,9 +79,7 @@ class StringNode : public TerminalNode {
 
 class TextNode : public TerminalNode {
  public:
-  explicit TextNode(std::string value, std::string_view raw_value,
-                    bool is_prefix = false)
-      : TerminalNode(std::move(value), raw_value, is_prefix) {}
+  explicit TextNode(std::string value) : TerminalNode(std::move(value)) {}
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitText(this);
   }

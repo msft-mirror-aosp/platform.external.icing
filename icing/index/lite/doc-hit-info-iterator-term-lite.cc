@@ -15,7 +15,6 @@
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <numeric>
 
@@ -74,20 +73,12 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
-DocHitInfoIteratorTermLite::TrimRightMostNode() && {
-  // Leaf iterator should trim itself.
-  DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
-                                          unnormalized_term_length_};
-  return node;
-}
-
 libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   // Exact match only. All hits in lite lexicon are exact.
   ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->GetTermId(term_));
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  lite_index_->FetchHits(
+  lite_index_->AppendHits(
       term_id, section_restrict_mask_,
       /*only_from_prefix_sections=*/false,
       /*score_by=*/
@@ -114,7 +105,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
-    lite_index_->FetchHits(
+    lite_index_->AppendHits(
         term_id, section_restrict_mask_,
         /*only_from_prefix_sections=*/!exact_match,
         /*score_by=*/

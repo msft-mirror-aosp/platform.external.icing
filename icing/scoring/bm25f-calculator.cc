@@ -42,12 +42,11 @@ constexpr float k1_ = 1.2f;
 constexpr float b_ = 0.7f;
 
 // TODO(b/158603900): add tests for Bm25fCalculator
-Bm25fCalculator::Bm25fCalculator(const DocumentStore* document_store,
-                                 SectionWeights* section_weights,
-                                 int64_t current_time_ms)
+Bm25fCalculator::Bm25fCalculator(
+    const DocumentStore* document_store,
+    std::unique_ptr<SectionWeights> section_weights)
     : document_store_(document_store),
-      section_weights_(*section_weights),
-      current_time_ms_(current_time_ms) {}
+      section_weights_(std::move(section_weights)) {}
 
 // During initialization, Bm25fCalculator iterates through
 // hit-iterators for each query term to pre-compute n(q_i) for each corpus under
@@ -220,7 +219,7 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
     sections &= ~(UINT64_C(1) << section_id);
 
     Hit::TermFrequency tf = term_match_info.term_frequencies[section_id];
-    double weighted_tf = tf * section_weights_.GetNormalizedSectionWeight(
+    double weighted_tf = tf * section_weights_->GetNormalizedSectionWeight(
                                   schema_type_id, section_id);
     if (tf != Hit::kNoTermFrequency) {
       sum += weighted_tf;
@@ -230,13 +229,13 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
 }
 
 SchemaTypeId Bm25fCalculator::GetSchemaTypeId(DocumentId document_id) const {
-  auto filter_data_optional = document_store_->GetAliveDocumentFilterData(
-      document_id, current_time_ms_);
+  auto filter_data_optional =
+      document_store_->GetAliveDocumentFilterData(document_id);
   if (!filter_data_optional) {
     // This should never happen. The only failure case for
-    // GetAliveDocumentFilterData is if the document_id is outside of the range
-    // of allocated document_ids, which shouldn't be possible since we're
-    // getting this document_id from the posting lists.
+    // GetDocumentFilterData is if the document_id is outside of the range of
+    // allocated document_ids, which shouldn't be possible since we're getting
+    // this document_id from the posting lists.
     ICING_LOG(WARNING) << "No document filter data for document ["
                        << document_id << "]";
     return kInvalidSchemaTypeId;

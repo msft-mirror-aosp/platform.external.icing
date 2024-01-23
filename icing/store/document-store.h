@@ -59,19 +59,13 @@ namespace lib {
 class DocumentStore {
  public:
   struct Header {
-    static int32_t GetCurrentMagic(bool namespace_id_fingerprint) {
-      return namespace_id_fingerprint ? kNewMagic : kOldMagic;
-    }
+    static constexpr int32_t kMagic = 0x746f7265;
 
     // Holds the magic as a quick sanity check against file corruption.
     int32_t magic;
 
     // Checksum of the DocumentStore's sub-component's checksums.
     uint32_t checksum;
-
-   private:
-    static constexpr int32_t kOldMagic = 0x746f7265;
-    static constexpr int32_t kNewMagic = 0x1b99c8b0;
   };
 
   struct OptimizeInfo {
@@ -141,18 +135,8 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
-      bool force_recovery_and_revalidate_documents,
-      bool namespace_id_fingerprint, bool pre_mapping_fbv,
-      bool use_persistent_hash_map, int32_t compression_level,
-      InitializeStatsProto* initialize_stats);
-
-  // Discards all derived data in the document store.
-  //
-  // Returns:
-  //   OK on success or nothing to discard
-  //   INTERNAL_ERROR on any I/O errors
-  static libtextclassifier3::Status DiscardDerivedFiles(
-      const Filesystem* filesystem, const std::string& base_dir);
+      bool force_recovery_and_revalidate_documents = false,
+      InitializeStatsProto* initialize_stats = nullptr);
 
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
@@ -229,8 +213,7 @@ class DocumentStore {
   //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
-                                    std::string_view uri,
-                                    int64_t current_time_ms);
+                                    std::string_view uri);
 
   // Deletes the document identified by the given document_id. The document
   // proto will be erased immediately.
@@ -244,8 +227,7 @@ class DocumentStore {
   //   NOT_FOUND if the document doesn't exist (i.e. deleted or expired)
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT if document_id is invalid.
-  libtextclassifier3::Status Delete(DocumentId document_id,
-                                    int64_t current_time_ms);
+  libtextclassifier3::Status Delete(DocumentId document_id);
 
   // Returns the NamespaceId of the string namespace
   //
@@ -341,15 +323,16 @@ class DocumentStore {
   //   True:DocumentFilterData  if the given document exists.
   //   False                    if the given document doesn't exist.
   std::optional<DocumentFilterData> GetAliveDocumentFilterData(
-      DocumentId document_id, int64_t current_time_ms) const;
+      DocumentId document_id) const;
 
   // Gets the usage scores of a document.
   //
   // Returns:
   //   UsageScores on success
-  //   nullopt if there are no usage scores stored for the requested docid.
-  std::optional<UsageStore::UsageScores> GetUsageScores(
-      DocumentId document_id, int64_t current_time_ms) const;
+  //   NOT_FOUND if document_id no longer exists.
+  //   INVALID_ARGUMENT if document_id is invalid
+  libtextclassifier3::StatusOr<UsageStore::UsageScores> GetUsageScores(
+      DocumentId document_id) const;
 
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.
@@ -488,12 +471,8 @@ class DocumentStore {
 
  private:
   // Use DocumentStore::Create() to instantiate.
-  explicit DocumentStore(const Filesystem* filesystem,
-                         std::string_view base_dir, const Clock* clock,
-                         const SchemaStore* schema_store,
-                         bool namespace_id_fingerprint, bool pre_mapping_fbv,
-                         bool use_persistent_hash_map,
-                         int32_t compression_level);
+  DocumentStore(const Filesystem* filesystem, std::string_view base_dir,
+                const Clock* clock, const SchemaStore* schema_store);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -505,21 +484,6 @@ class DocumentStore {
 
   // Used to validate incoming documents
   DocumentValidator document_validator_;
-
-  // Whether to use namespace id or namespace name to build up fingerprint for
-  // document_key_mapper_ and corpus_mapper_.
-  bool namespace_id_fingerprint_;
-
-  // Flag indicating whether memory map max possible file size for underlying
-  // FileBackedVector before growing the actual file size.
-  bool pre_mapping_fbv_;
-
-  // Flag indicating whether use persistent hash map as the key mapper (if
-  // false, then fall back to dynamic trie key mapper). Note: we only use
-  // persistent hash map for uri mapper if it is true.
-  bool use_persistent_hash_map_;
-
-  const int32_t compression_level_;
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
@@ -728,7 +692,7 @@ class DocumentStore {
   //   True:DocumentFilterData  if the given document isn't expired.
   //   False                    if the given doesn't document is expired.
   std::optional<DocumentFilterData> GetNonExpiredDocumentFilterData(
-      DocumentId document_id, int64_t current_time_ms) const;
+      DocumentId document_id) const;
 
   // Updates the entry in the score cache for document_id.
   libtextclassifier3::Status UpdateDocumentAssociatedScoreCache(
@@ -766,16 +730,9 @@ class DocumentStore {
   // Returns:
   //   - on success, a RepeatedPtrField for CorpusInfo collected.
   //   - OUT_OF_RANGE, this should never happen.
-  libtextclassifier3::StatusOr<
-      google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
+  libtextclassifier3::StatusOr<google::protobuf::RepeatedPtrField<
+      DocumentDebugInfoProto::CorpusInfo>>
   CollectCorpusInfo() const;
-
-  // Build fingerprint for the keys of document_key_mapper_ and corpus_mapper_.
-  // Note that namespace_id_fingerprint_ controls the way that a fingerprint is
-  // built.
-  std::string MakeFingerprint(NamespaceId namespace_id,
-                              std::string_view namespace_,
-                              std::string_view uri_or_schema) const;
 };
 
 }  // namespace lib

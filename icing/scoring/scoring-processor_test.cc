@@ -62,14 +62,8 @@ class ScoringProcessorTest
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -94,9 +88,7 @@ class ScoringProcessorTest
                                  .SetDataType(TYPE_STRING)
                                  .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(
-        test_email_schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+    ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
   }
 
   void TearDown() override {
@@ -108,8 +100,6 @@ class ScoringProcessorTest
   DocumentStore* document_store() { return document_store_.get(); }
 
   SchemaStore* schema_store() { return schema_store_.get(); }
-
-  const FakeClock& fake_clock() const { return fake_clock_; }
 
  private:
   const std::string test_dir_;
@@ -154,7 +144,7 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
 }
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64_t timestamp_ms,
+                              int64 timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);
@@ -187,27 +177,23 @@ PropertyWeight CreatePropertyWeight(std::string path, double weight) {
 
 TEST_F(ScoringProcessorTest, CreationWithNullDocumentStoreShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(ScoringProcessor::Create(
-                  spec_proto, /*document_store=*/nullptr, schema_store(),
-                  fake_clock().GetSystemTimeMilliseconds()),
+  EXPECT_THAT(ScoringProcessor::Create(spec_proto, /*document_store=*/nullptr,
+                                       schema_store()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(
-      ScoringProcessor::Create(spec_proto, document_store(),
-                               /*schema_store=*/nullptr,
-                               fake_clock().GetSystemTimeMilliseconds()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(ScoringProcessor::Create(spec_proto, document_store(),
+                                       /*schema_store=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_P(ScoringProcessorTest, ShouldCreateInstance) {
   ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
       ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
   ICING_EXPECT_OK(
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 }
 
 TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
@@ -222,8 +208,7 @@ TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/5),
@@ -249,8 +234,7 @@ TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/-1),
@@ -280,8 +264,7 @@ TEST_P(ScoringProcessorTest, ShouldRespectNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/2),
@@ -313,8 +296,7 @@ TEST_P(ScoringProcessorTest, ShouldScoreByDocumentScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -369,8 +351,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -439,8 +420,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -513,8 +493,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -563,8 +542,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -629,8 +607,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -700,8 +677,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -762,8 +738,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor with no explicit weights set.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   ScoringSpecProto spec_proto_with_weights =
       CreateScoringSpecForRankingStrategy(
@@ -779,8 +754,7 @@ TEST_P(ScoringProcessorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor_with_weights,
       ScoringProcessor::Create(spec_proto_with_weights, document_store(),
-                               schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+                               schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -866,8 +840,7 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -929,8 +902,7 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -990,8 +962,7 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1051,8 +1022,7 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1088,8 +1058,7 @@ TEST_P(ScoringProcessorTest, ShouldHandleNoScores) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/4),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
@@ -1138,8 +1107,7 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),

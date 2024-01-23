@@ -20,9 +20,10 @@
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/index-block.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -30,20 +31,25 @@ namespace lib {
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
 PostingListHitAccessor::Create(FlashIndexStorage *storage,
-                               PostingListHitSerializer *serializer) {
-  uint32_t max_posting_list_bytes = storage->max_posting_list_bytes();
-  ICING_ASSIGN_OR_RETURN(PostingListUsed in_memory_posting_list,
-                         PostingListUsed::CreateFromUnitializedRegion(
-                             serializer, max_posting_list_bytes));
+                               PostingListUsedHitSerializer *serializer) {
+  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+      storage->block_size(), serializer->GetDataTypeBytes());
+  std::unique_ptr<uint8_t[]> posting_list_buffer_array =
+      std::make_unique<uint8_t[]>(max_posting_list_bytes);
+  ICING_ASSIGN_OR_RETURN(
+      PostingListUsed posting_list_buffer,
+      PostingListUsed::CreateFromUnitializedRegion(
+          serializer, posting_list_buffer_array.get(), max_posting_list_bytes));
   return std::unique_ptr<PostingListHitAccessor>(new PostingListHitAccessor(
-      storage, serializer, std::move(in_memory_posting_list)));
+      storage, serializer, std::move(posting_list_buffer_array),
+      std::move(posting_list_buffer)));
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
 PostingListHitAccessor::CreateFromExisting(
-    FlashIndexStorage *storage, PostingListHitSerializer *serializer,
+    FlashIndexStorage *storage, PostingListUsedHitSerializer *serializer,
     PostingListIdentifier existing_posting_list_id) {
-  // Our in_memory_posting_list_ will start as empty.
+  // Our posting_list_buffer_ will start as empty.
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<PostingListHitAccessor> pl_accessor,
                          Create(storage, serializer));
   ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
@@ -67,23 +73,20 @@ PostingListHitAccessor::GetNextHitsBatch() {
   ICING_ASSIGN_OR_RETURN(
       std::vector<Hit> batch,
       serializer_->GetHits(&preexisting_posting_list_->posting_list));
-  uint32_t next_block_index = kInvalidBlockIndex;
+  uint32_t next_block_index;
   // Posting lists will only be chained when they are max-sized, in which case
-  // next_block_index will point to the next block for the next posting list.
-  // Otherwise, next_block_index can be kInvalidBlockIndex or be used to point
-  // to the next free list block, which is not relevant here.
-  if (preexisting_posting_list_->posting_list.size_in_bytes() ==
-      storage_->max_posting_list_bytes()) {
-    next_block_index = preexisting_posting_list_->next_block_index;
+  // block.next_block_index() will point to the next block for the next posting
+  // list. Otherwise, block.next_block_index() can be kInvalidBlockIndex or be
+  // used to point to the next free list block, which is not relevant here.
+  if (preexisting_posting_list_->block.max_num_posting_lists() == 1) {
+    next_block_index = preexisting_posting_list_->block.next_block_index();
+  } else {
+    next_block_index = kInvalidBlockIndex;
   }
-
   if (next_block_index != kInvalidBlockIndex) {
-    // Since we only have to deal with next block for max-sized posting list
-    // block, max_num_posting_lists is 1 and posting_list_index_bits is
-    // BitsToStore(1).
     PostingListIdentifier next_posting_list_id(
         next_block_index, /*posting_list_index=*/0,
-        /*posting_list_index_bits=*/BitsToStore(1));
+        preexisting_posting_list_->block.posting_list_index_bits());
     ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                            storage_->GetPostingList(next_posting_list_id));
     preexisting_posting_list_ =
@@ -98,7 +101,7 @@ PostingListHitAccessor::GetNextHitsBatch() {
 libtextclassifier3::Status PostingListHitAccessor::PrependHit(const Hit &hit) {
   PostingListUsed &active_pl = (preexisting_posting_list_ != nullptr)
                                    ? preexisting_posting_list_->posting_list
-                                   : in_memory_posting_list_;
+                                   : posting_list_buffer_;
   libtextclassifier3::Status status = serializer_->PrependHit(&active_pl, hit);
   if (!absl_ports::IsResourceExhausted(status)) {
     return status;
@@ -107,16 +110,16 @@ libtextclassifier3::Status PostingListHitAccessor::PrependHit(const Hit &hit) {
   // we need to either move those hits to a larger posting list or flush this
   // posting list and create another max-sized posting list in the chain.
   if (preexisting_posting_list_ != nullptr) {
-    ICING_RETURN_IF_ERROR(FlushPreexistingPostingList());
+    FlushPreexistingPostingList();
   } else {
     ICING_RETURN_IF_ERROR(FlushInMemoryPostingList());
   }
 
-  // Re-add hit. Should always fit since we just cleared
-  // in_memory_posting_list_. It's fine to explicitly reference
-  // in_memory_posting_list_ here because there's no way of reaching this line
-  // while preexisting_posting_list_ is still in use.
-  return serializer_->PrependHit(&in_memory_posting_list_, hit);
+  // Re-add hit. Should always fit since we just cleared posting_list_buffer_.
+  // It's fine to explicitly reference posting_list_buffer_ here because there's
+  // no way of reaching this line while preexisting_posting_list_ is still in
+  // use.
+  return serializer_->PrependHit(&posting_list_buffer_, hit);
 }
 
 }  // namespace lib

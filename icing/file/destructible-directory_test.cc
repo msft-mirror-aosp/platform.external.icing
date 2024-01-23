@@ -26,7 +26,7 @@ namespace {
 
 using ::testing::Eq;
 
-TEST(DestructibleDirectoryTest, DeletesDirectoryProperly) {
+TEST(DestructibleFileTest, DeletesDirectoryProperly) {
   Filesystem filesystem;
   std::string dir_path = GetTestTempDir() + "/dir1";
   std::string file_path = dir_path + "/file1";
@@ -52,7 +52,7 @@ TEST(DestructibleDirectoryTest, DeletesDirectoryProperly) {
   EXPECT_FALSE(filesystem.DirectoryExists(dir_path.c_str()));
 }
 
-TEST(DestructibleDirectoryTest, MoveAssignDeletesDirectoryProperly) {
+TEST(DestructibleFileTest, MoveAssignDeletesFileProperly) {
   Filesystem filesystem;
   std::string filepath1 = GetTestTempDir() + "/dir1";
   std::string filepath2 = GetTestTempDir() + "/dir2";
@@ -80,7 +80,7 @@ TEST(DestructibleDirectoryTest, MoveAssignDeletesDirectoryProperly) {
   EXPECT_TRUE(filesystem.DirectoryExists(filepath2.c_str()));
 }
 
-TEST(DestructibleDirectoryTest, MoveConstructionDeletesDirectoryProperly) {
+TEST(DestructibleFileTest, MoveConstructionDeletesFileProperly) {
   Filesystem filesystem;
   std::string filepath1 = GetTestTempDir() + "/dir1";
 

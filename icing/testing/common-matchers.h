@@ -16,7 +16,6 @@
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
 #include <algorithm>
-#include <cinttypes>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -33,7 +32,6 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
-#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -241,9 +239,7 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_changed_fully_compatible_by_name ==
           expected.schema_types_changed_fully_compatible_by_name &&
       actual.schema_types_index_incompatible_by_name ==
-          expected.schema_types_index_incompatible_by_name &&
-      actual.schema_types_join_incompatible_by_name ==
-          expected.schema_types_join_incompatible_by_name) {
+          expected.schema_types_index_incompatible_by_name) {
     return true;
   }
 
@@ -340,21 +336,6 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
                               ","),
           "]");
 
-  // Format schema_types_join_incompatible_by_name
-  std::string actual_schema_types_join_incompatible_by_name =
-      absl_ports::StrCat(
-          "[",
-          absl_ports::StrJoin(actual.schema_types_join_incompatible_by_name,
-                              ","),
-          "]");
-
-  std::string expected_schema_types_join_incompatible_by_name =
-      absl_ports::StrCat(
-          "[",
-          absl_ports::StrJoin(expected.schema_types_join_incompatible_by_name,
-                              ","),
-          "]");
-
   *result_listener << IcingStringUtil::StringPrintf(
       "\nExpected {\n"
       "\tsuccess=%d,\n"
@@ -364,9 +345,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
       "\tschema_types_new_by_name=%s,\n"
-      "\tschema_types_changed_fully_compatible_by_name=%s\n"
       "\tschema_types_index_incompatible_by_name=%s,\n"
-      "\tschema_types_join_incompatible_by_name=%s\n"
+      "\tschema_types_changed_fully_compatible_by_name=%s\n"
       "}\n"
       "Actual {\n"
       "\tsuccess=%d,\n"
@@ -376,9 +356,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
       "\tschema_types_new_by_name=%s,\n"
-      "\tschema_types_changed_fully_compatible_by_name=%s\n"
       "\tschema_types_index_incompatible_by_name=%s,\n"
-      "\tschema_types_join_incompatible_by_name=%s\n"
+      "\tschema_types_changed_fully_compatible_by_name=%s\n"
       "}\n",
       expected.success, expected_old_schema_type_ids_changed.c_str(),
       expected_schema_types_deleted_by_name.c_str(),
@@ -387,8 +366,7 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       expected_schema_types_incompatible_by_id.c_str(),
       expected_schema_types_new_by_name.c_str(),
       expected_schema_types_changed_fully_compatible_by_name.c_str(),
-      expected_schema_types_index_incompatible_by_name.c_str(),
-      expected_schema_types_join_incompatible_by_name.c_str(), actual.success,
+      expected_schema_types_index_incompatible_by_name.c_str(), actual.success,
       actual_old_schema_type_ids_changed.c_str(),
       actual_schema_types_deleted_by_name.c_str(),
       actual_schema_types_deleted_by_id.c_str(),
@@ -396,34 +374,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual_schema_types_incompatible_by_id.c_str(),
       actual_schema_types_new_by_name.c_str(),
       actual_schema_types_changed_fully_compatible_by_name.c_str(),
-      actual_schema_types_index_incompatible_by_name.c_str(),
-      actual_schema_types_join_incompatible_by_name.c_str());
+      actual_schema_types_index_incompatible_by_name.c_str());
   return false;
-}
-
-MATCHER_P3(EqualsSectionMetadata, expected_id, expected_property_path,
-           expected_property_config_proto, "") {
-  const SectionMetadata& actual = arg;
-  return actual.id == expected_id && actual.path == expected_property_path &&
-         actual.data_type == expected_property_config_proto.data_type() &&
-         actual.tokenizer ==
-             expected_property_config_proto.string_indexing_config()
-                 .tokenizer_type() &&
-         actual.term_match_type ==
-             expected_property_config_proto.string_indexing_config()
-                 .term_match_type() &&
-         actual.numeric_match_type ==
-             expected_property_config_proto.integer_indexing_config()
-                 .numeric_match_type();
-}
-
-MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,
-           expected_property_config_proto, "") {
-  const JoinablePropertyMetadata& actual = arg;
-  return actual.id == expected_id && actual.path == expected_property_path &&
-         actual.data_type == expected_property_config_proto.data_type() &&
-         actual.value_type ==
-             expected_property_config_proto.joinable_config().value_type();
 }
 
 std::string StatusCodeToString(libtextclassifier3::StatusCode code);

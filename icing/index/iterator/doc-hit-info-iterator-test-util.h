@@ -80,12 +80,8 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
       : doc_hit_infos_(std::move(doc_hit_infos)), term_(std::move(term)) {}
 
   explicit DocHitInfoIteratorDummy(const std::vector<DocHitInfo>& doc_hit_infos,
-                                   std::string term = "",
-                                   int term_start_index = 0,
-                                   int unnormalized_term_length = 0)
-      : term_(std::move(term)),
-        term_start_index_(term_start_index),
-        unnormalized_term_length_(unnormalized_term_length) {
+                                   std::string term = "")
+      : term_(std::move(term)) {
     for (auto& doc_hit_info : doc_hit_infos) {
       doc_hit_infos_.push_back(DocHitInfoTermFrequencyPair(doc_hit_info));
     }
@@ -100,12 +96,6 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
 
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
-  }
-
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
-    DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
-                                            unnormalized_term_length_};
-    return node;
   }
 
   // Imitates behavior of DocHitInfoIteratorTermMain/DocHitInfoIteratorTermLite
@@ -180,8 +170,6 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
   int32_t num_leaf_advance_calls_ = 0;
   std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos_;
   std::string term_;
-  int term_start_index_;
-  int unnormalized_term_length_;
 };
 
 inline std::vector<DocumentId> GetDocumentIds(DocHitInfoIterator* iterator) {

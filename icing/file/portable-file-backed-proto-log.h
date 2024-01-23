@@ -64,6 +64,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
@@ -78,7 +79,6 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
-#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
@@ -106,31 +106,12 @@ class PortableFileBackedProtoLog {
     // compressed size larger than max_proto_size are also not accepted.
     const int32_t max_proto_size;
 
-    // Level of compression if enabled, NO_COMPRESSION = 0, BEST_SPEED = 1,
-    // BEST_COMPRESSION = 9
-    const int32_t compression_level;
-
     // Must specify values for options.
     Options() = delete;
-    explicit Options(
-        bool compress_in, const int32_t max_proto_size_in = kMaxProtoSize,
-        const int32_t compression_level_in = kDeflateCompressionLevel)
-        : compress(compress_in),
-          max_proto_size(max_proto_size_in),
-          compression_level(compression_level_in) {}
+    explicit Options(bool compress_in,
+                     const int32_t max_proto_size_in = kMaxProtoSize)
+        : compress(compress_in), max_proto_size(max_proto_size_in) {}
   };
-
-  // Our internal max for protos.
-  //
-  // WARNING: Changing this to a larger number may invalidate our assumption
-  // that that proto size can safely be stored in the last 3 bytes of the proto
-  // header.
-  static constexpr int kMaxProtoSize = (1 << 24) - 1;  // 16MiB
-  static_assert(kMaxProtoSize <= 0x00FFFFFF,
-                "kMaxProtoSize doesn't fit in 3 bytes");
-
-  // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
-  static constexpr int kDeflateCompressionLevel = 3;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the
@@ -499,8 +480,7 @@ class PortableFileBackedProtoLog {
   // Object can only be instantiated via the ::Create factory.
   PortableFileBackedProtoLog(const Filesystem* filesystem,
                              const std::string& file_path,
-                             std::unique_ptr<Header> header,
-                             int32_t compression_level);
+                             std::unique_ptr<Header> header);
 
   // Initializes a new proto log.
   //
@@ -576,6 +556,18 @@ class PortableFileBackedProtoLog {
   // protos we support.
   static constexpr uint8_t kProtoMagic = 0x5C;
 
+  // Our internal max for protos.
+  //
+  // WARNING: Changing this to a larger number may invalidate our assumption
+  // that that proto size can safely be stored in the last 3 bytes of the proto
+  // header.
+  static constexpr int kMaxProtoSize = (1 << 24) - 1;  // 16MiB
+  static_assert(kMaxProtoSize <= 0x00FFFFFF,
+                "kMaxProtoSize doesn't fit in 3 bytes");
+
+  // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
+  static constexpr int kDeflateCompressionLevel = 3;
+
   // Chunks of the file to mmap at a time, so we don't mmap the entire file.
   // Only used on 32-bit devices
   static constexpr int kMmapChunkSize = 4 * 1024 * 1024;  // 4MiB
@@ -584,17 +576,15 @@ class PortableFileBackedProtoLog {
   const Filesystem* const filesystem_;
   const std::string file_path_;
   std::unique_ptr<Header> header_;
-  const int32_t compression_level_;
 };
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
-    std::unique_ptr<Header> header, int32_t compression_level)
+    std::unique_ptr<Header> header)
     : filesystem_(filesystem),
       file_path_(file_path),
-      header_(std::move(header)),
-      compression_level_(compression_level) {
+      header_(std::move(header)) {
   fd_.reset(filesystem_->OpenForAppend(file_path.c_str()));
 }
 
@@ -625,12 +615,6 @@ PortableFileBackedProtoLog<ProtoT>::Create(const Filesystem* filesystem,
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "options.max_proto_size must be under 16MiB, was %d",
         options.max_proto_size));
-  }
-
-  if (options.compression_level < 0 || options.compression_level > 9) {
-    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "options.compression_level must be between 0 and 9 inclusive, was %d",
-        options.compression_level));
   }
 
   if (!filesystem->FileExists(file_path.c_str())) {
@@ -676,8 +660,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header),
-                                                 options.compression_level)),
+                                                 std::move(header))),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
@@ -805,8 +788,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header),
-                                                 options.compression_level)),
+                                                 std::move(header))),
       data_loss, recalculated_checksum};
 
   return create_result;
@@ -911,7 +893,7 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   if (header_->GetCompressFlag()) {
     protobuf_ports::GzipOutputStream::Options options;
     options.format = protobuf_ports::GzipOutputStream::ZLIB;
-    options.compression_level = compression_level_;
+    options.compression_level = kDeflateCompressionLevel;
 
     protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 
@@ -989,7 +971,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
     return absl_ports::NotFoundError("The proto data has been erased.");
   }
 
-  google::protobuf::io::ArrayInputStream proto_stream(buf.get(), stored_size);
+  google::protobuf::io::ArrayInputStream proto_stream(buf.get(),
+                                                          stored_size);
 
   // Deserialize proto
   ProtoT proto;

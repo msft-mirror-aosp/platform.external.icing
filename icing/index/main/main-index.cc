@@ -22,9 +22,8 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/destructible-directory.h"
-#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-common.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -91,10 +90,6 @@ FindTermResult FindShortestValidTermWithPrefixHits(
   return result;
 }
 
-std::string MakeFlashIndexFilename(const std::string& base_dir) {
-  return base_dir + "/main_index";
-}
-
 }  // namespace
 
 MainIndex::MainIndex(const std::string& index_directory,
@@ -103,8 +98,8 @@ MainIndex::MainIndex(const std::string& index_directory,
     : base_dir_(index_directory),
       filesystem_(filesystem),
       icing_filesystem_(icing_filesystem),
-      posting_list_hit_serializer_(
-          std::make_unique<PostingListHitSerializer>()) {}
+      posting_list_used_hit_serializer_(
+          std::make_unique<PostingListUsedHitSerializer>()) {}
 
 libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> MainIndex::Create(
     const std::string& index_directory, const Filesystem* filesystem,
@@ -117,22 +112,16 @@ libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> MainIndex::Create(
   return main_index;
 }
 
-/* static */ libtextclassifier3::StatusOr<int> MainIndex::ReadFlashIndexMagic(
-    const Filesystem* filesystem, const std::string& index_directory) {
-  return FlashIndexStorage::ReadHeaderMagic(
-      filesystem, MakeFlashIndexFilename(index_directory));
-}
-
 // TODO(b/139087650) : Migrate off of IcingFilesystem.
 libtextclassifier3::Status MainIndex::Init() {
   if (!filesystem_->CreateDirectoryRecursively(base_dir_.c_str())) {
     return absl_ports::InternalError("Unable to create main index directory.");
   }
-  std::string flash_index_file = MakeFlashIndexFilename(base_dir_);
+  std::string flash_index_file = base_dir_ + "/main_index";
   ICING_ASSIGN_OR_RETURN(
       FlashIndexStorage flash_index,
       FlashIndexStorage::Create(flash_index_file, filesystem_,
-                                posting_list_hit_serializer_.get()));
+                                posting_list_used_hit_serializer_.get()));
   flash_index_storage_ =
       std::make_unique<FlashIndexStorage>(std::move(flash_index));
 
@@ -179,7 +168,7 @@ MainIndex::GetAccessorForExactTerm(const std::string& term) {
         "Term %s is not present in main lexicon.", term.c_str()));
   }
   return PostingListHitAccessor::CreateFromExisting(
-      flash_index_storage_.get(), posting_list_hit_serializer_.get(),
+      flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
       posting_list_id);
 }
 
@@ -212,7 +201,7 @@ MainIndex::GetAccessorForPrefixTerm(const std::string& prefix) {
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<PostingListHitAccessor> pl_accessor,
       PostingListHitAccessor::CreateFromExisting(
-          flash_index_storage_.get(), posting_list_hit_serializer_.get(),
+          flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
           posting_list_id));
   return GetPrefixAccessorResult(std::move(pl_accessor), exact);
 }
@@ -253,7 +242,7 @@ MainIndex::FindTermsByPrefix(
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<PostingListHitAccessor> pl_accessor,
         PostingListHitAccessor::CreateFromExisting(
-            flash_index_storage_.get(), posting_list_hit_serializer_.get(),
+            flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
             posting_list_id));
     ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
                            pl_accessor->GetNextHitsBatch());
@@ -565,10 +554,10 @@ libtextclassifier3::Status MainIndex::AddHits(
     memcpy(&backfill_posting_list_id,
            main_lexicon_->GetValueAtIndex(other_tvi_main_tvi_pair.second),
            sizeof(backfill_posting_list_id));
-    ICING_ASSIGN_OR_RETURN(
-        std::unique_ptr<PostingListHitAccessor> hit_accum,
-        PostingListHitAccessor::Create(flash_index_storage_.get(),
-                                       posting_list_hit_serializer_.get()));
+    ICING_ASSIGN_OR_RETURN(std::unique_ptr<PostingListHitAccessor> hit_accum,
+                           PostingListHitAccessor::Create(
+                               flash_index_storage_.get(),
+                               posting_list_used_hit_serializer_.get()));
     ICING_RETURN_IF_ERROR(
         AddPrefixBackfillHits(backfill_posting_list_id, hit_accum.get()));
     PostingListAccessor::FinalizeResult result =
@@ -603,15 +592,16 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
           "Valid posting list has an invalid block index!");
     }
     ICING_ASSIGN_OR_RETURN(
-        pl_accessor, PostingListHitAccessor::CreateFromExisting(
-                         flash_index_storage_.get(),
-                         posting_list_hit_serializer_.get(), posting_list_id));
+        pl_accessor,
+        PostingListHitAccessor::CreateFromExisting(
+            flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
+            posting_list_id));
   } else {
     // New posting list.
-    ICING_ASSIGN_OR_RETURN(
-        pl_accessor,
-        PostingListHitAccessor::Create(flash_index_storage_.get(),
-                                       posting_list_hit_serializer_.get()));
+    ICING_ASSIGN_OR_RETURN(pl_accessor,
+                           PostingListHitAccessor::Create(
+                               flash_index_storage_.get(),
+                               posting_list_used_hit_serializer_.get()));
   }
 
   // 2. Backfill any hits if necessary.
@@ -641,7 +631,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<PostingListHitAccessor> backfill_accessor,
       PostingListHitAccessor::CreateFromExisting(
-          flash_index_storage_.get(), posting_list_hit_serializer_.get(),
+          flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
           backfill_posting_list_id));
   std::vector<Hit> backfill_hits;
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> tmp,
@@ -751,13 +741,6 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
                          old_pl_accessor.GetNextHitsBatch());
   while (!tmp.empty()) {
     for (const Hit& hit : tmp) {
-      // A safety check to add robustness to the codebase, so to make sure that
-      // we never access invalid memory, in case that hit from the posting list
-      // is corrupted.
-      if (hit.document_id() < 0 ||
-          hit.document_id() >= document_id_old_to_new.size()) {
-        continue;
-      }
       DocumentId new_document_id = document_id_old_to_new[hit.document_id()];
       // Transfer the document id of the hit, if the document is not deleted
       // or outdated.
@@ -785,10 +768,11 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
     return largest_document_id;
   }
 
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<PostingListHitAccessor> hit_accum,
-                         PostingListHitAccessor::Create(
-                             new_index->flash_index_storage_.get(),
-                             new_index->posting_list_hit_serializer_.get()));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<PostingListHitAccessor> hit_accum,
+      PostingListHitAccessor::Create(
+          new_index->flash_index_storage_.get(),
+          new_index->posting_list_used_hit_serializer_.get()));
   for (auto itr = new_hits.rbegin(); itr != new_hits.rend(); ++itr) {
     ICING_RETURN_IF_ERROR(hit_accum->PrependHit(*itr));
   }
@@ -836,7 +820,7 @@ libtextclassifier3::Status MainIndex::TransferIndex(
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<PostingListHitAccessor> pl_accessor,
         PostingListHitAccessor::CreateFromExisting(
-            flash_index_storage_.get(), posting_list_hit_serializer_.get(),
+            flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
             posting_list_id));
     ICING_ASSIGN_OR_RETURN(
         DocumentId curr_largest_document_id,

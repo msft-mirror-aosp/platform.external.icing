@@ -78,7 +78,7 @@ class PostingListIdentifier {
                 /*val=*/block_index);
   }
 
-  uint32_t block_index() const {
+  int block_index() const {
     return BITFIELD_GET(val_, kEncodedPostingListIndexBits, kBlockIndexBits);
   }
 

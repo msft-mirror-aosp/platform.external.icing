@@ -38,7 +38,6 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
-using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::NiceMock;
 using ::testing::Return;
@@ -53,20 +52,18 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
 }
 
 std::vector<DocHitInfo> GetExactHits(
-    MainIndex* main_index, int term_start_index, int unnormalized_term_length,
-    const std::string& term, SectionIdMask section_mask = kSectionIdMaskAll) {
+    MainIndex* main_index, const std::string& term,
+    SectionIdMask section_mask = kSectionIdMaskAll) {
   auto iterator = std::make_unique<DocHitInfoIteratorTermMainExact>(
-      main_index, term, term_start_index, unnormalized_term_length,
-      section_mask, /*need_hit_term_frequency=*/true);
+      main_index, term, section_mask, /*need_hit_term_frequency=*/true);
   return GetHits(std::move(iterator));
 }
 
 std::vector<DocHitInfo> GetPrefixHits(
-    MainIndex* main_index, int term_start_index, int unnormalized_term_length,
-    const std::string& term, SectionIdMask section_mask = kSectionIdMaskAll) {
+    MainIndex* main_index, const std::string& term,
+    SectionIdMask section_mask = kSectionIdMaskAll) {
   auto iterator = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-      main_index, term, term_start_index, unnormalized_term_length,
-      section_mask, /*need_hit_term_frequency=*/true);
+      main_index, term, section_mask, /*need_hit_term_frequency=*/true);
   return GetHits(std::move(iterator));
 }
 
@@ -91,9 +88,7 @@ class MainIndexTest : public testing::Test {
 
     std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
     LiteIndex::Options options(lite_index_file_name,
-                               /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                               /*hit_buffer_sort_at_indexing=*/true,
-                               /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
+                               /*hit_buffer_want_merge_bytes=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));
 
@@ -105,8 +100,6 @@ class MainIndexTest : public testing::Test {
   }
 
   void TearDown() override {
-    term_id_codec_.reset();
-    lite_index_.reset();
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(index_dir_.c_str()));
   }
 
@@ -276,12 +269,9 @@ TEST_F(MainIndexTest, MergeIndexToEmpty) {
       MainIndex::Create(main_index_file_name, &filesystem_,
                         &icing_filesystem_));
 
-  std::vector<DocHitInfo> hits =
-      GetExactHits(main_index.get(), /*term_start_index=*/0,
-                   /*unnormalized_term_length=*/0, "foot");
+  std::vector<DocHitInfo> hits = GetExactHits(main_index.get(), "foot");
   EXPECT_THAT(hits, IsEmpty());
-  hits = GetPrefixHits(main_index.get(), /*term_start_index=*/0,
-                       /*unnormalized_term_length=*/0, "fo");
+  hits = GetPrefixHits(main_index.get(), "fo");
   EXPECT_THAT(hits, IsEmpty());
 
   // 3. Merge the index. The main index should contain "fool", "foot"
@@ -289,8 +279,7 @@ TEST_F(MainIndexTest, MergeIndexToEmpty) {
   // should not be present because it is not a branch point.
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
   // Get hits from an exact posting list.
-  hits = GetExactHits(main_index.get(), /*term_start_index=*/0,
-                      /*unnormalized_term_length=*/0, "foot");
+  hits = GetExactHits(main_index.get(), "foot");
   // We should get hits for "foot" in doc1 and doc0
   EXPECT_THAT(
       hits,
@@ -301,8 +290,7 @@ TEST_F(MainIndexTest, MergeIndexToEmpty) {
                            std::vector<SectionId>{doc0_hit.section_id()})));
 
   // Get hits from a branching point posting list. "fo" should redirect to "foo"
-  hits = GetPrefixHits(main_index.get(), /*term_start_index=*/0,
-                       /*unnormalized_term_length=*/0, "fo");
+  hits = GetPrefixHits(main_index.get(), "fo");
   // We should get hits for "foot" in doc1 and "fool" in doc1. We shouldn't get
   // the hits for "foot" in doc0 and "fool" in doc0 and doc2 because they
   // weren't hits in prefix sections.
@@ -364,9 +352,7 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   // - Doc4 {"four", "foul" is_in_prefix_section=true}
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
-                             /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -402,9 +388,7 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   // and "fall", a branch points for "fou" and backfill points for "fo".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
   // Get hits from an exact posting list the existed before the merge.
-  std::vector<DocHitInfo> hits =
-      GetExactHits(main_index.get(), /*term_start_index=*/0,
-                   /*unnormalized_term_length=*/0, "foot");
+  std::vector<DocHitInfo> hits = GetExactHits(main_index.get(), "foot");
 
   // We should get hits for "foot" in doc3, doc1 and doc0
   EXPECT_THAT(
@@ -417,8 +401,7 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
           EqualsDocHitInfo(doc0_hit.document_id(),
                            std::vector<SectionId>{doc0_hit.section_id()})));
   // Get hits from backfill posting list.
-  hits = GetPrefixHits(main_index.get(), /*term_start_index=*/0,
-                       /*unnormalized_term_length=*/0, "fo");
+  hits = GetPrefixHits(main_index.get(), "fo");
   // We should get hits for "four" and "foul" in doc4 and hits for "foot" and
   // "fool" in doc1. We shouldn't get the hits for "foot" in doc0 and doc3,
   // "fool" in doc0 and doc2 or the hits for "four" and "foul" in doc4 because
@@ -470,9 +453,7 @@ TEST_F(MainIndexTest, ExactRetrievedInPrefixSearch) {
   // 3. Merge the lite lexicon. The main lexicon should contain "foot" and
   // "foo".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
-  std::vector<DocHitInfo> hits =
-      GetPrefixHits(main_index.get(), /*term_start_index=*/0,
-                    /*unnormalized_term_length=*/0, "foo");
+  std::vector<DocHitInfo> hits = GetPrefixHits(main_index.get(), "foo");
   // We should get hits for "foo" in doc1 and doc0, but not in doc2 because it
   // is not a prefix hit.
   EXPECT_THAT(
@@ -521,9 +502,7 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
   // 3. Merge the lite lexicon. The main lexicon should contain "foot" and
   // "foo".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
-  std::vector<DocHitInfo> hits =
-      GetExactHits(main_index.get(), /*term_start_index=*/0,
-                   /*unnormalized_term_length=*/0, "foo");
+  std::vector<DocHitInfo> hits = GetExactHits(main_index.get(), "foo");
 
   // We should get hits for "foo" in doc2 and doc1, but not in doc0 because it
   // is not an exact hit.
@@ -536,35 +515,30 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
                            std::vector<SectionId>{doc1_hit.section_id()})));
 }
 
-TEST_F(MainIndexTest,
-       SearchChainedPostingListsShouldMergeSectionsAndTermFrequency) {
+TEST_F(MainIndexTest, SearchChainedPostingLists) {
   // Index 2048 document with 3 hits in each document. When merged into the main
   // index, this will 1) lead to a chained posting list and 2) split at least
   // one document's hits across multiple posting lists.
-  const std::string term = "foot";
-
   ICING_ASSERT_OK_AND_ASSIGN(
       uint32_t tvi,
-      lite_index_->InsertTerm(term, TermMatchType::EXACT_ONLY, kNamespace0));
+      lite_index_->InsertTerm("foot", TermMatchType::EXACT_ONLY, kNamespace0));
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foot_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   for (DocumentId document_id = 0; document_id < 2048; ++document_id) {
-    Hit::TermFrequency term_frequency = static_cast<Hit::TermFrequency>(
-        document_id % Hit::kMaxTermFrequency + 1);
-    Hit doc_hit0(
-        /*section_id=*/0, /*document_id=*/document_id, term_frequency,
-        /*is_in_prefix_section=*/false);
+    Hit doc_hit0(/*section_id=*/0, /*document_id=*/document_id,
+                 Hit::kDefaultTermFrequency,
+                 /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit0));
 
-    Hit doc_hit1(
-        /*section_id=*/1, /*document_id=*/document_id, term_frequency,
-        /*is_in_prefix_section=*/false);
+    Hit doc_hit1(/*section_id=*/1, /*document_id=*/document_id,
+                 Hit::kDefaultTermFrequency,
+                 /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit1));
 
-    Hit doc_hit2(
-        /*section_id=*/2, /*document_id=*/document_id, term_frequency,
-        /*is_in_prefix_section=*/false);
+    Hit doc_hit2(/*section_id=*/2, /*document_id=*/document_id,
+                 Hit::kDefaultTermFrequency,
+                 /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit2));
   }
 
@@ -578,35 +552,13 @@ TEST_F(MainIndexTest,
   // 3. Merge the lite index.
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
   // Get hits for all documents containing "foot" - which should be all of them.
+  std::vector<DocHitInfo> hits = GetExactHits(main_index.get(), "foot");
 
-  auto iterator = std::make_unique<DocHitInfoIteratorTermMainExact>(
-      main_index.get(), term, /*term_start_index=*/0,
-      /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-      /*need_hit_term_frequency=*/true);
-
-  DocumentId expected_document_id = 2047;
-  while (iterator->Advance().ok()) {
-    EXPECT_THAT(iterator->doc_hit_info(),
-                EqualsDocHitInfo(expected_document_id,
-                                 std::vector<SectionId>{0, 1, 2}));
-
-    std::vector<TermMatchInfo> matched_terms_stats;
-    iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-
-    Hit::TermFrequency expected_term_frequency =
-        static_cast<Hit::TermFrequency>(
-            expected_document_id % Hit::kMaxTermFrequency + 1);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));
-    EXPECT_THAT(matched_terms_stats[0].term, Eq(term));
-    EXPECT_THAT(matched_terms_stats[0].term_frequencies[0],
-                Eq(expected_term_frequency));
-    EXPECT_THAT(matched_terms_stats[0].term_frequencies[1],
-                Eq(expected_term_frequency));
-    EXPECT_THAT(matched_terms_stats[0].term_frequencies[2],
-                Eq(expected_term_frequency));
-    --expected_document_id;
-  }
-  EXPECT_THAT(expected_document_id, Eq(-1));
+  EXPECT_THAT(hits, SizeIs(2048));
+  EXPECT_THAT(hits.front(),
+              EqualsDocHitInfo(2047, std::vector<SectionId>{0, 1, 2}));
+  EXPECT_THAT(hits.back(),
+              EqualsDocHitInfo(0, std::vector<SectionId>{0, 1, 2}));
 }
 
 TEST_F(MainIndexTest, MergeIndexBackfilling) {
@@ -636,9 +588,7 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   // - Doc1 {"foot" is_in_prefix_section=false}
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
-                             /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -655,53 +605,15 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   // and a backfill point for "foo".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
   // Get hits from an exact posting list the existed before the merge.
-  std::vector<DocHitInfo> hits =
-      GetExactHits(main_index.get(), /*term_start_index=*/0,
-                   /*unnormalized_term_length=*/0, "foo");
+  std::vector<DocHitInfo> hits = GetExactHits(main_index.get(), "foo");
   EXPECT_THAT(hits, IsEmpty());
 
   // Get hits from backfill posting list.
-  hits = GetPrefixHits(main_index.get(), /*term_start_index=*/0,
-                       /*unnormalized_term_length=*/0, "foo");
+  hits = GetPrefixHits(main_index.get(), "foo");
   // We should get a hit for "fool" in doc0.
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfo(
                         doc0_hit.document_id(),
                         std::vector<SectionId>{doc0_hit.section_id()})));
-}
-
-TEST_F(MainIndexTest, OneHitInTheFirstPageForTwoPagesMainIndex) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t tvi,
-      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
-  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
-                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  SectionId section_id = 0;
-  // Based on debugging logs, 2038 documents in the following setting will
-  // result in two pages in the posting list chain, and the first page only
-  // contains one hit.
-  uint32_t num_docs = 2038;
-  for (DocumentId document_id = 0; document_id < num_docs; ++document_id) {
-    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
-    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
-  }
-
-  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
-
-  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
-  std::vector<DocHitInfo> hits =
-      GetExactHits(main_index.get(), /*term_start_index=*/0,
-                   /*unnormalized_term_length=*/0, "foo");
-  ASSERT_THAT(hits, SizeIs(num_docs));
-  for (DocumentId document_id = num_docs - 1; document_id >= 0; --document_id) {
-    ASSERT_THAT(
-        hits[num_docs - 1 - document_id],
-        EqualsDocHitInfo(document_id, std::vector<SectionId>{section_id}));
-  }
 }
 
 }  // namespace

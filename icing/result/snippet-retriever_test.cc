@@ -113,9 +113,7 @@ class SnippetRetrieverTest : public testing::Test {
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
@@ -1023,8 +1021,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestOneLevel) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1114,8 +1111,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevel) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1221,8 +1217,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelRepeated) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1336,8 +1331,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelSingleValue) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1610,8 +1604,7 @@ TEST_F(SnippetRetrieverTest, SnippettingVerbatimAscii) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1664,8 +1657,7 @@ TEST_F(SnippetRetrieverTest, SnippettingVerbatimCJK) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1723,8 +1715,7 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822Ascii) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
@@ -1799,8 +1790,7 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822CJK) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
@@ -1845,11 +1835,13 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822CJK) {
 TEST_F(SnippetRetrieverTest, SnippettingUrlAscii) {
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("urlType").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("url")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_URL)
-                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("urlType")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataTypeString(MATCH_PREFIX,
+                                                           TOKENIZER_URL)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/true));

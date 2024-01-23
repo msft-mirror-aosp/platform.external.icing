@@ -63,9 +63,8 @@ namespace lib {
 // see: glossary/bm25
 class Bm25fCalculator {
  public:
-  explicit Bm25fCalculator(const DocumentStore *document_store,
-                           SectionWeights *section_weights,
-                           int64_t current_time_ms);
+  explicit Bm25fCalculator(const DocumentStore *document_store_,
+                           std::unique_ptr<SectionWeights> section_weights_);
 
   // Precompute and cache statistics relevant to BM25F.
   // Populates term_id_map_ and corpus_nqi_map_ for use while scoring other
@@ -146,7 +145,7 @@ class Bm25fCalculator {
 
   // Used for accessing normalized section weights when computing the weighted
   // term frequency.
-  SectionWeights &section_weights_;
+  std::unique_ptr<SectionWeights> section_weights_;
 
   // Map from query term to compact term ID.
   // Necessary as a key to the other maps.
@@ -167,8 +166,6 @@ class Bm25fCalculator {
 
   // Map from <corpus ID, term ID> to IDF(q_i) (inverse document frequency).
   std::unordered_map<CorpusTermInfo::Value, float> corpus_idf_map_;
-
-  int64_t current_time_ms_;
 };
 
 }  // namespace lib

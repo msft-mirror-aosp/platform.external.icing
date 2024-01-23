@@ -312,47 +312,6 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
   }
 }
 
-TEST(DocHitInfoIteratorOrTest, TrimOrIterator) {
-  std::vector<DocHitInfo> first_vector = {DocHitInfo(0)};
-  std::vector<DocHitInfo> second_vector = {DocHitInfo(1)};
-
-  std::unique_ptr<DocHitInfoIterator> first_iter =
-      std::make_unique<DocHitInfoIteratorDummy>(first_vector);
-  std::unique_ptr<DocHitInfoIterator> second_iter =
-      std::make_unique<DocHitInfoIteratorDummy>(second_vector, "term", 10);
-
-  DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocHitInfoIterator::TrimmedNode trimmed_node,
-                             std::move(or_iter).TrimRightMostNode());
-  // The whole iterator is trimmed
-  ASSERT_TRUE(trimmed_node.iterator_ == nullptr);
-  ASSERT_THAT(trimmed_node.term_, Eq("term"));
-  ASSERT_THAT(trimmed_node.term_start_index_, Eq(10));
-}
-
-TEST(DocHitInfoIteratorOrNaryTest, TrimOrNaryIterator) {
-  std::vector<DocHitInfo> first_vector = {DocHitInfo(0)};
-  std::vector<DocHitInfo> second_vector = {DocHitInfo(1)};
-  std::vector<DocHitInfo> third_vector = {DocHitInfo(2)};
-  std::vector<DocHitInfo> forth_vector = {DocHitInfo(3)};
-
-  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
-  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(first_vector));
-  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(second_vector));
-  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(third_vector));
-  iterators.push_back(
-      std::make_unique<DocHitInfoIteratorDummy>(forth_vector, "term", 10));
-  DocHitInfoIteratorOrNary or_iter(std::move(iterators));
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocHitInfoIterator::TrimmedNode trimmed_node,
-                             std::move(or_iter).TrimRightMostNode());
-  // The whole iterator is trimmed
-  ASSERT_TRUE(trimmed_node.iterator_ == nullptr);
-  ASSERT_THAT(trimmed_node.term_, Eq("term"));
-  ASSERT_THAT(trimmed_node.term_start_index_, Eq(10));
-}
-
 TEST(DocHitInfoIteratorOrNaryTest, Initialize) {
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>());

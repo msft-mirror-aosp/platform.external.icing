@@ -14,8 +14,6 @@
 
 #include "icing/index/index.h"
 
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -58,7 +56,6 @@ using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::IsEmpty;
-using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Ne;
 using ::testing::NiceMock;
@@ -76,15 +73,12 @@ class IndexTest : public Test {
  protected:
   void SetUp() override {
     index_dir_ = GetTestTempDir() + "/index_test/";
-    Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
-                           /*lite_index_sort_size=*/1024 * 8);
+    Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
   }
 
   void TearDown() override {
-    index_.reset();
     icing_filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
   }
 
@@ -98,12 +92,10 @@ class IndexTest : public Test {
   }
 
   libtextclassifier3::StatusOr<std::vector<DocHitInfo>> GetHits(
-      std::string term, int term_start_index, int unnormalized_term_length,
-      TermMatchType::Code match_type) {
+      std::string term, TermMatchType::Code match_type) {
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<DocHitInfoIterator> itr,
-        index_->GetIterator(term, term_start_index, unnormalized_term_length,
-                            kSectionIdMaskAll, match_type));
+        index_->GetIterator(term, kSectionIdMaskAll, match_type));
     return GetHits(std::move(itr));
   }
 
@@ -149,9 +141,7 @@ MATCHER_P2(EqualsTermMetadata, content, hit_count, "") {
 }
 
 TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/1024 * 8);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
   EXPECT_THAT(
       Index::Create(options, &filesystem_, /*icing_filesystem=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
@@ -163,16 +153,13 @@ TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
 TEST_F(IndexTest, EmptyIndex) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
@@ -183,48 +170,15 @@ TEST_F(IndexTest, EmptyIndexAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-}
-
-TEST_F(IndexTest, CreationWithLiteIndexSortAtIndexingEnabledShouldSort) {
-  // Make the index with lite_index_sort_at_indexing=false and a very small sort
-  // threshold.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024,
-                         /*lite_index_sort_at_indexing=*/false,
-                         /*lite_index_sort_size=*/16);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
-
-  Index::Editor edit = index_->Edit(
-      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
-  ASSERT_THAT(edit.BufferTerm("bar"), IsOk());
-  ASSERT_THAT(edit.BufferTerm("baz"), IsOk());
-  ASSERT_THAT(edit.IndexAllBufferedTerms(), IsOk());
-
-  // Persist and recreate the index with lite_index_sort_at_indexing=true
-  ASSERT_THAT(index_->PersistToDisk(), IsOk());
-  options = Index::Options(index_dir_, /*index_merge_size=*/1024,
-                           /*lite_index_sort_at_indexing=*/true,
-                           /*lite_index_sort_size=*/16);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
-
-  // Check that the index is sorted after recreating with
-  // lite_index_sort_at_indexing, with the unsorted HitBuffer exceeding the sort
-  // threshold.
-  EXPECT_THAT(index_->LiteIndexNeedSort(), IsFalse());
 }
 
 TEST_F(IndexTest, AdvancePastEnd) {
@@ -235,18 +189,15 @@ TEST_F(IndexTest, AdvancePastEnd) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("bar", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("bar", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(itr->doc_hit_info(),
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(), IsOk());
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -264,18 +215,15 @@ TEST_F(IndexTest, AdvancePastEndAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("bar", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("bar", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(itr->doc_hit_info(),
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(), IsOk());
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -291,9 +239,7 @@ TEST_F(IndexTest, SingleHitSingleTermIndex) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -309,9 +255,7 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -326,32 +270,26 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterOptimize) {
 
   ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
                                    /*new_last_added_document_id=*/2));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
-          kDocumentId2, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId2, std::vector<SectionId>{kSectionId2}))));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
 
   // Mapping to a different docid will translate the hit
   ICING_ASSERT_OK(index_->Optimize(
       /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1},
       /*new_last_added_document_id=*/1));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
-          kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
 
   // Mapping to kInvalidDocumentId will remove the hit.
   ICING_ASSERT_OK(
       index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId},
                        /*new_last_added_document_id=*/0));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId0);
 }
 
@@ -366,32 +304,26 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMergeAndOptimize) {
 
   ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
                                    /*new_last_added_document_id=*/2));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
-          kDocumentId2, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId2, std::vector<SectionId>{kSectionId2}))));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
 
   // Mapping to a different docid will translate the hit
   ICING_ASSERT_OK(index_->Optimize(
       /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1},
       /*new_last_added_document_id=*/1));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
-          kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
 
   // Mapping to kInvalidDocumentId will remove the hit.
   ICING_ASSERT_OK(
       index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId},
                        /*new_last_added_document_id=*/0));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_EQ(index_->last_added_document_id(), 0);
 }
 
@@ -404,9 +336,7 @@ TEST_F(IndexTest, SingleHitMultiTermIndex) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -423,9 +353,7 @@ TEST_F(IndexTest, SingleHitMultiTermIndexAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -451,17 +379,14 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterOptimize) {
   ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
                                    /*new_last_added_document_id=*/2));
   EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
+      GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
           EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
           EqualsDocHitInfo(kDocumentId0,
                            std::vector<SectionId>{kSectionId2}))));
-  EXPECT_THAT(
-      GetHits("bar", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
-          kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
 
   // Delete document id 1, and document id 2 is translated to 1.
@@ -469,30 +394,23 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterOptimize) {
       index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
                        /*new_last_added_document_id=*/1));
   EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
+      GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
           EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
           EqualsDocHitInfo(kDocumentId0,
                            std::vector<SectionId>{kSectionId2}))));
-  EXPECT_THAT(
-      GetHits("bar", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
 
   // Delete all the rest documents.
   ICING_ASSERT_OK(index_->Optimize(
       /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId},
       /*new_last_added_document_id=*/kInvalidDocumentId));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(
-      GetHits("bar", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
 }
 
@@ -518,17 +436,14 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMergeAndOptimize) {
   ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
                                    /*new_last_added_document_id=*/2));
   EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
+      GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
           EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
           EqualsDocHitInfo(kDocumentId0,
                            std::vector<SectionId>{kSectionId2}))));
-  EXPECT_THAT(
-      GetHits("bar", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
-          kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
 
   // Delete document id 1, and document id 2 is translated to 1.
@@ -536,30 +451,23 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMergeAndOptimize) {
       index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
                        /*new_last_added_document_id=*/1));
   EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
+      GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
           EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
           EqualsDocHitInfo(kDocumentId0,
                            std::vector<SectionId>{kSectionId2}))));
-  EXPECT_THAT(
-      GetHits("bar", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
 
   // Delete all the rest documents.
   ICING_ASSERT_OK(index_->Optimize(
       /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId},
       /*new_last_added_document_id=*/kInvalidDocumentId));
-  EXPECT_THAT(
-      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(
-      GetHits("bar", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::EXACT_ONLY),
-      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
 }
 
@@ -572,9 +480,7 @@ TEST_F(IndexTest, NoHitMultiTermIndex) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("baz", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
@@ -590,9 +496,7 @@ TEST_F(IndexTest, NoHitMultiTermIndexAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("baz", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
@@ -615,9 +519,7 @@ TEST_F(IndexTest, MultiHitMultiTermIndex) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -645,9 +547,7 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -669,9 +569,7 @@ TEST_F(IndexTest, MultiHitSectionRestrict) {
   SectionIdMask desired_section = 1U << kSectionId2;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, desired_section,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", desired_section, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -693,9 +591,7 @@ TEST_F(IndexTest, MultiHitSectionRestrictAfterMerge) {
   SectionIdMask desired_section = 1U << kSectionId2;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, desired_section,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", desired_section, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -716,9 +612,7 @@ TEST_F(IndexTest, SingleHitDedupeIndex) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -732,9 +626,7 @@ TEST_F(IndexTest, PrefixHit) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -750,9 +642,7 @@ TEST_F(IndexTest, PrefixHitAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -771,9 +661,7 @@ TEST_F(IndexTest, MultiPrefixHit) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -796,9 +684,7 @@ TEST_F(IndexTest, MultiPrefixHitAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -819,9 +705,7 @@ TEST_F(IndexTest, NoExactHitInPrefixQuery) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId1, std::vector<SectionId>{kSectionId3})));
@@ -842,9 +726,7 @@ TEST_F(IndexTest, NoExactHitInPrefixQueryAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId1, std::vector<SectionId>{kSectionId3})));
@@ -859,9 +741,7 @@ TEST_F(IndexTest, PrefixHitDedupe) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -878,9 +758,7 @@ TEST_F(IndexTest, PrefixHitDedupeAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -890,27 +768,21 @@ TEST_F(IndexTest, PrefixToString) {
   SectionIdMask id_mask = (1U << kSectionId2) | (1U << kSectionId3);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, id_mask,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", id_mask, TermMatchType::PREFIX));
   EXPECT_THAT(itr->ToString(), Eq("(0000000000000000000000000000000000000000000"
                                   "000000000000000001100:foo* OR "
                                   "00000000000000000000000000000000000000000000"
                                   "00000000000000001100:foo*)"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("foo", kSectionIdMaskAll,
+                                                      TermMatchType::PREFIX));
   EXPECT_THAT(itr->ToString(), Eq("(1111111111111111111111111111111111111111111"
                                   "111111111111111111111:foo* OR "
                                   "11111111111111111111111111111111111111111111"
                                   "11111111111111111111:foo*)"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskNone, TermMatchType::PREFIX));
+  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("foo", kSectionIdMaskNone,
+                                                      TermMatchType::PREFIX));
   EXPECT_THAT(itr->ToString(), Eq("(0000000000000000000000000000000000000000000"
                                   "000000000000000000000:foo* OR "
                                   "00000000000000000000000000000000000000000000"
@@ -921,27 +793,23 @@ TEST_F(IndexTest, ExactToString) {
   SectionIdMask id_mask = (1U << kSectionId2) | (1U << kSectionId3);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, id_mask,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", id_mask, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->ToString(), Eq("(0000000000000000000000000000000000000000000"
                                   "000000000000000001100:foo OR "
                                   "00000000000000000000000000000000000000000000"
                                   "00000000000000001100:foo)"));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->ToString(), Eq("(1111111111111111111111111111111111111111111"
                                   "111111111111111111111:foo OR "
                                   "11111111111111111111111111111111111111111111"
                                   "11111111111111111111:foo)"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("foo", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskNone, TermMatchType::EXACT_ONLY));
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("foo", kSectionIdMaskNone,
+                                                 TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->ToString(), Eq("(0000000000000000000000000000000000000000000"
                                   "000000000000000000000:foo OR "
                                   "00000000000000000000000000000000000000000000"
@@ -957,17 +825,14 @@ TEST_F(IndexTest, NonAsciiTerms) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("こんに", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("こんに", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("あなた", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("あなた", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -984,17 +849,14 @@ TEST_F(IndexTest, NonAsciiTermsAfterMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("こんに", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("こんに", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("あなた", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("あなた", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -1002,9 +864,7 @@ TEST_F(IndexTest, NonAsciiTermsAfterMerge) {
 
 TEST_F(IndexTest, FullIndex) {
   // Make a smaller index so that it's easier to fill up.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/64);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
@@ -1054,8 +914,7 @@ TEST_F(IndexTest, FullIndex) {
   for (int i = 0; i < query_terms.size(); i += 25) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> itr,
-        index_->GetIterator(query_terms.at(i).c_str(), /*term_start_index=*/0,
-                            /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+        index_->GetIterator(query_terms.at(i).c_str(), kSectionIdMaskAll,
                             TermMatchType::PREFIX));
     // Each query term should contain at least one hit - there may have been
     // other hits for this term that were added.
@@ -1063,8 +922,7 @@ TEST_F(IndexTest, FullIndex) {
   }
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> last_itr,
-      index_->GetIterator(prefix.c_str(), /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+      index_->GetIterator(prefix.c_str(), kSectionIdMaskAll,
                           TermMatchType::PREFIX));
   EXPECT_THAT(last_itr->Advance(), IsOk());
   EXPECT_THAT(last_itr->doc_hit_info().document_id(), Eq(document_id - 1));
@@ -1072,9 +930,7 @@ TEST_F(IndexTest, FullIndex) {
 
 TEST_F(IndexTest, FullIndexMerge) {
   // Make a smaller index so that it's easier to fill up.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/64);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
@@ -1124,8 +980,7 @@ TEST_F(IndexTest, FullIndexMerge) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> last_itr,
-      index_->GetIterator(prefix.c_str(), /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+      index_->GetIterator(prefix.c_str(), kSectionIdMaskAll,
                           TermMatchType::PREFIX));
   EXPECT_THAT(last_itr->Advance(), IsOk());
   EXPECT_THAT(last_itr->doc_hit_info().document_id(), Eq(document_id - 1));
@@ -1142,16 +997,14 @@ TEST_F(IndexTest, FullIndexMerge) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator(prefix + "bar", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+      index_->GetIterator(prefix + "bar", kSectionIdMaskAll,
                           TermMatchType::EXACT_ONLY));
   // We know that "bar" should have at least one hit because we just added it!
   EXPECT_THAT(itr->Advance(), IsOk());
   EXPECT_THAT(itr->doc_hit_info().document_id(), Eq(document_id + 1));
   ICING_ASSERT_OK_AND_ASSIGN(
-      last_itr, index_->GetIterator(prefix.c_str(), /*term_start_index=*/0,
-                                    /*unnormalized_term_length=*/0,
-                                    kSectionIdMaskAll, TermMatchType::PREFIX));
+      last_itr, index_->GetIterator(prefix.c_str(), kSectionIdMaskAll,
+                                    TermMatchType::PREFIX));
   EXPECT_THAT(last_itr->Advance(), IsOk());
   EXPECT_THAT(last_itr->doc_hit_info().document_id(), Eq(document_id + 1));
 }
@@ -1165,15 +1018,11 @@ TEST_F(IndexTest, OptimizeShouldWorkForEmptyIndex) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("", kSectionIdMaskAll, /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("", kSectionIdMaskAll, /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               TermMatchType::PREFIX));
+      itr, index_->GetIterator("", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
@@ -1214,18 +1063,14 @@ TEST_F(IndexTest, IndexShouldWorkAtSectionLimit) {
   std::reverse(exp_prefix_hits.begin(), exp_prefix_hits.end());
 
   // Check prefix search.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<DocHitInfo> hits,
-      GetHits(prefix, /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::PREFIX));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocHitInfo> hits,
+                             GetHits(prefix, TermMatchType::PREFIX));
   EXPECT_THAT(hits, ContainerEq(exp_prefix_hits));
 
   // Check exact search.
   for (int i = 0; i < 4096; ++i) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        hits,
-        GetHits(query_terms[i], /*term_start_index=*/0,
-                /*unnormalized_term_length=*/0, TermMatchType::EXACT_ONLY));
+        hits, GetHits(query_terms[i], TermMatchType::EXACT_ONLY));
     EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfo(
                           i, std::vector<SectionId>{(SectionId)(i % 64)})));
   }
@@ -1278,10 +1123,8 @@ TEST_F(IndexTest, IndexShouldWorkAtDocumentLimit) {
   std::reverse(exp_prefix_hits.begin(), exp_prefix_hits.end());
 
   // Check prefix search.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<DocHitInfo> hits,
-      GetHits(prefix, /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::PREFIX));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocHitInfo> hits,
+                             GetHits(prefix, TermMatchType::PREFIX));
   EXPECT_THAT(hits, ContainerEq(exp_prefix_hits));
 
   // Check exact search.
@@ -1289,9 +1132,7 @@ TEST_F(IndexTest, IndexShouldWorkAtDocumentLimit) {
     if (i % 64 == 2) {
       // Only section 2 is an exact section
       ICING_ASSERT_OK_AND_ASSIGN(
-          hits,
-          GetHits(std::to_string(i), /*term_start_index=*/0,
-                  /*unnormalized_term_length=*/0, TermMatchType::EXACT_ONLY));
+          hits, GetHits(std::to_string(i), TermMatchType::EXACT_ONLY));
       EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfo(
                             i, std::vector<SectionId>{(SectionId)(2)})));
     }
@@ -1357,17 +1198,13 @@ TEST_F(IndexTest, IndexOptimize) {
       index_->Optimize(document_id_old_to_new, new_last_added_document_id));
   EXPECT_EQ(index_->last_added_document_id(), new_last_added_document_id);
   // Check prefix search.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<DocHitInfo> hits,
-      GetHits(prefix, /*term_start_index=*/0, /*unnormalized_term_length=*/0,
-              TermMatchType::PREFIX));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocHitInfo> hits,
+                             GetHits(prefix, TermMatchType::PREFIX));
   EXPECT_THAT(hits, ContainerEq(exp_prefix_hits));
   // Check exact search.
   for (int i = 0; i < 2048; ++i) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        hits,
-        GetHits(query_terms[i], /*term_start_index=*/0,
-                /*unnormalized_term_length=*/0, TermMatchType::EXACT_ONLY));
+        hits, GetHits(query_terms[i], TermMatchType::EXACT_ONLY));
     if (document_id_old_to_new[i] == kInvalidDocumentId) {
       EXPECT_THAT(hits, IsEmpty());
     } else {
@@ -1381,16 +1218,12 @@ TEST_F(IndexTest, IndexOptimize) {
   ICING_ASSERT_OK(index_->Merge());
   EXPECT_EQ(index_->last_added_document_id(), new_last_added_document_id);
   // Check prefix search.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      hits, GetHits(prefix, /*term_start_index=*/0,
-                    /*unnormalized_term_length=*/0, TermMatchType::PREFIX));
+  ICING_ASSERT_OK_AND_ASSIGN(hits, GetHits(prefix, TermMatchType::PREFIX));
   EXPECT_THAT(hits, ContainerEq(exp_prefix_hits));
   // Check exact search.
   for (int i = 0; i < 2048; ++i) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        hits,
-        GetHits(query_terms[i], /*term_start_index=*/0,
-                /*unnormalized_term_length=*/0, TermMatchType::EXACT_ONLY));
+        hits, GetHits(query_terms[i], TermMatchType::EXACT_ONLY));
     if (document_id_old_to_new[i] == kInvalidDocumentId) {
       EXPECT_THAT(hits, IsEmpty());
     } else {
@@ -1407,9 +1240,7 @@ TEST_F(IndexTest, IndexCreateIOFailure) {
   NiceMock<IcingMockFilesystem> mock_icing_filesystem;
   ON_CALL(mock_icing_filesystem, CreateDirectoryRecursively)
       .WillByDefault(Return(false));
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/1024 * 8);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
   EXPECT_THAT(Index::Create(options, &filesystem_, &mock_icing_filesystem),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
@@ -1440,9 +1271,7 @@ TEST_F(IndexTest, IndexCreateCorruptionFailure) {
       IsTrue());
 
   // Recreate the index.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/1024 * 8);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
   EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_),
               StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
 }
@@ -1460,18 +1289,14 @@ TEST_F(IndexTest, IndexPersistence) {
   index_.reset();
 
   // Recreate the index.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/1024 * 8);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
   // Check that the hits are present.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -1491,18 +1316,14 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
   index_.reset();
 
   // Recreate the index.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
-                         /*lite_index_sort_size=*/1024 * 8);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
   // Check that the hits are present.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -1510,8 +1331,7 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
 
 TEST_F(IndexTest, InvalidHitBufferSize) {
   Index::Options options(
-      index_dir_, /*index_merge_size=*/std::numeric_limits<uint32_t>::max(),
-      /*lite_index_sort_at_indexing=*/true, /*lite_index_sort_size=*/1024 * 8);
+      index_dir_, /*index_merge_size=*/std::numeric_limits<uint32_t>::max());
   EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -2099,9 +1919,7 @@ TEST_F(IndexTest, ExactResultsFromLiteAndMain) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -2132,9 +1950,7 @@ TEST_F(IndexTest, PrefixResultsFromLiteAndMain) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("foo", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -2249,9 +2065,7 @@ TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -2305,9 +2119,7 @@ TEST_F(IndexTest, BackfillingNewTermsSucceeds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -2320,9 +2132,7 @@ TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
   EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(0));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 
   // Add one document to the lite index
@@ -2333,9 +2143,7 @@ TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
   // Clipping to invalid should have no effect.
   ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("f", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -2344,9 +2152,7 @@ TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
   ICING_ASSERT_OK(index_->Merge());
   ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("f", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -2360,9 +2166,7 @@ TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
   // hits.
   ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("f", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -2375,9 +2179,7 @@ TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
   EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(0));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 
   // Add one document to the lite index
@@ -2389,9 +2191,7 @@ TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
   ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
   // Clipping to invalid should have no effect.
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("f", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -2400,9 +2200,7 @@ TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
   ICING_ASSERT_OK(index_->Merge());
   ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("f", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -2417,9 +2215,7 @@ TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
   // hits.
   ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
   ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("f", /*term_start_index=*/0,
-                               /*unnormalized_term_length=*/0,
-                               kSectionIdMaskAll, TermMatchType::PREFIX));
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(
@@ -2449,9 +2245,7 @@ TEST_F(IndexTest, TruncateToThrowsOutLiteIndex) {
   // Clipping to document 0 should toss out the lite index, but keep the main.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
@@ -2484,9 +2278,7 @@ TEST_F(IndexTest, TruncateToThrowsOutBothIndices) {
   // Clipping to document 0 should toss out both indices.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("f", /*term_start_index=*/0,
-                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                          TermMatchType::PREFIX));
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 

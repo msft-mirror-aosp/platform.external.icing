@@ -19,7 +19,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gtest/gtest.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/testing/common-matchers.h"
 
 namespace icing {
@@ -30,7 +30,7 @@ namespace {
 // TODO(b/249829533): test different serializers
 
 TEST(PostingListTest, PostingListFree) {
-  PostingListHitSerializer serializer;
+  PostingListUsedHitSerializer serializer;
   static const size_t kHitsSize = 2551 * sizeof(Hit);
 
   std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kHitsSize);
@@ -43,7 +43,7 @@ TEST(PostingListTest, PostingListFree) {
 }
 
 TEST(PostingListTest, PostingListTooSmallInvalidArgument) {
-  PostingListHitSerializer serializer;
+  PostingListUsedHitSerializer serializer;
   const size_t kHitSizeTooSmall =
       serializer.GetMinPostingListSize() - sizeof(Hit);
 
@@ -61,7 +61,7 @@ TEST(PostingListTest, PostingListTooSmallInvalidArgument) {
 }
 
 TEST(PostingListTest, PostingListNotAlignedInvalidArgument) {
-  PostingListHitSerializer serializer;
+  PostingListUsedHitSerializer serializer;
   const size_t kHitSizeNotAligned = serializer.GetMinPostingListSize() + 1;
 
   std::unique_ptr<char[]> hits_buf =
@@ -79,7 +79,7 @@ TEST(PostingListTest, PostingListNotAlignedInvalidArgument) {
 }
 
 TEST(PostingListTest, PostingListNullBufferFailedPrecondition) {
-  PostingListHitSerializer serializer;
+  PostingListUsedHitSerializer serializer;
   const size_t kHitSize = serializer.GetMinPostingListSize();
 
   // nullptr posting_list_buffer
@@ -96,7 +96,7 @@ TEST(PostingListTest, PostingListNullBufferFailedPrecondition) {
 }
 
 TEST(PostingListTest, PostingListFreePreexistingRegion) {
-  PostingListHitSerializer serializer;
+  PostingListUsedHitSerializer serializer;
   constexpr PostingListIndex kOtherPostingListIndex = 12;
   static const size_t kHitsSize = 2551 * sizeof(Hit);
 
@@ -124,7 +124,7 @@ TEST(PostingListTest, PostingListFreePreexistingRegion) {
 }
 
 TEST(PostingListTest, PostingListFreeUninitializedRegion) {
-  PostingListHitSerializer serializer;
+  PostingListUsedHitSerializer serializer;
   constexpr PostingListIndex kOtherPostingListIndex = 12;
   static const size_t kHitsSize = 2551 * sizeof(Hit);
 

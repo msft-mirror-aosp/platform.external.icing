@@ -27,9 +27,7 @@ struct LiteIndexOptions {
   // hit_buffer_want_merge_bytes and the logic in CalculateHitBufferSize and
   // CalculateTrieOptions.
   LiteIndexOptions(const std::string& filename_base,
-                   uint32_t hit_buffer_want_merge_bytes,
-                   bool hit_buffer_sort_at_indexing,
-                   uint32_t hit_buffer_sort_threshold_bytes);
+                   uint32_t hit_buffer_want_merge_bytes);
 
   IcingDynamicTrie::Options lexicon_options;
   IcingDynamicTrie::Options display_mappings_options;
@@ -37,8 +35,6 @@ struct LiteIndexOptions {
   std::string filename_base;
   uint32_t hit_buffer_want_merge_bytes = 0;
   uint32_t hit_buffer_size = 0;
-  bool hit_buffer_sort_at_indexing = false;
-  uint32_t hit_buffer_sort_threshold_bytes = 0;
 };
 
 }  // namespace lib

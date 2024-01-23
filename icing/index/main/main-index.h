@@ -23,7 +23,7 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/posting-list-hit-accessor.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
@@ -47,16 +47,6 @@ class MainIndex {
   static libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> Create(
       const std::string& index_directory, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
-
-  // Reads magic from existing flash index storage file header. We need this
-  // during Icing initialization phase to determine the version.
-  //
-  // RETURNS:
-  //   - On success, a valid magic.
-  //   - NOT_FOUND if the flash index doesn't exist.
-  //   - INTERNAL on I/O error.
-  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
-      const Filesystem* filesystem, const std::string& index_directory);
 
   // Get a PostingListHitAccessor that holds the posting list chain for 'term'.
   //
@@ -171,7 +161,7 @@ class MainIndex {
     if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
       return libtextclassifier3::Status::OK;
     }
-    return absl_ports::InternalError("Unable to sync main index components.");
+    return absl_ports::InternalError("Unable to sync lite index components.");
   }
 
   DocumentId last_added_document_id() const {
@@ -339,7 +329,8 @@ class MainIndex {
   std::string base_dir_;
   const Filesystem* filesystem_;
   const IcingFilesystem* icing_filesystem_;
-  std::unique_ptr<PostingListHitSerializer> posting_list_hit_serializer_;
+  std::unique_ptr<PostingListUsedHitSerializer>
+      posting_list_used_hit_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
 };

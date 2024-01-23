@@ -73,8 +73,6 @@ class TermIdHitPair {
     return value_ == rhs.value_;
   }
 
-  bool operator<(const TermIdHitPair& rhs) const { return value_ < rhs.value_; }
-
  private:
   Value value_;
 };

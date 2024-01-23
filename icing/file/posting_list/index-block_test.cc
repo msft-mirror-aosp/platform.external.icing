@@ -19,7 +19,7 @@
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/posting-list-used.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -30,8 +30,6 @@ namespace {
 
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
-using ::testing::IsFalse;
-using ::testing::IsTrue;
 
 static constexpr int kBlockSize = 4096;
 
@@ -42,28 +40,22 @@ class IndexBlockTest : public ::testing::Test {
     flash_file_ = test_dir_ + "/0";
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
 
-    sfd_ = std::make_unique<ScopedFd>(
-        filesystem_.OpenForWrite(flash_file_.c_str()));
-    ASSERT_TRUE(sfd_->is_valid());
-
     // Grow the file by one block for the IndexBlock to use.
-    ASSERT_TRUE(filesystem_.Grow(sfd_->get(), kBlockSize));
+    ASSERT_TRUE(filesystem_.Grow(flash_file_.c_str(), kBlockSize));
 
     // TODO: test different serializers
-    serializer_ = std::make_unique<PostingListHitSerializer>();
+    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
   }
 
   void TearDown() override {
     serializer_.reset();
-    sfd_.reset();
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
   }
 
-  Filesystem filesystem_;
   std::string test_dir_;
   std::string flash_file_;
-  std::unique_ptr<ScopedFd> sfd_;
-  std::unique_ptr<PostingListHitSerializer> serializer_;
+  Filesystem filesystem_;
+  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
 };
 
 TEST_F(IndexBlockTest, CreateFromUninitializedRegionProducesEmptyBlock) {
@@ -73,9 +65,9 @@ TEST_F(IndexBlockTest, CreateFromUninitializedRegionProducesEmptyBlock) {
     // Create an IndexBlock from this newly allocated file block.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromUninitializedRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize, kPostingListBytes));
-    EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsTrue()));
+    EXPECT_TRUE(block.has_free_posting_lists());
   }
 }
 
@@ -85,9 +77,9 @@ TEST_F(IndexBlockTest, SizeAccessorsWorkCorrectly) {
   // Create an IndexBlock from this newly allocated file block.
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock block,
                              IndexBlock::CreateFromUninitializedRegion(
-                                 &filesystem_, serializer_.get(), sfd_->get(),
+                                 filesystem_, flash_file_, serializer_.get(),
                                  /*offset=*/0, kBlockSize, kPostingListBytes1));
-  EXPECT_THAT(block.posting_list_bytes(), Eq(kPostingListBytes1));
+  EXPECT_THAT(block.get_posting_list_bytes(), Eq(kPostingListBytes1));
   // There should be (4096 - 12) / 20 = 204 posting lists
   // (sizeof(BlockHeader)==12). We can store a PostingListIndex of 203 in only 8
   // bits.
@@ -99,9 +91,9 @@ TEST_F(IndexBlockTest, SizeAccessorsWorkCorrectly) {
   // Create an IndexBlock from this newly allocated file block.
   ICING_ASSERT_OK_AND_ASSIGN(
       block, IndexBlock::CreateFromUninitializedRegion(
-                 &filesystem_, serializer_.get(), sfd_->get(), /*offset=*/0,
+                 filesystem_, flash_file_, serializer_.get(), /*offset=*/0,
                  kBlockSize, kPostingListBytes2));
-  EXPECT_THAT(block.posting_list_bytes(), Eq(kPostingListBytes2));
+  EXPECT_THAT(block.get_posting_list_bytes(), Eq(kPostingListBytes2));
   // There should be (4096 - 12) / 200 = 20 posting lists
   // (sizeof(BlockHeader)==12). We can store a PostingListIndex of 19 in only 5
   // bits.
@@ -124,36 +116,32 @@ TEST_F(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
     // Create an IndexBlock from this newly allocated file block.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromUninitializedRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
-                              /*offset=*/0, kBlockSize, kPostingListBytes));
+                              filesystem_, flash_file_, serializer_.get(),
+                              /*offset=*/0,
+                              /*block_size=*/kBlockSize, kPostingListBytes));
     // Add hits to the first posting list.
-    ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info,
-                               block.AllocatePostingList());
+    ICING_ASSERT_OK_AND_ASSIGN(allocated_index, block.AllocatePostingList());
+    ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl_used,
+                               block.GetAllocatedPostingList(allocated_index));
     for (const Hit& hit : test_hits) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&alloc_info.posting_list_used, hit));
+      ICING_ASSERT_OK(serializer_->PrependHit(&pl_used, hit));
     }
     EXPECT_THAT(
-        serializer_->GetHits(&alloc_info.posting_list_used),
+        serializer_->GetHits(&pl_used),
         IsOkAndHolds(ElementsAreArray(test_hits.rbegin(), test_hits.rend())));
-
-    ICING_ASSERT_OK(block.WritePostingListToDisk(
-        alloc_info.posting_list_used, alloc_info.posting_list_index));
-    allocated_index = alloc_info.posting_list_index;
   }
   {
     // Create an IndexBlock from the previously allocated file block.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromPreexistingIndexBlockRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        IndexBlock::PostingListAndBlockInfo pl_block_info,
-        block.GetAllocatedPostingList(allocated_index));
+    ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl_used,
+                               block.GetAllocatedPostingList(allocated_index));
     EXPECT_THAT(
-        serializer_->GetHits(&pl_block_info.posting_list_used),
+        serializer_->GetHits(&pl_used),
         IsOkAndHolds(ElementsAreArray(test_hits.rbegin(), test_hits.rend())));
-    EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsTrue()));
+    EXPECT_TRUE(block.has_free_posting_lists());
   }
 }
 
@@ -180,64 +168,58 @@ TEST_F(IndexBlockTest, IndexBlockMultiplePostingLists) {
     // Create an IndexBlock from this newly allocated file block.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromUninitializedRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize, kPostingListBytes));
 
     // Add hits to the first posting list.
-    ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_1,
-                               block.AllocatePostingList());
+    ICING_ASSERT_OK_AND_ASSIGN(allocated_index_1, block.AllocatePostingList());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PostingListUsed pl_used_1,
+        block.GetAllocatedPostingList(allocated_index_1));
     for (const Hit& hit : hits_in_posting_list1) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&alloc_info_1.posting_list_used, hit));
+      ICING_ASSERT_OK(serializer_->PrependHit(&pl_used_1, hit));
     }
-    EXPECT_THAT(serializer_->GetHits(&alloc_info_1.posting_list_used),
+    EXPECT_THAT(serializer_->GetHits(&pl_used_1),
                 IsOkAndHolds(ElementsAreArray(hits_in_posting_list1.rbegin(),
                                               hits_in_posting_list1.rend())));
 
     // Add hits to the second posting list.
-    ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_2,
-                               block.AllocatePostingList());
+    ICING_ASSERT_OK_AND_ASSIGN(allocated_index_2, block.AllocatePostingList());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PostingListUsed pl_used_2,
+        block.GetAllocatedPostingList(allocated_index_2));
     for (const Hit& hit : hits_in_posting_list2) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&alloc_info_2.posting_list_used, hit));
+      ICING_ASSERT_OK(serializer_->PrependHit(&pl_used_2, hit));
     }
-    EXPECT_THAT(serializer_->GetHits(&alloc_info_2.posting_list_used),
+    EXPECT_THAT(serializer_->GetHits(&pl_used_2),
                 IsOkAndHolds(ElementsAreArray(hits_in_posting_list2.rbegin(),
                                               hits_in_posting_list2.rend())));
 
     EXPECT_THAT(block.AllocatePostingList(),
                 StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-    EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsFalse()));
-
-    // Write both posting lists to disk.
-    ICING_ASSERT_OK(block.WritePostingListToDisk(
-        alloc_info_1.posting_list_used, alloc_info_1.posting_list_index));
-    ICING_ASSERT_OK(block.WritePostingListToDisk(
-        alloc_info_2.posting_list_used, alloc_info_2.posting_list_index));
-    allocated_index_1 = alloc_info_1.posting_list_index;
-    allocated_index_2 = alloc_info_2.posting_list_index;
+    EXPECT_FALSE(block.has_free_posting_lists());
   }
   {
     // Create an IndexBlock from the previously allocated file block.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromPreexistingIndexBlockRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize));
     ICING_ASSERT_OK_AND_ASSIGN(
-        IndexBlock::PostingListAndBlockInfo pl_block_info_1,
+        PostingListUsed pl_used_1,
         block.GetAllocatedPostingList(allocated_index_1));
-    EXPECT_THAT(serializer_->GetHits(&pl_block_info_1.posting_list_used),
+    EXPECT_THAT(serializer_->GetHits(&pl_used_1),
                 IsOkAndHolds(ElementsAreArray(hits_in_posting_list1.rbegin(),
                                               hits_in_posting_list1.rend())));
     ICING_ASSERT_OK_AND_ASSIGN(
-        IndexBlock::PostingListAndBlockInfo pl_block_info_2,
+        PostingListUsed pl_used_2,
         block.GetAllocatedPostingList(allocated_index_2));
-    EXPECT_THAT(serializer_->GetHits(&pl_block_info_2.posting_list_used),
+    EXPECT_THAT(serializer_->GetHits(&pl_used_2),
                 IsOkAndHolds(ElementsAreArray(hits_in_posting_list2.rbegin(),
                                               hits_in_posting_list2.rend())));
     EXPECT_THAT(block.AllocatePostingList(),
                 StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-    EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsFalse()));
+    EXPECT_FALSE(block.has_free_posting_lists());
   }
 }
 
@@ -247,7 +229,7 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
   // Create an IndexBlock from this newly allocated file block.
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock block,
                              IndexBlock::CreateFromUninitializedRegion(
-                                 &filesystem_, serializer_.get(), sfd_->get(),
+                                 filesystem_, flash_file_, serializer_.get(),
                                  /*offset=*/0, kBlockSize, kPostingListBytes));
 
   // Add hits to the first posting list.
@@ -258,13 +240,14 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
       Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17),
       Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency),
   };
-  ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_1,
+  ICING_ASSERT_OK_AND_ASSIGN(PostingListIndex allocated_index_1,
                              block.AllocatePostingList());
+  ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl_used_1,
+                             block.GetAllocatedPostingList(allocated_index_1));
   for (const Hit& hit : hits_in_posting_list1) {
-    ICING_ASSERT_OK(
-        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit));
+    ICING_ASSERT_OK(serializer_->PrependHit(&pl_used_1, hit));
   }
-  EXPECT_THAT(serializer_->GetHits(&alloc_info_1.posting_list_used),
+  EXPECT_THAT(serializer_->GetHits(&pl_used_1),
               IsOkAndHolds(ElementsAreArray(hits_in_posting_list1.rbegin(),
                                             hits_in_posting_list1.rend())));
 
@@ -276,44 +259,45 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
       Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12),
       Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency),
   };
-  ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_2,
+  ICING_ASSERT_OK_AND_ASSIGN(PostingListIndex allocated_index_2,
                              block.AllocatePostingList());
+  ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl_used_2,
+                             block.GetAllocatedPostingList(allocated_index_2));
   for (const Hit& hit : hits_in_posting_list2) {
-    ICING_ASSERT_OK(
-        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit));
+    ICING_ASSERT_OK(serializer_->PrependHit(&pl_used_2, hit));
   }
-  EXPECT_THAT(serializer_->GetHits(&alloc_info_2.posting_list_used),
+  EXPECT_THAT(serializer_->GetHits(&pl_used_2),
               IsOkAndHolds(ElementsAreArray(hits_in_posting_list2.rbegin(),
                                             hits_in_posting_list2.rend())));
 
   EXPECT_THAT(block.AllocatePostingList(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-  EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsFalse()));
+  EXPECT_FALSE(block.has_free_posting_lists());
 
   // Now free the first posting list. Then, reallocate it and fill it with a
   // different set of hits.
-  block.FreePostingList(alloc_info_1.posting_list_index);
-  EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsTrue()));
+  block.FreePostingList(allocated_index_1);
+  EXPECT_TRUE(block.has_free_posting_lists());
 
   std::vector<Hit> hits_in_posting_list3{
       Hit(/*section_id=*/12, /*document_id=*/0, /*term_frequency=*/88),
       Hit(/*section_id=*/17, /*document_id=*/1, Hit::kDefaultTermFrequency),
       Hit(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/2),
   };
-  ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_3,
+  ICING_ASSERT_OK_AND_ASSIGN(PostingListIndex allocated_index_3,
                              block.AllocatePostingList());
-  EXPECT_THAT(alloc_info_3.posting_list_index,
-              Eq(alloc_info_3.posting_list_index));
+  EXPECT_THAT(allocated_index_3, Eq(allocated_index_1));
+  ICING_ASSERT_OK_AND_ASSIGN(pl_used_1,
+                             block.GetAllocatedPostingList(allocated_index_3));
   for (const Hit& hit : hits_in_posting_list3) {
-    ICING_ASSERT_OK(
-        serializer_->PrependHit(&alloc_info_3.posting_list_used, hit));
+    ICING_ASSERT_OK(serializer_->PrependHit(&pl_used_1, hit));
   }
-  EXPECT_THAT(serializer_->GetHits(&alloc_info_3.posting_list_used),
+  EXPECT_THAT(serializer_->GetHits(&pl_used_1),
               IsOkAndHolds(ElementsAreArray(hits_in_posting_list3.rbegin(),
                                             hits_in_posting_list3.rend())));
   EXPECT_THAT(block.AllocatePostingList(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-  EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsFalse()));
+  EXPECT_FALSE(block.has_free_posting_lists());
 }
 
 TEST_F(IndexBlockTest, IndexBlockNextBlockIndex) {
@@ -325,29 +309,29 @@ TEST_F(IndexBlockTest, IndexBlockNextBlockIndex) {
     // next block index.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromUninitializedRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize, kPostingListBytes));
-    EXPECT_THAT(block.GetNextBlockIndex(), IsOkAndHolds(kInvalidBlockIndex));
-    EXPECT_THAT(block.SetNextBlockIndex(kSomeBlockIndex), IsOk());
-    EXPECT_THAT(block.GetNextBlockIndex(), IsOkAndHolds(kSomeBlockIndex));
+    EXPECT_THAT(block.next_block_index(), Eq(kInvalidBlockIndex));
+    block.set_next_block_index(kSomeBlockIndex);
+    EXPECT_THAT(block.next_block_index(), Eq(kSomeBlockIndex));
   }
   {
     // Create an IndexBlock from this previously allocated file block and make
     // sure that next_block_index is still set properly.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromPreexistingIndexBlockRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize));
-    EXPECT_THAT(block.GetNextBlockIndex(), IsOkAndHolds(kSomeBlockIndex));
+    EXPECT_THAT(block.next_block_index(), Eq(kSomeBlockIndex));
   }
   {
     // Create an IndexBlock, treating this file block as uninitialized. This
     // reset the next_block_index to kInvalidBlockIndex.
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock block, IndexBlock::CreateFromUninitializedRegion(
-                              &filesystem_, serializer_.get(), sfd_->get(),
+                              filesystem_, flash_file_, serializer_.get(),
                               /*offset=*/0, kBlockSize, kPostingListBytes));
-    EXPECT_THAT(block.GetNextBlockIndex(), IsOkAndHolds(kInvalidBlockIndex));
+    EXPECT_THAT(block.next_block_index(), Eq(kInvalidBlockIndex));
   }
 }
 
