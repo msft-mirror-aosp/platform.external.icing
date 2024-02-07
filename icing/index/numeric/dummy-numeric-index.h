@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
 #define ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -166,7 +167,8 @@ class DummyNumericIndex : public NumericIndex<T> {
     explicit Iterator(T key_lower, T key_upper,
                       std::vector<BucketInfo>&& bucket_info_vec)
         : NumericIndex<T>::Iterator(key_lower, key_upper),
-          pq_(std::less<BucketInfo>(), std::move(bucket_info_vec)) {}
+          pq_(std::less<BucketInfo>(), std::move(bucket_info_vec)),
+          num_advance_calls_(0) {}
 
     ~Iterator() override = default;
 
@@ -174,38 +176,55 @@ class DummyNumericIndex : public NumericIndex<T> {
 
     DocHitInfo GetDocHitInfo() const override { return doc_hit_info_; }
 
+    int32_t GetNumAdvanceCalls() const override { return num_advance_calls_; }
+
+    int32_t GetNumBlocksInspected() const override { return 0; }
+
    private:
     std::priority_queue<BucketInfo> pq_;
     DocHitInfo doc_hit_info_;
+
+    int32_t num_advance_calls_;
   };
 
   explicit DummyNumericIndex(const Filesystem& filesystem,
                              std::string&& working_path)
       : NumericIndex<T>(filesystem, std::move(working_path),
                         PersistentStorage::WorkingPathType::kDummy),
-        last_added_document_id_(kInvalidDocumentId) {}
+        dummy_crcs_buffer_(
+            std::make_unique<uint8_t[]>(sizeof(PersistentStorage::Crcs))),
+        last_added_document_id_(kInvalidDocumentId) {
+    memset(dummy_crcs_buffer_.get(), 0, sizeof(PersistentStorage::Crcs));
+  }
 
-  libtextclassifier3::Status PersistStoragesToDisk() override {
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::Status PersistMetadataToDisk() override {
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override {
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override {
     return Crc32(0);
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override {
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override {
     return Crc32(0);
   }
 
-  PersistentStorage::Crcs& crcs() override { return dummy_crcs_; }
-  const PersistentStorage::Crcs& crcs() const override { return dummy_crcs_; }
+  PersistentStorage::Crcs& crcs() override {
+    return *reinterpret_cast<PersistentStorage::Crcs*>(
+        dummy_crcs_buffer_.get());
+  }
+  const PersistentStorage::Crcs& crcs() const override {
+    return *reinterpret_cast<const PersistentStorage::Crcs*>(
+        dummy_crcs_buffer_.get());
+  }
 
   std::unordered_map<std::string, std::map<T, std::vector<BasicHit>>> storage_;
-  PersistentStorage::Crcs dummy_crcs_;
+  std::unique_ptr<uint8_t[]> dummy_crcs_buffer_;
   DocumentId last_added_document_id_;
 };
 
@@ -251,6 +270,7 @@ libtextclassifier3::Status DummyNumericIndex<T>::Iterator::Advance() {
   // Merge sections with same document_id into a single DocHitInfo
   while (!pq_.empty() &&
          pq_.top().GetCurrentBasicHit().document_id() == document_id) {
+    ++num_advance_calls_;
     doc_hit_info_.UpdateSection(pq_.top().GetCurrentBasicHit().section_id());
 
     BucketInfo info = pq_.top();
