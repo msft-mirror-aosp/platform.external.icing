@@ -28,8 +28,15 @@ java_library {
         include_dirs: ["external/protobuf/src"],
         canonical_path_from_root: false,
     },
-    srcs: ["icing/proto/*.proto"],
+    srcs: [
+        "icing/proto/*.proto",
+        "*.proto",
+    ],
     sdk_version: "core_current",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.appsearch",
+    ],
 }
 
 cc_library_static {

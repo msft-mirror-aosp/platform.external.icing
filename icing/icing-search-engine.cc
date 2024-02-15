@@ -14,7 +14,10 @@
 
 #include "icing/icing-search-engine.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -40,11 +43,17 @@
 #include "icing/index/integer-section-indexing-handler.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/integer-index.h"
-#include "icing/index/string-section-indexing-handler.h"
+#include "icing/index/term-indexing-handler.h"
+#include "icing/index/term-metadata.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/join/join-processor.h"
+#include "icing/join/qualified-id-join-index-impl-v1.h"
+#include "icing/join/qualified-id-join-index-impl-v2.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/performance-configuration.h"
 #include "icing/portable/endian.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
@@ -71,9 +80,8 @@
 #include "icing/result/projector.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
+#include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/section.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -82,11 +90,9 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
-#include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
@@ -97,7 +103,6 @@ namespace lib {
 
 namespace {
 
-constexpr std::string_view kVersionFilename = "version";
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kIndexSubfolderName = "index_dir";
 constexpr std::string_view kIntegerIndexSubfolderName = "integer_index_dir";
@@ -140,6 +145,15 @@ libtextclassifier3::Status ValidateResultSpec(
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_total_bytes_per_page_threshold cannot be "
         "non-positive.");
+  }
+  if (result_spec.max_joined_children_per_parent_to_return() < 0) {
+    return absl_ports::InvalidArgumentError(
+        "ResultSpecProto.max_joined_children_per_parent_to_return cannot be "
+        "negative.");
+  }
+  if (result_spec.num_to_score() <= 0) {
+    return absl_ports::InvalidArgumentError(
+        "ResultSpecProto.num_to_score cannot be non-positive.");
   }
   // Validate ResultGroupings.
   std::unordered_set<int32_t> unique_entry_ids;
@@ -218,10 +232,27 @@ libtextclassifier3::Status ValidateSuggestionSpec(
   return libtextclassifier3::Status::OK;
 }
 
-// Version file is a single file under base_dir containing version info of the
-// existing data.
-std::string MakeVersionFilePath(const std::string& base_dir) {
-  return absl_ports::StrCat(base_dir, "/", kVersionFilename);
+bool IsV2QualifiedIdJoinIndexEnabled(const IcingSearchEngineOptions& options) {
+  return options.use_new_qualified_id_join_index() &&
+         options.document_store_namespace_id_fingerprint();
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
+CreateQualifiedIdJoinIndex(const Filesystem& filesystem,
+                           std::string qualified_id_join_index_dir,
+                           const IcingSearchEngineOptions& options) {
+  if (IsV2QualifiedIdJoinIndexEnabled(options)) {
+    // V2
+    return QualifiedIdJoinIndexImplV2::Create(
+        filesystem, std::move(qualified_id_join_index_dir),
+        options.pre_mapping_fbv());
+  } else {
+    // V1
+    // TODO(b/275121148): deprecate this part after rollout v2.
+    return QualifiedIdJoinIndexImplV1::Create(
+        filesystem, std::move(qualified_id_join_index_dir),
+        options.pre_mapping_fbv(), options.use_persistent_hash_map());
+  }
 }
 
 // Document store files are in a standalone subfolder for easier file
@@ -569,30 +600,49 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     return status;
   }
 
-  // Read version file and determine the state change.
-  const std::string version_filepath = MakeVersionFilePath(options_.base_dir());
+  // Do version and flags compatibility check
+  // Read version file, determine the state change and rebuild derived files if
+  // needed.
   const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
   ICING_ASSIGN_OR_RETURN(
-      version_util::VersionInfo version_info,
-      version_util::ReadVersion(*filesystem_, version_filepath, index_dir));
+      IcingSearchEngineVersionProto stored_version_proto,
+      version_util::ReadVersion(
+          *filesystem_, /*version_file_dir=*/options_.base_dir(), index_dir));
+  version_util::VersionInfo stored_version_info =
+      version_util::GetVersionInfoFromProto(stored_version_proto);
   version_util::StateChange version_state_change =
-      version_util::GetVersionStateChange(version_info);
+      version_util::GetVersionStateChange(stored_version_info);
+
+  // Construct icing's current version proto based on the current code version
+  IcingSearchEngineVersionProto current_version_proto;
+  current_version_proto.set_version(version_util::kVersion);
+  current_version_proto.set_max_version(
+      std::max(stored_version_info.max_version, version_util::kVersion));
+  version_util::AddEnabledFeatures(options_, &current_version_proto);
+
+  // Step 1: If versions are incompatible, migrate schema according to the
+  // version state change.
   if (version_state_change != version_util::StateChange::kCompatible) {
-    // Step 1: migrate schema according to the version state change.
     ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
         filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
         version_state_change, version_util::kVersion));
-
-    // Step 2: discard all derived data
-    ICING_RETURN_IF_ERROR(DiscardDerivedFiles());
-
-    // Step 3: update version file
-    version_util::VersionInfo new_version_info(
-        version_util::kVersion,
-        std::max(version_info.max_version, version_util::kVersion));
-    ICING_RETURN_IF_ERROR(version_util::WriteVersion(
-        *filesystem_, version_filepath, new_version_info));
   }
+
+  // Step 2: Discard derived files that need to be rebuilt
+  version_util::DerivedFilesRebuildResult required_derived_files_rebuild =
+      version_util::CalculateRequiredDerivedFilesRebuild(stored_version_proto,
+                                                         current_version_proto);
+  ICING_RETURN_IF_ERROR(DiscardDerivedFiles(required_derived_files_rebuild));
+
+  // Step 3: update version files. We need to update both the V1 and V2
+  // version files.
+  ICING_RETURN_IF_ERROR(version_util::WriteV1Version(
+      *filesystem_, /*version_file_dir=*/options_.base_dir(),
+      version_util::GetVersionInfoFromProto(current_version_proto)));
+  ICING_RETURN_IF_ERROR(version_util::WriteV2Version(
+      *filesystem_, /*version_file_dir=*/options_.base_dir(),
+      std::make_unique<IcingSearchEngineVersionProto>(
+          std::move(current_version_proto))));
 
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
@@ -621,29 +671,39 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     if (!filesystem_->DeleteDirectoryRecursively(doc_store_dir.c_str()) ||
         !filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !IntegerIndex::Discard(*filesystem_, integer_index_dir).ok() ||
-        !QualifiedIdTypeJoinableIndex::Discard(*filesystem_,
-                                               qualified_id_join_index_dir)
+        !QualifiedIdJoinIndex::Discard(*filesystem_,
+                                       qualified_id_join_index_dir)
              .ok()) {
       return absl_ports::InternalError(absl_ports::StrCat(
           "Could not delete directories: ", index_dir, ", ", integer_index_dir,
           ", ", qualified_id_join_index_dir, " and ", doc_store_dir));
     }
-    ICING_RETURN_IF_ERROR(InitializeDocumentStore(
-        /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
-    index_init_status = InitializeIndex(initialize_stats);
+    ICING_ASSIGN_OR_RETURN(
+        bool document_store_derived_files_regenerated,
+        InitializeDocumentStore(
+            /*force_recovery_and_revalidate_documents=*/false,
+            initialize_stats));
+    index_init_status = InitializeIndex(
+        document_store_derived_files_regenerated, initialize_stats);
     if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
       return index_init_status;
     }
   } else if (filesystem_->FileExists(marker_filepath.c_str())) {
     // If the marker file is still around then something wonky happened when we
     // last tried to set the schema.
+    //
+    // Since we're going to rebuild all indices in this case, the return value
+    // of InitializeDocumentStore (document_store_derived_files_regenerated) is
+    // unused.
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
 
     // We're going to need to build the index from scratch. So just delete its
     // directory now.
     // Discard index directory and instantiate a new one.
-    Index::Options index_options(index_dir, options_.index_merge_size());
+    Index::Options index_options(index_dir, options_.index_merge_size(),
+                                 options_.lite_index_sort_at_indexing(),
+                                 options_.lite_index_sort_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
       return absl_ports::InternalError(
@@ -661,18 +721,18 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
         IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.integer_index_bucket_split_threshold(),
                              options_.pre_mapping_fbv()));
 
     // Discard qualified id join index directory and instantiate a new one.
     std::string qualified_id_join_index_dir =
         MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
-    ICING_RETURN_IF_ERROR(QualifiedIdTypeJoinableIndex::Discard(
+    ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
         *filesystem_, qualified_id_join_index_dir));
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
-        QualifiedIdTypeJoinableIndex::Create(
-            *filesystem_, std::move(qualified_id_join_index_dir),
-            options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
+        CreateQualifiedIdJoinIndex(
+            *filesystem_, std::move(qualified_id_join_index_dir), options_));
 
     std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     IndexRestorationResult restore_result = RestoreIndexIfNeeded();
@@ -697,9 +757,12 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     initialize_stats->set_qualified_id_join_index_restoration_cause(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
   } else if (version_state_change != version_util::StateChange::kCompatible) {
-    ICING_RETURN_IF_ERROR(InitializeDocumentStore(
-        /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
-    index_init_status = InitializeIndex(initialize_stats);
+    ICING_ASSIGN_OR_RETURN(bool document_store_derived_files_regenerated,
+                           InitializeDocumentStore(
+                               /*force_recovery_and_revalidate_documents=*/true,
+                               initialize_stats));
+    index_init_status = InitializeIndex(
+        document_store_derived_files_regenerated, initialize_stats);
     if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
       return index_init_status;
     }
@@ -715,11 +778,40 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     initialize_stats->set_qualified_id_join_index_restoration_cause(
         InitializeStatsProto::VERSION_CHANGED);
   } else {
-    ICING_RETURN_IF_ERROR(InitializeDocumentStore(
-        /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
-    index_init_status = InitializeIndex(initialize_stats);
+    ICING_ASSIGN_OR_RETURN(
+        bool document_store_derived_files_regenerated,
+        InitializeDocumentStore(
+            /*force_recovery_and_revalidate_documents=*/false,
+            initialize_stats));
+    index_init_status = InitializeIndex(
+        document_store_derived_files_regenerated, initialize_stats);
     if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
       return index_init_status;
+    }
+
+    // Set recovery cause to FEATURE_FLAG_CHANGED according to the calculated
+    // required_derived_files_rebuild
+    if (required_derived_files_rebuild
+            .needs_document_store_derived_files_rebuild) {
+      initialize_stats->set_document_store_recovery_cause(
+          InitializeStatsProto::FEATURE_FLAG_CHANGED);
+    }
+    if (required_derived_files_rebuild
+            .needs_schema_store_derived_files_rebuild) {
+      initialize_stats->set_schema_store_recovery_cause(
+          InitializeStatsProto::FEATURE_FLAG_CHANGED);
+    }
+    if (required_derived_files_rebuild.needs_term_index_rebuild) {
+      initialize_stats->set_index_restoration_cause(
+          InitializeStatsProto::FEATURE_FLAG_CHANGED);
+    }
+    if (required_derived_files_rebuild.needs_integer_index_rebuild) {
+      initialize_stats->set_integer_index_restoration_cause(
+          InitializeStatsProto::FEATURE_FLAG_CHANGED);
+    }
+    if (required_derived_files_rebuild.needs_qualified_id_join_index_rebuild) {
+      initialize_stats->set_qualified_id_join_index_restoration_cause(
+          InitializeStatsProto::FEATURE_FLAG_CHANGED);
     }
   }
 
@@ -751,7 +843,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
+libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
     bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
@@ -765,17 +857,19 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
   }
   ICING_ASSIGN_OR_RETURN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(filesystem_.get(), document_dir, clock_.get(),
-                            schema_store_.get(),
-                            force_recovery_and_revalidate_documents,
-                            options_.document_store_namespace_id_fingerprint(),
-                            options_.compression_level(), initialize_stats));
+      DocumentStore::Create(
+          filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
+          force_recovery_and_revalidate_documents,
+          options_.document_store_namespace_id_fingerprint(),
+          options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+          options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
 
-  return libtextclassifier3::Status::OK;
+  return create_result.derived_files_regenerated;
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
+    bool document_store_derived_files_regenerated,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
 
@@ -785,7 +879,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     return absl_ports::InternalError(
         absl_ports::StrCat("Could not create directory: ", index_dir));
   }
-  Index::Options index_options(index_dir, options_.index_merge_size());
+  Index::Options index_options(index_dir, options_.index_merge_size(),
+                               options_.lite_index_sort_at_indexing(),
+                               options_.lite_index_sort_size());
 
   // Term index
   InitializeStatsProto::RecoveryCause index_recovery_cause;
@@ -816,8 +912,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   std::string integer_index_dir =
       MakeIntegerIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause integer_index_recovery_cause;
-  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir,
-                                               options_.pre_mapping_fbv());
+  auto integer_index_or =
+      IntegerIndex::Create(*filesystem_, integer_index_dir,
+                           options_.integer_index_bucket_split_threshold(),
+                           options_.pre_mapping_fbv());
   if (!integer_index_or.ok()) {
     ICING_RETURN_IF_ERROR(
         IntegerIndex::Discard(*filesystem_, integer_index_dir));
@@ -828,6 +926,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
         IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.integer_index_bucket_split_threshold(),
                              options_.pre_mapping_fbv()));
   } else {
     // Integer index was created fine.
@@ -842,29 +941,44 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   std::string qualified_id_join_index_dir =
       MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause qualified_id_join_index_recovery_cause;
-  auto qualified_id_join_index_or = QualifiedIdTypeJoinableIndex::Create(
-      *filesystem_, qualified_id_join_index_dir, options_.pre_mapping_fbv(),
-      options_.use_persistent_hash_map());
-  if (!qualified_id_join_index_or.ok()) {
-    ICING_RETURN_IF_ERROR(QualifiedIdTypeJoinableIndex::Discard(
+  if (document_store_derived_files_regenerated &&
+      IsV2QualifiedIdJoinIndexEnabled(options_)) {
+    // V2 qualified id join index depends on document store derived files, so we
+    // have to rebuild it from scratch if
+    // document_store_derived_files_regenerated is true.
+    ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
         *filesystem_, qualified_id_join_index_dir));
 
-    qualified_id_join_index_recovery_cause = InitializeStatsProto::IO_ERROR;
-
-    // Try recreating it from scratch and rebuild everything.
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
-        QualifiedIdTypeJoinableIndex::Create(
-            *filesystem_, std::move(qualified_id_join_index_dir),
-            options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
-  } else {
-    // Qualified id join index was created fine.
-    qualified_id_join_index_ =
-        std::move(qualified_id_join_index_or).ValueOrDie();
-    // If a recover does have to happen, then it must be because the index is
-    // out of sync with the document store.
+        CreateQualifiedIdJoinIndex(
+            *filesystem_, std::move(qualified_id_join_index_dir), options_));
+
     qualified_id_join_index_recovery_cause =
-        InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH;
+        InitializeStatsProto::DEPENDENCIES_CHANGED;
+  } else {
+    auto qualified_id_join_index_or = CreateQualifiedIdJoinIndex(
+        *filesystem_, qualified_id_join_index_dir, options_);
+    if (!qualified_id_join_index_or.ok()) {
+      ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
+          *filesystem_, qualified_id_join_index_dir));
+
+      qualified_id_join_index_recovery_cause = InitializeStatsProto::IO_ERROR;
+
+      // Try recreating it from scratch and rebuild everything.
+      ICING_ASSIGN_OR_RETURN(
+          qualified_id_join_index_,
+          CreateQualifiedIdJoinIndex(
+              *filesystem_, std::move(qualified_id_join_index_dir), options_));
+    } else {
+      // Qualified id join index was created fine.
+      qualified_id_join_index_ =
+          std::move(qualified_id_join_index_or).ValueOrDie();
+      // If a recover does have to happen, then it must be because the index is
+      // out of sync with the document store.
+      qualified_id_join_index_recovery_cause =
+          InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH;
+    }
   }
 
   std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
@@ -1402,7 +1516,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   // Gets unordered results from query processor
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), integer_index_.get(), language_segmenter_.get(),
-      normalizer_.get(), document_store_.get(), schema_store_.get());
+      normalizer_.get(), document_store_.get(), schema_store_.get(),
+      clock_.get());
   if (!query_processor_or.ok()) {
     TransformStatus(query_processor_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -1536,33 +1651,41 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   // TODO(b/143646633): figure out if we need to optimize index and doc store
   // at the same time.
   std::unique_ptr<Timer> optimize_doc_store_timer = clock_->GetNewTimer();
-  libtextclassifier3::StatusOr<std::vector<DocumentId>>
-      document_id_old_to_new_or = OptimizeDocumentStore(optimize_stats);
+  libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
+      optimize_result_or = OptimizeDocumentStore(optimize_stats);
   optimize_stats->set_document_store_optimize_latency_ms(
       optimize_doc_store_timer->GetElapsedMilliseconds());
 
-  if (!document_id_old_to_new_or.ok() &&
-      !absl_ports::IsDataLoss(document_id_old_to_new_or.status())) {
+  if (!optimize_result_or.ok() &&
+      !absl_ports::IsDataLoss(optimize_result_or.status())) {
     // The status now is either ABORTED_ERROR or INTERNAL_ERROR.
     // If ABORTED_ERROR, Icing should still be working.
     // If INTERNAL_ERROR, we're having IO errors or other errors that we can't
     // recover from.
-    TransformStatus(document_id_old_to_new_or.status(), result_status);
+    TransformStatus(optimize_result_or.status(), result_status);
     return result_proto;
   }
 
   // The status is either OK or DATA_LOSS. The optimized document store is
   // guaranteed to work, so we update index according to the new document store.
   std::unique_ptr<Timer> optimize_index_timer = clock_->GetNewTimer();
+  auto doc_store_optimize_result_status = optimize_result_or.status();
   bool should_rebuild_index =
-      !document_id_old_to_new_or.ok() ||
+      !optimize_result_or.ok() ||
+      optimize_result_or.ValueOrDie().should_rebuild_index ||
       ShouldRebuildIndex(*optimize_stats,
                          options_.optimize_rebuild_index_threshold());
   if (!should_rebuild_index) {
+    // At this point should_rebuild_index is false, so it means
+    // optimize_result_or.ok() is true and therefore it is safe to call
+    // ValueOrDie.
+    DocumentStore::OptimizeResult optimize_result =
+        std::move(optimize_result_or).ValueOrDie();
+
     optimize_stats->set_index_restoration_mode(
         OptimizeStatsProto::INDEX_TRANSLATION);
     libtextclassifier3::Status index_optimize_status =
-        index_->Optimize(document_id_old_to_new_or.ValueOrDie(),
+        index_->Optimize(optimize_result.document_id_old_to_new,
                          document_store_->last_added_document_id());
     if (!index_optimize_status.ok()) {
       ICING_LOG(WARNING) << "Failed to optimize index. Error: "
@@ -1571,7 +1694,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     }
 
     libtextclassifier3::Status integer_index_optimize_status =
-        integer_index_->Optimize(document_id_old_to_new_or.ValueOrDie(),
+        integer_index_->Optimize(optimize_result.document_id_old_to_new,
                                  document_store_->last_added_document_id());
     if (!integer_index_optimize_status.ok()) {
       ICING_LOG(WARNING) << "Failed to optimize integer index. Error: "
@@ -1581,7 +1704,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
 
     libtextclassifier3::Status qualified_id_join_index_optimize_status =
         qualified_id_join_index_->Optimize(
-            document_id_old_to_new_or.ValueOrDie(),
+            optimize_result.document_id_old_to_new,
+            optimize_result.namespace_id_old_to_new,
             document_store_->last_added_document_id());
     if (!qualified_id_join_index_optimize_status.ok()) {
       ICING_LOG(WARNING)
@@ -1593,6 +1717,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   // If we received a DATA_LOSS error from OptimizeDocumentStore, we have a
   // valid document store, but it might be the old one or the new one. So throw
   // out the index data and rebuild from scratch.
+  // Also rebuild index if DocumentStore::OptimizeInto hints to do so.
   // Likewise, if Index::Optimize failed, then attempt to recover the index by
   // rebuilding from scratch.
   // If ShouldRebuildIndex() returns true, we will also rebuild the index for
@@ -1651,7 +1776,11 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   // Update the status for this run and write it.
   auto optimize_status = std::make_unique<OptimizeStatusProto>();
   optimize_status->set_last_successful_optimize_run_time_ms(current_time);
-  optimize_status_file.Write(std::move(optimize_status));
+  auto write_status = optimize_status_file.Write(std::move(optimize_status));
+  if (!write_status.ok()) {
+    ICING_LOG(ERROR) << "Failed to write optimize status:\n"
+                     << write_status.error_message();
+  }
 
   // Flushes data to disk after doing optimization
   status = InternalPersistToDisk(PersistType::FULL);
@@ -1664,7 +1793,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   optimize_stats->set_storage_size_after(
       Filesystem::SanitizeFileSize(after_size));
 
-  TransformStatus(document_id_old_to_new_or.status(), result_status);
+  TransformStatus(doc_store_optimize_result_status, result_status);
   return result_proto;
 }
 
@@ -1871,12 +2000,23 @@ SearchResultProto IcingSearchEngine::InternalSearch(
   StatusProto* result_status = result_proto.mutable_status();
 
   QueryStatsProto* query_stats = result_proto.mutable_query_stats();
+  query_stats->set_is_first_page(true);
+  query_stats->set_requested_page_size(result_spec.num_per_page());
+
+  // TODO(b/305098009): deprecate search-related flat fields in query_stats.
+  query_stats->set_num_namespaces_filtered(
+      search_spec.namespace_filters_size());
+  query_stats->set_num_schema_types_filtered(
+      search_spec.schema_type_filters_size());
   query_stats->set_query_length(search_spec.query().length());
+  query_stats->set_ranking_strategy(scoring_spec.rank_by());
+
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
     return result_proto;
   }
+  index_->PublishQueryStats(query_stats);
 
   libtextclassifier3::Status status =
       ValidateResultSpec(document_store_.get(), result_spec);
@@ -1890,27 +2030,22 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     return result_proto;
   }
 
-  query_stats->set_num_namespaces_filtered(
-      search_spec.namespace_filters_size());
-  query_stats->set_num_schema_types_filtered(
-      search_spec.schema_type_filters_size());
-  query_stats->set_ranking_strategy(scoring_spec.rank_by());
-  query_stats->set_is_first_page(true);
-  query_stats->set_requested_page_size(result_spec.num_per_page());
-
   const JoinSpecProto& join_spec = search_spec.join_spec();
   std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
   std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   if (!join_spec.parent_property_expression().empty() &&
       !join_spec.child_property_expression().empty()) {
+    query_stats->set_is_join_query(true);
+    QueryStatsProto::SearchStats* child_search_stats =
+        query_stats->mutable_child_search_stats();
+
     // Process child query
     QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
         join_spec.nested_spec().search_spec(),
         join_spec.nested_spec().scoring_spec(),
         join_spec.nested_spec().result_spec(),
-        /*join_children_fetcher=*/nullptr, current_time_ms);
-    // TOOD(b/256022027): set different kinds of latency for 2nd query.
+        /*join_children_fetcher=*/nullptr, current_time_ms, child_search_stats);
     if (!nested_query_scoring_results.status.ok()) {
       TransformStatus(nested_query_scoring_results.status, result_status);
       return result_proto;
@@ -1941,24 +2076,24 @@ SearchResultProto IcingSearchEngine::InternalSearch(
   }
 
   // Process parent query
-  QueryScoringResults query_scoring_results =
-      ProcessQueryAndScore(search_spec, scoring_spec, result_spec,
-                           join_children_fetcher.get(), current_time_ms);
-  int term_count = 0;
-  for (const auto& section_and_terms : query_scoring_results.query_terms) {
-    term_count += section_and_terms.second.size();
-  }
-  query_stats->set_num_terms(term_count);
+  QueryStatsProto::SearchStats* parent_search_stats =
+      query_stats->mutable_parent_search_stats();
+  QueryScoringResults query_scoring_results = ProcessQueryAndScore(
+      search_spec, scoring_spec, result_spec, join_children_fetcher.get(),
+      current_time_ms, parent_search_stats);
+  // TODO(b/305098009): deprecate search-related flat fields in query_stats.
+  query_stats->set_num_terms(parent_search_stats->num_terms());
   query_stats->set_parse_query_latency_ms(
-      query_scoring_results.parse_query_latency_ms);
-  query_stats->set_scoring_latency_ms(query_scoring_results.scoring_latency_ms);
+      parent_search_stats->parse_query_latency_ms());
+  query_stats->set_scoring_latency_ms(
+      parent_search_stats->scoring_latency_ms());
+  query_stats->set_num_documents_scored(
+      parent_search_stats->num_documents_scored());
   if (!query_scoring_results.status.ok()) {
     TransformStatus(query_scoring_results.status, result_status);
     return result_proto;
   }
 
-  query_stats->set_num_documents_scored(
-      query_scoring_results.scored_document_hits.size());
   // Returns early for empty result
   if (query_scoring_results.scored_document_hits.empty()) {
     result_status->set_code(StatusProto::OK);
@@ -2072,19 +2207,28 @@ SearchResultProto IcingSearchEngine::InternalSearch(
 IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec,
-    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms) {
+    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms,
+    QueryStatsProto::SearchStats* search_stats) {
+  search_stats->set_num_namespaces_filtered(
+      search_spec.namespace_filters_size());
+  search_stats->set_num_schema_types_filtered(
+      search_spec.schema_type_filters_size());
+  search_stats->set_query_length(search_spec.query().length());
+  search_stats->set_ranking_strategy(scoring_spec.rank_by());
+
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
 
   // Gets unordered results from query processor
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), integer_index_.get(), language_segmenter_.get(),
-      normalizer_.get(), document_store_.get(), schema_store_.get());
+      normalizer_.get(), document_store_.get(), schema_store_.get(),
+      clock_.get());
   if (!query_processor_or.ok()) {
-    return QueryScoringResults(
-        std::move(query_processor_or).status(), /*query_terms_in=*/{},
-        /*scored_document_hits_in=*/{},
-        /*parse_query_latency_ms_in=*/component_timer->GetElapsedMilliseconds(),
-        /*scoring_latency_ms_in=*/0);
+    search_stats->set_parse_query_latency_ms(
+        component_timer->GetElapsedMilliseconds());
+    return QueryScoringResults(std::move(query_processor_or).status(),
+                               /*query_terms_in=*/{},
+                               /*scored_document_hits_in=*/{});
   }
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
@@ -2093,19 +2237,30 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   libtextclassifier3::StatusOr<QueryResults> query_results_or;
   if (ranking_strategy_or.ok()) {
     query_results_or = query_processor->ParseSearch(
-        search_spec, ranking_strategy_or.ValueOrDie(), current_time_ms);
+        search_spec, ranking_strategy_or.ValueOrDie(), current_time_ms,
+        search_stats);
   } else {
     query_results_or = ranking_strategy_or.status();
   }
+  search_stats->set_parse_query_latency_ms(
+      component_timer->GetElapsedMilliseconds());
   if (!query_results_or.ok()) {
-    return QueryScoringResults(
-        std::move(query_results_or).status(), /*query_terms_in=*/{},
-        /*scored_document_hits_in=*/{},
-        /*parse_query_latency_ms_in=*/component_timer->GetElapsedMilliseconds(),
-        /*scoring_latency_ms_in=*/0);
+    return QueryScoringResults(std::move(query_results_or).status(),
+                               /*query_terms_in=*/{},
+                               /*scored_document_hits_in=*/{});
   }
   QueryResults query_results = std::move(query_results_or).ValueOrDie();
-  int64_t parse_query_latency_ms = component_timer->GetElapsedMilliseconds();
+
+  // Set SearchStats related to QueryResults.
+  int term_count = 0;
+  for (const auto& section_and_terms : query_results.query_terms) {
+    term_count += section_and_terms.second.size();
+  }
+  search_stats->set_num_terms(term_count);
+
+  if (query_results.features_in_use.count(kNumericSearchFeature)) {
+    search_stats->set_is_numeric_query(true);
+  }
 
   component_timer = clock_->GetNewTimer();
   // Scores but does not rank the results.
@@ -2116,22 +2271,20 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   if (!scoring_processor_or.ok()) {
     return QueryScoringResults(std::move(scoring_processor_or).status(),
                                std::move(query_results.query_terms),
-                               /*scored_document_hits_in=*/{},
-                               parse_query_latency_ms,
-                               /*scoring_latency_ms_in=*/0);
+                               /*scored_document_hits_in=*/{});
   }
   std::unique_ptr<ScoringProcessor> scoring_processor =
       std::move(scoring_processor_or).ValueOrDie();
   std::vector<ScoredDocumentHit> scored_document_hits =
-      scoring_processor->Score(std::move(query_results.root_iterator),
-                               performance_configuration_.num_to_score,
-                               &query_results.query_term_iterators);
-  int64_t scoring_latency_ms = component_timer->GetElapsedMilliseconds();
+      scoring_processor->Score(
+          std::move(query_results.root_iterator), result_spec.num_to_score(),
+          &query_results.query_term_iterators, search_stats);
+  search_stats->set_scoring_latency_ms(
+      component_timer->GetElapsedMilliseconds());
 
   return QueryScoringResults(libtextclassifier3::Status::OK,
                              std::move(query_results.query_terms),
-                             std::move(scored_document_hits),
-                             parse_query_latency_ms, scoring_latency_ms);
+                             std::move(scored_document_hits));
 }
 
 SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
@@ -2222,7 +2375,7 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
   result_state_manager_->InvalidateResultState(next_page_token);
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentId>>
+libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
 IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   // Gets the current directory path and an empty tmp directory path for
   // document store optimization.
@@ -2239,17 +2392,16 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   }
 
   // Copies valid document data to tmp directory
-  libtextclassifier3::StatusOr<std::vector<DocumentId>>
-      document_id_old_to_new_or = document_store_->OptimizeInto(
-          temporary_document_dir, language_segmenter_.get(),
-          options_.document_store_namespace_id_fingerprint(), optimize_stats);
+  libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
+      optimize_result_or = document_store_->OptimizeInto(
+          temporary_document_dir, language_segmenter_.get(), optimize_stats);
 
   // Handles error if any
-  if (!document_id_old_to_new_or.ok()) {
+  if (!optimize_result_or.ok()) {
     filesystem_->DeleteDirectoryRecursively(temporary_document_dir.c_str());
     return absl_ports::Annotate(
         absl_ports::AbortedError("Failed to optimize document store"),
-        document_id_old_to_new_or.status().error_message());
+        optimize_result_or.status().error_message());
   }
 
   // result_state_manager_ depends on document_store_. So we need to reset it at
@@ -2280,6 +2432,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
         options_.document_store_namespace_id_fingerprint(),
+        options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
         options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
@@ -2307,6 +2460,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
       options_.document_store_namespace_id_fingerprint(),
+      options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
       options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
@@ -2316,7 +2470,9 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
         "Document store has been optimized, but a valid document store "
         "instance can't be created");
   }
-  document_store_ = std::move(create_result_or.ValueOrDie().document_store);
+  DocumentStore::CreateResult create_result =
+      std::move(create_result_or).ValueOrDie();
+  document_store_ = std::move(create_result.document_store);
   result_state_manager_ = std::make_unique<ResultStateManager>(
       performance_configuration_.max_num_total_hits, *document_store_);
 
@@ -2326,7 +2482,19 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     ICING_LOG(ERROR) << "Document store has been optimized, but it failed to "
                         "delete temporary file directory";
   }
-  return document_id_old_to_new_or;
+
+  // Since we created new (optimized) document store with correct PersistToDisk
+  // call, we shouldn't have data loss or regenerate derived files. Therefore,
+  // if we really encounter any of these situations, then return DataLossError
+  // to let the caller rebuild index.
+  if (create_result.data_loss != DataLoss::NONE ||
+      create_result.derived_files_regenerated) {
+    return absl_ports::DataLossError(
+        "Unexpected data loss or derived files regenerated for new document "
+        "store");
+  }
+
+  return optimize_result_or;
 }
 
 IcingSearchEngine::IndexRestorationResult
@@ -2458,11 +2626,12 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
 
   // Term index handler
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<StringSectionIndexingHandler>
-                             string_section_indexing_handler,
-                         StringSectionIndexingHandler::Create(
-                             clock_.get(), normalizer_.get(), index_.get()));
-  handlers.push_back(std::move(string_section_indexing_handler));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<TermIndexingHandler> term_indexing_handler,
+      TermIndexingHandler::Create(
+          clock_.get(), normalizer_.get(), index_.get(),
+          options_.build_property_existence_metadata_hits()));
+  handlers.push_back(std::move(term_indexing_handler));
 
   // Integer index handler
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<IntegerSectionIndexingHandler>
@@ -2471,13 +2640,13 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
                              clock_.get(), integer_index_.get()));
   handlers.push_back(std::move(integer_section_indexing_handler));
 
-  // Qualified id joinable property index handler
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
-                             qualified_id_joinable_property_indexing_handler,
-                         QualifiedIdJoinIndexingHandler::Create(
-                             clock_.get(), qualified_id_join_index_.get()));
-  handlers.push_back(
-      std::move(qualified_id_joinable_property_indexing_handler));
+  // Qualified id join index handler
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler>
+          qualified_id_join_indexing_handler,
+      QualifiedIdJoinIndexingHandler::Create(
+          clock_.get(), document_store_.get(), qualified_id_join_index_.get()));
+  handlers.push_back(std::move(qualified_id_join_indexing_handler));
 
   return handlers;
 }
@@ -2573,7 +2742,12 @@ IcingSearchEngine::TruncateIndicesTo(DocumentId last_stored_document_id) {
                              qualified_id_join_index_needed_restoration);
 }
 
-libtextclassifier3::Status IcingSearchEngine::DiscardDerivedFiles() {
+libtextclassifier3::Status IcingSearchEngine::DiscardDerivedFiles(
+    const version_util::DerivedFilesRebuildResult& rebuild_result) {
+  if (!rebuild_result.IsRebuildNeeded()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   if (schema_store_ != nullptr || document_store_ != nullptr ||
       index_ != nullptr || integer_index_ != nullptr ||
       qualified_id_join_index_ != nullptr) {
@@ -2582,30 +2756,40 @@ libtextclassifier3::Status IcingSearchEngine::DiscardDerivedFiles() {
   }
 
   // Schema store
-  ICING_RETURN_IF_ERROR(
-      SchemaStore::DiscardDerivedFiles(filesystem_.get(), options_.base_dir()));
+  if (rebuild_result.needs_schema_store_derived_files_rebuild) {
+    ICING_RETURN_IF_ERROR(SchemaStore::DiscardDerivedFiles(
+        filesystem_.get(), options_.base_dir()));
+  }
 
   // Document store
-  ICING_RETURN_IF_ERROR(DocumentStore::DiscardDerivedFiles(
-      filesystem_.get(), options_.base_dir()));
+  if (rebuild_result.needs_document_store_derived_files_rebuild) {
+    ICING_RETURN_IF_ERROR(DocumentStore::DiscardDerivedFiles(
+        filesystem_.get(), options_.base_dir()));
+  }
 
   // Term index
-  if (!filesystem_->DeleteDirectoryRecursively(
-          MakeIndexDirectoryPath(options_.base_dir()).c_str())) {
-    return absl_ports::InternalError("Failed to discard index");
+  if (rebuild_result.needs_term_index_rebuild) {
+    if (!filesystem_->DeleteDirectoryRecursively(
+            MakeIndexDirectoryPath(options_.base_dir()).c_str())) {
+      return absl_ports::InternalError("Failed to discard index");
+    }
   }
 
   // Integer index
-  if (!filesystem_->DeleteDirectoryRecursively(
-          MakeIntegerIndexWorkingPath(options_.base_dir()).c_str())) {
-    return absl_ports::InternalError("Failed to discard integer index");
+  if (rebuild_result.needs_integer_index_rebuild) {
+    if (!filesystem_->DeleteDirectoryRecursively(
+            MakeIntegerIndexWorkingPath(options_.base_dir()).c_str())) {
+      return absl_ports::InternalError("Failed to discard integer index");
+    }
   }
 
   // Qualified id join index
-  if (!filesystem_->DeleteDirectoryRecursively(
-          MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir()).c_str())) {
-    return absl_ports::InternalError(
-        "Failed to discard qualified id join index");
+  if (rebuild_result.needs_qualified_id_join_index_rebuild) {
+    if (!filesystem_->DeleteDirectoryRecursively(
+            MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir()).c_str())) {
+      return absl_ports::InternalError(
+          "Failed to discard qualified id join index");
+    }
   }
 
   return libtextclassifier3::Status::OK;
@@ -2687,7 +2871,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   // Create the suggestion processor.
   auto suggestion_processor_or = SuggestionProcessor::Create(
       index_.get(), integer_index_.get(), language_segmenter_.get(),
-      normalizer_.get(), document_store_.get(), schema_store_.get());
+      normalizer_.get(), document_store_.get(), schema_store_.get(),
+      clock_.get());
   if (!suggestion_processor_or.ok()) {
     TransformStatus(suggestion_processor_or.status(), response_status);
     return response;

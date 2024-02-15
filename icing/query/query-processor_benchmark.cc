@@ -81,7 +81,9 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
 std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
                                    const Filesystem& filesystem,
                                    const std::string& index_dir) {
-  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
+  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
@@ -98,7 +100,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
   return DocumentStore::Create(
       filesystem, base_dir, clock, schema_store,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false,
+      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/false,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
@@ -170,7 +173,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
                              language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+                             document_store.get(), schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -313,7 +316,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
                              language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+                             document_store.get(), schema_store.get(), &clock));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -449,7 +452,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
                              language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+                             document_store.get(), schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -581,7 +584,7 @@ void BM_QueryHiragana(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
                              language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+                             document_store.get(), schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);

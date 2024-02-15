@@ -116,7 +116,7 @@ Parser::ConsumeMember() {
   // Member could be either `TEXT (DOT TEXT)* (DOT function)?` or `TEXT STAR`
   // at this point. So check for 'STAR' to differentiate the two cases.
   if (Match(Lexer::TokenType::STAR)) {
-    Consume(Lexer::TokenType::STAR);
+    ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::STAR));
     std::string_view raw_text = text_node->raw_value();
     std::string text = std::move(*text_node).value();
     text_node = std::make_unique<TextNode>(std::move(text), raw_text,
@@ -125,7 +125,7 @@ Parser::ConsumeMember() {
   } else {
     children.push_back(std::move(text_node));
     while (Match(Lexer::TokenType::DOT)) {
-      Consume(Lexer::TokenType::DOT);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::DOT));
       if (MatchFunction()) {
         ICING_ASSIGN_OR_RETURN(std::unique_ptr<FunctionNode> function_node,
                                ConsumeFunction());
@@ -201,7 +201,7 @@ Parser::ConsumeArgs() {
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> arg, ConsumeExpression());
   args.push_back(std::move(arg));
   while (Match(Lexer::TokenType::COMMA)) {
-    Consume(Lexer::TokenType::COMMA);
+    ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::COMMA));
     ICING_ASSIGN_OR_RETURN(arg, ConsumeExpression());
     args.push_back(std::move(arg));
   }
@@ -223,7 +223,7 @@ Parser::ConsumeRestriction() {
 
   bool has_minus = Match(Lexer::TokenType::MINUS);
   if (has_minus) {
-    Consume(Lexer::TokenType::MINUS);
+    ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::MINUS));
   }
 
   std::unique_ptr<Node> arg;
@@ -276,10 +276,10 @@ libtextclassifier3::StatusOr<std::unique_ptr<Node>> Parser::ConsumeTerm() {
     operator_text = "MINUS";
   } else {
     if (Match(Lexer::TokenType::NOT)) {
-      Consume(Lexer::TokenType::NOT);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::NOT));
       operator_text = "NOT";
     } else {
-      Consume(Lexer::TokenType::MINUS);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::MINUS));
       operator_text = "MINUS";
     }
   }
@@ -296,7 +296,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Node>> Parser::ConsumeFactor() {
   terms.push_back(std::move(term));
 
   while (Match(Lexer::TokenType::OR)) {
-    Consume(Lexer::TokenType::OR);
+    ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::OR));
     ICING_ASSIGN_OR_RETURN(term, ConsumeTerm());
     terms.push_back(std::move(term));
   }
@@ -330,7 +330,7 @@ Parser::ConsumeQueryExpression() {
   sequences.push_back(std::move(sequence));
 
   while (Match(Lexer::TokenType::AND)) {
-    Consume(Lexer::TokenType::AND);
+    ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::AND));
     ICING_ASSIGN_OR_RETURN(sequence, ConsumeSequence());
     sequences.push_back(std::move(sequence));
   }
@@ -348,7 +348,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Node>> Parser::ConsumeMultExpr() {
 
   while (Match(Lexer::TokenType::TIMES) || Match(Lexer::TokenType::DIV)) {
     while (Match(Lexer::TokenType::TIMES)) {
-      Consume(Lexer::TokenType::TIMES);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::TIMES));
       ICING_ASSIGN_OR_RETURN(node, ConsumeTerm());
       stack.push_back(std::move(node));
     }
@@ -357,7 +357,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Node>> Parser::ConsumeMultExpr() {
     stack.push_back(std::move(node));
 
     while (Match(Lexer::TokenType::DIV)) {
-      Consume(Lexer::TokenType::DIV);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::DIV));
       ICING_ASSIGN_OR_RETURN(node, ConsumeTerm());
       stack.push_back(std::move(node));
     }
@@ -380,7 +380,7 @@ Parser::ConsumeScoringExpression() {
 
   while (Match(Lexer::TokenType::PLUS) || Match(Lexer::TokenType::MINUS)) {
     while (Match(Lexer::TokenType::PLUS)) {
-      Consume(Lexer::TokenType::PLUS);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::PLUS));
       ICING_ASSIGN_OR_RETURN(node, ConsumeMultExpr());
       stack.push_back(std::move(node));
     }
@@ -389,7 +389,7 @@ Parser::ConsumeScoringExpression() {
     stack.push_back(std::move(node));
 
     while (Match(Lexer::TokenType::MINUS)) {
-      Consume(Lexer::TokenType::MINUS);
+      ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::MINUS));
       ICING_ASSIGN_OR_RETURN(node, ConsumeMultExpr());
       stack.push_back(std::move(node));
     }
