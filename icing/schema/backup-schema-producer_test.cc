@@ -36,6 +36,8 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::Pointee;
+using ::testing::SizeIs;
 
 class BackupSchemaProducerTest : public ::testing::Test {
  protected:
@@ -442,6 +444,96 @@ TEST_F(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
   EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
+TEST_F(
+    BackupSchemaProducerTest,
+    MakeExtraDocumentIndexedPropertiesWithIndexableNestedPropertiesListUnindexed) {
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  PropertyConfigBuilder indexed_int_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeInt64(NUMERIC_MATCH_RANGE);
+  SchemaTypeConfigProto typeB =
+      SchemaTypeConfigBuilder()
+          .SetType("TypeB")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(indexed_int_property_builder.SetName("prop1"))
+          .AddProperty(indexed_string_property_builder.SetName("prop2"))
+          .AddProperty(indexed_int_property_builder.SetName("prop3"))
+          .AddProperty(indexed_string_property_builder.SetName("prop4"))
+          .AddProperty(indexed_int_property_builder.SetName("prop5"))
+          .AddProperty(indexed_string_property_builder.SetName("prop6"))
+          .AddProperty(indexed_int_property_builder.SetName("prop7"))
+          .AddProperty(indexed_string_property_builder.SetName("prop8"))
+          .AddProperty(indexed_int_property_builder.SetName("prop9"))
+          .Build();
+
+  // Create indexed document property by using indexable nested properties list.
+  PropertyConfigBuilder indexed_document_property_with_list_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeDocument(
+              "TypeB", /*indexable_nested_properties_list=*/{
+                  "prop0", "prop1", "prop2", "prop3", "prop4", "prop5",
+                  "unknown1", "unknown2", "unknown3"});
+  SchemaTypeConfigProto typeA =
+      SchemaTypeConfigBuilder()
+          .SetType("TypeA")
+          .AddProperty(
+              indexed_document_property_with_list_builder.SetName("propA"))
+          .AddProperty(
+              indexed_document_property_with_list_builder.SetName("propB"))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(typeA).AddType(typeB).Build();
+
+  SchemaUtil::TypeConfigMap type_config_map;
+  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
+                                                 /*maximum_size_bytes=*/10000));
+  ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
+  ASSERT_THAT(type_id_mapper->Put("TypeB", 1), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+  ASSERT_THAT(schema_type_manager->section_manager().GetMetadataList("TypeA"),
+              IsOkAndHolds(Pointee(SizeIs(18))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      BackupSchemaProducer backup_producer,
+      BackupSchemaProducer::Create(schema,
+                                   schema_type_manager->section_manager()));
+  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
+  SchemaProto backup = std::move(backup_producer).Produce();
+
+  PropertyConfigProto unindexed_document_property =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataType(TYPE_DOCUMENT)
+          .Build();
+  unindexed_document_property.set_schema_type("TypeB");
+  PropertyConfigBuilder unindexed_document_property_builder(
+      unindexed_document_property);
+
+  // "propA" and "propB" both have 9 sections respectively, so we have to drop
+  // "propB" indexing config to make total # of sections <= 16.
+  SchemaTypeConfigProto expected_typeA =
+      SchemaTypeConfigBuilder()
+          .SetType("TypeA")
+          .AddProperty(
+              indexed_document_property_with_list_builder.SetName("propA"))
+          .AddProperty(unindexed_document_property_builder.SetName("propB"))
+          .Build();
+  SchemaProto expected_backup =
+      SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+}
+
 TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
   PropertyConfigBuilder indexed_string_property_builder =
       PropertyConfigBuilder()
@@ -539,31 +631,33 @@ TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
           .AddProperty(indexed_string_property_builder.SetName("prop2"))
           .AddProperty(indexed_int_property_builder.SetName("prop3"))
           .AddProperty(indexed_string_property_builder.SetName("prop4"))
-          .AddProperty(indexed_int_property_builder.SetName("prop5"))
-          .AddProperty(indexed_string_property_builder.SetName("prop6"))
-          .AddProperty(indexed_int_property_builder.SetName("prop7"))
-          .AddProperty(indexed_string_property_builder.SetName("prop8"))
-          .AddProperty(indexed_int_property_builder.SetName("prop9"))
           .Build();
 
   PropertyConfigBuilder indexed_document_property_builder =
       PropertyConfigBuilder()
           .SetCardinality(CARDINALITY_OPTIONAL)
           .SetDataTypeDocument("TypeB", /*index_nested_properties=*/true);
+  PropertyConfigBuilder indexed_document_property_with_list_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeDocument(
+              "TypeB", /*indexable_nested_properties_list=*/{
+                  "prop0", "prop4", "unknown1", "unknown2", "unknown3"});
   SchemaTypeConfigProto typeA =
       SchemaTypeConfigBuilder()
           .SetType("TypeA")
           .AddProperty(indexed_string_property_builder.SetName("propA"))
-          .AddProperty(indexed_int_property_builder.SetName("propB"))
+          .AddProperty(
+              indexed_document_property_with_list_builder.SetName("propB"))
           .AddProperty(indexed_string_property_builder.SetName("propC"))
-          .AddProperty(indexed_int_property_builder.SetName("propD"))
+          .AddProperty(indexed_document_property_builder.SetName("propD"))
           .AddProperty(indexed_string_property_builder.SetName("propE"))
           .AddProperty(indexed_int_property_builder.SetName("propF"))
-          .AddProperty(indexed_string_property_builder.SetName("propG"))
-          .AddProperty(indexed_int_property_builder.SetName("propH"))
-          .AddProperty(indexed_document_property_builder.SetName("propI"))
-          .AddProperty(indexed_string_property_builder.SetName("propJ"))
-          .AddProperty(indexed_int_property_builder.SetName("propK"))
+          .AddProperty(indexed_document_property_builder.SetName("propG"))
+          .AddProperty(indexed_string_property_builder.SetName("propH"))
+          .AddProperty(indexed_int_property_builder.SetName("propI"))
+          .AddProperty(
+              indexed_document_property_with_list_builder.SetName("propJ"))
           .Build();
 
   SchemaProto schema = SchemaBuilder().AddType(typeA).AddType(typeB).Build();
@@ -580,6 +674,8 @@ TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+  ASSERT_THAT(schema_type_manager->section_manager().GetMetadataList("TypeA"),
+              IsOkAndHolds(Pointee(SizeIs(26))));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       BackupSchemaProducer backup_producer,
@@ -605,20 +701,30 @@ TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
   PropertyConfigBuilder unindexed_document_property_builder(
       unindexed_document_property);
 
+  // On version 0 (Android T):
+  // - Only "propA", "propC", "propD.prop0", "propD.prop1", "propD.prop2",
+  //   "propD.prop3", "propD.prop4", "propE", "propF" will be assigned sections.
+  // - Unlike version 2, "propB.prop0", "propB.prop4", "propB.unknown1",
+  //   "propB.unknown2", "propB.unknown3" will be ignored because version 0
+  //   doesn't recognize indexable nested properties list.
+  // - So there will be only 9 sections on version 0. We still have potential to
+  //   avoid dropping "propG", "propH", "propI" indexing configs on version 0
+  //   (in this case it will be 16 sections), but it is ok to make it simple as
+  //   long as total # of sections <= 16.
   SchemaTypeConfigProto expected_typeA =
       SchemaTypeConfigBuilder()
           .SetType("TypeA")
           .AddProperty(indexed_string_property_builder.SetName("propA"))
-          .AddProperty(indexed_int_property_builder.SetName("propB"))
+          .AddProperty(
+              indexed_document_property_with_list_builder.SetName("propB"))
           .AddProperty(indexed_string_property_builder.SetName("propC"))
-          .AddProperty(indexed_int_property_builder.SetName("propD"))
+          .AddProperty(indexed_document_property_builder.SetName("propD"))
           .AddProperty(indexed_string_property_builder.SetName("propE"))
           .AddProperty(indexed_int_property_builder.SetName("propF"))
-          .AddProperty(indexed_string_property_builder.SetName("propG"))
-          .AddProperty(indexed_int_property_builder.SetName("propH"))
-          .AddProperty(unindexed_document_property_builder.SetName("propI"))
-          .AddProperty(unindexed_string_property_builder.SetName("propJ"))
-          .AddProperty(unindexed_int_property_builder.SetName("propK"))
+          .AddProperty(unindexed_document_property_builder.SetName("propG"))
+          .AddProperty(unindexed_string_property_builder.SetName("propH"))
+          .AddProperty(unindexed_int_property_builder.SetName("propI"))
+          .AddProperty(unindexed_document_property_builder.SetName("propJ"))
           .Build();
   SchemaProto expected_backup =
       SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();

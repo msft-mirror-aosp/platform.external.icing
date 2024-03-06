@@ -113,14 +113,17 @@ class SchemaUtil {
     std::unordered_map<std::string_view, const PropertyConfigProto*>
         property_config_map;
 
-    // Total number of properties that have an indexing config
-    int32_t num_indexed_properties = 0;
+    // Properties that have an indexing config
+    std::unordered_set<std::string_view> indexed_properties;
 
-    // Total number of properties that were REQUIRED
-    int32_t num_required_properties = 0;
+    // Properties that were REQUIRED
+    std::unordered_set<std::string_view> required_properties;
 
-    // Total number of properties that have joinable config
-    int32_t num_joinable_properties = 0;
+    // Properties that have joinable config
+    std::unordered_set<std::string_view> joinable_properties;
+
+    // Properties that have DataType::DOCUMENT
+    std::unordered_set<std::string_view> nested_document_properties;
   };
 
   // This function validates:
@@ -157,6 +160,9 @@ class SchemaUtil {
   //              (property whose joinable config is not NONE), OR
   //          ii. Any type node in the cycle has a nested-type (direct or
   //              indirect) with a joinable property.
+  //  15. For DOCUMENT data types, if
+  //      DocumentIndexingConfig.indexable_nested_properties_list is non-empty,
+  //      DocumentIndexingConfig.index_nested_properties must be false.
   //
   // Returns:
   //   On success, a dependent map from each types to their dependent types
@@ -314,6 +320,17 @@ class SchemaUtil {
       PropertyConfigProto::DataType::Code data_type,
       PropertyConfigProto::Cardinality::Code cardinality,
       std::string_view schema_type, std::string_view property_name);
+
+  // Checks that the 'document_indexing_config' satisfies the following rule:
+  //    1. If indexable_nested_properties is non-empty, index_nested_properties
+  //       must be set to false.
+  //
+  // Returns:
+  //   INVALID_ARGUMENT if any of the rules are not followed
+  //   OK on success
+  static libtextclassifier3::Status ValidateDocumentIndexingConfig(
+      const DocumentIndexingConfig& config, std::string_view schema_type,
+      std::string_view property_name);
 
   // Returns if 'parent_type' is a direct or indirect parent of 'child_type'.
   static bool IsParent(const SchemaUtil::InheritanceMap& inheritance_map,

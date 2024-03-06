@@ -17,10 +17,14 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/main/main-index.h"
 #include "icing/index/main/posting-list-hit-accessor.h"
@@ -29,8 +33,21 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
+class DocHitInfoIteratorTermMain : public DocHitInfoLeafIterator {
  public:
+  struct DocHitInfoAndTermFrequencyArray {
+    DocHitInfo doc_hit_info;
+    std::optional<Hit::TermFrequencyArray> term_frequency_array;
+
+    explicit DocHitInfoAndTermFrequencyArray() = default;
+
+    explicit DocHitInfoAndTermFrequencyArray(
+        DocHitInfo doc_hit_info_in,
+        std::optional<Hit::TermFrequencyArray> term_frequency_array_in)
+        : doc_hit_info(std::move(doc_hit_info_in)),
+          term_frequency_array(std::move(term_frequency_array_in)) {}
+  };
+
   explicit DocHitInfoIteratorTermMain(MainIndex* main_index,
                                       const std::string& term,
                                       int term_start_index,
@@ -53,10 +70,14 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumBlocksInspected() const override {
-    return num_blocks_inspected_;
+  CallStats GetCallStats() const override {
+    return CallStats(
+        /*num_leaf_advance_calls_lite_index_in=*/0,
+        /*num_leaf_advance_calls_main_index_in=*/num_advance_calls_,
+        /*num_leaf_advance_calls_integer_index_in=*/0,
+        /*num_leaf_advance_calls_no_index_in=*/0,
+        /*num_blocks_inspected_in=*/num_blocks_inspected_);
   }
-  int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,
@@ -74,8 +95,9 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
     while (section_mask_copy) {
       SectionId section_id = __builtin_ctzll(section_mask_copy);
       if (need_hit_term_frequency_) {
-        section_term_frequencies.at(section_id) = cached_hit_term_frequency_.at(
-            cached_doc_hit_infos_idx_)[section_id];
+        section_term_frequencies.at(section_id) =
+            (*cached_doc_hit_infos_.at(cached_doc_hit_infos_idx_)
+                  .term_frequency_array)[section_id];
       }
       section_mask_copy &= ~(UINT64_C(1) << section_id);
     }
@@ -106,12 +128,13 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
   std::unique_ptr<PostingListHitAccessor> posting_list_accessor_;
 
   MainIndex* main_index_;
-  // Stores hits retrieved from the index. This may only be a subset of the hits
-  // that are present in the index. Current value pointed to by the Iterator is
-  // tracked by cached_doc_hit_infos_idx_.
-  std::vector<DocHitInfo> cached_doc_hit_infos_;
-  std::vector<Hit::TermFrequencyArray> cached_hit_term_frequency_;
+  // Stores hits and optional term frequency arrays retrieved from the index.
+  // This may only be a subset of the hits that are present in the index.
+  // Current value pointed to by the Iterator is tracked by
+  // cached_doc_hit_infos_idx_.
+  std::vector<DocHitInfoAndTermFrequencyArray> cached_doc_hit_infos_;
   int cached_doc_hit_infos_idx_;
+
   int num_advance_calls_;
   int num_blocks_inspected_;
   bool all_pages_consumed_;
@@ -168,10 +191,6 @@ class DocHitInfoIteratorTermMainPrefix : public DocHitInfoIteratorTermMain {
   libtextclassifier3::Status RetrieveMoreHits() override;
 
  private:
-  // After retrieving DocHitInfos from the index, a DocHitInfo for docid 1 and
-  // "foo" and a DocHitInfo for docid 1 and "fool". These DocHitInfos should be
-  // merged.
-  void SortAndDedupeDocumentIds();
   // Whether or not posting_list_accessor_ holds a posting list chain for
   // 'term' or for a term for which 'term' is a prefix. This is necessary to
   // determine whether to return hits that are not from a prefix section (hits
