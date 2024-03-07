@@ -113,12 +113,12 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
     const DocumentStore* document_store, const SchemaStore* schema_store,
     const SearchSpecProto& search_spec, int64_t current_time_ms) {
   std::unordered_map<std::string, std::set<std::string>> type_property_filters;
-  // TODO(b/294274922): Add support for polymorphism in type property filters.
-  for (const TypePropertyMask& type_property_mask :
-       search_spec.type_property_filters()) {
-    type_property_filters[type_property_mask.schema_type()] =
-        std::set<std::string>(type_property_mask.paths().begin(),
-                              type_property_mask.paths().end());
+  for (const SchemaStore::ExpandedTypePropertyMask& type_property_mask :
+       schema_store->ExpandTypePropertyMasks(
+           search_spec.type_property_filters())) {
+    type_property_filters[type_property_mask.schema_type] =
+        std::set<std::string>(type_property_mask.paths.begin(),
+                              type_property_mask.paths.end());
   }
   auto data = std::make_unique<SectionRestrictData>(
       document_store, schema_store, current_time_ms, type_property_filters);
