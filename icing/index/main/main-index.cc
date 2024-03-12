@@ -651,7 +651,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor->GetNextHitsBatch());
   }
 
-  Hit last_added_hit;
+  Hit last_added_hit(Hit::kInvalidValue);
   // The hits in backfill_hits are in the reverse order of how they were added.
   // Iterate in reverse to add them to this new posting list in the correct
   // order.

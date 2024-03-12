@@ -74,7 +74,7 @@ size_t header_size() { return sizeof(LiteIndex_HeaderImpl::HeaderData); }
 }  // namespace
 
 const TermIdHitPair::Value TermIdHitPair::kInvalidValue =
-    TermIdHitPair(0, Hit()).value();
+    TermIdHitPair(0, Hit(Hit::kInvalidValue)).value();
 
 libtextclassifier3::StatusOr<std::unique_ptr<LiteIndex>> LiteIndex::Create(
     const LiteIndex::Options& options, const IcingFilesystem* filesystem) {
@@ -517,7 +517,8 @@ int LiteIndex::FetchHits(
 
   // Do binary search over the sorted section and repeat the above steps.
   TermIdHitPair target_term_id_hit_pair(
-      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultTermFrequency));
+      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kNoEnabledFlags,
+                   Hit::kDefaultTermFrequency));
   for (const TermIdHitPair* ptr = std::lower_bound(
            array, array + header_->searchable_end(), target_term_id_hit_pair);
        ptr < array + header_->searchable_end(); ++ptr) {
