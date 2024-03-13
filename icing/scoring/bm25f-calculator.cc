@@ -20,12 +20,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -42,24 +42,29 @@ constexpr float k1_ = 1.2f;
 constexpr float b_ = 0.7f;
 
 // TODO(b/158603900): add tests for Bm25fCalculator
-Bm25fCalculator::Bm25fCalculator(const DocumentStore *document_store)
-    : document_store_(document_store) {}
+Bm25fCalculator::Bm25fCalculator(const DocumentStore* document_store,
+                                 SectionWeights* section_weights,
+                                 int64_t current_time_ms)
+    : document_store_(document_store),
+      section_weights_(*section_weights),
+      current_time_ms_(current_time_ms) {}
 
 // During initialization, Bm25fCalculator iterates through
 // hit-iterators for each query term to pre-compute n(q_i) for each corpus under
 // consideration.
 void Bm25fCalculator::PrepareToScore(
-    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-        *query_term_iterators) {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+        query_term_iterators) {
   Clear();
   TermId term_id = 0;
-  for (auto &iter : *query_term_iterators) {
-    const std::string &term = iter.first;
+  for (auto& iter : *query_term_iterators) {
+    const std::string& term = iter.first;
     if (term_id_map_.find(term) != term_id_map_.end()) {
       continue;
     }
     term_id_map_[term] = ++term_id;
-    DocHitInfoIterator *term_it = iter.second.get();
+    DocHitInfoIterator* term_it = iter.second.get();
+
     while (term_it->Advance().ok()) {
       auto status_or = document_store_->GetDocumentAssociatedScoreData(
           term_it->doc_hit_info().document_id());
@@ -89,8 +94,8 @@ void Bm25fCalculator::Clear() {
 // where IDF(q_i) is the Inverse Document Frequency (IDF) weight of the query
 // term q_i in the corpus with document D, and tf(q_i, D) is the weighted and
 // normalized term frequency of query term q_i in the document D.
-float Bm25fCalculator::ComputeScore(const DocHitInfoIterator *query_it,
-                                    const DocHitInfo &hit_info,
+float Bm25fCalculator::ComputeScore(const DocHitInfoIterator* query_it,
+                                    const DocHitInfo& hit_info,
                                     double default_score) {
   auto status_or =
       document_store_->GetDocumentAssociatedScoreData(hit_info.document_id());
@@ -103,7 +108,7 @@ float Bm25fCalculator::ComputeScore(const DocHitInfoIterator *query_it,
   query_it->PopulateMatchedTermsStats(&matched_terms_stats);
 
   float score = 0;
-  for (const TermMatchInfo &term_match_info : matched_terms_stats) {
+  for (const TermMatchInfo& term_match_info : matched_terms_stats) {
     float idf_weight =
         GetCorpusIdfWeightForTerm(term_match_info.term, data.corpus_id());
     float normalized_tf =
@@ -111,18 +116,17 @@ float Bm25fCalculator::ComputeScore(const DocHitInfoIterator *query_it,
     score += idf_weight * normalized_tf;
   }
 
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-      "BM25F: corpus_id:%d docid:%d score:%f\n", data.corpus_id(),
-      hit_info.document_id(), score);
+  ICING_VLOG(1) << "BM25F: corpus_id:" << data.corpus_id()
+                << " docid:" << hit_info.document_id() << " score:" << score;
   return score;
 }
 
 // Compute inverse document frequency (IDF) weight for query term in the given
 // corpus, and cache it in the map.
 //
-//                     N - n(q_i) + 0.5
-// IDF(q_i) = log(1 + ------------------)
-//                       n(q_i) + 0.5
+//                    N - n(q_i) + 0.5
+// IDF(q_i) = ln(1 + ------------------)
+//                      n(q_i) + 0.5
 //
 // where N is the number of documents in the corpus, and n(q_i) is the number
 // of documents in the corpus containing the query term q_i.
@@ -139,8 +143,7 @@ float Bm25fCalculator::GetCorpusIdfWeightForTerm(std::string_view term,
   // First, figure out corpus scoring data.
   auto status_or = document_store_->GetCorpusAssociatedScoreData(corpus_id);
   if (!status_or.ok()) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "No scoring data for corpus [%d]", corpus_id);
+    ICING_LOG(ERROR) << "No scoring data for corpus [" << corpus_id << "]";
     return 0;
   }
   CorpusAssociatedScoreData csdata = status_or.ValueOrDie();
@@ -148,15 +151,19 @@ float Bm25fCalculator::GetCorpusIdfWeightForTerm(std::string_view term,
   uint32_t num_docs = csdata.num_docs();
   uint32_t nqi = corpus_nqi_map_[corpus_term_info.value];
   float idf =
-      nqi != 0 ? log(1.0f + (num_docs - nqi + 0.5f) / (nqi - 0.5f)) : 0.0f;
+      nqi != 0 ? log(1.0f + (num_docs - nqi + 0.5f) / (nqi + 0.5f)) : 0.0f;
   corpus_idf_map_.insert({corpus_term_info.value, idf});
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-      "corpus_id:%d term:%s N:%d nqi:%d idf:%f", corpus_id,
-      std::string(term).c_str(), num_docs, nqi, idf);
+  ICING_VLOG(1) << "corpus_id:" << corpus_id << " term:" << term
+                << " N:" << num_docs << "nqi:" << nqi << " idf:" << idf;
   return idf;
 }
 
 // Get per corpus average document length and cache the result in the map.
+// The average doc length is calculated as:
+//
+//                    total_tokens_in_corpus
+// Avg Doc Length =  -------------------------
+//                    num_docs_in_corpus + 1
 float Bm25fCalculator::GetCorpusAvgDocLength(CorpusId corpus_id) {
   auto iter = corpus_avgdl_map_.find(corpus_id);
   if (iter != corpus_avgdl_map_.end()) {
@@ -166,8 +173,7 @@ float Bm25fCalculator::GetCorpusAvgDocLength(CorpusId corpus_id) {
   // First, figure out corpus scoring data.
   auto status_or = document_store_->GetCorpusAssociatedScoreData(corpus_id);
   if (!status_or.ok()) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "No scoring data for corpus [%d]", corpus_id);
+    ICING_LOG(ERROR) << "No scoring data for corpus [" << corpus_id << "]";
     return 0;
   }
   CorpusAssociatedScoreData csdata = status_or.ValueOrDie();
@@ -186,37 +192,56 @@ float Bm25fCalculator::GetCorpusAvgDocLength(CorpusId corpus_id) {
 // |D| is the #tokens in D, avgdl is the average document length in the corpus,
 // k1 and b are smoothing parameters.
 float Bm25fCalculator::ComputedNormalizedTermFrequency(
-    const TermMatchInfo &term_match_info, const DocHitInfo &hit_info,
-    const DocumentAssociatedScoreData &data) {
+    const TermMatchInfo& term_match_info, const DocHitInfo& hit_info,
+    const DocumentAssociatedScoreData& data) {
   uint32_t dl = data.length_in_tokens();
   float avgdl = GetCorpusAvgDocLength(data.corpus_id());
-  float f_q =
-      ComputeTermFrequencyForMatchedSections(data.corpus_id(), term_match_info);
+  float f_q = ComputeTermFrequencyForMatchedSections(
+      data.corpus_id(), term_match_info, hit_info.document_id());
   float normalized_tf =
       f_q * (k1_ + 1) / (f_q + k1_ * (1 - b_ + b_ * dl / avgdl));
 
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-      "corpus_id:%d docid:%d dl:%d avgdl:%f f_q:%f norm_tf:%f\n",
-      data.corpus_id(), hit_info.document_id(), dl, avgdl, f_q, normalized_tf);
+  ICING_VLOG(1) << "corpus_id:" << data.corpus_id()
+                << " docid:" << hit_info.document_id() << " dl:" << dl
+                << " avgdl:" << avgdl << " f_q:" << f_q
+                << " norm_tf:" << normalized_tf;
   return normalized_tf;
 }
 
-// Note: once we support section weights, we should update this function to
-// compute the weighted term frequency.
 float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
-    CorpusId corpus_id, const TermMatchInfo &term_match_info) const {
+    CorpusId corpus_id, const TermMatchInfo& term_match_info,
+    DocumentId document_id) const {
   float sum = 0.0f;
   SectionIdMask sections = term_match_info.section_ids_mask;
+  SchemaTypeId schema_type_id = GetSchemaTypeId(document_id);
+
   while (sections != 0) {
-    SectionId section_id = __builtin_ctz(sections);
-    sections &= ~(1u << section_id);
+    SectionId section_id = __builtin_ctzll(sections);
+    sections &= ~(UINT64_C(1) << section_id);
 
     Hit::TermFrequency tf = term_match_info.term_frequencies[section_id];
+    double weighted_tf = tf * section_weights_.GetNormalizedSectionWeight(
+                                  schema_type_id, section_id);
     if (tf != Hit::kNoTermFrequency) {
-      sum += tf;
+      sum += weighted_tf;
     }
   }
   return sum;
+}
+
+SchemaTypeId Bm25fCalculator::GetSchemaTypeId(DocumentId document_id) const {
+  auto filter_data_optional = document_store_->GetAliveDocumentFilterData(
+      document_id, current_time_ms_);
+  if (!filter_data_optional) {
+    // This should never happen. The only failure case for
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
+    ICING_LOG(WARNING) << "No document filter data for document ["
+                       << document_id << "]";
+    return kInvalidSchemaTypeId;
+  }
+  return filter_data_optional.value().schema_type_id();
 }
 
 }  // namespace lib

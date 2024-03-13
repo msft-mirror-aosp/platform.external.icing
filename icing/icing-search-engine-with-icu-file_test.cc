@@ -27,12 +27,14 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
 namespace {
+
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 
@@ -55,23 +57,6 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .Build();
 }
 
-SchemaProto CreateMessageSchema() {
-  SchemaProto schema;
-  auto type = schema.add_types();
-  type->set_schema_type("Message");
-
-  auto body = type->add_properties();
-  body->set_property_name("body");
-  body->set_data_type(PropertyConfigProto::DataType::STRING);
-  body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::PREFIX);
-  body->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
-
-  return schema;
-}
-
 ScoringSpecProto GetDefaultScoringSpec() {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
@@ -81,15 +66,31 @@ ScoringSpecProto GetDefaultScoringSpec() {
 TEST(IcingSearchEngineWithIcuFileTest, ShouldInitialize) {
   IcingSearchEngine icing(GetDefaultIcingOptions());
   EXPECT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
-              Eq(StatusProto::OK));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
 }
 
 TEST(IcingSearchEngineWithIcuFileTest, ShouldIndexAndSearch) {
   IcingSearchEngine icing(GetDefaultIcingOptions());
   ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
-  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
-              Eq(StatusProto::OK));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
 
   DocumentProto document_one = CreateMessageDocument("namespace", "uri1");
   ASSERT_THAT(icing.Put(document_one).status().code(), Eq(StatusProto::OK));
@@ -115,8 +116,8 @@ TEST(IcingSearchEngineWithIcuFileTest, ShouldIndexAndSearch) {
   // The token is a random number so we don't verify it.
   expected_search_result_proto.set_next_page_token(
       search_result_proto.next_page_token());
-  EXPECT_THAT(search_result_proto,
-              EqualsSearchResultIgnoreStats(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
 }
 
 }  // namespace

@@ -15,9 +15,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
+#include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/platform.h"
+#include "icing/testing/icu-data-file-helper.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -43,10 +44,13 @@ class LanguageSegmenterIteratorTest : public testing::Test {
               GetTestFilePath("icing/icu.dat")));
     }
   }
+
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
 };
 
 TEST_F(LanguageSegmenterIteratorTest, AdvanceAndGetTerm) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -66,86 +70,91 @@ TEST_F(LanguageSegmenterIteratorTest, AdvanceAndGetTerm) {
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermStartingAfterWithOffsetInText) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+       ResetToTermStartingAfterUtf32WithOffsetInText) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/0),
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/0),
               IsOkAndHolds(3));  // The term " "
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/3),
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/3),
               IsOkAndHolds(4));  // The term "bar"
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/4),
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/4),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermStartingAfterWithNegativeOffsetNotOk) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+       ResetToTermStartingAfterUtf32WithNegativeOffsetNotOk) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/-1),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/-1), IsOk());
 
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/-100),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/-100), IsOk());
 
-  EXPECT_THAT(iterator->ResetToStart(), IsOkAndHolds(0));
+  EXPECT_THAT(iterator->ResetToStartUtf32(), IsOkAndHolds(0));
   EXPECT_THAT(iterator->GetTerm(), Eq("foo"));
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermStartingAfterWithTextLengthOffsetInvalidArgument) {
+       ResetToTermStartingAfterUtf32WithTextLengthOffsetInvalidArgument) {
   std::string text = "foo bar";
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/text.size()),
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/text.length()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermStartingAfterWithOffsetPastTextLengthInvalidArgument) {
+       ResetToTermStartingAfterUtf32WithOffsetPastTextLengthInvalidArgument) {
   std::string text = "foo bar";
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
-  EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/100),
+  EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/100),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(LanguageSegmenterIteratorTest, ResetToTermEndingBeforeWithOffsetInText) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+TEST_F(LanguageSegmenterIteratorTest,
+       ResetToTermEndingBeforeUtf32WithOffsetInText) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/6),
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/6),
               IsOkAndHolds(3));  // The term " "
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/3),
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/3),
               IsOkAndHolds(0));  // The term "foo"
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/2),
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/2),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermEndingBeforeWithZeroNotFound) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+       ResetToTermEndingBeforeUtf32WithZeroNotFound) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -153,40 +162,43 @@ TEST_F(LanguageSegmenterIteratorTest,
                              language_segmenter->Segment("foo bar"));
 
   // Zero is a valid argument, but there aren't any terms that end before it.
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/0),
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermEndingBeforeWithNegativeOffsetInvalidArgument) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+       ResetToTermEndingBeforeUtf32WithNegativeOffsetInvalidArgument) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/-1),
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/-100),
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/-100),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermEndingBeforeWithOffsetPastTextEndInvalidArgument) {
+       ResetToTermEndingBeforeUtf32WithOffsetPastTextEndInvalidArgument) {
   std::string text = "foo bar";
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/text.length()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/text.length()),
+              IsOk());
 
-  EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/text.length() + 1),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      iterator->ResetToTermEndingBeforeUtf32(/*offset=*/text.length() + 1),
+      IsOk());
 }
 
 }  // namespace
