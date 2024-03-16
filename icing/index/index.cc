@@ -65,10 +65,9 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(options.base_dir + "/idx/lite.",
-                            options.index_merge_size,
-                            options.lite_index_sort_at_indexing,
-                            options.lite_index_sort_size);
+  return LiteIndex::Options(
+      options.base_dir + "/idx/lite.", options.index_merge_size,
+      options.lite_index_sort_at_indexing, options.lite_index_sort_size);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -345,7 +344,8 @@ libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
 libtextclassifier3::Status Index::Editor::IndexAllBufferedTerms() {
   for (auto itr = seen_tokens_.begin(); itr != seen_tokens_.end(); itr++) {
     Hit hit(section_id_, document_id_, /*term_frequency=*/itr->second,
-            term_match_type_ == TermMatchType::PREFIX);
+            /*is_in_prefix_section=*/term_match_type_ == TermMatchType::PREFIX,
+            /*is_prefix_hit=*/false);
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id, term_id_codec_->EncodeTvi(itr->first, TviType::LITE));
     ICING_RETURN_IF_ERROR(lite_index_->AddHit(term_id, hit));

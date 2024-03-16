@@ -14,23 +14,33 @@
 
 #include "icing/index/main/main-index.h"
 
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/lite-index.h"
 #include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
 #include "icing/index/main/main-index-merger.h"
 #include "icing/index/term-id-codec.h"
-#include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -152,7 +162,7 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForPrefixReturnsValidAccessor) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
   // 2. Create the main index. It should have no entries in its lexicon.
@@ -178,7 +188,7 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForPrefixReturnsNotFound) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
   // 2. Create the main index. It should have no entries in its lexicon.
@@ -217,7 +227,7 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForExactReturnsValidAccessor) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
   // 2. Create the main index. It should have no entries in its lexicon.
@@ -254,18 +264,18 @@ TEST_F(MainIndexTest, MergeIndexToEmpty) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc0_hit));
 
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc1_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
   Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc2_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc2_hit));
 
@@ -332,18 +342,18 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc0_hit));
 
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc1_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
   Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc2_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc2_hit));
 
@@ -387,14 +397,14 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc3_hit(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc3_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(four_term_id, doc3_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(foul_term_id, doc3_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fall_term_id, doc3_hit));
 
   Hit doc4_hit(/*section_id=*/0, /*document_id=*/4, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(four_term_id, doc4_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(foul_term_id, doc4_hit));
 
@@ -449,15 +459,15 @@ TEST_F(MainIndexTest, ExactRetrievedInPrefixSearch) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc1_hit));
 
   Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc2_hit));
 
   // 2. Create the main index. It should have no entries in its lexicon.
@@ -500,15 +510,15 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc1_hit));
 
   Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc2_hit));
 
   // 2. Create the main index. It should have no entries in its lexicon.
@@ -554,17 +564,17 @@ TEST_F(MainIndexTest,
         document_id % Hit::kMaxTermFrequency + 1);
     Hit doc_hit0(
         /*section_id=*/0, /*document_id=*/document_id, term_frequency,
-        /*is_in_prefix_section=*/false);
+        /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit0));
 
     Hit doc_hit1(
         /*section_id=*/1, /*document_id=*/document_id, term_frequency,
-        /*is_in_prefix_section=*/false);
+        /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit1));
 
     Hit doc_hit2(
         /*section_id=*/2, /*document_id=*/document_id, term_frequency,
-        /*is_in_prefix_section=*/false);
+        /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit2));
   }
 
@@ -619,7 +629,7 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc0_hit));
 
   // 2. Create the main index. It should have no entries in its lexicon.
@@ -648,7 +658,7 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc1_hit));
 
   // 5. Merge the index. The main index should now contain "fool", "foot"
@@ -682,7 +692,7 @@ TEST_F(MainIndexTest, OneHitInTheFirstPageForTwoPagesMainIndex) {
   uint32_t num_docs = 2038;
   for (DocumentId document_id = 0; document_id < num_docs; ++document_id) {
     Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
   }
 
