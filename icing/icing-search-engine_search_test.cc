@@ -3716,6 +3716,109 @@ TEST_P(IcingSearchEngineSearchTest, SearchWithPropertyFilters) {
   EXPECT_THAT(results.results(0).document(), EqualsProto(document_one));
 }
 
+TEST_P(IcingSearchEngineSearchTest, SearchWithPropertyFiltersPolymorphism) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Artist")
+                       .AddParentType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("company")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add a person document and an artist document
+  DocumentProto document_person =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Meg Ryan")
+          .AddStringProperty("emailAddress", "shopgirl@aol.com")
+          .Build();
+  DocumentProto document_artist =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Meg Artist")
+          .AddStringProperty("emailAddress", "artist@aol.com")
+          .AddStringProperty("company", "company")
+          .Build();
+  ASSERT_THAT(icing.Put(document_person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_artist).status(), ProtoIsOk());
+
+  // Set a query with property filters of "name" in Person and "emailAddress"
+  // in Artist. By polymorphism, "name" should also apply to Artist.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* person_type_property_mask =
+      search_spec->add_type_property_filters();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("name");
+  TypePropertyMask* artist_type_property_mask =
+      search_spec->add_type_property_filters();
+  artist_type_property_mask->set_schema_type("Artist");
+  artist_type_property_mask->add_paths("emailAddress");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+
+  // Verify that the property filter for "name" in Person is also applied to
+  // Artist.
+  search_spec->set_query("Meg");
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document_person));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_artist));
+
+  // Verify that the property filter for "emailAddress" in Artist is only
+  // applied to Artist.
+  search_spec->set_query("aol");
+  results = icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_artist));
+
+  // Verify that the "company" property is filtered out, since it is not
+  // specified in the property filter.
+  search_spec->set_query("company");
+  results = icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+}
+
 TEST_P(IcingSearchEngineSearchTest, EmptySearchWithPropertyFilter) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());

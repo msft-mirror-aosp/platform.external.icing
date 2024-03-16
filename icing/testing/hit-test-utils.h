@@ -18,19 +18,28 @@
 #include <vector>
 
 #include "icing/index/hit/hit.h"
-#include "icing/legacy/index/icing-bit-util.h"
-#include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
 
 // Returns a hit that has a delta of desired_byte_length from last_hit.
-Hit CreateHit(Hit last_hit, int desired_byte_length);
+Hit CreateHit(const Hit& last_hit, int desired_byte_length);
+
+// Returns a hit that has a delta of desired_byte_length from last_hit, with
+// the desired term_frequency and flags
+Hit CreateHit(const Hit& last_hit, int desired_byte_length,
+              Hit::TermFrequency term_frequency, bool is_in_prefix_section,
+              bool is_prefix_hit);
 
 // Returns a vector of num_hits Hits with the first hit starting at start_docid
 // and with desired_byte_length deltas.
 std::vector<Hit> CreateHits(DocumentId start_docid, int num_hits,
+                            int desired_byte_length);
+
+// Returns a vector of num_hits Hits with the first hit being the desired byte
+// length from last_hit, and with deltas of the same desired byte length.
+std::vector<Hit> CreateHits(const Hit& last_hit, int num_hits,
                             int desired_byte_length);
 
 // Returns a vector of num_hits Hits with the first hit starting at 0 and each

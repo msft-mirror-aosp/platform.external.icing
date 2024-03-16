@@ -2736,7 +2736,8 @@ TEST_F(IndexTest, IndexStorageInfoProto) {
   EXPECT_THAT(storage_info.main_index_lexicon_size(), Ge(0));
   EXPECT_THAT(storage_info.main_index_storage_size(), Ge(0));
   EXPECT_THAT(storage_info.main_index_block_size(), Ge(0));
-  // There should be 1 block for the header and 1 block for two posting lists.
+  // There should be 1 block for the header and 1 block for three posting lists
+  // ("fo", "foo", "foul").
   EXPECT_THAT(storage_info.num_blocks(), Eq(2));
   EXPECT_THAT(storage_info.min_free_fraction(), Ge(0));
 }

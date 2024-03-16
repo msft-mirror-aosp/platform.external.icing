@@ -32,7 +32,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.UsageReport;
 import java.io.Closeable;
 
-/** A common user-facing interface to expose the funcationalities provided by Icing Library. */
+/** A common user-facing interface to expose the functionalities provided by Icing Library. */
 public interface IcingSearchEngineInterface extends Closeable {
   /**
    * Initializes the current IcingSearchEngine implementation.

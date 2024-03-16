@@ -53,7 +53,7 @@ class LiteIndex_Header {
 class LiteIndex_HeaderImpl : public LiteIndex_Header {
  public:
   struct HeaderData {
-    static const uint32_t kMagic = 0x01c61418;
+    static const uint32_t kMagic = 0xC2EAD682;
 
     uint32_t lite_index_crc;
     uint32_t magic;
