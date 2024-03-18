@@ -22,6 +22,8 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -76,6 +78,25 @@ SectionIdMask SectionRestrictData::ComputeAllowedSectionsMask(
 
   type_property_masks_[schema_type] = new_section_id_mask;
   return new_section_id_mask;
+}
+
+SectionIdMask SectionRestrictData::ComputeAllowedSectionsMask(
+    DocumentId document_id) {
+  auto data_optional =
+      document_store_.GetAliveDocumentFilterData(document_id, current_time_ms_);
+  if (!data_optional) {
+    // Ran into some error retrieving information on this document, skip
+    return kSectionIdMaskNone;
+  }
+  // Guaranteed that the DocumentFilterData exists at this point
+  SchemaTypeId schema_type_id = data_optional.value().schema_type_id();
+  auto schema_type_or = schema_store_.GetSchemaType(schema_type_id);
+  if (!schema_type_or.ok()) {
+    // Ran into error retrieving schema type, skip
+    return kSectionIdMaskNone;
+  }
+  const std::string* schema_type = std::move(schema_type_or).ValueOrDie();
+  return ComputeAllowedSectionsMask(*schema_type);
 }
 
 }  // namespace lib

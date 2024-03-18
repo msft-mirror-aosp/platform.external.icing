@@ -15,14 +15,22 @@
 #ifndef ICING_SCORING_ADVANCED_SCORING_SCORING_VISITOR_H_
 #define ICING_SCORING_ADVANCED_SCORING_SCORING_VISITOR_H_
 
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/bm25f-calculator.h"
+#include "icing/scoring/section-weights.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -31,18 +39,23 @@ namespace lib {
 class ScoringVisitor : public AbstractSyntaxTreeVisitor {
  public:
   explicit ScoringVisitor(double default_score,
+                          SearchSpecProto::EmbeddingQueryMetricType::Code
+                              default_semantic_metric_type,
                           const DocumentStore* document_store,
                           const SchemaStore* schema_store,
                           SectionWeights* section_weights,
                           Bm25fCalculator* bm25f_calculator,
                           const JoinChildrenFetcher* join_children_fetcher,
+                          const EmbeddingQueryResults* embedding_query_results,
                           int64_t current_time_ms)
       : default_score_(default_score),
+        default_semantic_metric_type_(default_semantic_metric_type),
         document_store_(*document_store),
         schema_store_(*schema_store),
         section_weights_(*section_weights),
         bm25f_calculator_(*bm25f_calculator),
         join_children_fetcher_(join_children_fetcher),
+        embedding_query_results_(*embedding_query_results),
         current_time_ms_(current_time_ms) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
@@ -90,12 +103,15 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   }
 
   double default_score_;
+  const SearchSpecProto::EmbeddingQueryMetricType::Code
+      default_semantic_metric_type_;
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
   SectionWeights& section_weights_;
   Bm25fCalculator& bm25f_calculator_;
   // A non-null join_children_fetcher_ indicates scoring in a join.
   const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
+  const EmbeddingQueryResults& embedding_query_results_;
 
   libtextclassifier3::Status pending_error_;
   std::vector<std::unique_ptr<ScoreExpression>> stack_;
