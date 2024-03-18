@@ -28,6 +28,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -483,6 +484,9 @@ class IcingSearchEngine {
   std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index_
       ICING_GUARDED_BY(mutex_);
 
+  // Storage for all hits of embedding contents from the document store.
+  std::unique_ptr<EmbeddingIndex> embedding_index_ ICING_GUARDED_BY(mutex_);
+
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
@@ -701,6 +705,7 @@ class IcingSearchEngine {
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
     bool qualified_id_join_index_needed_restoration;
+    bool embedding_index_needed_restoration;
   };
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -741,17 +746,21 @@ class IcingSearchEngine {
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
     bool qualified_id_join_index_needed_restoration;
+    bool embedding_index_needed_restoration;
 
     explicit TruncateIndexResult(
         DocumentId first_document_to_reindex_in,
         bool index_needed_restoration_in,
         bool integer_index_needed_restoration_in,
-        bool qualified_id_join_index_needed_restoration_in)
+        bool qualified_id_join_index_needed_restoration_in,
+        bool embedding_index_needed_restoration_in)
         : first_document_to_reindex(first_document_to_reindex_in),
           index_needed_restoration(index_needed_restoration_in),
           integer_index_needed_restoration(integer_index_needed_restoration_in),
           qualified_id_join_index_needed_restoration(
-              qualified_id_join_index_needed_restoration_in) {}
+              qualified_id_join_index_needed_restoration_in),
+          embedding_index_needed_restoration(
+              embedding_index_needed_restoration_in) {}
   };
   libtextclassifier3::StatusOr<TruncateIndexResult> TruncateIndicesTo(
       DocumentId last_stored_document_id)
