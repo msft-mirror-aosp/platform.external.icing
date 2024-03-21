@@ -15,6 +15,7 @@
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <numeric>
 
@@ -64,13 +65,20 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
+  ++num_advance_calls_;
   doc_hit_info_ = cached_hits_.at(cached_hits_idx_);
-  hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorTermLite::TrimRightMostNode() && {
+  // Leaf iterator should trim itself.
+  DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
+                                          unnormalized_term_length_};
+  return node;
 }
 
 libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
@@ -78,7 +86,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->GetTermId(term_));
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  lite_index_->AppendHits(
+  lite_index_->FetchHits(
       term_id, section_restrict_mask_,
       /*only_from_prefix_sections=*/false,
       /*score_by=*/
@@ -105,7 +113,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
-    lite_index_->AppendHits(
+    lite_index_->FetchHits(
         term_id, section_restrict_mask_,
         /*only_from_prefix_sections=*/!exact_match,
         /*score_by=*/

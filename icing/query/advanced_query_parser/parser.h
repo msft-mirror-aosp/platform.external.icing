@@ -94,7 +94,8 @@ class Parser {
   libtextclassifier3::StatusOr<std::unique_ptr<FunctionNameNode>>
   ConsumeFunctionName();
 
-  libtextclassifier3::StatusOr<std::unique_ptr<StringNode>> ConsumeString();
+  libtextclassifier3::StatusOr<std::unique_ptr<StringNode>>
+  ConsumeStringElement();
 
   libtextclassifier3::StatusOr<std::string> ConsumeComparator();
 

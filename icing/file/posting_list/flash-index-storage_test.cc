@@ -26,8 +26,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage-header.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -42,6 +43,7 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Ne;
 using ::testing::Not;
 
 class FlashIndexStorageTest : public testing::Test {
@@ -52,7 +54,7 @@ class FlashIndexStorageTest : public testing::Test {
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
 
     // TODO(b/249829533): test different serializers
-    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
+    serializer_ = std::make_unique<PostingListHitSerializer>();
   }
 
   void TearDown() override {
@@ -64,8 +66,52 @@ class FlashIndexStorageTest : public testing::Test {
   std::string test_dir_;
   std::string file_name_;
   Filesystem filesystem_;
-  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
+  std::unique_ptr<PostingListHitSerializer> serializer_;
 };
+
+TEST_F(FlashIndexStorageTest, ReadHeaderMagic) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FlashIndexStorage flash_index_storage,
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
+  }
+  EXPECT_THAT(FlashIndexStorage::ReadHeaderMagic(&filesystem_, file_name_),
+              IsOkAndHolds(HeaderBlock::Header::kMagic));
+}
+
+TEST_F(FlashIndexStorageTest, ReadHeaderMagicOldVersion) {
+  int block_size;
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FlashIndexStorage flash_index_storage,
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
+    block_size = flash_index_storage.block_size();
+  }
+
+  int old_magic = 0x6dfba6ae;
+  ASSERT_THAT(old_magic, Ne(HeaderBlock::Header::kMagic));
+  {
+    // Manually modify the header magic.
+    ScopedFd sfd(filesystem_.OpenForWrite(file_name_.c_str()));
+    ASSERT_THAT(sfd.is_valid(), IsTrue());
+
+    // Read and validate header.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        HeaderBlock header_block,
+        HeaderBlock::Read(&filesystem_, sfd.get(), block_size));
+    header_block.header()->magic = old_magic;
+    ASSERT_THAT(header_block.Write(sfd.get()), IsTrue());
+  }
+
+  EXPECT_THAT(FlashIndexStorage::ReadHeaderMagic(&filesystem_, file_name_),
+              IsOkAndHolds(old_magic));
+}
+
+TEST_F(FlashIndexStorageTest,
+       ReadHeaderMagicNonExistingFileShouldGetNotFoundError) {
+  EXPECT_THAT(FlashIndexStorage::ReadHeaderMagic(&filesystem_, file_name_),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
 
 TEST_F(FlashIndexStorageTest, CorruptHeader) {
   {
@@ -203,7 +249,8 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Now, free the first posting list. This should add it to the free list
-    flash_index_storage.FreePostingList(std::move(posting_list_holder1));
+    ICING_ASSERT_OK(
+        flash_index_storage.FreePostingList(std::move(posting_list_holder1)));
 
     // 4. Request another posting list. This should NOT grow the index because
     // the first posting list is free.
@@ -303,7 +350,8 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Now, free the first posting list. This should add it to the free list
-    flash_index_storage.FreePostingList(std::move(posting_list_holder1));
+    ICING_ASSERT_OK(
+        flash_index_storage.FreePostingList(std::move(posting_list_holder1)));
 
     // 4. Request another posting list. This should NOT grow the index because
     // the first posting list is free.
@@ -406,7 +454,8 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
 
       // 3. Now, free the first posting list. This should add it to the free
       // list
-      flash_index_storage.FreePostingList(std::move(posting_list_holder1));
+      ICING_ASSERT_OK(
+          flash_index_storage.FreePostingList(std::move(posting_list_holder1)));
     }
 
     EXPECT_THAT(flash_index_storage.GetDiskUsage(),

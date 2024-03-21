@@ -15,16 +15,33 @@
 #include "icing/monkey_test/icing-monkey-test-runner.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/destructible-directory.h"
+#include "icing/icing-search-engine.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 #include "icing/monkey_test/monkey-test-generators.h"
+#include "icing/monkey_test/monkey-test-util.h"
+#include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/result/result-state-manager.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/logging.h"
@@ -37,16 +54,9 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::Le;
+using ::testing::Not;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAreArray;
-
-SchemaProto GenerateRandomSchema(
-    const IcingMonkeyTestRunnerConfiguration& config,
-    MonkeyTestRandomEngine* random) {
-  MonkeySchemaGenerator schema_generator(random);
-  return schema_generator.GenerateSchema(config.num_types,
-                                         config.possible_num_properties);
-}
 
 SearchSpecProto GenerateRandomSearchSpecProto(
     MonkeyTestRandomEngine* random,
@@ -113,7 +123,22 @@ ResultSpecProto::SnippetSpecProto GenerateRandomSnippetSpecProto(
   return snippet_spec;
 }
 
-ResultSpecProto GenerateRandomResultSpecProto(MonkeyTestRandomEngine* random) {
+TypePropertyMask GenerateTypePropertyMask(
+    MonkeyTestRandomEngine* random, const SchemaTypeConfigProto& type_config) {
+  TypePropertyMask type_property_mask;
+  type_property_mask.set_schema_type(type_config.schema_type());
+  for (const auto& properties : type_config.properties()) {
+    // 25% chance of adding the current property to the mask.
+    std::uniform_int_distribution<> dist(0, 3);
+    if (dist(*random) == 0) {
+      type_property_mask.add_paths(properties.property_name());
+    }
+  }
+  return type_property_mask;
+}
+
+ResultSpecProto GenerateRandomResultSpecProto(MonkeyTestRandomEngine* random,
+                                              const SchemaProto* schema) {
   std::uniform_int_distribution<> dist(0, 4);
   ResultSpecProto result_spec;
   // 1/5 chance of getting one of 1, 4, 16, 64, 256
@@ -121,6 +146,18 @@ ResultSpecProto GenerateRandomResultSpecProto(MonkeyTestRandomEngine* random) {
   result_spec.set_num_per_page(num_per_page);
   *result_spec.mutable_snippet_spec() =
       GenerateRandomSnippetSpecProto(random, result_spec);
+
+  // 1/5 chance of enabling projection.
+  if (dist(*random) == 0) {
+    for (const SchemaTypeConfigProto& type_config : schema->types()) {
+      // 25% chance of adding the current type to the projection.
+      std::uniform_int_distribution<> dist(0, 3);
+      if (dist(*random) == 0) {
+        *result_spec.add_type_property_masks() =
+            GenerateTypePropertyMask(random, type_config);
+      }
+    }
+  }
   return result_spec;
 }
 
@@ -137,20 +174,13 @@ void SortDocuments(std::vector<DocumentProto>& documents) {
 }  // namespace
 
 IcingMonkeyTestRunner::IcingMonkeyTestRunner(
-    const IcingMonkeyTestRunnerConfiguration& config)
-    : config_(config), random_(config.seed), in_memory_icing_() {
+    IcingMonkeyTestRunnerConfiguration config)
+    : config_(std::move(config)),
+      random_(config_.seed),
+      in_memory_icing_(std::make_unique<InMemoryIcingSearchEngine>(&random_)),
+      schema_generator_(
+          std::make_unique<MonkeySchemaGenerator>(&random_, &config_)) {
   ICING_LOG(INFO) << "Monkey test runner started with seed: " << config_.seed;
-
-  SchemaProto schema = GenerateRandomSchema(config_, &random_);
-  ICING_LOG(DBG) << "Schema Generated: " << schema.DebugString();
-
-  in_memory_icing_ =
-      std::make_unique<InMemoryIcingSearchEngine>(&random_, std::move(schema));
-
-  document_generator_ = std::make_unique<MonkeyDocumentGenerator>(
-      &random_, in_memory_icing_->GetSchema(), config_.possible_num_tokens_,
-      config_.num_namespaces, config_.num_uris);
-
   std::string dir = GetTestTempDir() + "/icing/monkey";
   filesystem_.DeleteDirectoryRecursively(dir.c_str());
   icing_dir_ = std::make_unique<DestructibleDirectory>(&filesystem_, dir);
@@ -159,7 +189,7 @@ IcingMonkeyTestRunner::IcingMonkeyTestRunner(
 void IcingMonkeyTestRunner::Run(uint32_t num) {
   ASSERT_TRUE(icing_ != nullptr)
       << "Icing search engine has not yet been created. Please call "
-         "CreateIcingSearchEngineWithSchema() first";
+         "Initialize() first";
 
   uint32_t frequency_sum = 0;
   for (const auto& schedule : config_.monkey_api_schedules) {
@@ -181,10 +211,55 @@ void IcingMonkeyTestRunner::Run(uint32_t num) {
   }
 }
 
-void IcingMonkeyTestRunner::CreateIcingSearchEngineWithSchema() {
+SetSchemaResultProto IcingMonkeyTestRunner::SetSchema(SchemaProto&& schema) {
+  in_memory_icing_->SetSchema(std::move(schema));
+  document_generator_ = std::make_unique<MonkeyDocumentGenerator>(
+      &random_, in_memory_icing_->GetSchema(), &config_);
+  return icing_->SetSchema(*in_memory_icing_->GetSchema(),
+                           /*ignore_errors_and_delete_documents=*/true);
+}
+
+void IcingMonkeyTestRunner::Initialize() {
   ASSERT_NO_FATAL_FAILURE(CreateIcingSearchEngine());
-  ASSERT_THAT(icing_->SetSchema(*in_memory_icing_->GetSchema()).status(),
-              ProtoIsOk());
+
+  SchemaProto schema = schema_generator_->GenerateSchema();
+  ICING_LOG(DBG) << "Schema Generated: " << schema.DebugString();
+
+  ASSERT_THAT(SetSchema(std::move(schema)).status(), ProtoIsOk());
+}
+
+void IcingMonkeyTestRunner::DoUpdateSchema() {
+  ICING_LOG(INFO) << "Monkey updating schema";
+
+  MonkeySchemaGenerator::UpdateSchemaResult result =
+      schema_generator_->UpdateSchema(*in_memory_icing_->GetSchema());
+  if (result.is_invalid_schema) {
+    SetSchemaResultProto set_schema_result =
+        icing_->SetSchema(result.schema,
+                          /*ignore_errors_and_delete_documents=*/true);
+    ASSERT_THAT(set_schema_result.status(), Not(ProtoIsOk()));
+    return;
+  }
+  ICING_LOG(DBG) << "Updating schema to: " << result.schema.DebugString();
+  SetSchemaResultProto icing_set_schema_result =
+      SetSchema(std::move(result.schema));
+  ASSERT_THAT(icing_set_schema_result.status(), ProtoIsOk());
+  ASSERT_THAT(icing_set_schema_result.deleted_schema_types(),
+              UnorderedElementsAreArray(result.schema_types_deleted));
+  ASSERT_THAT(icing_set_schema_result.incompatible_schema_types(),
+              UnorderedElementsAreArray(result.schema_types_incompatible));
+  ASSERT_THAT(
+      icing_set_schema_result.index_incompatible_changed_schema_types(),
+      UnorderedElementsAreArray(result.schema_types_index_incompatible));
+
+  // Update in-memory icing
+  for (const std::string& deleted_type : result.schema_types_deleted) {
+    ICING_ASSERT_OK(in_memory_icing_->DeleteBySchemaType(deleted_type));
+  }
+  for (const std::string& incompatible_type :
+       result.schema_types_incompatible) {
+    ICING_ASSERT_OK(in_memory_icing_->DeleteBySchemaType(incompatible_type));
+  }
 }
 
 void IcingMonkeyTestRunner::DoGet() {
@@ -239,10 +314,11 @@ void IcingMonkeyTestRunner::DoDelete() {
                                            /*p_other=*/0.1);
   ICING_LOG(INFO) << "Monkey deleting namespace: " << document.name_space
                   << ", uri: " << document.uri;
-  in_memory_icing_->Delete(document.name_space, document.uri);
   DeleteResultProto delete_result =
       icing_->Delete(document.name_space, document.uri);
   if (document.document.has_value()) {
+    ICING_ASSERT_OK(
+        in_memory_icing_->Delete(document.name_space, document.uri));
     ASSERT_THAT(delete_result.status(), ProtoIsOk())
         << "Cannot delete an existing document.";
   } else {
@@ -338,25 +414,36 @@ void IcingMonkeyTestRunner::DoDeleteByQuery() {
 }
 
 void IcingMonkeyTestRunner::DoSearch() {
-  SearchSpecProto search_spec =
-      GenerateRandomSearchSpecProto(&random_, document_generator_.get());
-  ScoringSpecProto scoring_spec = GenerateRandomScoringSpec(&random_);
-  ResultSpecProto result_spec = GenerateRandomResultSpecProto(&random_);
-  const ResultSpecProto::SnippetSpecProto& snippet_spec =
-      result_spec.snippet_spec();
+  std::unique_ptr<SearchSpecProto> search_spec =
+      std::make_unique<SearchSpecProto>(
+          GenerateRandomSearchSpecProto(&random_, document_generator_.get()));
+  std::unique_ptr<ScoringSpecProto> scoring_spec =
+      std::make_unique<ScoringSpecProto>(GenerateRandomScoringSpec(&random_));
+  std::unique_ptr<ResultSpecProto> result_spec =
+      std::make_unique<ResultSpecProto>(GenerateRandomResultSpecProto(
+          &random_, in_memory_icing_->GetSchema()));
+  const ResultSpecProto::SnippetSpecProto snippet_spec =
+      result_spec->snippet_spec();
+  bool is_projection_enabled = !result_spec->type_property_masks().empty();
 
-  ICING_LOG(INFO) << "Monkey searching by query: " << search_spec.query()
-                  << ", term_match_type: " << search_spec.term_match_type();
-  ICING_VLOG(1) << "search_spec:\n" << search_spec.DebugString();
-  ICING_VLOG(1) << "scoring_spec:\n" << scoring_spec.DebugString();
-  ICING_VLOG(1) << "result_spec:\n" << result_spec.DebugString();
+  ICING_LOG(INFO) << "Monkey searching by query: " << search_spec->query()
+                  << ", term_match_type: " << search_spec->term_match_type();
+  ICING_VLOG(1) << "search_spec:\n" << search_spec->DebugString();
+  ICING_VLOG(1) << "scoring_spec:\n" << scoring_spec->DebugString();
+  ICING_VLOG(1) << "result_spec:\n" << result_spec->DebugString();
 
-  std::vector<DocumentProto> exp_documents =
-      in_memory_icing_->Search(search_spec);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocumentProto> exp_documents,
+                             in_memory_icing_->Search(*search_spec));
 
   SearchResultProto search_result =
-      icing_->Search(search_spec, scoring_spec, result_spec);
+      icing_->Search(*search_spec, *scoring_spec, *result_spec);
   ASSERT_THAT(search_result.status(), ProtoIsOk());
+
+  // Delete all of the specs used in the search. GetNextPage should have no
+  // problem because it shouldn't be keeping any references to them.
+  search_spec.reset();
+  scoring_spec.reset();
+  result_spec.reset();
 
   std::vector<DocumentProto> actual_documents;
   int num_snippeted = 0;
@@ -382,7 +469,7 @@ void IcingMonkeyTestRunner::DoSearch() {
   if (exp_documents.size() >= 30000) {
     return;
   }
-  if (snippet_spec.num_matches_per_property() > 0) {
+  if (snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled) {
     ASSERT_THAT(num_snippeted,
                 Eq(std::min<uint32_t>(exp_documents.size(),
                                       snippet_spec.num_to_snippet())));
@@ -391,6 +478,12 @@ void IcingMonkeyTestRunner::DoSearch() {
   SortDocuments(actual_documents);
   ASSERT_THAT(actual_documents, SizeIs(exp_documents.size()));
   for (int i = 0; i < exp_documents.size(); ++i) {
+    if (is_projection_enabled) {
+      ASSERT_THAT(actual_documents[i].namespace_(),
+                  Eq(exp_documents[i].namespace_()));
+      ASSERT_THAT(actual_documents[i].uri(), Eq(exp_documents[i].uri()));
+      continue;
+    }
     ASSERT_THAT(actual_documents[i], EqualsProto(exp_documents[i]));
   }
   ICING_LOG(INFO) << exp_documents.size() << " documents found by query.";
@@ -409,9 +502,21 @@ void IcingMonkeyTestRunner::DoOptimize() {
 }
 
 void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
+  std::uniform_int_distribution<> dist(0, 1);
+
+  bool always_rebuild_index_optimize = dist(random_);
+  float optimize_rebuild_index_threshold =
+      always_rebuild_index_optimize ? 0.0 : 0.9;
+
   IcingSearchEngineOptions icing_options;
   icing_options.set_index_merge_size(config_.index_merge_size);
   icing_options.set_base_dir(icing_dir_->dir());
+  icing_options.set_optimize_rebuild_index_threshold(
+      optimize_rebuild_index_threshold);
+  // The method will be called every time when we ReloadFromDisk(), so randomly
+  // flip this flag to test document store's compatibility.
+  icing_options.set_document_store_namespace_id_fingerprint(
+      (bool)dist(random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
