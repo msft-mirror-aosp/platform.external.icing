@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 
@@ -89,18 +90,31 @@ struct SectionMetadata {
   //   Contents will be matched by a range query.
   IntegerIndexingConfig::NumericMatchType::Code numeric_match_type;
 
+  // How vectors in a vector section should be indexed.
+  //
+  // EmbeddingIndexingType::UNKNOWN:
+  //   Contents will not be indexed. It is invalid for a vector section
+  //   (data_type == 'VECTOR') to have embedding_indexing_type == 'UNKNOWN'.
+  //
+  // EmbeddingIndexingType::LINEAR_SEARCH:
+  //   Contents will be indexed for linear search.
+  EmbeddingIndexingConfig::EmbeddingIndexingType::Code embedding_indexing_type;
+
   explicit SectionMetadata(
       SectionId id_in, PropertyConfigProto::DataType::Code data_type_in,
       StringIndexingConfig::TokenizerType::Code tokenizer,
       TermMatchType::Code term_match_type_in,
       IntegerIndexingConfig::NumericMatchType::Code numeric_match_type_in,
+      EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+          embedding_indexing_type_in,
       std::string&& path_in)
       : path(std::move(path_in)),
         id(id_in),
         data_type(data_type_in),
         tokenizer(tokenizer),
         term_match_type(term_match_type_in),
-        numeric_match_type(numeric_match_type_in) {}
+        numeric_match_type(numeric_match_type_in),
+        embedding_indexing_type(embedding_indexing_type_in) {}
 
   SectionMetadata(const SectionMetadata& other) = default;
   SectionMetadata& operator=(const SectionMetadata& other) = default;
@@ -144,6 +158,7 @@ struct Section {
 struct SectionGroup {
   std::vector<Section<std::string_view>> string_sections;
   std::vector<Section<int64_t>> integer_sections;
+  std::vector<Section<PropertyProto::VectorProto>> vector_sections;
 };
 
 }  // namespace lib

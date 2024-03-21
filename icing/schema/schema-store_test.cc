@@ -14,8 +14,10 @@
 
 #include "icing/schema/schema-store.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -23,6 +25,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/file/version-util.h"
@@ -32,10 +35,7 @@
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
@@ -142,7 +142,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
               IsOkAndHolds(Eq(expected_checksum)));
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
-                                    "prop1");
+                                    EMBEDDING_INDEXING_UNKNOWN, "prop1");
   EXPECT_THAT(move_constructed_schema_store.GetSectionMetadata("type_a"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
 }
@@ -193,7 +193,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
               IsOkAndHolds(Eq(expected_checksum)));
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
-                                    "prop1");
+                                    EMBEDDING_INDEXING_UNKNOWN, "prop1");
   EXPECT_THAT(move_assigned_schema_store->GetSectionMetadata("type_a"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
 }
@@ -1527,10 +1527,10 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
             .Build();
     SectionMetadata expected_int_prop1_metadata(
         /*id_in=*/0, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
-        NUMERIC_MATCH_RANGE, "intProp1");
+        NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN, "intProp1");
     SectionMetadata expected_string_prop1_metadata(
         /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
-        NUMERIC_MATCH_UNKNOWN, "stringProp1");
+        NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN, "stringProp1");
     ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                                schema_store->ExtractSections(document));
     ASSERT_THAT(section_group.string_sections, SizeIs(1));

@@ -52,9 +52,15 @@ constexpr Feature kListFilterQueryLanguageFeature =
 constexpr Feature kHasPropertyFunctionFeature =
     "HAS_PROPERTY_FUNCTION";  // Features#HAS_PROPERTY_FUNCTION
 
+// This feature relates to the use of embedding searches in the advanced query
+// language. Ex. `semanticSearch(getSearchSpecEmbedding(0), 0.5, 1, "COSINE")`.
+constexpr Feature kEmbeddingSearchFeature =
+    "EMBEDDING_SEARCH";  // Features#EMBEDDING_SEARCH
+
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
   return {kNumericSearchFeature, kVerbatimSearchFeature,
-          kListFilterQueryLanguageFeature, kHasPropertyFunctionFeature};
+          kListFilterQueryLanguageFeature, kHasPropertyFunctionFeature,
+          kEmbeddingSearchFeature};
 }
 
 }  // namespace lib

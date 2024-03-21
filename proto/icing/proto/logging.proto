@@ -23,7 +23,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 14
+// Next tag: 15
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -121,10 +121,16 @@ message InitializeStatsProto {
   // - SCHEMA_CHANGES_OUT_OF_SYNC
   // - IO_ERROR
   optional RecoveryCause qualified_id_join_index_restoration_cause = 13;
+
+  // Possible recovery causes for embedding index:
+  // - INCONSISTENT_WITH_GROUND_TRUTH
+  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - IO_ERROR
+  optional RecoveryCause embedding_index_restoration_cause = 14;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
-// Next tag: 12
+// Next tag: 13
 message PutDocumentStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -170,6 +176,9 @@ message PutDocumentStatsProto {
   // Time used to index all metadata terms in the document, which can only be
   // added by PropertyExistenceIndexingHandler currently.
   optional int32 metadata_term_index_latency_ms = 11;
+
+  // Time used to index all embeddings in the document.
+  optional int32 embedding_index_latency_ms = 12;
 }
 
 // Stats of the top-level function IcingSearchEngine::Search() and

@@ -14,6 +14,8 @@
 
 #include "icing/schema/property-util.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -129,6 +131,14 @@ libtextclassifier3::StatusOr<std::vector<int64_t>>
 ExtractPropertyValues<int64_t>(const PropertyProto& property) {
   return std::vector<int64_t>(property.int64_values().begin(),
                               property.int64_values().end());
+}
+
+template <>
+libtextclassifier3::StatusOr<std::vector<PropertyProto::VectorProto>>
+ExtractPropertyValues<PropertyProto::VectorProto>(
+    const PropertyProto& property) {
+  return std::vector<PropertyProto::VectorProto>(
+      property.vector_values().begin(), property.vector_values().end());
 }
 
 }  // namespace property_util

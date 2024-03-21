@@ -12,11 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
 
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/advanced-scorer.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -29,6 +36,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const std::string test_dir = GetTestTempDir() + "/icing";
   const std::string doc_store_dir = test_dir + "/doc_store";
   const std::string schema_store_dir = test_dir + "/schema_store";
+  EmbeddingQueryResults empty_embedding_query_results_;
   filesystem.DeleteDirectoryRecursively(test_dir.c_str());
   filesystem.CreateDirectoryRecursively(doc_store_dir.c_str());
   filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
@@ -54,9 +62,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   scoring_spec.set_advanced_scoring_expression(text);
 
   AdvancedScorer::Create(scoring_spec,
-                         /*default_score=*/10, document_store.get(),
-                         schema_store.get(),
-                         fake_clock.GetSystemTimeMilliseconds());
+                         /*default_score=*/10,
+                         SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+                         document_store.get(), schema_store.get(),
+                         fake_clock.GetSystemTimeMilliseconds(),
+                         /*join_children_fetcher=*/nullptr,
+                         &empty_embedding_query_results_);
 
   // Not able to test the GetScore method of AdvancedScorer, since it will only
   // be available after AdvancedScorer is successfully created. However, the

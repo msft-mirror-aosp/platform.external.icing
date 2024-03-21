@@ -61,6 +61,7 @@ libtextclassifier3::Status AppendNewSectionMetadata(
       property_config.string_indexing_config().tokenizer_type(),
       property_config.string_indexing_config().term_match_type(),
       property_config.integer_indexing_config().numeric_match_type(),
+      property_config.embedding_indexing_config().embedding_indexing_type(),
       std::move(concatenated_path)));
   return libtextclassifier3::Status::OK;
 }
@@ -160,6 +161,19 @@ libtextclassifier3::StatusOr<SectionGroup> SectionManager::ExtractSections(
                       property_util::ExtractPropertyValuesFromDocument<int64_t>(
                           document, section_metadata.path),
                       section_group.integer_sections);
+        break;
+      }
+      case PropertyConfigProto::DataType::VECTOR: {
+        if (section_metadata.embedding_indexing_type ==
+            EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN) {
+          // Skip if embedding indexing type is UNKNOWN.
+          break;
+        }
+        AppendSection(
+            section_metadata,
+            property_util::ExtractPropertyValuesFromDocument<
+                PropertyProto::VectorProto>(document, section_metadata.path),
+            section_group.vector_sections);
         break;
       }
       default: {

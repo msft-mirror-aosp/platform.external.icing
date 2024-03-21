@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "icing/index/embed/embedding-hit.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/schema/section.h"
@@ -85,6 +86,29 @@ std::vector<Hit> CreateHits(const Hit& last_hit, int num_hits,
 
 std::vector<Hit> CreateHits(int num_hits, int desired_byte_length) {
   return CreateHits(/*start_docid=*/0, num_hits, desired_byte_length);
+}
+
+EmbeddingHit CreateEmbeddingHit(const EmbeddingHit& last_hit,
+                                uint32_t desired_byte_length) {
+  // Create a delta that has (desired_byte_length - 1) * 7 + 1 bits, so that it
+  // can be encoded in desired_byte_length bytes.
+  uint64_t delta = UINT64_C(1) << ((desired_byte_length - 1) * 7);
+  return EmbeddingHit(last_hit.value() - delta);
+}
+
+std::vector<EmbeddingHit> CreateEmbeddingHits(int num_hits,
+                                              int desired_byte_length) {
+  std::vector<EmbeddingHit> hits;
+  if (num_hits == 0) {
+    return hits;
+  }
+  hits.reserve(num_hits);
+  hits.push_back(EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
+                              /*location=*/0));
+  for (int i = 1; i < num_hits; ++i) {
+    hits.push_back(CreateEmbeddingHit(hits.back(), desired_byte_length));
+  }
+  return hits;
 }
 
 }  // namespace lib

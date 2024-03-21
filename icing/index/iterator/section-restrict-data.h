@@ -23,6 +23,7 @@
 
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -48,9 +49,20 @@ class SectionRestrictData {
   // Returns:
   //  - If type_property_filters_ has an entry for the given schema type or
   //    wildcard(*), return a bitwise or of section IDs in the schema type
-  //    that that are also present in the relevant filter list.
+  //    that are also present in the relevant filter list.
   //  - Otherwise, return kSectionIdMaskAll.
   SectionIdMask ComputeAllowedSectionsMask(const std::string& schema_type);
+
+  // Calculates the section mask of allowed sections(determined by the
+  // property filters map) for the given document id, by retrieving its schema
+  // type name and calling the above method.
+  //
+  // Returns:
+  //  - If type_property_filters_ has an entry for the given document's schema
+  //    type or wildcard(*), return a bitwise or of section IDs in the schema
+  //    type that are also present in the relevant filter list.
+  //  - Otherwise, return kSectionIdMaskAll.
+  SectionIdMask ComputeAllowedSectionsMask(DocumentId document_id);
 
   const DocumentStore& document_store() const { return document_store_; }
 

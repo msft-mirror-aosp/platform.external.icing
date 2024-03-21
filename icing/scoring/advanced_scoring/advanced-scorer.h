@@ -15,17 +15,26 @@
 #ifndef ICING_SCORING_ADVANCED_SCORING_ADVANCED_SCORER_H_
 #define ICING_SCORING_ADVANCED_SCORING_ADVANCED_SCORER_H_
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scorer.h"
+#include "icing/scoring/section-weights.h"
 #include "icing/store/document-store.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -38,9 +47,11 @@ class AdvancedScorer : public Scorer {
   //   INVALID_ARGUMENT if fails to create an instance
   static libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> Create(
       const ScoringSpecProto& scoring_spec, double default_score,
+      SearchSpecProto::EmbeddingQueryMetricType::Code
+          default_semantic_metric_type,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      int64_t current_time_ms,
-      const JoinChildrenFetcher* join_children_fetcher = nullptr);
+      int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
+      const EmbeddingQueryResults* embedding_query_results);
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator* query_it) override {
@@ -63,7 +74,7 @@ class AdvancedScorer : public Scorer {
     bm25f_calculator_->PrepareToScore(query_term_iterators);
   }
 
-  bool is_constant() const { return score_expression_->is_constant_double(); }
+  bool is_constant() const { return score_expression_->is_constant(); }
 
  private:
   explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,

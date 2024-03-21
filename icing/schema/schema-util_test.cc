@@ -2900,6 +2900,118 @@ TEST_P(SchemaUtilTest,
               IsEmpty());
 }
 
+TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
+  SchemaProto schema_with_indexed_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto schema_with_unindexed_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property")
+                               .SetDataTypeVector(EMBEDDING_INDEXING_UNKNOWN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+
+  // New schema gained a new indexed vector property.
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_unindexed_property, schema_with_indexed_property,
+                  no_dependents_map),
+              Eq(schema_delta));
+
+  // New schema lost an indexed vector property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_indexed_property, schema_with_unindexed_property,
+                  no_dependents_map),
+              Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, AddingNewIndexedVectorPropertyMakesIndexIncompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewEmbeddingProperty")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependents_map),
+              Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest,
+       AddingNewNonIndexedVectorPropertyShouldRemainIndexCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("NewProperty")
+                               .SetDataTypeVector(EMBEDDING_INDEXING_UNKNOWN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependents_map)
+                  .schema_types_index_incompatible,
+              IsEmpty());
+}
+
 TEST_P(SchemaUtilTest,
        AddingNewIndexedDocumentPropertyMakesIndexAndJoinIncompatible) {
   SchemaTypeConfigProto nested_schema =

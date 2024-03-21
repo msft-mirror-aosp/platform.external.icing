@@ -15,8 +15,11 @@
 #ifndef ICING_SCHEMA_PROPERTY_UTIL_H_
 #define ICING_SCHEMA_PROPERTY_UTIL_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -162,6 +165,11 @@ ExtractPropertyValues<std::string_view>(const PropertyProto& property);
 template <>
 libtextclassifier3::StatusOr<std::vector<int64_t>>
 ExtractPropertyValues<int64_t>(const PropertyProto& property);
+
+template <>
+libtextclassifier3::StatusOr<std::vector<PropertyProto::VectorProto>>
+ExtractPropertyValues<PropertyProto::VectorProto>(
+    const PropertyProto& property);
 
 template <typename T>
 libtextclassifier3::StatusOr<std::vector<T>> ExtractPropertyValuesFromDocument(

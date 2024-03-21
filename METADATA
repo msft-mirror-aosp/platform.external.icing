@@ -12,6 +12,6 @@ third_party {
     type: PIPER
     value: "http://google3/third_party/icing/"
   }
-  last_upgrade_date { year: 2019 month: 12 day: 20 }
+  last_upgrade_date { year: 2024 month: 3 day: 18 }
   license_type: NOTICE
 }

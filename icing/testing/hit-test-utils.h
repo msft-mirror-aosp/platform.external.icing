@@ -15,8 +15,10 @@
 #ifndef ICING_TESTING_HIT_TEST_UTILS_H_
 #define ICING_TESTING_HIT_TEST_UTILS_H_
 
+#include <cstdint>
 #include <vector>
 
+#include "icing/index/embed/embedding-hit.h"
 #include "icing/index/hit/hit.h"
 #include "icing/store/document-id.h"
 
@@ -45,6 +47,18 @@ std::vector<Hit> CreateHits(const Hit& last_hit, int num_hits,
 // Returns a vector of num_hits Hits with the first hit starting at 0 and each
 // with desired_byte_length deltas.
 std::vector<Hit> CreateHits(int num_hits, int desired_byte_length);
+
+// Returns a hit that has a delta of desired_byte_length from last_hit after
+// VarInt encoding.
+// Requires that 0 < desired_byte_length <= VarInt::kMaxEncodedLen64.
+EmbeddingHit CreateEmbeddingHit(const EmbeddingHit& last_hit,
+                                uint32_t desired_byte_length);
+
+// Returns a vector of num_hits Hits with the first hit starting at document 0
+// and with a delta of desired_byte_length between each subsequent hit after
+// VarInt encoding.
+std::vector<EmbeddingHit> CreateEmbeddingHits(int num_hits,
+                                              int desired_byte_length);
 
 }  // namespace lib
 }  // namespace icing

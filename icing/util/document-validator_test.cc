@@ -15,7 +15,11 @@
 #include "icing/util/document-validator.h"
 
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -42,6 +46,7 @@ constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
 constexpr char kPropertyRecipients[] = "recipients";
 constexpr char kPropertyNote[] = "note";
+constexpr char kPropertyNoteEmbedding[] = "noteEmbedding";
 // type and property names of Conversation
 constexpr char kTypeConversation[] = "Conversation";
 constexpr char kTypeConversationWithEmailNote[] = "ConversationWithEmailNote";
@@ -92,6 +97,10 @@ class DocumentValidatorTest : public ::testing::Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyNote)
                                      .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyNoteEmbedding)
+                                     .SetDataType(TYPE_VECTOR)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .AddType(
                 SchemaTypeConfigBuilder()
@@ -146,6 +155,12 @@ class DocumentValidatorTest : public ::testing::Test {
   }
 
   DocumentBuilder SimpleEmailWithNoteBuilder() {
+    PropertyProto::VectorProto vector;
+    vector.add_values(0.1);
+    vector.add_values(0.2);
+    vector.add_values(0.3);
+    vector.set_model_signature("my_model");
+
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "email_with_note/1")
         .SetSchema(kTypeEmailWithNote)
@@ -153,7 +168,8 @@ class DocumentValidatorTest : public ::testing::Test {
         .AddStringProperty(kPropertyText, kDefaultString)
         .AddStringProperty(kPropertyRecipients, kDefaultString, kDefaultString,
                            kDefaultString)
-        .AddStringProperty(kPropertyNote, kDefaultString);
+        .AddStringProperty(kPropertyNote, kDefaultString)
+        .AddVectorProperty(kPropertyNoteEmbedding, vector);
   }
 
   DocumentBuilder SimpleConversationBuilder() {
@@ -595,6 +611,64 @@ TEST_F(DocumentValidatorTest, NegativeDocumentTtlMsInvalid) {
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("is negative")));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingZeroDimensionInvalid) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("my_model");
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  EXPECT_THAT(document_validator_->Validate(email),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("contains empty vectors")));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingEmptySignatureOk) {
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  vector.set_model_signature("");
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  ICING_EXPECT_OK(document_validator_->Validate(email));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingNoSignatureOk) {
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  ICING_EXPECT_OK(document_validator_->Validate(email));
 }
 
 }  // namespace
