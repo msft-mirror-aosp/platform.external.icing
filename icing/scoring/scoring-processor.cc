@@ -14,6 +14,7 @@
 
 #include "icing/scoring/scoring-processor.h"
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -23,10 +24,12 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/scoring.pb.h"
-#include "icing/scoring/ranker.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer-factory.h"
 #include "icing/scoring/scorer.h"
@@ -44,24 +47,28 @@ constexpr double kDefaultScoreInAscendingOrder =
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
+                         SearchSpecProto::EmbeddingQueryMetricType::Code
+                             default_semantic_metric_type,
                          const DocumentStore* document_store,
                          const SchemaStore* schema_store,
                          int64_t current_time_ms,
-                         const JoinChildrenFetcher* join_children_fetcher) {
+                         const JoinChildrenFetcher* join_children_fetcher,
+                         const EmbeddingQueryResults* embedding_query_results) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(embedding_query_results);
 
   bool is_descending_order =
       scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
-      scorer_factory::Create(scoring_spec,
-                             is_descending_order
-                                 ? kDefaultScoreInDescendingOrder
-                                 : kDefaultScoreInAscendingOrder,
-                             document_store, schema_store, current_time_ms,
-                             join_children_fetcher));
+      scorer_factory::Create(
+          scoring_spec,
+          is_descending_order ? kDefaultScoreInDescendingOrder
+                              : kDefaultScoreInAscendingOrder,
+          default_semantic_metric_type, document_store, schema_store,
+          current_time_ms, join_children_fetcher, embedding_query_results));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
