@@ -115,6 +115,12 @@ bool IsIntegerNumericMatchTypeCompatible(
   return old_indexed.numeric_match_type() == new_indexed.numeric_match_type();
 }
 
+bool IsEmbeddingIndexingCompatible(const EmbeddingIndexingConfig& old_indexed,
+                                   const EmbeddingIndexingConfig& new_indexed) {
+  return old_indexed.embedding_indexing_type() ==
+         new_indexed.embedding_indexing_type();
+}
+
 bool IsDocumentIndexingCompatible(const DocumentIndexingConfig& old_indexed,
                                   const DocumentIndexingConfig& new_indexed) {
   // TODO(b/265304217): This could mark the new schema as incompatible and
@@ -824,6 +830,10 @@ libtextclassifier3::Status SchemaUtil::ValidateDocumentIndexingConfig(
              !property_config.document_indexing_config()
                   .indexable_nested_properties_list()
                   .empty();
+    case PropertyConfigProto::DataType::VECTOR:
+      return property_config.embedding_indexing_config()
+                 .embedding_indexing_type() !=
+             EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
     case PropertyConfigProto::DataType::UNKNOWN:
     case PropertyConfigProto::DataType::DOUBLE:
     case PropertyConfigProto::DataType::BOOLEAN:
@@ -1087,7 +1097,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
               new_property_config->integer_indexing_config()) ||
           !IsDocumentIndexingCompatible(
               old_property_config.document_indexing_config(),
-              new_property_config->document_indexing_config())) {
+              new_property_config->document_indexing_config()) ||
+          !IsEmbeddingIndexingCompatible(
+              old_property_config.embedding_indexing_config(),
+              new_property_config->embedding_indexing_config())) {
         is_index_incompatible = true;
       }
 

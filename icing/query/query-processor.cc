@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -111,25 +112,28 @@ std::unique_ptr<DocHitInfoIterator> ProcessParserStateFrame(
 
 libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>>
 QueryProcessor::Create(Index* index, const NumericIndex<int64_t>* numeric_index,
+                       const EmbeddingIndex* embedding_index,
                        const LanguageSegmenter* language_segmenter,
                        const Normalizer* normalizer,
                        const DocumentStore* document_store,
                        const SchemaStore* schema_store, const Clock* clock) {
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(numeric_index);
+  ICING_RETURN_ERROR_IF_NULL(embedding_index);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(clock);
 
-  return std::unique_ptr<QueryProcessor>(
-      new QueryProcessor(index, numeric_index, language_segmenter, normalizer,
-                         document_store, schema_store, clock));
+  return std::unique_ptr<QueryProcessor>(new QueryProcessor(
+      index, numeric_index, embedding_index, language_segmenter, normalizer,
+      document_store, schema_store, clock));
 }
 
 QueryProcessor::QueryProcessor(Index* index,
                                const NumericIndex<int64_t>* numeric_index,
+                               const EmbeddingIndex* embedding_index,
                                const LanguageSegmenter* language_segmenter,
                                const Normalizer* normalizer,
                                const DocumentStore* document_store,
@@ -137,6 +141,7 @@ QueryProcessor::QueryProcessor(Index* index,
                                const Clock* clock)
     : index_(*index),
       numeric_index_(*numeric_index),
+      embedding_index_(*embedding_index),
       language_segmenter_(*language_segmenter),
       normalizer_(*normalizer),
       document_store_(*document_store),
@@ -229,11 +234,12 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
 
   std::unique_ptr<Timer> query_visitor_timer = clock_.GetNewTimer();
-  QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
-                             &schema_store_, &normalizer_,
-                             plain_tokenizer.get(), search_spec.query(),
-                             std::move(options), search_spec.term_match_type(),
-                             needs_term_frequency_info, current_time_ms);
+  QueryVisitor query_visitor(
+      &index_, &numeric_index_, &embedding_index_, &document_store_,
+      &schema_store_, &normalizer_, plain_tokenizer.get(), search_spec.query(),
+      &search_spec.embedding_query_vectors(), std::move(options),
+      search_spec.term_match_type(), search_spec.embedding_query_metric_type(),
+      needs_term_frequency_info, current_time_ms);
   tree_root->Accept(&query_visitor);
   ICING_ASSIGN_OR_RETURN(QueryResults results,
                          std::move(query_visitor).ConsumeResults());
