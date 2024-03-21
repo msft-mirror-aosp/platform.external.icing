@@ -14,16 +14,18 @@
 
 #include "icing/util/tokenized-document.h"
 
-#include <string>
+#include <memory>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/util/document-validator.h"
@@ -85,6 +87,7 @@ TokenizedDocument::Create(const SchemaStore* schema_store,
   return TokenizedDocument(std::move(document),
                            std::move(tokenized_string_sections),
                            std::move(section_group.integer_sections),
+                           std::move(section_group.vector_sections),
                            std::move(joinable_property_group));
 }
 
