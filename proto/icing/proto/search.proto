@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 11
+// Next tag: 13
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -112,6 +112,22 @@ message SearchSpecProto {
   // (TypePropertyMask for the given schema type has empty paths field), no
   // properties of that schema type will be searched.
   repeated TypePropertyMask type_property_filters = 10;
+
+  // The vectors to be used in embedding queries.
+  repeated PropertyProto.VectorProto embedding_query_vectors = 11;
+
+  message EmbeddingQueryMetricType {
+    enum Code {
+      UNKNOWN = 0;
+      COSINE = 1;
+      DOT_PRODUCT = 2;
+      EUCLIDEAN = 3;
+    }
+  }
+
+  // The default metric type used to calculate the scores for embedding
+  // queries.
+  optional EmbeddingQueryMetricType.Code embedding_query_metric_type = 12;
 }
 
 // Client-supplied specifications on what to include/how to format the search

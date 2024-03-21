@@ -214,6 +214,12 @@ class DocHitInfoIterator {
 
   virtual bool is_leaf() { return false; }
 
+  // Whether the iterator has already been applied all the required section
+  // restrictions.
+  // If true, calling DocHitInfoIteratorSectionRestrict::ApplyRestrictions on
+  // this iterator will have no effect.
+  virtual bool full_section_restriction_applied() const { return false; }
+
   virtual ~DocHitInfoIterator() = default;
 
   // Returns:

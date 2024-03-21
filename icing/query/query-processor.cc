@@ -14,6 +14,7 @@
 
 #include "icing/query/query-processor.h"
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <stack>
@@ -26,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -34,13 +36,14 @@
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/query-visitor.h"
 #include "icing/query/query-features.h"
-#include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
 #include "icing/query/query-utils.h"
@@ -49,11 +52,11 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/raw-query-tokenizer.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -109,39 +112,46 @@ std::unique_ptr<DocHitInfoIterator> ProcessParserStateFrame(
 
 libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>>
 QueryProcessor::Create(Index* index, const NumericIndex<int64_t>* numeric_index,
+                       const EmbeddingIndex* embedding_index,
                        const LanguageSegmenter* language_segmenter,
                        const Normalizer* normalizer,
                        const DocumentStore* document_store,
-                       const SchemaStore* schema_store) {
+                       const SchemaStore* schema_store, const Clock* clock) {
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(numeric_index);
+  ICING_RETURN_ERROR_IF_NULL(embedding_index);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(clock);
 
-  return std::unique_ptr<QueryProcessor>(
-      new QueryProcessor(index, numeric_index, language_segmenter, normalizer,
-                         document_store, schema_store));
+  return std::unique_ptr<QueryProcessor>(new QueryProcessor(
+      index, numeric_index, embedding_index, language_segmenter, normalizer,
+      document_store, schema_store, clock));
 }
 
 QueryProcessor::QueryProcessor(Index* index,
                                const NumericIndex<int64_t>* numeric_index,
+                               const EmbeddingIndex* embedding_index,
                                const LanguageSegmenter* language_segmenter,
                                const Normalizer* normalizer,
                                const DocumentStore* document_store,
-                               const SchemaStore* schema_store)
+                               const SchemaStore* schema_store,
+                               const Clock* clock)
     : index_(*index),
       numeric_index_(*numeric_index),
+      embedding_index_(*embedding_index),
       language_segmenter_(*language_segmenter),
       normalizer_(*normalizer),
       document_store_(*document_store),
-      schema_store_(*schema_store) {}
+      schema_store_(*schema_store),
+      clock_(*clock) {}
 
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    int64_t current_time_ms) {
+    int64_t current_time_ms, QueryStatsProto::SearchStats* search_stats) {
   if (search_spec.search_type() == SearchSpecProto::SearchType::UNDEFINED) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         "Search type ",
@@ -152,9 +162,9 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
   if (search_spec.search_type() ==
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
     ICING_VLOG(1) << "Using EXPERIMENTAL_ICING_ADVANCED_QUERY parser!";
-    ICING_ASSIGN_OR_RETURN(
-        results,
-        ParseAdvancedQuery(search_spec, ranking_strategy, current_time_ms));
+    ICING_ASSIGN_OR_RETURN(results,
+                           ParseAdvancedQuery(search_spec, ranking_strategy,
+                                              current_time_ms, search_stats));
   } else {
     ICING_ASSIGN_OR_RETURN(
         results, ParseRawQuery(search_spec, ranking_strategy, current_time_ms));
@@ -167,8 +177,10 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
       search_spec.enabled_features().end());
   for (const Feature feature : results.features_in_use) {
     if (enabled_features.find(feature) == enabled_features.end()) {
-      return absl_ports::InvalidArgumentError(
-          absl_ports::StrCat("Attempted use of unenabled feature ", feature));
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Attempted use of unenabled feature ", feature,
+          ". Please make sure that you have explicitly set all advanced query "
+          "features used in this query as enabled in the SearchSpec."));
     }
   }
 
@@ -188,17 +200,27 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    int64_t current_time_ms) const {
-  QueryResults results;
+    int64_t current_time_ms, QueryStatsProto::SearchStats* search_stats) const {
+  std::unique_ptr<Timer> lexer_timer = clock_.GetNewTimer();
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
                          lexer.ExtractTokens());
+  if (search_stats != nullptr) {
+    search_stats->set_query_processor_lexer_extract_token_latency_ms(
+        lexer_timer->GetElapsedMilliseconds());
+  }
 
+  std::unique_ptr<Timer> parser_timer = clock_.GetNewTimer();
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> tree_root,
                          parser.ConsumeQuery());
+  if (search_stats != nullptr) {
+    search_stats->set_query_processor_parser_consume_query_latency_ms(
+        parser_timer->GetElapsedMilliseconds());
+  }
 
   if (tree_root == nullptr) {
+    QueryResults results;
     results.root_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
         document_store_.last_added_document_id());
     return results;
@@ -210,13 +232,23 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
   DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
   bool needs_term_frequency_info =
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
-  QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
-                             &schema_store_, &normalizer_,
-                             plain_tokenizer.get(), search_spec.query(),
-                             std::move(options), search_spec.term_match_type(),
-                             needs_term_frequency_info, current_time_ms);
+
+  std::unique_ptr<Timer> query_visitor_timer = clock_.GetNewTimer();
+  QueryVisitor query_visitor(
+      &index_, &numeric_index_, &embedding_index_, &document_store_,
+      &schema_store_, &normalizer_, plain_tokenizer.get(), search_spec.query(),
+      &search_spec.embedding_query_vectors(), std::move(options),
+      search_spec.term_match_type(), search_spec.embedding_query_metric_type(),
+      needs_term_frequency_info, current_time_ms);
   tree_root->Accept(&query_visitor);
-  return std::move(query_visitor).ConsumeResults();
+  ICING_ASSIGN_OR_RETURN(QueryResults results,
+                         std::move(query_visitor).ConsumeResults());
+  if (search_stats != nullptr) {
+    search_stats->set_query_processor_query_visitor_latency_ms(
+        query_visitor_timer->GetElapsedMilliseconds());
+  }
+
+  return results;
 }
 
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto

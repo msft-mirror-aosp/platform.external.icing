@@ -113,12 +113,12 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
     const DocumentStore* document_store, const SchemaStore* schema_store,
     const SearchSpecProto& search_spec, int64_t current_time_ms) {
   std::unordered_map<std::string, std::set<std::string>> type_property_filters;
-  // TODO(b/294274922): Add support for polymorphism in type property filters.
-  for (const TypePropertyMask& type_property_mask :
-       search_spec.type_property_filters()) {
-    type_property_filters[type_property_mask.schema_type()] =
-        std::set<std::string>(type_property_mask.paths().begin(),
-                              type_property_mask.paths().end());
+  for (const SchemaStore::ExpandedTypePropertyMask& type_property_mask :
+       schema_store->ExpandTypePropertyMasks(
+           search_spec.type_property_filters())) {
+    type_property_filters[type_property_mask.schema_type] =
+        std::set<std::string>(type_property_mask.paths.begin(),
+                              type_property_mask.paths.end());
   }
   auto data = std::make_unique<SectionRestrictData>(
       document_store, schema_store, current_time_ms, type_property_filters);
@@ -134,7 +134,9 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
   ChildrenMapper mapper;
   mapper = [&data, &mapper](std::unique_ptr<DocHitInfoIterator> iterator)
       -> std::unique_ptr<DocHitInfoIterator> {
-    if (iterator->is_leaf()) {
+    if (iterator->full_section_restriction_applied()) {
+      return iterator;
+    } else if (iterator->is_leaf()) {
       return std::make_unique<DocHitInfoIteratorSectionRestrict>(
           std::move(iterator), data);
     } else {
@@ -149,24 +151,8 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
   while (delegate_->Advance().ok()) {
     DocumentId document_id = delegate_->doc_hit_info().document_id();
-
-    auto data_optional = data_->document_store().GetAliveDocumentFilterData(
-        document_id, data_->current_time_ms());
-    if (!data_optional) {
-      // Ran into some error retrieving information on this hit, skip
-      continue;
-    }
-
-    // Guaranteed that the DocumentFilterData exists at this point
-    SchemaTypeId schema_type_id = data_optional.value().schema_type_id();
-    auto schema_type_or = data_->schema_store().GetSchemaType(schema_type_id);
-    if (!schema_type_or.ok()) {
-      // Ran into error retrieving schema type, skip
-      continue;
-    }
-    const std::string* schema_type = std::move(schema_type_or).ValueOrDie();
     SectionIdMask allowed_sections_mask =
-        data_->ComputeAllowedSectionsMask(*schema_type);
+        data_->ComputeAllowedSectionsMask(document_id);
 
     // A hit can be in multiple sections at once, need to check which of the
     // section ids match the sections allowed by type_property_masks_. This can
