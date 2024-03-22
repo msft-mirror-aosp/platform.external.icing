@@ -14,10 +14,12 @@
 
 #include "icing/schema/section-manager.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -27,6 +29,8 @@
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
@@ -37,6 +41,7 @@ namespace lib {
 
 namespace {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 using ::testing::Pointee;
@@ -48,6 +53,8 @@ static constexpr std::string_view kTypeEmail = "Email";
 static constexpr std::string_view kPropertyRecipientIds = "recipientIds";
 static constexpr std::string_view kPropertyRecipients = "recipients";
 static constexpr std::string_view kPropertySubject = "subject";
+static constexpr std::string_view kPropertySubjectEmbedding =
+    "subjectEmbedding";
 static constexpr std::string_view kPropertyTimestamp = "timestamp";
 // non-indexable
 static constexpr std::string_view kPropertyAttachment = "attachment";
@@ -109,6 +116,14 @@ PropertyConfigProto CreateSubjectPropertyConfig() {
       .Build();
 }
 
+PropertyConfigProto CreateSubjectEmbeddingPropertyConfig() {
+  return PropertyConfigBuilder()
+      .SetName(kPropertySubjectEmbedding)
+      .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+      .SetCardinality(CARDINALITY_OPTIONAL)
+      .Build();
+}
+
 PropertyConfigProto CreateTimestampPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyTimestamp)
@@ -145,6 +160,7 @@ SchemaTypeConfigProto CreateEmailTypeConfig() {
   return SchemaTypeConfigBuilder()
       .SetType(kTypeEmail)
       .AddProperty(CreateSubjectPropertyConfig())
+      .AddProperty(CreateSubjectEmbeddingPropertyConfig())
       .AddProperty(PropertyConfigBuilder()
                        .SetName(kPropertyText)
                        .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
@@ -220,11 +236,19 @@ class SectionManagerTest : public ::testing::Test {
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeConversation, 1));
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeGroup, 2));
 
+    email_subject_embedding_ = PropertyProto::VectorProto();
+    email_subject_embedding_.add_values(1.0);
+    email_subject_embedding_.add_values(2.0);
+    email_subject_embedding_.add_values(3.0);
+    email_subject_embedding_.set_model_signature("my_model");
+
     email_document_ =
         DocumentBuilder()
             .SetKey("icing", "email/1")
             .SetSchema(std::string(kTypeEmail))
             .AddStringProperty(std::string(kPropertySubject), "the subject")
+            .AddVectorProperty(std::string(kPropertySubjectEmbedding),
+                               email_subject_embedding_)
             .AddStringProperty(std::string(kPropertyText), "the text")
             .AddBytesProperty(std::string(kPropertyAttachment),
                               "attachment bytes")
@@ -265,6 +289,7 @@ class SectionManagerTest : public ::testing::Test {
   SchemaUtil::TypeConfigMap type_config_map_;
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
+  PropertyProto::VectorProto email_subject_embedding_;
   DocumentProto email_document_;
   DocumentProto conversation_document_;
   DocumentProto group_document_;
@@ -308,11 +333,21 @@ TEST_F(SectionManagerTest, ExtractSections) {
   EXPECT_THAT(section_group.integer_sections[0].content, ElementsAre(1, 2, 3));
 
   EXPECT_THAT(section_group.integer_sections[1].metadata,
-              EqualsSectionMetadata(/*expected_id=*/3,
+              EqualsSectionMetadata(/*expected_id=*/4,
                                     /*expected_property_path=*/"timestamp",
                                     CreateTimestampPropertyConfig()));
   EXPECT_THAT(section_group.integer_sections[1].content,
               ElementsAre(kDefaultTimestamp));
+
+  // Vector sections
+  EXPECT_THAT(section_group.vector_sections, SizeIs(1));
+  EXPECT_THAT(
+      section_group.vector_sections[0].metadata,
+      EqualsSectionMetadata(/*expected_id=*/3,
+                            /*expected_property_path=*/"subjectEmbedding",
+                            CreateSubjectEmbeddingPropertyConfig()));
+  EXPECT_THAT(section_group.vector_sections[0].content,
+              ElementsAre(EqualsProto(email_subject_embedding_)));
 }
 
 TEST_F(SectionManagerTest, ExtractSectionsNested) {
@@ -359,11 +394,22 @@ TEST_F(SectionManagerTest, ExtractSectionsNested) {
 
   EXPECT_THAT(
       section_group.integer_sections[1].metadata,
-      EqualsSectionMetadata(/*expected_id=*/3,
+      EqualsSectionMetadata(/*expected_id=*/4,
                             /*expected_property_path=*/"emails.timestamp",
                             CreateTimestampPropertyConfig()));
   EXPECT_THAT(section_group.integer_sections[1].content,
               ElementsAre(kDefaultTimestamp, kDefaultTimestamp));
+
+  // Vector sections
+  EXPECT_THAT(section_group.vector_sections, SizeIs(1));
+  EXPECT_THAT(section_group.vector_sections[0].metadata,
+              EqualsSectionMetadata(
+                  /*expected_id=*/3,
+                  /*expected_property_path=*/"emails.subjectEmbedding",
+                  CreateSubjectEmbeddingPropertyConfig()));
+  EXPECT_THAT(section_group.vector_sections[0].content,
+              ElementsAre(EqualsProto(email_subject_embedding_),
+                          EqualsProto(email_subject_embedding_)));
 }
 
 TEST_F(SectionManagerTest, ExtractSectionsIndexableNestedPropertiesList) {
@@ -461,7 +507,8 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
   //   0 -> recipientIds
   //   1 -> recipients
   //   2 -> subject
-  //   3 -> timestamp
+  //   3 -> subjectEmbedding
+  //   4 -> timestamp
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/0, /*section_id=*/0),
               IsOkAndHolds(Pointee(EqualsSectionMetadata(
@@ -472,13 +519,30 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
               IsOkAndHolds(Pointee(EqualsSectionMetadata(
                   /*expected_id=*/1, /*expected_property_path=*/"recipients",
                   CreateRecipientsPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/0, /*section_id=*/2),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/2, /*expected_property_path=*/"subject",
+                  CreateSubjectPropertyConfig()))));
+  EXPECT_THAT(
+      schema_type_manager->section_manager().GetSectionMetadata(
+          /*schema_type_id=*/0, /*section_id=*/3),
+      IsOkAndHolds(Pointee(EqualsSectionMetadata(
+          /*expected_id=*/3, /*expected_property_path=*/"subjectEmbedding",
+          CreateSubjectEmbeddingPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/0, /*section_id=*/4),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/4, /*expected_property_path=*/"timestamp",
+                  CreateTimestampPropertyConfig()))));
 
   // Conversation (section id -> section property path):
   //   0 -> emails.recipientIds
   //   1 -> emails.recipients
   //   2 -> emails.subject
-  //   3 -> emails.timestamp
-  //   4 -> name
+  //   3 -> emails.subjectEmbedding
+  //   4 -> emails.timestamp
+  //   5 -> name
   EXPECT_THAT(
       schema_type_manager->section_manager().GetSectionMetadata(
           /*schema_type_id=*/1, /*section_id=*/0),
@@ -497,16 +561,22 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
       IsOkAndHolds(Pointee(EqualsSectionMetadata(
           /*expected_id=*/2, /*expected_property_path=*/"emails.subject",
           CreateSubjectPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/1, /*section_id=*/3),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/3,
+                  /*expected_property_path=*/"emails.subjectEmbedding",
+                  CreateSubjectEmbeddingPropertyConfig()))));
   EXPECT_THAT(
       schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/1, /*section_id=*/3),
+          /*schema_type_id=*/1, /*section_id=*/4),
       IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/3, /*expected_property_path=*/"emails.timestamp",
+          /*expected_id=*/4, /*expected_property_path=*/"emails.timestamp",
           CreateTimestampPropertyConfig()))));
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/1, /*section_id=*/4),
+                  /*schema_type_id=*/1, /*section_id=*/5),
               IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/4, /*expected_property_path=*/"name",
+                  /*expected_id=*/5, /*expected_property_path=*/"name",
                   CreateNamePropertyConfig()))));
 
   // Group (section id -> section property path):
@@ -615,25 +685,27 @@ TEST_F(SectionManagerTest, GetSectionMetadataInvalidSectionId) {
   //   0 -> recipientIds
   //   1 -> recipients
   //   2 -> subject
-  //   3 -> timestamp
+  //   3 -> subjectEmbedding
+  //   4 -> timestamp
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/0, /*section_id=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/0, /*section_id=*/4),
+                  /*schema_type_id=*/0, /*section_id=*/5),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Conversation (section id -> section property path):
   //   0 -> emails.recipientIds
   //   1 -> emails.recipients
   //   2 -> emails.subject
-  //   3 -> emails.timestamp
-  //   4 -> name
+  //   3 -> emails.subjectEmbedding
+  //   4 -> emails.timestamp
+  //   5 -> name
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/1, /*section_id=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/1, /*section_id=*/5),
+                  /*schema_type_id=*/1, /*section_id=*/6),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
