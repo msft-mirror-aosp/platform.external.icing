@@ -168,7 +168,8 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     header_mmap_.Remap(hit_buffer_fd_.get(), kHeaderFileOffset, header_size());
     header_ = std::make_unique<LiteIndex_HeaderImpl>(
         reinterpret_cast<LiteIndex_HeaderImpl::HeaderData*>(
-            header_mmap_.address()));
+            header_mmap_.address()),
+        options_.include_property_existence_metadata_hits);
     header_->Reset();
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
@@ -183,7 +184,8 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     header_mmap_.Remap(hit_buffer_fd_.get(), kHeaderFileOffset, header_size());
     header_ = std::make_unique<LiteIndex_HeaderImpl>(
         reinterpret_cast<LiteIndex_HeaderImpl::HeaderData*>(
-            header_mmap_.address()));
+            header_mmap_.address()),
+        options_.include_property_existence_metadata_hits);
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
                           sizeof(TermIdHitPair::Value), header_->cur_size(),
