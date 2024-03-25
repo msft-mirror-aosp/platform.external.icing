@@ -28,16 +28,14 @@ namespace lib {
 // implementation.
 //
 // See https://www.zlib.net/manual.html#Checksum for more details.
-//
-// TODO (samzheng): investigate/benchmark swapping zlib crc32 with
-// util/hash/crc32c.h. Regarding util/hash/crc32c.h, CRC32C::Extend crashes as
-// described in b/145837799.
 class Crc32 {
  public:
   // Default to the checksum of an empty string, that is "0".
   Crc32() : crc_(0) {}
 
   explicit Crc32(uint32_t init_crc) : crc_(init_crc) {}
+
+  explicit Crc32(std::string_view str) : crc_(0) { Append(str); }
 
   inline bool operator==(const Crc32& other) const {
     return crc_ == other.Get();

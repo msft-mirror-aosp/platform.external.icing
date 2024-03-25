@@ -38,7 +38,7 @@ namespace {
 // (https://www.fileformat.info/info/unicode/category/index.htm). The set of
 // characters that are regarded as punctuation is not the same for std::ispunct
 // and u_ispunct.
-const std::string ascii_icu_punctuation = "!\"#%&'*,./:;?@\\_-([{}])";
+constexpr std::string_view kAsciiIcuPunctuation = "!\"#%&'*,./:;?@\\_-([{}])";
 
 }  // namespace
 
@@ -116,6 +116,8 @@ bool IsAscii(char c) { return U8_IS_SINGLE((uint8_t)c); }
 
 bool IsAscii(UChar32 c) { return U8_LENGTH(c) == 1; }
 
+bool IsAlphaNumeric(UChar32 c) { return u_isalnum(c); }
+
 int GetUtf8Length(UChar32 c) { return U8_LENGTH(c); }
 
 int GetUtf16Length(UChar32 c) { return U16_LENGTH(c); }
@@ -127,7 +129,7 @@ bool IsPunctuationAt(std::string_view input, int position, int* char_len_out) {
     if (char_len_out != nullptr) {
       *char_len_out = 1;
     }
-    return ascii_icu_punctuation.find(input[position]) != std::string::npos;
+    return kAsciiIcuPunctuation.find(input[position]) != std::string_view::npos;
   }
   UChar32 c = GetUChar32At(input.data(), input.length(), position);
   if (char_len_out != nullptr) {
@@ -156,7 +158,7 @@ void AppendUchar32ToUtf8(std::string* utf8_string, UChar32 uchar) {
   uint8_t utf8_buffer[4];  // U8_APPEND writes 0 to 4 bytes
 
   int utf8_index = 0;
-  UBool has_error = FALSE;
+  UBool has_error = false;
 
   // utf8_index is advanced to the end of the contents if successful
   U8_APPEND(utf8_buffer, utf8_index, sizeof(utf8_buffer), uchar, has_error);

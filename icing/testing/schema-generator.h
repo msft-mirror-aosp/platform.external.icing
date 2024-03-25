@@ -18,8 +18,8 @@
 #include <random>
 #include <string>
 
-#include "icing/proto/schema.proto.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
 
 namespace icing {
 namespace lib {
@@ -40,6 +40,7 @@ class ExactStringPropertyGenerator {
   }
 };
 
+// Schema generator with random number of properties
 template <typename Rand, typename PropertyGenerator>
 class RandomSchemaGenerator {
  public:
@@ -68,6 +69,37 @@ class RandomSchemaGenerator {
   }
 
   Rand* rand_;
+  PropertyGenerator* prop_generator_;
+};
+
+// Schema generator with number of properties specified by the caller
+template <typename PropertyGenerator>
+class SchemaGenerator {
+ public:
+  explicit SchemaGenerator(int num_properties,
+                           PropertyGenerator* prop_generator)
+      : num_properties_(num_properties), prop_generator_(prop_generator) {}
+
+  SchemaProto GenerateSchema(int num_types) {
+    SchemaProto schema;
+    while (--num_types >= 0) {
+      SetType(schema.add_types(), "Type" + std::to_string(num_types),
+              num_properties_);
+    }
+    return schema;
+  }
+
+ private:
+  void SetType(SchemaTypeConfigProto* type_config, std::string_view name,
+               int num_properties) const {
+    type_config->set_schema_type(name.data(), name.length());
+    while (--num_properties >= 0) {
+      std::string prop_name = "Prop" + std::to_string(num_properties);
+      (*type_config->add_properties()) = (*prop_generator_)(prop_name);
+    }
+  }
+
+  int num_properties_;
   PropertyGenerator* prop_generator_;
 };
 

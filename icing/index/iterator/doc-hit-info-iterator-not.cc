@@ -15,13 +15,15 @@
 #include "icing/index/iterator/doc-hit-info-iterator-not.h"
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
-#include "icing/schema/section.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -35,40 +37,40 @@ DocHitInfoIteratorNot::DocHitInfoIteratorNot(
           DocHitInfoIteratorAllDocumentId(document_id_limit)) {}
 
 libtextclassifier3::Status DocHitInfoIteratorNot::Advance() {
-  if (!all_document_id_iterator_.Advance().ok()) {
-    doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+  while (all_document_id_iterator_.Advance().ok()) {
+    if (all_document_id_iterator_.doc_hit_info().document_id() <
+        to_be_excluded_->doc_hit_info().document_id()) {
+      // Since DocumentIds are returned from DocHitInfoIterators in decreasing
+      // order, we have passed the last NOT result if we're smaller than its
+      // DocumentId. Advance the NOT result if so.
+      to_be_excluded_->Advance().IgnoreError();
+    }
+
+    if (all_document_id_iterator_.doc_hit_info().document_id() ==
+        to_be_excluded_->doc_hit_info().document_id()) {
+      // This is a NOT result, skip and Advance to the next result.
+      continue;
+    }
+
+    // No errors, we've found a valid result
+    doc_hit_info_ = all_document_id_iterator_.doc_hit_info();
+    return libtextclassifier3::Status::OK;
   }
 
-  if (all_document_id_iterator_.doc_hit_info().document_id() <
-      to_be_excluded_->doc_hit_info().document_id()) {
-    // Since DocumentIds are returned from DocHitInfoIterators in decreasing
-    // order, we have passed the last NOT result if we're smaller than its
-    // DocumentId. Advance the NOT result if so.
-    to_be_excluded_->Advance().IgnoreError();
-  }
-
-  if (all_document_id_iterator_.doc_hit_info().document_id() ==
-      to_be_excluded_->doc_hit_info().document_id()) {
-    // This is a NOT result, skip and Advance to the next result.
-    return Advance();
-  }
-
-  // No errors, we've found a valid result
-  doc_hit_info_ = all_document_id_iterator_.doc_hit_info();
-
-  return libtextclassifier3::Status::OK;
+  // Didn't find a hit, return with error
+  doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+  return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
 }
 
-int32_t DocHitInfoIteratorNot::GetNumBlocksInspected() const {
-  return to_be_excluded_->GetNumBlocksInspected() +
-         all_document_id_iterator_.GetNumBlocksInspected();
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorNot::TrimRightMostNode() && {
+  // Don't generate suggestion if the last operator is NOT.
+  return absl_ports::InvalidArgumentError(
+      "Cannot generate suggestion if the last term is NOT operator.");
 }
 
-int32_t DocHitInfoIteratorNot::GetNumLeafAdvanceCalls() const {
-  return to_be_excluded_->GetNumLeafAdvanceCalls() +
-         all_document_id_iterator_.GetNumLeafAdvanceCalls();
+void DocHitInfoIteratorNot::MapChildren(const ChildrenMapper& mapper) {
+  to_be_excluded_ = mapper(std::move(to_be_excluded_));
 }
 
 std::string DocHitInfoIteratorNot::ToString() const {

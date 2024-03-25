@@ -29,39 +29,42 @@ namespace lib {
 
 class TermIdHitPair {
  public:
-  // Layout bits: 24 termid + 32 hit value + 8 hit score.
+  // Layout bits: 24 termid + 32 hit value + 8 hit term frequency.
   using Value = uint64_t;
 
   static constexpr int kTermIdBits = 24;
   static constexpr int kHitValueBits = sizeof(Hit::Value) * 8;
-  static constexpr int kHitScoreBits = sizeof(Hit::Score) * 8;
+  static constexpr int kHitTermFrequencyBits = sizeof(Hit::TermFrequency) * 8;
 
   static const Value kInvalidValue;
 
   explicit TermIdHitPair(Value v = kInvalidValue) : value_(v) {}
 
   TermIdHitPair(uint32_t term_id, const Hit& hit) {
-    static_assert(
-        kTermIdBits + kHitValueBits + kHitScoreBits <= sizeof(Value) * 8,
-        "TermIdHitPairTooBig");
+    static_assert(kTermIdBits + kHitValueBits + kHitTermFrequencyBits <=
+                      sizeof(Value) * 8,
+                  "TermIdHitPairTooBig");
 
     value_ = 0;
     // Term id goes into the most significant bits because it takes
     // precedent in sorts.
-    bit_util::BitfieldSet(term_id, kHitValueBits + kHitScoreBits, kTermIdBits,
+    bit_util::BitfieldSet(term_id, kHitValueBits + kHitTermFrequencyBits,
+                          kTermIdBits, &value_);
+    bit_util::BitfieldSet(hit.value(), kHitTermFrequencyBits, kHitValueBits,
                           &value_);
-    bit_util::BitfieldSet(hit.value(), kHitScoreBits, kHitValueBits, &value_);
-    bit_util::BitfieldSet(hit.score(), 0, kHitScoreBits, &value_);
+    bit_util::BitfieldSet(hit.term_frequency(), 0, kHitTermFrequencyBits,
+                          &value_);
   }
 
   uint32_t term_id() const {
-    return bit_util::BitfieldGet(value_, kHitValueBits + kHitScoreBits,
+    return bit_util::BitfieldGet(value_, kHitValueBits + kHitTermFrequencyBits,
                                  kTermIdBits);
   }
 
   Hit hit() const {
-    return Hit(bit_util::BitfieldGet(value_, kHitScoreBits, kHitValueBits),
-               bit_util::BitfieldGet(value_, 0, kHitScoreBits));
+    return Hit(
+        bit_util::BitfieldGet(value_, kHitTermFrequencyBits, kHitValueBits),
+        bit_util::BitfieldGet(value_, 0, kHitTermFrequencyBits));
   }
 
   Value value() const { return value_; }
@@ -69,6 +72,8 @@ class TermIdHitPair {
   bool operator==(const TermIdHitPair& rhs) const {
     return value_ == rhs.value_;
   }
+
+  bool operator<(const TermIdHitPair& rhs) const { return value_ < rhs.value_; }
 
  private:
   Value value_;
