@@ -7515,6 +7515,57 @@ TEST_P(IcingSearchEngineSearchTest, EmbeddingSearch) {
   EXPECT_THAT(results.results(1).score(), DoubleNear(-2.1, kEps));
 }
 
+TEST_P(IcingSearchEngineSearchTest,
+       EmbeddingSearchWithManyFilteredOutDocuments) {
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    GTEST_SKIP() << "Embedding search is only supported in advanced query.";
+  }
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  for (int i = 0; i < 50000; ++i) {
+    DocumentProto document =
+        DocumentBuilder()
+            .SetKey("icing", "uri" + std::to_string(i))
+            .SetSchema("Email")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.1, 0.2, 0.3}))
+            .Build();
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  search_spec.add_enabled_features(std::string(kEmbeddingSearchFeature));
+  search_spec.set_search_type(GetParam());
+
+  // Create an embedding query with a range that should not match any embedding
+  // hits.
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+  search_spec.set_query("semanticSearch(getSearchSpecEmbedding(0), 100)");
+
+  SearchResultProto results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     IcingSearchEngineSearchTest, IcingSearchEngineSearchTest,
     testing::Values(
