@@ -33,9 +33,11 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -2734,9 +2736,45 @@ TEST_F(IndexTest, IndexStorageInfoProto) {
   EXPECT_THAT(storage_info.main_index_lexicon_size(), Ge(0));
   EXPECT_THAT(storage_info.main_index_storage_size(), Ge(0));
   EXPECT_THAT(storage_info.main_index_block_size(), Ge(0));
-  // There should be 1 block for the header and 1 block for two posting lists.
+  // There should be 1 block for the header and 1 block for three posting lists
+  // ("fo", "foo", "foul").
   EXPECT_THAT(storage_info.num_blocks(), Eq(2));
   EXPECT_THAT(storage_info.min_free_fraction(), Ge(0));
+}
+
+TEST_F(IndexTest, PublishQueryStats) {
+  // Add two documents to the lite index without merging.
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("foul"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Verify query stats.
+  QueryStatsProto query_stats1;
+  index_->PublishQueryStats(&query_stats1);
+  EXPECT_THAT(query_stats1.lite_index_hit_buffer_byte_size(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  EXPECT_THAT(query_stats1.lite_index_hit_buffer_unsorted_byte_size(),
+              Ge(2 * sizeof(TermIdHitPair::Value)));
+
+  // Sort lite index.
+  index_->SortLiteIndex();
+  QueryStatsProto query_stats2;
+  index_->PublishQueryStats(&query_stats2);
+  EXPECT_THAT(query_stats2.lite_index_hit_buffer_byte_size(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  EXPECT_THAT(query_stats2.lite_index_hit_buffer_unsorted_byte_size(), Eq(0));
+
+  // Merge lite index to main index.
+  ICING_ASSERT_OK(index_->Merge());
+  QueryStatsProto query_stats3;
+  index_->PublishQueryStats(&query_stats3);
+  EXPECT_THAT(query_stats3.lite_index_hit_buffer_byte_size(), Eq(0));
+  EXPECT_THAT(query_stats3.lite_index_hit_buffer_unsorted_byte_size(), Eq(0));
 }
 
 }  // namespace

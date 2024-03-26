@@ -17,7 +17,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -27,7 +26,9 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -51,11 +52,11 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
-#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -483,6 +484,9 @@ class IcingSearchEngine {
   std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index_
       ICING_GUARDED_BY(mutex_);
 
+  // Storage for all hits of embedding contents from the document store.
+  std::unique_ptr<EmbeddingIndex> embedding_index_ ICING_GUARDED_BY(mutex_);
+
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
@@ -578,8 +582,8 @@ class IcingSearchEngine {
   // read-lock, allowing for parallel non-exclusive operations.
   // This implementation is used if search_spec.use_read_only_search is true.
   SearchResultProto SearchLockedShared(const SearchSpecProto& search_spec,
-                                   const ScoringSpecProto& scoring_spec,
-                                   const ResultSpecProto& result_spec)
+                                       const ScoringSpecProto& scoring_spec,
+                                       const ResultSpecProto& result_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Implementation of IcingSearchEngine::Search that requires the overall
@@ -587,8 +591,8 @@ class IcingSearchEngine {
   // this version is used.
   // This implementation is used if search_spec.use_read_only_search is false.
   SearchResultProto SearchLockedExclusive(const SearchSpecProto& search_spec,
-                                 const ScoringSpecProto& scoring_spec,
-                                 const ResultSpecProto& result_spec)
+                                          const ScoringSpecProto& scoring_spec,
+                                          const ResultSpecProto& result_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Helper method for the actual work to Search. We need this separate
@@ -641,13 +645,14 @@ class IcingSearchEngine {
   libtextclassifier3::Status CheckConsistency()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Discards all derived data.
+  // Discards derived data that requires rebuild based on rebuild_result.
   //
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION_ERROR if those instances are valid (non nullptr)
   //   INTERNAL_ERROR on any I/O errors
-  libtextclassifier3::Status DiscardDerivedFiles()
+  libtextclassifier3::Status DiscardDerivedFiles(
+      const version_util::DerivedFilesRebuildResult& rebuild_result)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Repopulates derived data off our ground truths.
@@ -700,6 +705,7 @@ class IcingSearchEngine {
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
     bool qualified_id_join_index_needed_restoration;
+    bool embedding_index_needed_restoration;
   };
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -740,17 +746,21 @@ class IcingSearchEngine {
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
     bool qualified_id_join_index_needed_restoration;
+    bool embedding_index_needed_restoration;
 
     explicit TruncateIndexResult(
         DocumentId first_document_to_reindex_in,
         bool index_needed_restoration_in,
         bool integer_index_needed_restoration_in,
-        bool qualified_id_join_index_needed_restoration_in)
+        bool qualified_id_join_index_needed_restoration_in,
+        bool embedding_index_needed_restoration_in)
         : first_document_to_reindex(first_document_to_reindex_in),
           index_needed_restoration(index_needed_restoration_in),
           integer_index_needed_restoration(integer_index_needed_restoration_in),
           qualified_id_join_index_needed_restoration(
-              qualified_id_join_index_needed_restoration_in) {}
+              qualified_id_join_index_needed_restoration_in),
+          embedding_index_needed_restoration(
+              embedding_index_needed_restoration_in) {}
   };
   libtextclassifier3::StatusOr<TruncateIndexResult> TruncateIndicesTo(
       DocumentId last_stored_document_id)

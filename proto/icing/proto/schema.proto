@@ -34,7 +34,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 7
+// Next tag: 8
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that uniquely identifies the structured, logical
   // schema being defined.
@@ -42,6 +42,13 @@ message SchemaTypeConfigProto {
   // Recommended format: Human readable string that's one of the types defined
   // in http://schema.org. Eg: DigitalDocument, Message, Person, etc.
   optional string schema_type = 1;
+
+  // OPTIONAL: A natural language description of the SchemaTypeConfigProto.
+  //
+  // This string is not used by Icing in any way. It simply exists to allow
+  // users to store semantic information about the SchemaTypeConfigProto for
+  // future retrieval.
+  optional string description = 7;
 
   // List of all properties that are supported by Documents of this type.
   // An Document should never have properties that are not listed here.
@@ -177,6 +184,26 @@ message IntegerIndexingConfig {
   optional NumericMatchType.Code numeric_match_type = 1;
 }
 
+// Describes how a vector property should be indexed.
+// Next tag: 3
+message EmbeddingIndexingConfig {
+  // OPTIONAL: Indicates how the vector contents of this property should be
+  // matched.
+  //
+  // The default value is UNKNOWN.
+  message EmbeddingIndexingType {
+    enum Code {
+      // Contents in this property will not be indexed. Useful if the vector
+      // property type is not indexable.
+      UNKNOWN = 0;
+
+      // Contents in this property will be indexed for linear search.
+      LINEAR_SEARCH = 1;
+    }
+  }
+  optional EmbeddingIndexingType.Code embedding_indexing_type = 1;
+}
+
 // Describes how a property can be used to join this document with another
 // document. See JoinSpecProto (in search.proto) for more details.
 // Next tag: 3
@@ -208,7 +235,7 @@ message JoinableConfig {
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 9
+// Next tag: 11
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -218,6 +245,13 @@ message PropertyConfigProto {
   // Eg: 'author' for http://schema.org/DigitalDocument.
   // Eg: 'address' for http://schema.org/Place.
   optional string property_name = 1;
+
+  // OPTIONAL: A natural language description of the property.
+  //
+  // This string is not used by Icing in any way. It simply exists to allow
+  // users to store semantic information about the PropertyConfigProto for
+  // future retrieval.
+  optional string description = 9;
 
   // REQUIRED: Physical data-types of the contents of the property.
   message DataType {
@@ -238,6 +272,9 @@ message PropertyConfigProto {
       // a hierarchical Document schema. Any property using this data_type
       // MUST have a valid 'schema_type'.
       DOCUMENT = 6;
+
+      // A list of floats. Vector type is used for embedding searches.
+      VECTOR = 7;
     }
   }
   optional DataType.Code data_type = 2;
@@ -299,6 +336,10 @@ message PropertyConfigProto {
   // - The property itself and any upper-level (nested doc) property should
   //   contain at most one element (i.e. Cardinality is OPTIONAL or REQUIRED).
   optional JoinableConfig joinable_config = 8;
+
+  // OPTIONAL: Describes how vector properties should be indexed. Vector
+  // properties that do not set the indexing config will not be indexed.
+  optional EmbeddingIndexingConfig embedding_indexing_config = 10;
 }
 
 // List of all supported types constitutes the schema used by Icing.

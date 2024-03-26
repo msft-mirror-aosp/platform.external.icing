@@ -14,15 +14,16 @@
 
 #include "icing/scoring/advanced_scoring/score-expression.h"
 
-#include <cmath>
 #include <memory>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/testing/common-matchers.h"
 
 namespace icing {
@@ -47,7 +48,7 @@ class NonConstantScoreExpression : public ScoreExpression {
     return ScoreExpressionType::kDouble;
   }
 
-  bool is_constant_double() const override { return false; }
+  bool is_constant() const override { return false; }
 };
 
 class ListScoreExpression : public ScoreExpression {
@@ -87,7 +88,7 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
           OperatorScoreExpression::OperatorType::kPlus,
           MakeChildren(ConstantScoreExpression::Create(1),
                        ConstantScoreExpression::Create(1))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(2)));
 
   // 1 - 2 - 3 = -4
@@ -97,7 +98,7 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                       MakeChildren(ConstantScoreExpression::Create(1),
                                    ConstantScoreExpression::Create(2),
                                    ConstantScoreExpression::Create(3))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(-4)));
 
   // 1 * 2 * 3 * 4 = 24
@@ -108,7 +109,7 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                                    ConstantScoreExpression::Create(2),
                                    ConstantScoreExpression::Create(3),
                                    ConstantScoreExpression::Create(4))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(24)));
 
   // 1 / 2 / 4 = 0.125
@@ -118,7 +119,7 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                       MakeChildren(ConstantScoreExpression::Create(1),
                                    ConstantScoreExpression::Create(2),
                                    ConstantScoreExpression::Create(4))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(0.125)));
 
   // -(2) = -2
@@ -126,7 +127,7 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
       expression, OperatorScoreExpression::Create(
                       OperatorScoreExpression::OperatorType::kNegative,
                       MakeChildren(ConstantScoreExpression::Create(2))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(-2)));
 }
 
@@ -138,7 +139,7 @@ TEST(ScoreExpressionTest, MathFunctionSimplification) {
           MathFunctionScoreExpression::FunctionType::kPow,
           MakeChildren(ConstantScoreExpression::Create(2),
                        ConstantScoreExpression::Create(2))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(4)));
 
   // abs(-2) = 2
@@ -146,7 +147,7 @@ TEST(ScoreExpressionTest, MathFunctionSimplification) {
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kAbs,
                       MakeChildren(ConstantScoreExpression::Create(-2))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(2)));
 
   // log(e) = 1
@@ -154,7 +155,7 @@ TEST(ScoreExpressionTest, MathFunctionSimplification) {
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kLog,
                       MakeChildren(ConstantScoreExpression::Create(M_E))));
-  ASSERT_TRUE(expression->is_constant_double());
+  ASSERT_TRUE(expression->is_constant());
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
 }
 
@@ -166,7 +167,7 @@ TEST(ScoreExpressionTest, CannotSimplifyNonConstant) {
           OperatorScoreExpression::OperatorType::kPlus,
           MakeChildren(ConstantScoreExpression::Create(1),
                        NonConstantScoreExpression::Create())));
-  ASSERT_FALSE(expression->is_constant_double());
+  ASSERT_FALSE(expression->is_constant());
 
   // non_constant * non_constant = non_constant
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -174,14 +175,14 @@ TEST(ScoreExpressionTest, CannotSimplifyNonConstant) {
                       OperatorScoreExpression::OperatorType::kTimes,
                       MakeChildren(NonConstantScoreExpression::Create(),
                                    NonConstantScoreExpression::Create())));
-  ASSERT_FALSE(expression->is_constant_double());
+  ASSERT_FALSE(expression->is_constant());
 
   // -(non_constant) = non_constant
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, OperatorScoreExpression::Create(
                       OperatorScoreExpression::OperatorType::kNegative,
                       MakeChildren(NonConstantScoreExpression::Create())));
-  ASSERT_FALSE(expression->is_constant_double());
+  ASSERT_FALSE(expression->is_constant());
 
   // pow(non_constant, 2) = non_constant
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -189,21 +190,21 @@ TEST(ScoreExpressionTest, CannotSimplifyNonConstant) {
                       MathFunctionScoreExpression::FunctionType::kPow,
                       MakeChildren(NonConstantScoreExpression::Create(),
                                    ConstantScoreExpression::Create(2))));
-  ASSERT_FALSE(expression->is_constant_double());
+  ASSERT_FALSE(expression->is_constant());
 
   // abs(non_constant) = non_constant
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kAbs,
                       MakeChildren(NonConstantScoreExpression::Create())));
-  ASSERT_FALSE(expression->is_constant_double());
+  ASSERT_FALSE(expression->is_constant());
 
   // log(non_constant) = non_constant
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kLog,
                       MakeChildren(NonConstantScoreExpression::Create())));
-  ASSERT_FALSE(expression->is_constant_double());
+  ASSERT_FALSE(expression->is_constant());
 }
 
 TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgument) {
