@@ -43,6 +43,23 @@ static constexpr std::string_view kTypeNestedTest = "NestedTest";
 static constexpr std::string_view kPropertyStr = "str";
 static constexpr std::string_view kPropertyNestedDocument = "nestedDocument";
 
+TEST(PropertyUtilTest, IsParentPropertyPath) {
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo.bar"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo.bar.foo"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo.foo.bar"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo.bar", "foo.bar.foo"));
+
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo", "foofoo.bar"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar", "foo.foo.bar"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar", "foofoo.bar"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar.foo", "foo"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar.foo", "foo.bar"));
+  EXPECT_FALSE(
+      property_util::IsParentPropertyPath("foo.foo.bar", "foo.bar.foo"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo", "foo#bar.foo"));
+}
+
 TEST(PropertyUtilTest, ExtractPropertyValuesTypeString) {
   PropertyProto property;
   property.mutable_string_values()->Add("Hello, world");

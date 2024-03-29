@@ -91,7 +91,7 @@ libtextclassifier3::StatusOr<IntegerIndex::PropertyToStorageMapType>
 GetPropertyIntegerIndexStorageMap(
     const Filesystem& filesystem, const std::string& working_path,
     PostingListIntegerIndexSerializer* posting_list_serializer,
-    bool pre_mapping_fbv) {
+    int32_t num_data_threshold_for_bucket_split, bool pre_mapping_fbv) {
   ICING_ASSIGN_OR_RETURN(std::vector<std::string> property_paths,
                          GetAllExistingPropertyPaths(filesystem, working_path));
 
@@ -102,11 +102,13 @@ GetPropertyIntegerIndexStorageMap(
     }
     std::string storage_working_path =
         GetPropertyIndexStoragePath(working_path, property_path);
-    ICING_ASSIGN_OR_RETURN(std::unique_ptr<IntegerIndexStorage> storage,
-                           IntegerIndexStorage::Create(
-                               filesystem, storage_working_path,
-                               IntegerIndexStorage::Options(pre_mapping_fbv),
-                               posting_list_serializer));
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<IntegerIndexStorage> storage,
+        IntegerIndexStorage::Create(
+            filesystem, storage_working_path,
+            IntegerIndexStorage::Options(num_data_threshold_for_bucket_split,
+                                         pre_mapping_fbv),
+            posting_list_serializer));
     property_to_storage_map.insert(
         std::make_pair(property_path, std::move(storage)));
   }
@@ -141,6 +143,8 @@ libtextclassifier3::StatusOr<std::unordered_set<std::string>> CreatePropertySet(
 }  // namespace
 
 libtextclassifier3::Status IntegerIndex::Editor::IndexAllBufferedKeys() && {
+  integer_index_.SetDirty();
+
   auto iter = integer_index_.property_to_storage_map_.find(property_path_);
   IntegerIndexStorage* target_storage = nullptr;
   // 1. Check if this property already has its own individual index.
@@ -161,7 +165,8 @@ libtextclassifier3::Status IntegerIndex::Editor::IndexAllBufferedKeys() && {
               integer_index_.filesystem_,
               GetPropertyIndexStoragePath(integer_index_.working_path_,
                                           kWildcardPropertyIndexFileName),
-              IntegerIndexStorage::Options(pre_mapping_fbv_),
+              IntegerIndexStorage::Options(num_data_threshold_for_bucket_split_,
+                                           pre_mapping_fbv_),
               integer_index_.posting_list_serializer_.get()));
     }
     ICING_RETURN_IF_ERROR(
@@ -175,7 +180,8 @@ libtextclassifier3::Status IntegerIndex::Editor::IndexAllBufferedKeys() && {
             integer_index_.filesystem_,
             GetPropertyIndexStoragePath(integer_index_.working_path_,
                                         property_path_),
-            IntegerIndexStorage::Options(pre_mapping_fbv_),
+            IntegerIndexStorage::Options(num_data_threshold_for_bucket_split_,
+                                         pre_mapping_fbv_),
             integer_index_.posting_list_serializer_.get()));
     target_storage = new_storage.get();
     integer_index_.property_to_storage_map_.insert(
@@ -188,6 +194,7 @@ libtextclassifier3::Status IntegerIndex::Editor::IndexAllBufferedKeys() && {
 
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
 IntegerIndex::Create(const Filesystem& filesystem, std::string working_path,
+                     int32_t num_data_threshold_for_bucket_split,
                      bool pre_mapping_fbv) {
   if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str())) {
     // Discard working_path if metadata file is missing, and reinitialize.
@@ -195,9 +202,11 @@ IntegerIndex::Create(const Filesystem& filesystem, std::string working_path,
       ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
     }
     return InitializeNewFiles(filesystem, std::move(working_path),
+                              num_data_threshold_for_bucket_split,
                               pre_mapping_fbv);
   }
   return InitializeExistingFiles(filesystem, std::move(working_path),
+                                 num_data_threshold_for_bucket_split,
                                  pre_mapping_fbv);
 }
 
@@ -227,7 +236,7 @@ IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
         std::unique_ptr<DocHitInfoIterator> delegate,
         wildcard_index_storage_->GetIterator(key_lower, key_upper));
     std::set<std::string> property_paths = {std::move(property_path_str)};
-    return std::make_unique<DocHitInfoIteratorSectionRestrict>(
+    return DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
         std::move(delegate), &document_store, &schema_store,
         std::move(property_paths), current_time_ms);
   }
@@ -239,6 +248,8 @@ IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
 
 libtextclassifier3::Status IntegerIndex::AddPropertyToWildcardStorage(
     const std::string& property_path) {
+  SetDirty();
+
   WildcardPropertyStorage wildcard_properties;
   wildcard_properties.mutable_property_entries()->Reserve(
       wildcard_properties_set_.size());
@@ -272,7 +283,8 @@ libtextclassifier3::Status IntegerIndex::Optimize(
     // we can safely swap directories later.
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<IntegerIndex> new_integer_index,
-        Create(filesystem_, temp_working_path_ddir.dir(), pre_mapping_fbv_));
+        Create(filesystem_, temp_working_path_ddir.dir(),
+               num_data_threshold_for_bucket_split_, pre_mapping_fbv_));
     ICING_RETURN_IF_ERROR(
         TransferIndex(document_id_old_to_new, new_integer_index.get()));
     new_integer_index->set_last_added_document_id(new_last_added_document_id);
@@ -322,20 +334,24 @@ libtextclassifier3::Status IntegerIndex::Optimize(
             filesystem_,
             GetPropertyIndexStoragePath(working_path_,
                                         kWildcardPropertyIndexFileName),
-            IntegerIndexStorage::Options(pre_mapping_fbv_),
+            IntegerIndexStorage::Options(num_data_threshold_for_bucket_split_,
+                                         pre_mapping_fbv_),
             posting_list_serializer_.get()));
   }
 
   // Initialize all existing integer index storages.
-  ICING_ASSIGN_OR_RETURN(property_to_storage_map_,
-                         GetPropertyIntegerIndexStorageMap(
-                             filesystem_, working_path_,
-                             posting_list_serializer_.get(), pre_mapping_fbv_));
+  ICING_ASSIGN_OR_RETURN(
+      property_to_storage_map_,
+      GetPropertyIntegerIndexStorageMap(
+          filesystem_, working_path_, posting_list_serializer_.get(),
+          num_data_threshold_for_bucket_split_, pre_mapping_fbv_));
 
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IntegerIndex::Clear() {
+  SetDirty();
+
   // Step 1: clear property_to_storage_map_.
   property_to_storage_map_.clear();
   wildcard_index_storage_.reset();
@@ -367,6 +383,7 @@ libtextclassifier3::Status IntegerIndex::Clear() {
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
 IntegerIndex::InitializeNewFiles(const Filesystem& filesystem,
                                  std::string&& working_path,
+                                 int32_t num_data_threshold_for_bucket_split,
                                  bool pre_mapping_fbv) {
   // Create working directory.
   if (!filesystem.CreateDirectoryRecursively(working_path.c_str())) {
@@ -399,12 +416,14 @@ IntegerIndex::InitializeNewFiles(const Filesystem& filesystem,
       std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
       /*property_to_storage_map=*/{}, std::move(wildcard_property_storage),
       /*wildcard_properties_set=*/{}, /*wildcard_index_storage=*/nullptr,
-      pre_mapping_fbv));
+      num_data_threshold_for_bucket_split, pre_mapping_fbv));
 
   // Initialize info content by writing mapped memory directly.
   Info& info_ref = new_integer_index->info();
   info_ref.magic = Info::kMagic;
   info_ref.last_added_document_id = kInvalidDocumentId;
+  info_ref.num_data_threshold_for_bucket_split =
+      num_data_threshold_for_bucket_split;
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_integer_index->InitializeNewStorage());
@@ -413,9 +432,9 @@ IntegerIndex::InitializeNewFiles(const Filesystem& filesystem,
 }
 
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-IntegerIndex::InitializeExistingFiles(const Filesystem& filesystem,
-                                      std::string&& working_path,
-                                      bool pre_mapping_fbv) {
+IntegerIndex::InitializeExistingFiles(
+    const Filesystem& filesystem, std::string&& working_path,
+    int32_t num_data_threshold_for_bucket_split, bool pre_mapping_fbv) {
   // Mmap the content of the crcs and info.
   ICING_ASSIGN_OR_RETURN(
       MemoryMappedFile metadata_mmapped_file,
@@ -432,10 +451,11 @@ IntegerIndex::InitializeExistingFiles(const Filesystem& filesystem,
       std::make_unique<PostingListIntegerIndexSerializer>();
 
   // Initialize all existing integer index storages.
-  ICING_ASSIGN_OR_RETURN(PropertyToStorageMapType property_to_storage_map,
-                         GetPropertyIntegerIndexStorageMap(
-                             filesystem, working_path,
-                             posting_list_serializer.get(), pre_mapping_fbv));
+  ICING_ASSIGN_OR_RETURN(
+      PropertyToStorageMapType property_to_storage_map,
+      GetPropertyIntegerIndexStorageMap(
+          filesystem, working_path, posting_list_serializer.get(),
+          num_data_threshold_for_bucket_split, pre_mapping_fbv));
 
   std::string wildcard_property_path =
       GetWildcardPropertyStorageFilePath(working_path);
@@ -455,7 +475,8 @@ IntegerIndex::InitializeExistingFiles(const Filesystem& filesystem,
             filesystem,
             GetPropertyIndexStoragePath(working_path,
                                         kWildcardPropertyIndexFileName),
-            IntegerIndexStorage::Options(pre_mapping_fbv),
+            IntegerIndexStorage::Options(num_data_threshold_for_bucket_split,
+                                         pre_mapping_fbv),
             posting_list_serializer.get()));
   }
 
@@ -465,13 +486,21 @@ IntegerIndex::InitializeExistingFiles(const Filesystem& filesystem,
       std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
       std::move(property_to_storage_map), std::move(wildcard_property_storage),
       std::move(wildcard_properties_set), std::move(wildcard_index_storage),
-      pre_mapping_fbv));
+      num_data_threshold_for_bucket_split, pre_mapping_fbv));
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(integer_index->InitializeExistingStorage());
 
   // Validate magic.
   if (integer_index->info().magic != Info::kMagic) {
     return absl_ports::FailedPreconditionError("Incorrect magic value");
+  }
+
+  // If num_data_threshold_for_bucket_split mismatches, then return error to let
+  // caller rebuild.
+  if (integer_index->info().num_data_threshold_for_bucket_split !=
+      num_data_threshold_for_bucket_split) {
+    return absl_ports::FailedPreconditionError(
+        "Mismatch num_data_threshold_for_bucket_split");
   }
 
   return integer_index;
@@ -488,7 +517,8 @@ IntegerIndex::TransferIntegerIndexStorage(
       std::unique_ptr<IntegerIndexStorage> new_storage,
       IntegerIndexStorage::Create(
           new_integer_index->filesystem_, new_storage_working_path,
-          IntegerIndexStorage::Options(pre_mapping_fbv_),
+          IntegerIndexStorage::Options(num_data_threshold_for_bucket_split_,
+                                       pre_mapping_fbv_),
           new_integer_index->posting_list_serializer_.get()));
 
   ICING_RETURN_IF_ERROR(
@@ -552,7 +582,11 @@ libtextclassifier3::Status IntegerIndex::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk() {
+libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk(bool force) {
+  if (!force && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   for (auto& [_, storage] : property_to_storage_map_) {
     ICING_RETURN_IF_ERROR(storage->PersistToDisk());
   }
@@ -564,18 +598,32 @@ libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk() {
+libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk(bool force) {
+  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   // Changes should have been applied to the underlying file when using
   // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
   // extra safety step to ensure they are written out.
   return metadata_mmapped_file_->PersistToDisk();
 }
 
-libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeInfoChecksum() {
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeInfoChecksum(
+    bool force) {
+  if (!force && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+
   return info().ComputeChecksum();
 }
 
-libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum() {
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum(
+    bool force) {
+  if (!force && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
   // XOR all crcs of all storages. Since XOR is commutative and associative,
   // the order doesn't matter.
   uint32_t storages_checksum = 0;

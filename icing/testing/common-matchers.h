@@ -29,6 +29,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
@@ -68,6 +69,39 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
       section_mask);
   return actual.document_id() == document_id &&
          actual.hit_section_ids_mask() == section_mask;
+}
+
+// Used to match a DocHitInfoIterator::CallStats
+MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
+           num_leaf_advance_calls_main_index,
+           num_leaf_advance_calls_integer_index,
+           num_leaf_advance_calls_no_index, num_blocks_inspected, "") {
+  const DocHitInfoIterator::CallStats& actual = arg;
+  *result_listener << IcingStringUtil::StringPrintf(
+      "(actual is {num_leaf_advance_calls_lite_index=%d, "
+      "num_leaf_advance_calls_main_index=%d, "
+      "num_leaf_advance_calls_integer_index=%d, "
+      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}, but "
+      "expected was {num_leaf_advance_calls_lite_index=%d, "
+      "num_leaf_advance_calls_main_index=%d, "
+      "num_leaf_advance_calls_integer_index=%d, "
+      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}.)",
+      actual.num_leaf_advance_calls_lite_index,
+      actual.num_leaf_advance_calls_main_index,
+      actual.num_leaf_advance_calls_integer_index,
+      actual.num_leaf_advance_calls_no_index, actual.num_blocks_inspected,
+      num_leaf_advance_calls_lite_index, num_leaf_advance_calls_main_index,
+      num_leaf_advance_calls_integer_index, num_leaf_advance_calls_no_index,
+      num_blocks_inspected);
+  return actual.num_leaf_advance_calls_lite_index ==
+             num_leaf_advance_calls_lite_index &&
+         actual.num_leaf_advance_calls_main_index ==
+             num_leaf_advance_calls_main_index &&
+         actual.num_leaf_advance_calls_integer_index ==
+             num_leaf_advance_calls_integer_index &&
+         actual.num_leaf_advance_calls_no_index ==
+             num_leaf_advance_calls_no_index &&
+         actual.num_blocks_inspected == num_blocks_inspected;
 }
 
 struct ExtractTermFrequenciesResult {
@@ -241,7 +275,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_changed_fully_compatible_by_name ==
           expected.schema_types_changed_fully_compatible_by_name &&
       actual.schema_types_index_incompatible_by_name ==
-          expected.schema_types_index_incompatible_by_name) {
+          expected.schema_types_index_incompatible_by_name &&
+      actual.schema_types_join_incompatible_by_name ==
+          expected.schema_types_join_incompatible_by_name) {
     return true;
   }
 
@@ -338,6 +374,21 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
                               ","),
           "]");
 
+  // Format schema_types_join_incompatible_by_name
+  std::string actual_schema_types_join_incompatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(actual.schema_types_join_incompatible_by_name,
+                              ","),
+          "]");
+
+  std::string expected_schema_types_join_incompatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(expected.schema_types_join_incompatible_by_name,
+                              ","),
+          "]");
+
   *result_listener << IcingStringUtil::StringPrintf(
       "\nExpected {\n"
       "\tsuccess=%d,\n"
@@ -347,8 +398,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
       "\tschema_types_new_by_name=%s,\n"
-      "\tschema_types_index_incompatible_by_name=%s,\n"
       "\tschema_types_changed_fully_compatible_by_name=%s\n"
+      "\tschema_types_index_incompatible_by_name=%s,\n"
+      "\tschema_types_join_incompatible_by_name=%s\n"
       "}\n"
       "Actual {\n"
       "\tsuccess=%d,\n"
@@ -358,8 +410,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
       "\tschema_types_new_by_name=%s,\n"
-      "\tschema_types_index_incompatible_by_name=%s,\n"
       "\tschema_types_changed_fully_compatible_by_name=%s\n"
+      "\tschema_types_index_incompatible_by_name=%s,\n"
+      "\tschema_types_join_incompatible_by_name=%s\n"
       "}\n",
       expected.success, expected_old_schema_type_ids_changed.c_str(),
       expected_schema_types_deleted_by_name.c_str(),
@@ -368,7 +421,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       expected_schema_types_incompatible_by_id.c_str(),
       expected_schema_types_new_by_name.c_str(),
       expected_schema_types_changed_fully_compatible_by_name.c_str(),
-      expected_schema_types_index_incompatible_by_name.c_str(), actual.success,
+      expected_schema_types_index_incompatible_by_name.c_str(),
+      expected_schema_types_join_incompatible_by_name.c_str(), actual.success,
       actual_old_schema_type_ids_changed.c_str(),
       actual_schema_types_deleted_by_name.c_str(),
       actual_schema_types_deleted_by_id.c_str(),
@@ -376,7 +430,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual_schema_types_incompatible_by_id.c_str(),
       actual_schema_types_new_by_name.c_str(),
       actual_schema_types_changed_fully_compatible_by_name.c_str(),
-      actual_schema_types_index_incompatible_by_name.c_str());
+      actual_schema_types_index_incompatible_by_name.c_str(),
+      actual_schema_types_join_incompatible_by_name.c_str());
   return false;
 }
 

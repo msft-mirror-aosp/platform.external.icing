@@ -716,7 +716,7 @@ TEST_F(IcingDynamicTrieTest, Properties) {
 
   static const uint32_t kOne = 1;
   uint32_t val_idx;
-  trie.Insert("abcd", &kOne, &val_idx, false);
+  ICING_ASSERT_OK(trie.Insert("abcd", &kOne, &val_idx, false));
   trie.SetProperty(val_idx, 0);
   trie.SetProperty(val_idx, 3);
 
@@ -736,7 +736,7 @@ TEST_F(IcingDynamicTrieTest, Properties) {
   }
 
   // Persist after sync.
-  trie.Insert("abcd", &kOne, &val_idx, false);
+  ICING_ASSERT_OK(trie.Insert("abcd", &kOne, &val_idx, false));
   trie.SetProperty(val_idx, 1);
   ASSERT_TRUE(trie.Sync());
   trie.Close();
@@ -770,15 +770,15 @@ TEST_F(IcingDynamicTrieTest, ClearSingleProperty) {
 
   static const uint32_t kOne = 1;
   uint32_t val_idx[3];
-  trie.Insert("abcd", &kOne, &val_idx[0], false);
+  ICING_ASSERT_OK(trie.Insert("abcd", &kOne, &val_idx[0], false));
   trie.SetProperty(val_idx[0], 0);
   trie.SetProperty(val_idx[0], 3);
 
-  trie.Insert("efgh", &kOne, &val_idx[1], false);
+  ICING_ASSERT_OK(trie.Insert("efgh", &kOne, &val_idx[1], false));
   trie.SetProperty(val_idx[1], 0);
   trie.SetProperty(val_idx[1], 3);
 
-  trie.Insert("ijkl", &kOne, &val_idx[2], false);
+  ICING_ASSERT_OK(trie.Insert("ijkl", &kOne, &val_idx[2], false));
   trie.SetProperty(val_idx[2], 0);
   trie.SetProperty(val_idx[2], 3);
 

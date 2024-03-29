@@ -97,13 +97,14 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -198,8 +199,7 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   auto original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "hi");
-  original_iterator->set_hit_intersect_section_ids_mask(
-      original_section_id_mask);
+  original_iterator->set_hit_section_ids_mask(original_section_id_mask);
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -217,7 +217,7 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
   // The expected mask is the same as the original mask, since the iterator
   // should treat it as a pass-through.
   SectionIdMask expected_section_id_mask = original_section_id_mask;
-  EXPECT_EQ(property_defined_iterator.hit_intersect_section_ids_mask(),
+  EXPECT_EQ(property_defined_iterator.doc_hit_info().hit_section_ids_mask(),
             expected_section_id_mask);
 
   property_defined_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
