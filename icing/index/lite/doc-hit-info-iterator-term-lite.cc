@@ -65,12 +65,11 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
+  ++num_advance_calls_;
   doc_hit_info_ = cached_hits_.at(cached_hits_idx_);
-  hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
 }
 
