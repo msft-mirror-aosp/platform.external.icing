@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/util/status-macros.h"
@@ -28,22 +29,43 @@ namespace icing {
 namespace lib {
 
 template <typename T>
-class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
+class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
  public:
   explicit DocHitInfoIteratorNumeric(
       std::unique_ptr<typename NumericIndex<T>::Iterator> numeric_index_iter)
       : numeric_index_iter_(std::move(numeric_index_iter)) {}
 
   libtextclassifier3::Status Advance() override {
+    // If the query property path doesn't exist (i.e. the storage doesn't
+    // exist), then numeric_index_iter_ will be nullptr.
+    if (numeric_index_iter_ == nullptr) {
+      return absl_ports::ResourceExhaustedError("End of iterator");
+    }
+
     ICING_RETURN_IF_ERROR(numeric_index_iter_->Advance());
 
     doc_hit_info_ = numeric_index_iter_->GetDocHitInfo();
     return libtextclassifier3::Status::OK;
   }
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
+    return absl_ports::InvalidArgumentError(
+        "Cannot generate suggestion if the last term is numeric operator.");
+  }
 
-  int32_t GetNumLeafAdvanceCalls() const override { return 0; }
+  CallStats GetCallStats() const override {
+    if (numeric_index_iter_ == nullptr) {
+      return CallStats();
+    }
+
+    return CallStats(/*num_leaf_advance_calls_lite_index_in=*/0,
+                     /*num_leaf_advance_calls_main_index_in=*/0,
+                     /*num_leaf_advance_calls_integer_index_in=*/
+                     numeric_index_iter_->GetNumAdvanceCalls(),
+                     /*num_leaf_advance_calls_no_index_in=*/0,
+                     /*num_blocks_inspected_in=*/
+                     numeric_index_iter_->GetNumBlocksInspected());
+  }
 
   std::string ToString() const override { return "test"; }
 

@@ -296,12 +296,19 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
   //   2. '@' became a word connector
   //   3. <numeric><word-connector><numeric> such as "3'14" is now considered as
   //      a single token.
-  if (IsIcu72PlusTokenization()) {
+  if (GetIcuTokenizationVersion() >= 72) {
     EXPECT_THAT(
         language_segmenter->GetAllTerms("com:google:android"),
         IsOkAndHolds(ElementsAre("com", ":", "google", ":", "android")));
-    EXPECT_THAT(language_segmenter->GetAllTerms("com@google@android"),
-                IsOkAndHolds(ElementsAre("com@google@android")));
+    // In ICU 74, the rules for '@' were reverted.
+    if (GetIcuTokenizationVersion() >= 74) {
+      EXPECT_THAT(
+          language_segmenter->GetAllTerms("com@google@android"),
+          IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));
+    } else {
+      EXPECT_THAT(language_segmenter->GetAllTerms("com@google@android"),
+                  IsOkAndHolds(ElementsAre("com@google@android")));
+    }
     EXPECT_THAT(language_segmenter->GetAllTerms("3'14"),
                 IsOkAndHolds(ElementsAre("3'14")));
   } else {
@@ -1288,6 +1295,50 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, QuerySyntax) {
   EXPECT_THAT(terms, ElementsAre("(", "-", "term1", " ", "OR", " ", "term2",
                                  ")", " ", "AND", " ", "property1", ".",
                                  "subproperty2", ":", "term3"));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest, MultipleLangSegmentersTest) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(
+          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LanguageSegmenter::Iterator> iterator_one,
+      language_segmenter->Segment("foo bar baz"));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LanguageSegmenter::Iterator> iterator_two,
+      language_segmenter->Segment("abra kadabra alakazam"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("foo"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("abra"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("kadabra"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+
+  ASSERT_TRUE(iterator_two->Advance());
+  ASSERT_TRUE(iterator_one->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("baz"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("alakazam"));
+
+  ASSERT_FALSE(iterator_two->Advance());
+  ASSERT_FALSE(iterator_one->Advance());
 }
 
 INSTANTIATE_TEST_SUITE_P(
