@@ -236,8 +236,7 @@ libtextclassifier3::Status ValidateSuggestionSpec(
 }
 
 bool IsV2QualifiedIdJoinIndexEnabled(const IcingSearchEngineOptions& options) {
-  return options.use_new_qualified_id_join_index() &&
-         options.document_store_namespace_id_fingerprint();
+  return true;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
@@ -715,7 +714,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // directory now.
     // Discard index directory and instantiate a new one.
     Index::Options index_options(index_dir, options_.index_merge_size(),
-                                 options_.lite_index_sort_at_indexing(),
+                                 /*lite_index_sort_at_indexing=*/true,
                                  options_.lite_index_sort_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -887,8 +886,8 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
       DocumentStore::Create(
           filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
           force_recovery_and_revalidate_documents,
-          options_.document_store_namespace_id_fingerprint(),
-          options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+          /*document_store_namespace_id_fingerprint=*/true,
+          /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
 
@@ -907,7 +906,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
         absl_ports::StrCat("Could not create directory: ", index_dir));
   }
   Index::Options index_options(index_dir, options_.index_merge_size(),
-                               options_.lite_index_sort_at_indexing(),
+                               /*lite_index_sort_at_indexing=*/true,
                                options_.lite_index_sort_size());
 
   // Term index
@@ -2498,8 +2497,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     auto create_result_or = DocumentStore::Create(
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-        options_.document_store_namespace_id_fingerprint(),
-        options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+        /*document_store_namespace_id_fingerprint=*/true,
+        /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
         options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
@@ -2526,8 +2525,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   auto create_result_or = DocumentStore::Create(
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-      options_.document_store_namespace_id_fingerprint(),
-      options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+      /*document_store_namespace_id_fingerprint=*/true,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
