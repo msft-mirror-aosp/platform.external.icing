@@ -79,8 +79,8 @@ class ResultStateV2Test : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, doc_store_base_dir_, &clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
