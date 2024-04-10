@@ -202,6 +202,18 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DocHitInfoIterator>>>
   PopAllPendingIterators();
 
+  // Processes the TEXT segment within text_value. Processing includes
+  // tokenizing the text, normalizing it and outputting a DocHitIterator that
+  // ANDs all the produced tokens together.
+  // Returns:
+  //   - On success, a DocHitInfoIterator representing the tokenized text from
+  //     text_value
+  //   - INVALID_ARGUMENT if the tokenizer produces more than one token within
+  //       a token group.
+  //   - Any errors that could be produced by Tokenizer::Tokenize.
+  libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
+  ProduceTextTokenIterators(QueryTerm text_value);
+
   // Processes the unary operator node as a NOT operator. A NOT can have an
   // operator type of "NOT" or "MINUS"
   //
@@ -299,6 +311,14 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   //     an embedding vector that has a score within [low, high].
   //   - any errors returned by Lexer::ExtractTokens
   libtextclassifier3::StatusOr<PendingValue> SemanticSearchFunction(
+      std::vector<PendingValue>&& args);
+
+  // Implementation of the tokenize(string) custom function.
+  // Returns:
+  //   - a Pending Value holding a DocHitIterator that returns hits for all
+  //     documents containing the normalized tokens present in the string.
+  //   - any errors returned by ProduceTextTokenIterators
+  libtextclassifier3::StatusOr<PendingValue> TokenizeFunction(
       std::vector<PendingValue>&& args);
 
   // Handles a NaryOperatorNode where the operator is HAS (':') and pushes an
