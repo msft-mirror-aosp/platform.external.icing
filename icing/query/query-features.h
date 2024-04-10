@@ -57,10 +57,15 @@ constexpr Feature kHasPropertyFunctionFeature =
 constexpr Feature kEmbeddingSearchFeature =
     "EMBEDDING_SEARCH";  // Features#EMBEDDING_SEARCH
 
+// This feature relates to the use of the tokenize function which returns an
+// iterator that ANDs all of the normalized tokens in its string.
+// Ex. `tokenize("foo.bar\" baz(")`.
+constexpr Feature kTokenizeFeature = "TOKENIZE";  // Features#TOKENIZE
+
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
-  return {kNumericSearchFeature, kVerbatimSearchFeature,
+  return {kNumericSearchFeature,           kVerbatimSearchFeature,
           kListFilterQueryLanguageFeature, kHasPropertyFunctionFeature,
-          kEmbeddingSearchFeature};
+          kEmbeddingSearchFeature,         kTokenizeFeature};
 }
 
 }  // namespace lib

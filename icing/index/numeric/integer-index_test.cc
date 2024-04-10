@@ -87,8 +87,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, document_store_dir, &clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -159,8 +159,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, document_store_dir, &clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));

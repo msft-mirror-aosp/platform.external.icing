@@ -157,7 +157,7 @@ class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
                               /*force_recovery_and_revalidate_documents=*/false,
                               /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
+                              /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
                                   DocumentWrapper>::kDeflateCompressionLevel,
                               /*initialize_stats=*/nullptr));

@@ -281,6 +281,17 @@ void QueryVisitor::RegisterFunctions() {
           .ValueOrDie();
   registered_functions_.insert(
       {semantic_search_function.name(), std::move(semantic_search_function)});
+
+  // DocHitInfoIterator tokenize(std::string);
+  auto tokenize = [this](std::vector<PendingValue>&& args) {
+    return this->TokenizeFunction(std::move(args));
+  };
+  Function tokenize_function =
+      Function::Create(DataType::kDocumentIterator, "tokenize",
+                       {Param(DataType::kString)}, std::move(tokenize))
+          .ValueOrDie();
+  registered_functions_.insert(
+      {tokenize_function.name(), std::move(tokenize_function)});
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
@@ -421,6 +432,10 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   if (args.size() >= 3) {
     high = args.at(2).double_val().ValueOrDie();
   }
+  if (low > high) {
+    return absl_ports::InvalidArgumentError(
+        "The lower bound cannot be greater than the upper bound.");
+  }
   if (args.size() >= 4) {
     const std::string& metric = args.at(3).string_val().ValueOrDie()->term;
     ICING_ASSIGN_OR_RETURN(
@@ -448,6 +463,17 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
                              &embedding_query_vectors_->at(vector_index),
                              std::move(section_restrict_data), metric_type, low,
                              high, score_map, &embedding_index_));
+  return PendingValue(std::move(iterator));
+}
+
+libtextclassifier3::StatusOr<PendingValue> QueryVisitor::TokenizeFunction(
+    std::vector<PendingValue>&& args) {
+  features_.insert(kTokenizeFeature);
+
+  QueryTerm text_value = std::move(args.at(0)).string_val().ValueOrDie();
+  text_value.is_prefix_val = false;  // the prefix operator cannot be used here.
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
+                         ProduceTextTokenIterators(std::move(text_value)));
   return PendingValue(std::move(iterator));
 }
 
@@ -481,6 +507,60 @@ libtextclassifier3::StatusOr<QueryTerm> QueryVisitor::PopPendingTextValue() {
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
+QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> token_itr,
+                         tokenizer_.Tokenize(text_value.term));
+  std::string normalized_term;
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  // raw_text is the portion of text_value.raw_term that hasn't yet been
+  // matched to any of the tokens that we've processed. escaped_token will
+  // hold the portion of raw_text that corresponds to the current token that
+  // is being processed.
+  std::string_view raw_text = text_value.raw_term;
+  std::string_view raw_token;
+  bool reached_final_token = !token_itr->Advance();
+  // If the term is different then the raw_term, then there must have been some
+  // escaped characters that we will need to handle.
+  while (!reached_final_token) {
+    std::vector<Token> tokens = token_itr->GetTokens();
+    if (tokens.size() > 1) {
+      // The tokenizer iterator iterates between token groups. In practice,
+      // the tokenizer used with QueryVisitor (PlainTokenizer) will always
+      // only produce a single token per token group.
+      return absl_ports::InvalidArgumentError(
+          "Encountered unexpected token group with >1 tokens.");
+    }
+
+    reached_final_token = !token_itr->Advance();
+    const Token& token = tokens.at(0);
+    if (reached_final_token && token.text.length() == raw_text.length()) {
+      // Unescaped tokens are strictly smaller than their escaped counterparts
+      // This means that if we're at the final token and token.length equals
+      // raw_text, then all of raw_text must correspond to this token.
+      raw_token = raw_text;
+    } else {
+      ICING_ASSIGN_OR_RETURN(
+          raw_token, string_util::FindEscapedToken(raw_text, token.text));
+    }
+    normalized_term = normalizer_.NormalizeTerm(token.text);
+    QueryTerm term_value{std::move(normalized_term), raw_token,
+                         reached_final_token && text_value.is_prefix_val};
+    ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
+                           CreateTermIterator(std::move(term_value)));
+    iterators.push_back(std::move(iterator));
+
+    // Remove escaped_token from raw_text now that we've processed
+    // raw_text.
+    const char* escaped_token_end = raw_token.data() + raw_token.length();
+    raw_text = raw_text.substr(escaped_token_end - raw_text.data());
+  }
+  // Finally, create an And Iterator. If there's only a single term here, then
+  // it will just return that term iterator. Otherwise, segmented text is
+  // treated as a group of terms AND'd together.
+  return CreateAndIterator(std::move(iterators));
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 QueryVisitor::PopPendingIterator() {
   if (pending_values_.empty() || pending_values_.top().is_placeholder()) {
     return absl_ports::InvalidArgumentError("Unable to retrieve iterator.");
@@ -496,57 +576,7 @@ QueryVisitor::PopPendingIterator() {
     return CreateTermIterator(std::move(string_value));
   } else {
     ICING_ASSIGN_OR_RETURN(QueryTerm text_value, PopPendingTextValue());
-    ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> token_itr,
-                           tokenizer_.Tokenize(text_value.term));
-    std::string normalized_term;
-    std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
-    // The tokenizer will produce 1+ tokens out of the text. The prefix operator
-    // only applies to the final token.
-    bool reached_final_token = !token_itr->Advance();
-    // raw_text is the portion of text_value.raw_term that hasn't yet been
-    // matched to any of the tokens that we've processed. escaped_token will
-    // hold the portion of raw_text that corresponds to the current token that
-    // is being processed.
-    std::string_view raw_text = text_value.raw_term;
-    std::string_view raw_token;
-    while (!reached_final_token) {
-      std::vector<Token> tokens = token_itr->GetTokens();
-      if (tokens.size() > 1) {
-        // The tokenizer iterator iterates between token groups. In practice,
-        // the tokenizer used with QueryVisitor (PlainTokenizer) will always
-        // only produce a single token per token group.
-        return absl_ports::InvalidArgumentError(
-            "Encountered unexpected token group with >1 tokens.");
-      }
-
-      reached_final_token = !token_itr->Advance();
-      const Token& token = tokens.at(0);
-      if (reached_final_token && token.text.length() == raw_text.length()) {
-        // Unescaped tokens are strictly smaller than their escaped counterparts
-        // This means that if we're at the final token and token.length equals
-        // raw_text, then all of raw_text must correspond to this token.
-        raw_token = raw_text;
-      } else {
-        ICING_ASSIGN_OR_RETURN(
-            raw_token, string_util::FindEscapedToken(raw_text, token.text));
-      }
-      normalized_term = normalizer_.NormalizeTerm(token.text);
-      QueryTerm term_value{std::move(normalized_term), raw_token,
-                           reached_final_token && text_value.is_prefix_val};
-      ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
-                             CreateTermIterator(std::move(term_value)));
-      iterators.push_back(std::move(iterator));
-
-      // Remove escaped_token from raw_text now that we've processed
-      // raw_text.
-      const char* escaped_token_end = raw_token.data() + raw_token.length();
-      raw_text = raw_text.substr(escaped_token_end - raw_text.data());
-    }
-
-    // Finally, create an And Iterator. If there's only a single term here, then
-    // it will just return that term iterator. Otherwise, segmented text is
-    // treated as a group of terms AND'd together.
-    return CreateAndIterator(std::move(iterators));
+    return ProduceTextTokenIterators(std::move(text_value));
   }
 }
 

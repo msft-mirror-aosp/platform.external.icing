@@ -206,7 +206,7 @@ std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
 libtextclassifier3::StatusOr<std::unique_ptr<
     KeyMapper<DocumentId, fingerprint_util::FingerprintStringFormatter>>>
 CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
-                bool pre_mapping_fbv, bool use_persistent_hash_map) {
+                bool use_persistent_hash_map) {
   std::string uri_hash_mapper_working_path =
       MakeUriHashMapperWorkingPath(base_dir);
   // Due to historic issue, we use document store's base_dir directly as
@@ -228,7 +228,7 @@ CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
     return PersistentHashMapKeyMapper<
         DocumentId, fingerprint_util::FingerprintStringFormatter>::
         Create(filesystem, std::move(uri_hash_mapper_working_path),
-               pre_mapping_fbv,
+               /*pre_mapping_fbv=*/false,
                /*max_num_entries=*/kUriHashKeyMapperMaxNumEntries,
                /*average_kv_byte_size=*/kUriHashKeyMapperKVByteSize);
   } else {
@@ -475,8 +475,8 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto document_key_mapper_or = CreateUriMapper(
-      *filesystem_, base_dir_, pre_mapping_fbv_, use_persistent_hash_map_);
+  auto document_key_mapper_or =
+      CreateUriMapper(*filesystem_, base_dir_, use_persistent_hash_map_);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to initialize KeyMapper";
@@ -714,8 +714,8 @@ libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
 
   // TODO(b/216487496): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto document_key_mapper_or = CreateUriMapper(
-      *filesystem_, base_dir_, pre_mapping_fbv_, use_persistent_hash_map_);
+  auto document_key_mapper_or =
+      CreateUriMapper(*filesystem_, base_dir_, use_persistent_hash_map_);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to re-init key mapper";

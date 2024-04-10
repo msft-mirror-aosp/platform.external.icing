@@ -278,7 +278,6 @@ Index::FindTermsByPrefix(
     return term_metadata_list;
   }
   // Get results from the LiteIndex.
-  // TODO(b/250648165) support score term by prefix_hit in lite_index.
   ICING_ASSIGN_OR_RETURN(
       std::vector<TermMetadata> lite_term_metadata_list,
       FindLiteTermsByPrefix(prefix, rank_by, suggestion_result_checker));

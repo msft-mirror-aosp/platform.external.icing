@@ -129,6 +129,16 @@ class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
   //   - Any error from posting lists.
   libtextclassifier3::StatusOr<const EmbeddingHit*> AdvanceToNextEmbeddingHit();
 
+  // Similar to Advance(), this method advances the iterator to the next
+  // document, but it does not guarantee that the next document will have
+  // a matched embedding hit within the score range.
+  //
+  // Returns:
+  //   - OK, if it is able to advance to a new document_id.
+  //   - RESOUCE_EXHAUSTED, if we have run out of document_ids to iterate over.
+  //   - Any error from posting lists.
+  libtextclassifier3::Status AdvanceToNextUnfilteredDocument();
+
   // Query information
   const PropertyProto::VectorProto& query_;                     // Does not own
   std::unique_ptr<SectionRestrictData> section_restrict_data_;  // Nullable.
