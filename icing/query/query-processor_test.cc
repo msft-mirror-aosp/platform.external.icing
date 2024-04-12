@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -36,6 +37,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-features.h"
+#include "icing/query/query-results.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -113,7 +115,9 @@ class QueryProcessorTest
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
-                           /*index_merge_size=*/1024 * 1024);
+                           /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
     // TODO(b/249829533): switch to use persistent numeric index.
@@ -1097,7 +1101,7 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
       IsOk());
   EXPECT_THAT(AddTokenToIndex(document_id1, section_id, term_match_type, "dog"),
               IsOk());
-  index_->Merge();
+  ICING_ASSERT_OK(index_->Merge());
 
   // Document 2 has content "animal kitten cat"
   EXPECT_THAT(
@@ -3173,6 +3177,147 @@ TEST_P(QueryProcessorTest, NumericFilterWithoutEnablingFeatureFails) {
                                     fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(result_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryProcessorTest, GroupingInSectionRestriction) {
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    GTEST_SKIP() << "Grouping in section restriction is only supported in "
+                    "advanced query.";
+  }
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
+
+  SectionId prop1_section_id = 0;
+  SectionId prop2_section_id = 1;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Create documents as follows:
+  //   Doc0:
+  //     prop1: "foo"
+  //     prop2: "bar"
+  //   Doc1:
+  //     prop1: "bar"
+  //     prop2: "foo"
+  //   Doc2:
+  //     prop1: "foo bar"
+  //     prop2: ""
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id0,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "0")
+                                                      .SetSchema("email")
+                                                      .Build()));
+  EXPECT_THAT(
+      AddTokenToIndex(document_id0, prop1_section_id, term_match_type, "foo"),
+      IsOk());
+  EXPECT_THAT(
+      AddTokenToIndex(document_id0, prop2_section_id, term_match_type, "bar"),
+      IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "1")
+                                                      .SetSchema("email")
+                                                      .Build()));
+  EXPECT_THAT(
+      AddTokenToIndex(document_id1, prop1_section_id, term_match_type, "bar"),
+      IsOk());
+  EXPECT_THAT(
+      AddTokenToIndex(document_id1, prop2_section_id, term_match_type, "foo"),
+      IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "2")
+                                                      .SetSchema("email")
+                                                      .Build()));
+  EXPECT_THAT(
+      AddTokenToIndex(document_id2, prop1_section_id, term_match_type, "foo"),
+      IsOk());
+  EXPECT_THAT(
+      AddTokenToIndex(document_id2, prop1_section_id, term_match_type, "bar"),
+      IsOk());
+
+  // prop1:(foo bar) <=> prop1:foo AND prop1:bar, which matches doc2.
+  SearchSpecProto search_spec;
+  search_spec.set_query("prop1:(foo bar)");
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(EqualsDocHitInfo(
+                  document_id2, std::vector<SectionId>{prop1_section_id})));
+
+  // prop2:(foo bar) <=> prop2:foo AND prop2:bar, which matches nothing.
+  search_spec.set_query("prop2:(foo bar)");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
+
+  // prop1:(foo -bar) <=> prop1:foo AND -prop1:bar, which matches doc0.
+  search_spec.set_query("prop1:(foo -bar)");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(EqualsDocHitInfo(
+                  document_id0, std::vector<SectionId>{prop1_section_id})));
+
+  // prop2:(-foo OR bar) <=> -prop2:foo OR prop2:bar, which matches doc0 and
+  // doc2.
+  search_spec.set_query("prop2:(-foo OR bar)");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(
+      GetDocHitInfos(results.root_iterator.get()),
+      ElementsAre(EqualsDocHitInfo(document_id2, std::vector<SectionId>{}),
+                  EqualsDocHitInfo(document_id0,
+                                   std::vector<SectionId>{prop2_section_id})));
+
+  // prop1:((foo AND bar) OR (foo AND -baz))
+  // <=> ((prop1:foo AND prop1:bar) OR (prop1:foo AND -prop1:baz)), which
+  // matches doc0 and doc2.
+  search_spec.set_query("prop1:((foo AND bar) OR (foo AND -baz))");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(
+      GetDocHitInfos(results.root_iterator.get()),
+      ElementsAre(EqualsDocHitInfo(document_id2,
+                                   std::vector<SectionId>{prop1_section_id}),
+                  EqualsDocHitInfo(document_id0,
+                                   std::vector<SectionId>{prop1_section_id})));
 }
 
 INSTANTIATE_TEST_SUITE_P(
