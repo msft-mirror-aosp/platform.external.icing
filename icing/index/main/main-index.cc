@@ -751,6 +751,13 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
                          old_pl_accessor.GetNextHitsBatch());
   while (!tmp.empty()) {
     for (const Hit& hit : tmp) {
+      // A safety check to add robustness to the codebase, so to make sure that
+      // we never access invalid memory, in case that hit from the posting list
+      // is corrupted.
+      if (hit.document_id() < 0 ||
+          hit.document_id() >= document_id_old_to_new.size()) {
+        continue;
+      }
       DocumentId new_document_id = document_id_old_to_new[hit.document_id()];
       // Transfer the document id of the hit, if the document is not deleted
       // or outdated.

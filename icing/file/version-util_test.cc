@@ -32,6 +32,8 @@ namespace version_util {
 namespace {
 
 using ::testing::Eq;
+using ::testing::IsFalse;
+using ::testing::IsTrue;
 
 struct VersionUtilReadVersionTestParam {
   std::optional<VersionInfo> existing_version_info;
@@ -339,6 +341,14 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_version_in=*/2,
             /*expected_state_change_in=*/StateChange::kRollForward),
 
+        // - version 1, max_version 2
+        // - Current version = 3
+        // - Result: roll forward
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(1, 2),
+            /*curr_version_in=*/3,
+            /*expected_state_change_in=*/StateChange::kRollForward),
+
         // - version 1, max_version 3
         // - Current version = 2
         // - Result: roll forward
@@ -378,6 +388,94 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_info_in=*/VersionInfo(3, 4),
             /*curr_version_in=*/2,
             /*expected_state_change_in=*/StateChange::kRollBack)));
+
+TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
+  EXPECT_THAT(
+      ShouldRebuildDerivedFiles(VersionInfo(-1, -1), /*curr_version=*/1),
+      IsTrue());
+  EXPECT_THAT(
+      ShouldRebuildDerivedFiles(VersionInfo(-1, -1), /*curr_version=*/2),
+      IsTrue());
+}
+
+TEST(VersionUtilTest, ShouldRebuildDerivedFilesVersionZeroUpgrade) {
+  // 0 -> 1
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 0), /*curr_version=*/1),
+              IsTrue());
+
+  // 0 -> 2
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 0), /*curr_version=*/2),
+              IsTrue());
+}
+
+TEST(VersionUtilTest, ShouldRebuildDerivedFilesVersionZeroRollForward) {
+  // (1 -> 0), 0 -> 1
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 1), /*curr_version=*/1),
+              IsTrue());
+
+  // (1 -> 0), 0 -> 2
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 1), /*curr_version=*/2),
+              IsTrue());
+
+  // (2 -> 0), 0 -> 1
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 2), /*curr_version=*/1),
+              IsTrue());
+}
+
+TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollBack) {
+  // 2 -> 1
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(2, 2), /*curr_version=*/1),
+              IsTrue());
+
+  // 3 -> 1
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(3, 3), /*curr_version=*/1),
+              IsTrue());
+
+  // (3 -> 2), 2 -> 1
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(2, 3), /*curr_version=*/1),
+              IsTrue());
+}
+
+TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollForward) {
+  // (2 -> 1), 1 -> 2
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(1, 2), /*curr_version=*/2),
+              IsTrue());
+
+  // (2 -> 1), 1 -> 3
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(1, 2), /*curr_version=*/3),
+              IsTrue());
+
+  // (3 -> 1), 1 -> 2
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(1, 3), /*curr_version=*/2),
+              IsTrue());
+}
+
+TEST(VersionUtilTest, ShouldRebuildDerivedFilesCompatible) {
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(2, 2), /*curr_version=*/2),
+              IsFalse());
+
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(2, 3), /*curr_version=*/2),
+              IsFalse());
+}
+
+TEST(VersionUtilTest, Upgrade) {
+  // Unlike other state changes, upgrade depends on the actual "encoded path".
+
+  // kVersionOne -> kVersionTwo
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
+                                        /*curr_version=*/kVersionTwo),
+              IsFalse());
+
+  // kVersionTwo -> kVersionThree
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionTwo, kVersionTwo),
+                                        /*curr_version=*/kVersionThree),
+              IsFalse());
+
+  // kVersionOne -> kVersionThree.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
+                                        /*curr_version=*/kVersionThree),
+              IsFalse());
+}
 
 }  // namespace
 

@@ -12,13 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
+#include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/data-indexing-handler.h"
@@ -27,11 +31,11 @@
 #include "icing/index/integer-section-indexing-handler.h"
 #include "icing/index/numeric/integer-index.h"
 #include "icing/index/numeric/numeric-index.h"
-#include "icing/index/string-section-indexing-handler.h"
+#include "icing/index/term-indexing-handler.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/schema/schema-store.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
+#include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
@@ -40,7 +44,9 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -150,7 +156,9 @@ DocumentProto CreateDocumentWithHiragana(int content_length) {
 std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
                                    const Filesystem& filesystem,
                                    const std::string& index_dir) {
-  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
+  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
@@ -187,16 +195,17 @@ libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DataIndexingHandler>>>
 CreateDataIndexingHandlers(const Clock* clock, const Normalizer* normalizer,
                            Index* index, NumericIndex<int64_t>* integer_index) {
   ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<StringSectionIndexingHandler>
-          string_section_indexing_handler,
-      StringSectionIndexingHandler::Create(clock, normalizer, index));
+      std::unique_ptr<TermIndexingHandler> term_indexing_handler,
+      TermIndexingHandler::Create(
+          clock, normalizer, index,
+          /*build_property_existence_metadata_hits=*/true));
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<IntegerSectionIndexingHandler>
           integer_section_indexing_handler,
       IntegerSectionIndexingHandler::Create(clock, integer_index));
 
   std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
-  handlers.push_back(std::move(string_section_indexing_handler));
+  handlers.push_back(std::move(term_indexing_handler));
   handlers.push_back(std::move(integer_section_indexing_handler));
   return handlers;
 }
@@ -227,6 +236,7 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -302,6 +312,7 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -378,6 +389,7 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -454,6 +466,7 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
