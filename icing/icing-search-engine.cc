@@ -414,25 +414,46 @@ bool ShouldRebuildIndex(const OptimizeStatsProto& optimize_stats,
                                       optimize_rebuild_index_threshold;
 }
 
+libtextclassifier3::StatusOr<bool> ScoringExpressionHasRelevanceScoreFunction(
+    std::string_view scoring_expression) {
+  // TODO(b/261474063) The Lexer will be called again when creating the
+  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
+  // to be called only once.
+  Lexer lexer(scoring_expression, Lexer::Language::SCORING);
+  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
+                         lexer.ExtractTokens());
+  for (const Lexer::LexerToken& token : lexer_tokens) {
+    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
+        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Useful method to get RankingStrategy if advanced scoring is enabled. When the
 // "RelevanceScore" function is used in the advanced scoring expression,
 // RankingStrategy will be treated as RELEVANCE_SCORE in order to prepare the
 // necessary information needed for calculating relevance score.
 libtextclassifier3::StatusOr<ScoringSpecProto::RankingStrategy::Code>
 GetRankingStrategyFromScoringSpec(const ScoringSpecProto& scoring_spec) {
-  if (scoring_spec.advanced_scoring_expression().empty()) {
+  if (scoring_spec.advanced_scoring_expression().empty() &&
+      scoring_spec.additional_advanced_scoring_expressions().empty()) {
     return scoring_spec.rank_by();
   }
-  // TODO(b/261474063) The Lexer will be called again when creating the
-  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
-  // to be called only once.
-  Lexer lexer(scoring_spec.advanced_scoring_expression(),
-              Lexer::Language::SCORING);
-  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
-  for (const Lexer::LexerToken& token : lexer_tokens) {
-    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
-        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+
+  ICING_ASSIGN_OR_RETURN(bool has_relevance_score_function,
+                         ScoringExpressionHasRelevanceScoreFunction(
+                             scoring_spec.advanced_scoring_expression()));
+  if (has_relevance_score_function) {
+    return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+  }
+  for (std::string_view additional_scoring_expression :
+       scoring_spec.additional_advanced_scoring_expressions()) {
+    ICING_ASSIGN_OR_RETURN(has_relevance_score_function,
+                           ScoringExpressionHasRelevanceScoreFunction(
+                               additional_scoring_expression));
+    if (has_relevance_score_function) {
       return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
     }
   }
