@@ -1552,6 +1552,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
   expected.set_num_original_documents(3);
   expected.set_num_deleted_documents(1);
   expected.set_num_expired_documents(1);
+  expected.set_num_original_namespaces(1);
+  expected.set_num_deleted_namespaces(0);
   expected.set_index_restoration_mode(OptimizeStatsProto::INDEX_TRANSLATION);
 
   // Run Optimize
@@ -1584,6 +1586,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
   expected.set_num_original_documents(1);
   expected.set_num_deleted_documents(0);
   expected.set_num_expired_documents(0);
+  expected.set_num_original_namespaces(1);
+  expected.set_num_deleted_namespaces(0);
   expected.set_time_since_last_optimize_ms(10000);
   expected.set_index_restoration_mode(OptimizeStatsProto::INDEX_TRANSLATION);
 
@@ -1606,6 +1610,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
   expected.set_num_original_documents(1);
   expected.set_num_deleted_documents(1);
   expected.set_num_expired_documents(0);
+  expected.set_num_original_namespaces(1);
+  expected.set_num_deleted_namespaces(1);
   expected.set_time_since_last_optimize_ms(0);
   // Should rebuild the index since all documents are removed.
   expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
@@ -1689,6 +1695,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   expected.set_num_original_documents(3);
   expected.set_num_deleted_documents(1);
   expected.set_num_expired_documents(1);
+  expected.set_num_original_namespaces(1);
+  expected.set_num_deleted_namespaces(0);
   expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
 
   // Run Optimize
@@ -1723,6 +1731,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   expected.set_num_original_documents(1);
   expected.set_num_deleted_documents(0);
   expected.set_num_expired_documents(0);
+  expected.set_num_original_namespaces(1);
+  expected.set_num_deleted_namespaces(0);
   expected.set_time_since_last_optimize_ms(10000);
   expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
 
@@ -1745,6 +1755,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   expected.set_num_original_documents(1);
   expected.set_num_deleted_documents(1);
   expected.set_num_expired_documents(0);
+  expected.set_num_original_namespaces(1);
+  expected.set_num_deleted_namespaces(1);
   expected.set_time_since_last_optimize_ms(0);
   expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
 

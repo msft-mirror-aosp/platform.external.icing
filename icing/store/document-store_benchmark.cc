@@ -163,8 +163,9 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
     // stuff.
     ICING_ASSERT_OK(document_store->Put(
         CreateDocument("namespace", /*uri=*/std::to_string(i))));
-    document_store->Delete("namespace", /*uri=*/std::to_string(i),
-                           clock.GetSystemTimeMilliseconds());
+    ICING_ASSERT_OK(document_store->Delete("namespace",
+                                           /*uri=*/std::to_string(i),
+                                           clock.GetSystemTimeMilliseconds()));
   }
 
   std::default_random_engine random;
