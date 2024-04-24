@@ -33,7 +33,8 @@ namespace lib {
 //  2. Transforms full-width Latin characters to ASCII characters if possible.
 //  3. Transforms hiragana to katakana.
 //  4. Removes accent / diacritic marks on Latin characters
-//  5. Normalized text must be less than or equal to max_term_byte_size,
+//  5. Removes accent / diacritic marks on Greek characters
+//  6. Normalized text must be less than or equal to max_term_byte_size,
 //     otherwise it will be truncated.
 //
 // There're some other rules from ICU not listed here, please see .cc file for
