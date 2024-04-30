@@ -81,7 +81,9 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
 std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
                                    const Filesystem& filesystem,
                                    const std::string& index_dir) {
-  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
+  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
