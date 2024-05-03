@@ -2564,6 +2564,114 @@ TEST_P(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
 }
 
+TEST_P(SchemaUtilTest, SameNumberOfRequiredFieldsCanBeIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property1")
+                               .SetDataType(TYPE_STRING)
+                               // Changing required to optional should be fine
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property2")
+                               .SetDataType(TYPE_STRING)
+                               // Adding a new required property is incompatible
+                               .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{});
+  EXPECT_THAT(delta.schema_types_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{});
+  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_index_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{});
+  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_join_incompatible,
+              testing::ElementsAre(kEmailType));
+}
+
 TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
   // Configure old schema
   SchemaProto schema_with_indexed_property =
@@ -2790,6 +2898,437 @@ TEST_P(SchemaUtilTest,
                                                     no_dependents_map)
                   .schema_types_index_incompatible,
               IsEmpty());
+}
+
+TEST_P(SchemaUtilTest,
+       AddingNewIndexedDocumentPropertyMakesIndexAndJoinIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("NewEmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(
+    SchemaUtilTest,
+    AddingNewIndexedDocumentPropertyWithIndexableListMakesIndexAndJoinIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema. The added nested document property is indexed, so
+  // this is both index and join incompatible
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("Property")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("NewEmailProperty")
+                          .SetDataTypeDocument(
+                              kEmailType,
+                              /*indexable_nested_properties_list=*/
+                              std::initializer_list<std::string>{"subject"})
+                          .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest,
+       AddingNewNonIndexedDocumentPropertyMakesJoinIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema. The added nested document property is not indexed, so
+  // this is index compatible, but join incompatible
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewEmailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, DeletingIndexedDocumentPropertyIsIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schemam with two nested document properties of the same type
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("AnotherEmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema and drop one of the nested document properties
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, DeletingNonIndexedDocumentPropertyIsIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schemam with two nested document properties of the same type
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("AnotherEmailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema and drop the non-indexed nested document property
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, ChangingIndexedDocumentPropertyIsIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schemam with two nested document properties of the same type
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("AnotherEmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema and change one of the nested document properties
+  // to a different name (this is the same as deleting a property and adding
+  // another)
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("DifferentEmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, ChangingNonIndexedDocumentPropertyIsIncompatible) {
+  SchemaTypeConfigProto nested_schema =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // Configure old schemam with two nested document properties of the same type
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("AnotherEmailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema and change the non-indexed nested document property to
+  // a different name (this is the same as deleting a property and adding
+  // another)
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(nested_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("EmailProperty")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("DifferentEmailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                            dependents_map);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
 TEST_P(SchemaUtilTest, ChangingJoinablePropertiesMakesJoinIncompatible) {
