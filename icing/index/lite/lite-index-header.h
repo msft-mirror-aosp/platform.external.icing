@@ -15,6 +15,9 @@
 #ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
 #define ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
 
+#include <cstddef>
+#include <cstdint>
+
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/store/document-id.h"
 
@@ -50,7 +53,14 @@ class LiteIndex_Header {
 class LiteIndex_HeaderImpl : public LiteIndex_Header {
  public:
   struct HeaderData {
-    static const uint32_t kMagic = 0x6dfba6a0;
+    static uint32_t GetCurrentMagic(
+        bool include_property_existence_metadata_hits) {
+      if (!include_property_existence_metadata_hits) {
+        return 0x01c61418;
+      } else {
+        return 0x56e07d5b;
+      }
+    }
 
     uint32_t lite_index_crc;
     uint32_t magic;
@@ -66,10 +76,15 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
     uint32_t searchable_end;
   };
 
-  explicit LiteIndex_HeaderImpl(HeaderData *hdr) : hdr_(hdr) {}
+  explicit LiteIndex_HeaderImpl(HeaderData *hdr,
+                                bool include_property_existence_metadata_hits)
+      : hdr_(hdr),
+        include_property_existence_metadata_hits_(
+            include_property_existence_metadata_hits) {}
 
   bool check_magic() const override {
-    return hdr_->magic == HeaderData::kMagic;
+    return hdr_->magic == HeaderData::GetCurrentMagic(
+                              include_property_existence_metadata_hits_);
   }
 
   uint32_t lite_index_crc() const override { return hdr_->lite_index_crc; }
@@ -96,7 +111,8 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
 
   void Reset() override {
     hdr_->lite_index_crc = 0;
-    hdr_->magic = HeaderData::kMagic;
+    hdr_->magic =
+        HeaderData::GetCurrentMagic(include_property_existence_metadata_hits_);
     hdr_->last_added_docid = kInvalidDocumentId;
     hdr_->cur_size = 0;
     hdr_->searchable_end = 0;
@@ -104,6 +120,7 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
 
  private:
   HeaderData *hdr_;
+  bool include_property_existence_metadata_hits_;
 };
 static_assert(24 == sizeof(LiteIndex_HeaderImpl::HeaderData),
               "sizeof(HeaderData) != 24");
