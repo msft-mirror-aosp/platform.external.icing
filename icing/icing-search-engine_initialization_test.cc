@@ -761,8 +761,6 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromMissingHeaderFile) {
   // Checks that the integer index is still ok so we can search over it
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -971,8 +969,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
   search_spec1.add_schema_type_filters("Message");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_google::protobuf;
@@ -1175,8 +1171,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -1645,8 +1639,6 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIntegerIndex) {
 
   SearchSpecProto search_spec;
   search_spec.set_query("indexableInteger == 123");
-  search_spec.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
@@ -1821,8 +1813,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec;
     search_spec.set_query("indexableInteger == 123");
-    search_spec.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results =
@@ -2161,8 +2151,6 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -2357,8 +2345,6 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIntegerIndex) {
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -2555,8 +2541,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -2782,8 +2766,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3032,8 +3014,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3437,8 +3417,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3633,8 +3611,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec;
     search_spec.set_query("indexableInteger == 123");
-    search_spec.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results =
@@ -3812,8 +3788,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3878,8 +3852,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec;
     search_spec.set_query("indexableInteger == 456");
-    search_spec.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results =
@@ -4187,8 +4159,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -5666,8 +5636,6 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -5881,8 +5849,6 @@ TEST_P(IcingSearchEngineInitializationChangePropertyExistenceHitsFlagTest,
   // Get all documents that have "body".
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-  search_spec.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec.add_enabled_features(std::string(kHasPropertyFunctionFeature));
   search_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
