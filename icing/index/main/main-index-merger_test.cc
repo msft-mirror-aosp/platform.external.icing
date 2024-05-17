@@ -45,7 +45,9 @@ class MainIndexMergerTest : public testing::Test {
 
     std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
     LiteIndex::Options options(lite_index_file_name,
-                               /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                               /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                               /*hit_buffer_sort_at_indexing=*/true,
+                               /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));
 

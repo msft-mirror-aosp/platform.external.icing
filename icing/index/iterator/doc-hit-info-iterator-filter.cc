@@ -100,14 +100,11 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
 
     // Satisfied all our specified filters
     doc_hit_info_ = delegate_->doc_hit_info();
-    hit_intersect_section_ids_mask_ =
-        delegate_->hit_intersect_section_ids_mask();
     return libtextclassifier3::Status::OK;
   }
 
   // Didn't find anything on the delegate iterator.
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-  hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
   return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
 }
 
@@ -121,14 +118,6 @@ DocHitInfoIteratorFilter::TrimRightMostNode() && {
         options_, current_time_ms_);
   }
   return trimmed_delegate;
-}
-
-int32_t DocHitInfoIteratorFilter::GetNumBlocksInspected() const {
-  return delegate_->GetNumBlocksInspected();
-}
-
-int32_t DocHitInfoIteratorFilter::GetNumLeafAdvanceCalls() const {
-  return delegate_->GetNumLeafAdvanceCalls();
 }
 
 std::string DocHitInfoIteratorFilter::ToString() const {
