@@ -12,32 +12,50 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
+#include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
+#include "icing/index/integer-section-indexing-handler.h"
+#include "icing/index/numeric/integer-index.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/index/term-indexing-handler.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/schema/schema-store.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
+#include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
+#include "icing/util/tokenized-document.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
 //    //icing/index:index-processor_benchmark
 //
 //    $ blaze-bin/icing/index/index-processor_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 //
 // Run on an Android device:
 //    Make target //icing/tokenization:language-segmenter depend on
@@ -53,7 +71,8 @@
 //    $ adb push blaze-bin/icing/index/index-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/index-processor_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/index-processor_benchmark
+//    --benchmark_filter=all
 //    --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
@@ -65,6 +84,8 @@ namespace lib {
 
 namespace {
 
+using ::testing::IsTrue;
+
 // Creates a fake type config with 10 properties (p0 - p9)
 void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
   type_config->set_schema_type("Fake_Type");
@@ -74,11 +95,11 @@ void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
     property->set_property_name(
         IcingStringUtil::StringPrintf("p%d", i));  //  p0 - p9
     property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
   }
 }
 
@@ -132,10 +153,13 @@ DocumentProto CreateDocumentWithHiragana(int content_length) {
       .Build();
 }
 
-std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
+std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
+                                   const Filesystem& filesystem,
                                    const std::string& index_dir) {
-  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
-  return Index::Create(options, &filesystem).ValueOrDie();
+  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
+  return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
@@ -145,14 +169,20 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
       .ValueOrDie();
 }
 
-std::unique_ptr<SchemaStore> CreateSchemaStore() {
-  Filesystem filesystem;
+std::unique_ptr<SchemaStore> CreateSchemaStore(const Filesystem& filesystem,
+                                               const Clock* clock,
+                                               const std::string& base_dir) {
+  std::string schema_store_dir = base_dir + "/schema_store_test";
+  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+
   std::unique_ptr<SchemaStore> schema_store =
-      SchemaStore::Create(&filesystem, GetTestTempDir()).ValueOrDie();
+      SchemaStore::Create(&filesystem, schema_store_dir, clock).ValueOrDie();
 
   SchemaProto schema;
   CreateFakeTypeConfig(schema.add_types());
-  auto set_schema_status = schema_store->SetSchema(schema);
+  auto set_schema_status = schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false);
 
   if (!set_schema_status.ok()) {
     ICING_LOG(ERROR) << set_schema_status.status().error_message();
@@ -161,22 +191,27 @@ std::unique_ptr<SchemaStore> CreateSchemaStore() {
   return schema_store;
 }
 
-void CleanUp(const IcingFilesystem& filesystem, const std::string& index_dir) {
-  filesystem.DeleteDirectoryRecursively(index_dir.c_str());
+libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DataIndexingHandler>>>
+CreateDataIndexingHandlers(const Clock* clock, const Normalizer* normalizer,
+                           Index* index, NumericIndex<int64_t>* integer_index) {
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<TermIndexingHandler> term_indexing_handler,
+      TermIndexingHandler::Create(
+          clock, normalizer, index,
+          /*build_property_existence_metadata_hits=*/true));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<IntegerSectionIndexingHandler>
+          integer_section_indexing_handler,
+      IntegerSectionIndexingHandler::Create(clock, integer_index));
+
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+  handlers.push_back(std::move(term_indexing_handler));
+  handlers.push_back(std::move(integer_section_indexing_handler));
+  return handlers;
 }
 
-std::unique_ptr<IndexProcessor> CreateIndexProcessor(
-    const SchemaStore* schema_store,
-    const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
-    Index* index) {
-  IndexProcessor::Options processor_options{};
-  processor_options.max_tokens_per_document = 1024 * 1024 * 10;
-  processor_options.token_limit_behavior =
-      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
-
-  return IndexProcessor::Create(schema_store, language_segmenter, normalizer,
-                                index, processor_options)
-      .ValueOrDie();
+void CleanUp(const Filesystem& filesystem, const std::string& base_dir) {
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 
 void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
@@ -186,29 +221,58 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  IcingFilesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  IcingFilesystem icing_filesystem;
+  Filesystem filesystem;
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
-  std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
+                           /*pre_mapping_fbv=*/true));
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
-  std::unique_ptr<IndexProcessor> index_processor =
-      CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
+      CreateDataIndexingHandlers(&clock, normalizer.get(), index.get(),
+                                 integer_index.get()));
+  auto index_processor =
+      std::make_unique<IndexProcessor>(std::move(handlers), &clock);
 
   DocumentProto input_document = CreateDocumentWithOneProperty(state.range(0));
+  TokenizedDocument tokenized_document(std::move(
+      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
+                                input_document)
+          .ValueOrDie()));
 
   DocumentId document_id = 0;
   for (auto _ : state) {
     ICING_ASSERT_OK(
-        index_processor->IndexDocument(input_document, document_id++));
+        index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithOneProperty)
     ->Arg(1000)
@@ -233,30 +297,59 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  IcingFilesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  IcingFilesystem icing_filesystem;
+  Filesystem filesystem;
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
-  std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
+                           /*pre_mapping_fbv=*/true));
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
-  std::unique_ptr<IndexProcessor> index_processor =
-      CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
+      CreateDataIndexingHandlers(&clock, normalizer.get(), index.get(),
+                                 integer_index.get()));
+  auto index_processor =
+      std::make_unique<IndexProcessor>(std::move(handlers), &clock);
 
   DocumentProto input_document =
       CreateDocumentWithTenProperties(state.range(0));
+  TokenizedDocument tokenized_document(std::move(
+      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
+                                input_document)
+          .ValueOrDie()));
 
   DocumentId document_id = 0;
   for (auto _ : state) {
     ICING_ASSERT_OK(
-        index_processor->IndexDocument(input_document, document_id++));
+        index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithTenProperties)
     ->Arg(1000)
@@ -281,30 +374,59 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  IcingFilesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  IcingFilesystem icing_filesystem;
+  Filesystem filesystem;
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
-  std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
+                           /*pre_mapping_fbv=*/true));
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
-  std::unique_ptr<IndexProcessor> index_processor =
-      CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
+      CreateDataIndexingHandlers(&clock, normalizer.get(), index.get(),
+                                 integer_index.get()));
+  auto index_processor =
+      std::make_unique<IndexProcessor>(std::move(handlers), &clock);
 
   DocumentProto input_document =
       CreateDocumentWithDiacriticLetters(state.range(0));
+  TokenizedDocument tokenized_document(std::move(
+      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
+                                input_document)
+          .ValueOrDie()));
 
   DocumentId document_id = 0;
   for (auto _ : state) {
     ICING_ASSERT_OK(
-        index_processor->IndexDocument(input_document, document_id++));
+        index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithDiacriticLetters)
     ->Arg(1000)
@@ -329,29 +451,58 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  IcingFilesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  IcingFilesystem icing_filesystem;
+  Filesystem filesystem;
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
-  std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
+                           /*pre_mapping_fbv=*/true));
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
-  std::unique_ptr<IndexProcessor> index_processor =
-      CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
+      CreateDataIndexingHandlers(&clock, normalizer.get(), index.get(),
+                                 integer_index.get()));
+  auto index_processor =
+      std::make_unique<IndexProcessor>(std::move(handlers), &clock);
 
   DocumentProto input_document = CreateDocumentWithHiragana(state.range(0));
+  TokenizedDocument tokenized_document(std::move(
+      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
+                                input_document)
+          .ValueOrDie()));
 
   DocumentId document_id = 0;
   for (auto _ : state) {
     ICING_ASSERT_OK(
-        index_processor->IndexDocument(input_document, document_id++));
+        index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithHiragana)
     ->Arg(1000)

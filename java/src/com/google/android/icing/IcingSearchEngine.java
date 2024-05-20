@@ -14,21 +14,29 @@
 
 package com.google.android.icing;
 
-import android.util.Log;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import com.google.android.icing.proto.DebugInfoResultProto;
+import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
+import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
+import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
+import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
+import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PutResultProto;
+import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
 import com.google.android.icing.proto.ResultSpecProto;
 import com.google.android.icing.proto.SchemaProto;
@@ -36,354 +44,234 @@ import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
-import com.google.android.icing.proto.StatusProto;
-import com.google.android.icing.protobuf.InvalidProtocolBufferException;
+import com.google.android.icing.proto.StorageInfoResultProto;
+import com.google.android.icing.proto.SuggestionResponse;
+import com.google.android.icing.proto.SuggestionSpecProto;
+import com.google.android.icing.proto.UsageReport;
 
-/** Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h */
-public final class IcingSearchEngine {
+/**
+ * Java wrapper to access {@link IcingSearchEngineImpl}.
+ *
+ * <p>It converts byte array from {@link IcingSearchEngineImpl} to corresponding protos.
+ *
+ * <p>If this instance has been closed, the instance is no longer usable.
+ *
+ * <p>Keep this class to be non-Final so that it can be mocked in AppSearch.
+ *
+ * <p>NOTE: This class is NOT thread-safe.
+ */
+public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   private static final String TAG = "IcingSearchEngine";
+  private final IcingSearchEngineImpl icingSearchEngineImpl;
 
-  private final long nativePointer;
-
-  static {
-    // NOTE: This can fail with an UnsatisfiedLinkError
-    System.loadLibrary("icing");
-  }
-
-  /** @throws IllegalStateException if IcingSearchEngine fails to be created */
+  /**
+   * @throws IllegalStateException if IcingSearchEngine fails to be created
+   */
   public IcingSearchEngine(@NonNull IcingSearchEngineOptions options) {
-    nativePointer = nativeCreate(options.toByteArray());
-    if (nativePointer == 0) {
-      Log.e(TAG, "Failed to create IcingSearchEngine.");
-      throw new IllegalStateException("Failed to create IcingSearchEngine.");
-    }
+    icingSearchEngineImpl = new IcingSearchEngineImpl(options.toByteArray());
+  }
+
+  @Override
+  public void close() {
+    icingSearchEngineImpl.close();
+  }
+
+  @SuppressWarnings({"deprecation", "removal"}) // b/316643605
+  @Override
+  protected void finalize() throws Throwable {
+    icingSearchEngineImpl.close();
+    super.finalize();
   }
 
   @NonNull
+  @Override
   public InitializeResultProto initialize() {
-    byte[] initializeResultBytes = nativeInitialize(nativePointer);
-    if (initializeResultBytes == null) {
-      Log.e(TAG, "Received null InitializeResult from native.");
-      return InitializeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return InitializeResultProto.parseFrom(initializeResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing InitializeResultProto.", e);
-      return InitializeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToInitializeResultProto(
+        icingSearchEngineImpl.initialize());
   }
 
   @NonNull
+  @Override
   public SetSchemaResultProto setSchema(@NonNull SchemaProto schema) {
     return setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
   }
 
   @NonNull
+  @Override
   public SetSchemaResultProto setSchema(
       @NonNull SchemaProto schema, boolean ignoreErrorsAndDeleteDocuments) {
-    byte[] setSchemaResultBytes =
-        nativeSetSchema(nativePointer, schema.toByteArray(), ignoreErrorsAndDeleteDocuments);
-    if (setSchemaResultBytes == null) {
-      Log.e(TAG, "Received null SetSchemaResultProto from native.");
-      return SetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return SetSchemaResultProto.parseFrom(setSchemaResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing SetSchemaResultProto.", e);
-      return SetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToSetSchemaResultProto(
+        icingSearchEngineImpl.setSchema(schema.toByteArray(), ignoreErrorsAndDeleteDocuments));
   }
 
   @NonNull
+  @Override
   public GetSchemaResultProto getSchema() {
-    byte[] getSchemaResultBytes = nativeGetSchema(nativePointer);
-    if (getSchemaResultBytes == null) {
-      Log.e(TAG, "Received null GetSchemaResultProto from native.");
-      return GetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return GetSchemaResultProto.parseFrom(getSchemaResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetSchemaResultProto.", e);
-      return GetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToGetSchemaResultProto(
+        icingSearchEngineImpl.getSchema());
   }
 
   @NonNull
+  @Override
   public GetSchemaTypeResultProto getSchemaType(@NonNull String schemaType) {
-    byte[] getSchemaTypeResultBytes = nativeGetSchemaType(nativePointer, schemaType);
-    if (getSchemaTypeResultBytes == null) {
-      Log.e(TAG, "Received null GetSchemaTypeResultProto from native.");
-      return GetSchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return GetSchemaTypeResultProto.parseFrom(getSchemaTypeResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetSchemaTypeResultProto.", e);
-      return GetSchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToGetSchemaTypeResultProto(
+        icingSearchEngineImpl.getSchemaType(schemaType));
   }
 
   @NonNull
+  @Override
   public PutResultProto put(@NonNull DocumentProto document) {
-    byte[] putResultBytes = nativePut(nativePointer, document.toByteArray());
-    if (putResultBytes == null) {
-      Log.e(TAG, "Received null PutResultProto from native.");
-      return PutResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return PutResultProto.parseFrom(putResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing PutResultProto.", e);
-      return PutResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToPutResultProto(
+        icingSearchEngineImpl.put(document.toByteArray()));
   }
 
   @NonNull
-  public GetResultProto get(@NonNull String namespace, @NonNull String uri) {
-    byte[] getResultBytes = nativeGet(nativePointer, namespace, uri);
-    if (getResultBytes == null) {
-      Log.e(TAG, "Received null GetResultProto from native.");
-      return GetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return GetResultProto.parseFrom(getResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetResultProto.", e);
-      return GetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+  @Override
+  public GetResultProto get(
+      @NonNull String namespace, @NonNull String uri, @NonNull GetResultSpecProto getResultSpec) {
+    return IcingSearchEngineUtils.byteArrayToGetResultProto(
+        icingSearchEngineImpl.get(namespace, uri, getResultSpec.toByteArray()));
   }
 
   @NonNull
+  @Override
+  public ReportUsageResultProto reportUsage(@NonNull UsageReport usageReport) {
+    return IcingSearchEngineUtils.byteArrayToReportUsageResultProto(
+        icingSearchEngineImpl.reportUsage(usageReport.toByteArray()));
+  }
+
+  @NonNull
+  @Override
+  public GetAllNamespacesResultProto getAllNamespaces() {
+    return IcingSearchEngineUtils.byteArrayToGetAllNamespacesResultProto(
+        icingSearchEngineImpl.getAllNamespaces());
+  }
+
+  @NonNull
+  @Override
   public SearchResultProto search(
       @NonNull SearchSpecProto searchSpec,
       @NonNull ScoringSpecProto scoringSpec,
       @NonNull ResultSpecProto resultSpec) {
-    byte[] searchResultBytes =
-        nativeSearch(
-            nativePointer,
-            searchSpec.toByteArray(),
-            scoringSpec.toByteArray(),
-            resultSpec.toByteArray());
-    if (searchResultBytes == null) {
-      Log.e(TAG, "Received null SearchResultProto from native.");
-      return SearchResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return SearchResultProto.parseFrom(searchResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing SearchResultProto.", e);
-      return SearchResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToSearchResultProto(
+        icingSearchEngineImpl.search(
+            searchSpec.toByteArray(), scoringSpec.toByteArray(), resultSpec.toByteArray()));
   }
 
   @NonNull
+  @Override
+  public SearchResultProto getNextPage(long nextPageToken) {
+    return IcingSearchEngineUtils.byteArrayToSearchResultProto(
+        icingSearchEngineImpl.getNextPage(nextPageToken));
+  }
+
+  @NonNull
+  @Override
+  public void invalidateNextPageToken(long nextPageToken) {
+    icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);
+  }
+
+  @NonNull
+  @Override
   public DeleteResultProto delete(@NonNull String namespace, @NonNull String uri) {
-    byte[] deleteResultBytes = nativeDelete(nativePointer, namespace, uri);
-    if (deleteResultBytes == null) {
-      Log.e(TAG, "Received null DeleteResultProto from native.");
-      return DeleteResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return DeleteResultProto.parseFrom(deleteResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteResultProto.", e);
-      return DeleteResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToDeleteResultProto(
+        icingSearchEngineImpl.delete(namespace, uri));
   }
 
   @NonNull
+  @Override
+  public SuggestionResponse searchSuggestions(@NonNull SuggestionSpecProto suggestionSpec) {
+    return IcingSearchEngineUtils.byteArrayToSuggestionResponse(
+        icingSearchEngineImpl.searchSuggestions(suggestionSpec.toByteArray()));
+  }
+
+  @NonNull
+  @Override
   public DeleteByNamespaceResultProto deleteByNamespace(@NonNull String namespace) {
-    byte[] deleteByNamespaceResultBytes = nativeDeleteByNamespace(nativePointer, namespace);
-    if (deleteByNamespaceResultBytes == null) {
-      Log.e(TAG, "Received null DeleteByNamespaceResultProto from native.");
-      return DeleteByNamespaceResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return DeleteByNamespaceResultProto.parseFrom(deleteByNamespaceResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteByNamespaceResultProto.", e);
-      return DeleteByNamespaceResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToDeleteByNamespaceResultProto(
+        icingSearchEngineImpl.deleteByNamespace(namespace));
   }
 
   @NonNull
+  @Override
   public DeleteBySchemaTypeResultProto deleteBySchemaType(@NonNull String schemaType) {
-    byte[] deleteBySchemaTypeResultBytes = nativeDeleteBySchemaType(nativePointer, schemaType);
-    if (deleteBySchemaTypeResultBytes == null) {
-      Log.e(TAG, "Received null DeleteBySchemaTypeResultProto from native.");
-      return DeleteBySchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return DeleteBySchemaTypeResultProto.parseFrom(deleteBySchemaTypeResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteBySchemaTypeResultProto.", e);
-      return DeleteBySchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToDeleteBySchemaTypeResultProto(
+        icingSearchEngineImpl.deleteBySchemaType(schemaType));
   }
 
   @NonNull
-  public PersistToDiskResultProto persistToDisk() {
-    byte[] persistToDiskResultBytes = nativePersistToDisk(nativePointer);
-    if (persistToDiskResultBytes == null) {
-      Log.e(TAG, "Received null PersistToDiskResultProto from native.");
-      return PersistToDiskResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return PersistToDiskResultProto.parseFrom(persistToDiskResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing PersistToDiskResultProto.", e);
-      return PersistToDiskResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+  @Override
+  public DeleteByQueryResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
+    return deleteByQuery(searchSpec, /*returnDeletedDocumentInfo=*/ false);
   }
 
   @NonNull
+  @Override
+  public DeleteByQueryResultProto deleteByQuery(
+      @NonNull SearchSpecProto searchSpec, boolean returnDeletedDocumentInfo) {
+    return IcingSearchEngineUtils.byteArrayToDeleteByQueryResultProto(
+        icingSearchEngineImpl.deleteByQuery(searchSpec.toByteArray(), returnDeletedDocumentInfo));
+  }
+
+  @NonNull
+  @Override
+  public PersistToDiskResultProto persistToDisk(@NonNull PersistType.Code persistTypeCode) {
+    return IcingSearchEngineUtils.byteArrayToPersistToDiskResultProto(
+        icingSearchEngineImpl.persistToDisk(persistTypeCode.getNumber()));
+  }
+
+  @NonNull
+  @Override
   public OptimizeResultProto optimize() {
-    byte[] optimizeResultBytes = nativeOptimize(nativePointer);
-    if (optimizeResultBytes == null) {
-      Log.e(TAG, "Received null OptimizeResultProto from native.");
-      return OptimizeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return OptimizeResultProto.parseFrom(optimizeResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing OptimizeResultProto.", e);
-      return OptimizeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToOptimizeResultProto(icingSearchEngineImpl.optimize());
   }
 
   @NonNull
+  @Override
   public GetOptimizeInfoResultProto getOptimizeInfo() {
-    byte[] getOptimizeInfoResultBytes = nativeGetOptimizeInfo(nativePointer);
-    if (getOptimizeInfoResultBytes == null) {
-      Log.e(TAG, "Received null GetOptimizeInfoResultProto from native.");
-      return GetOptimizeInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return GetOptimizeInfoResultProto.parseFrom(getOptimizeInfoResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetOptimizeInfoResultProto.", e);
-      return GetOptimizeInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return IcingSearchEngineUtils.byteArrayToGetOptimizeInfoResultProto(
+        icingSearchEngineImpl.getOptimizeInfo());
   }
 
   @NonNull
-  public ResetResultProto reset() {
-    byte[] resetResultBytes = nativeReset(nativePointer);
-    if (resetResultBytes == null) {
-      Log.e(TAG, "Received null ResetResultProto from native.");
-      return ResetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
-
-    try {
-      return ResetResultProto.parseFrom(resetResultBytes);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing ResetResultProto.", e);
-      return ResetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+  @Override
+  public StorageInfoResultProto getStorageInfo() {
+    return IcingSearchEngineUtils.byteArrayToStorageInfoResultProto(
+        icingSearchEngineImpl.getStorageInfo());
   }
 
-  private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
+  @NonNull
+  @Override
+  public DebugInfoResultProto getDebugInfo(DebugInfoVerbosity.Code verbosity) {
+    return IcingSearchEngineUtils.byteArrayToDebugInfoResultProto(
+        icingSearchEngineImpl.getDebugInfo(verbosity.getNumber()));
+  }
 
-  private static native byte[] nativeInitialize(long nativePointer);
+  @NonNull
+  @Override
+  public ResetResultProto reset() {
+    return IcingSearchEngineUtils.byteArrayToResetResultProto(icingSearchEngineImpl.reset());
+  }
 
-  private static native byte[] nativeSetSchema(
-      long nativePointer, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
+  public static boolean shouldLog(LogSeverity.Code severity) {
+    return shouldLog(severity, (short) 0);
+  }
 
-  private static native byte[] nativeGetSchema(long nativePointer);
+  public static boolean shouldLog(LogSeverity.Code severity, short verbosity) {
+    return IcingSearchEngineImpl.shouldLog((short) severity.getNumber(), verbosity);
+  }
 
-  private static native byte[] nativeGetSchemaType(long nativePointer, String schemaType);
+  public static boolean setLoggingLevel(LogSeverity.Code severity) {
+    return setLoggingLevel(severity, (short) 0);
+  }
 
-  private static native byte[] nativePut(long nativePointer, byte[] documentBytes);
+  public static boolean setLoggingLevel(LogSeverity.Code severity, short verbosity) {
+    return IcingSearchEngineImpl.setLoggingLevel((short) severity.getNumber(), verbosity);
+  }
 
-  private static native byte[] nativeGet(long nativePointer, String namespace, String uri);
-
-  private static native byte[] nativeSearch(
-      long nativePointer, byte[] searchSpecBytes, byte[] scoringSpecBytes, byte[] resultSpecBytes);
-
-  private static native byte[] nativeDelete(long nativePointer, String namespace, String uri);
-
-  private static native byte[] nativeDeleteByNamespace(long nativePointer, String namespace);
-
-  private static native byte[] nativeDeleteBySchemaType(long nativePointer, String schemaType);
-
-  private static native byte[] nativePersistToDisk(long nativePointer);
-
-  private static native byte[] nativeOptimize(long nativePointer);
-
-  private static native byte[] nativeGetOptimizeInfo(long nativePointer);
-
-  private static native byte[] nativeReset(long nativePointer);
+  @Nullable
+  public static String getLoggingTag() {
+    return IcingSearchEngineImpl.getLoggingTag();
+  }
 }

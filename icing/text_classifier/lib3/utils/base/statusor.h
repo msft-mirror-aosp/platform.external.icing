@@ -86,6 +86,8 @@ class StatusOr {
   // Conversion assignment operator, T must be assignable from U
   template <typename U>
   inline StatusOr& operator=(const StatusOr<U>& other);
+  template <typename U>
+  inline StatusOr& operator=(StatusOr<U>&& other);
 
   inline ~StatusOr();
 
@@ -134,6 +136,40 @@ class StatusOr {
   friend class StatusOr;
 
  private:
+  void Clear() {
+    if (ok()) {
+      value_.~T();
+    }
+  }
+
+  // Construct the value through placement new with the passed argument.
+  template <typename... Arg>
+  void MakeValue(Arg&&... arg) {
+    new (&value_) T(std::forward<Arg>(arg)...);
+  }
+
+  // Creates a valid instance of type T constructed with U and assigns it to
+  // value_. Handles how to properly assign to value_ if value_ was never
+  // actually initialized (if this is currently non-OK).
+  template <typename U>
+  void AssignValue(U&& value) {
+    if (ok()) {
+      value_ = std::forward<U>(value);
+    } else {
+      MakeValue(std::forward<U>(value));
+      status_ = Status::OK;
+    }
+  }
+
+  // Creates a status constructed with U and assigns it to status_. It also
+  // properly destroys value_ if this is OK and value_ represents a valid
+  // instance of T.
+  template <typename U>
+  void AssignStatus(U&& v) {
+    Clear();
+    status_ = static_cast<Status>(std::forward<U>(v));
+  }
+
   Status status_;
   // The members of unions do not require initialization and are not destructed
   // unless specifically called. This allows us to construct instances of
@@ -165,12 +201,19 @@ template <typename T>
 inline StatusOr<T>::StatusOr(T&& value) : value_(std::move(value)) {}
 
 template <typename T>
-inline StatusOr<T>::StatusOr(const StatusOr& other)
-    : status_(other.status_), value_(other.value_) {}
+inline StatusOr<T>::StatusOr(const StatusOr& other) : status_(other.status_) {
+  if (other.ok()) {
+    MakeValue(other.value_);
+  }
+}
 
 template <typename T>
 inline StatusOr<T>::StatusOr(StatusOr&& other)
-    : status_(other.status_), value_(std::move(other.value_)) {}
+    : status_(std::move(other.status_)) {
+  if (other.ok()) {
+    MakeValue(std::move(other.value_));
+  }
+}
 
 template <typename T>
 template <
@@ -180,7 +223,11 @@ template <
                                       std::is_convertible<const U&, T>>::value,
                      int>>
 inline StatusOr<T>::StatusOr(const StatusOr<U>& other)
-    : status_(other.status_), value_(other.value_) {}
+    : status_(other.status_) {
+  if (other.ok()) {
+    MakeValue(other.value_);
+  }
+}
 
 template <typename T>
 template <typename U,
@@ -189,7 +236,11 @@ template <typename U,
                                             std::is_convertible<U&&, T>>::value,
                            int>>
 inline StatusOr<T>::StatusOr(StatusOr<U>&& other)
-    : status_(other.status_), value_(std::move(other.value_)) {}
+    : status_(std::move(other.status_)) {
+  if (other.ok()) {
+    MakeValue(std::move(other.value_));
+  }
+}
 
 template <typename T>
 template <
@@ -210,35 +261,47 @@ inline StatusOr<T>::StatusOr(U&& value) : StatusOr(T(std::forward<U>(value))) {}
 
 template <typename T>
 inline StatusOr<T>& StatusOr<T>::operator=(const StatusOr& other) {
-  status_ = other.status_;
-  if (status_.ok()) {
-    value_ = other.value_;
+  if (other.ok()) {
+    AssignValue(other.value_);
+  } else {
+    AssignStatus(other.status_);
   }
   return *this;
 }
 
 template <typename T>
 inline StatusOr<T>& StatusOr<T>::operator=(StatusOr&& other) {
-  status_ = other.status_;
-  if (status_.ok()) {
-    value_ = std::move(other.value_);
+  if (other.ok()) {
+    AssignValue(std::move(other.value_));
+  } else {
+    AssignStatus(std::move(other.status_));
   }
   return *this;
 }
 
 template <typename T>
 inline StatusOr<T>::~StatusOr() {
-  if (ok()) {
-    value_.~T();
-  }
+  Clear();
 }
 
 template <typename T>
 template <typename U>
 inline StatusOr<T>& StatusOr<T>::operator=(const StatusOr<U>& other) {
-  status_ = other.status_;
-  if (status_.ok()) {
-    value_ = other.value_;
+  if (other.ok()) {
+    AssignValue(other.value_);
+  } else {
+    AssignStatus(other.status_);
+  }
+  return *this;
+}
+
+template <typename T>
+template <typename U>
+inline StatusOr<T>& StatusOr<T>::operator=(StatusOr<U>&& other) {
+  if (other.ok()) {
+    AssignValue(std::move(other.value_));
+  } else {
+    AssignStatus(std::move(other.status_));
   }
   return *this;
 }

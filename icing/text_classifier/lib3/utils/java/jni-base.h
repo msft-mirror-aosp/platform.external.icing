@@ -17,6 +17,7 @@
 
 #include <jni.h>
 
+#include <memory>
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -63,7 +64,8 @@ namespace libtextclassifier3 {
 bool EnsureLocalCapacity(JNIEnv* env, int capacity);
 
 // Returns true if there was an exception. Also it clears the exception.
-bool JniExceptionCheckAndClear(JNIEnv* env);
+bool JniExceptionCheckAndClear(JNIEnv* env,
+                               bool print_exception_on_error = true);
 
 // A deleter to be used with std::unique_ptr to delete JNI global references.
 class GlobalRefDeleter {

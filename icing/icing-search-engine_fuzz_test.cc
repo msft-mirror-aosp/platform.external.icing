@@ -18,11 +18,15 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/document-builder.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -34,20 +38,6 @@ IcingSearchEngineOptions Setup() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestTempDir() + "/icing");
   return icing_options;
-}
-
-SchemaProto SetTypes() {
-  SchemaProto schema;
-  SchemaTypeConfigProto* type = schema.add_types();
-  type->set_schema_type("Message");
-  PropertyConfigProto* body = type->add_properties();
-  body->set_property_name("body");
-  body->set_data_type(PropertyConfigProto::DataType::STRING);
-  body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  return schema;
 }
 
 DocumentProto MakeDocument(const uint8_t* data, size_t size) {
@@ -82,7 +72,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // TODO (b/145758378): Deleting directory should not be required.
   filesystem_.DeleteDirectoryRecursively(icing_options.base_dir().c_str());
   icing.Initialize();
-  SchemaProto schema_proto = SetTypes();
+
+  SchemaProto schema_proto =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
   icing.SetSchema(schema_proto);
 
   // Index

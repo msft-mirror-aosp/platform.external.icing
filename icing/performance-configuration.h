@@ -23,29 +23,20 @@ struct PerformanceConfiguration {
   // Loads default configuration.
   PerformanceConfiguration();
 
-  PerformanceConfiguration(int max_query_length_in, int num_to_score_in,
-                           int max_num_hits_per_query_in,
-                           int max_num_cache_results_in)
+  PerformanceConfiguration(int max_query_length_in, int max_num_total_hits)
       : max_query_length(max_query_length_in),
-        num_to_score(num_to_score_in),
-        max_num_hits_per_query(max_num_hits_per_query_in),
-        max_num_cache_results(max_num_cache_results_in) {}
+        max_num_total_hits(max_num_total_hits) {}
 
   // Search performance
 
   // Maximum length of query to execute in IndexProcessor.
   int max_query_length;
 
-  // Number of results to score in ScoringProcessor for every query.
-  int num_to_score;
-
   // Memory
 
-  // Maximum number of ScoredDocumentHits to return per query.
-  int max_num_hits_per_query;
-
-  // Maximum number of ResultStates to store in ResultStateManager.
-  int max_num_cache_results;
+  // Maximum number of ScoredDocumentHits to cache in the ResultStateManager at
+  // one time.
+  int max_num_total_hits;
 };
 
 // TODO(b/149040810): Consider creating a class to manage performance

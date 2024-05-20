@@ -11,21 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2011 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
-//         sbanacho@google.com (Scott Banachowski)
-//
-// This is a list of IsGoogleLetter letters. It is copied from
-// google3/util/utf8/proptables/letters.txt CL 19164202.
 #include "icing/legacy/core/icing-string-util.h"
 
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-
 #include <algorithm>
+#include <cstdarg>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <string>
 
 #include "icing/legacy/portable/icing-zlib.h"
@@ -34,7 +26,6 @@
 namespace icing {
 namespace lib {
 
-namespace {}  // namespace
 uint32_t IcingStringUtil::UpdateCrc32(uint32_t crc, const char *str, int len) {
   if (len > 0) {
     crc = ~crc32(~crc, reinterpret_cast<const Bytef *>(str), len);

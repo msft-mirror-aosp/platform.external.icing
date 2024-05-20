@@ -37,7 +37,7 @@ namespace tokenizer_factory {
 //   FAILED_PRECONDITION on any null pointer input
 //   INVALID_ARGUMENT if tokenizer type is invalid
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>>
-CreateIndexingTokenizer(IndexingConfig::TokenizerType::Code type,
+CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
                         const LanguageSegmenter* lang_segmenter);
 
 // All the supported query tokenizer types

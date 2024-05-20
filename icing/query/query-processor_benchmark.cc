@@ -16,27 +16,32 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index.h"
+#include "icing/index/numeric/dummy-numeric-index.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/fake-clock.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
 //    //icing/query:query-processor_benchmark
 //
 //    $ blaze-bin/icing/query/query-processor_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 //
 // Run on an Android device:
 //    Make target //icing/tokenization:language-segmenter depend on
@@ -52,8 +57,8 @@
 //    $ adb push blaze-bin/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmarks=all
-//    --adb
+//    $ adb shell /data/local/tmp/query-processor_benchmark
+//    --benchmark_filter=all --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
 // the benchmark will set up data files accordingly.
@@ -69,13 +74,17 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
                      const std::string& token) {
   Index::Editor editor =
       index->Edit(document_id, section_id, term_match_type, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.AddHit(token.c_str()));
+  ICING_ASSERT_OK(editor.BufferTerm(token.c_str()));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 }
 
-std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
+std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
+                                   const Filesystem& filesystem,
                                    const std::string& index_dir) {
-  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
-  return Index::Create(options, &filesystem).ValueOrDie();
+  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
+  return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
@@ -83,6 +92,18 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
 
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
+}
+
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
 }
 
 void BM_QueryOneTerm(benchmark::State& state) {
@@ -96,6 +117,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -106,23 +128,35 @@ void BM_QueryOneTerm(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  FakeClock fake_clock;
 
   SchemaProto schema;
   auto type_config = schema.add_types();
   type_config->set_schema_type("type1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, schema_dir));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  Clock clock;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, schema_dir, &clock));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
-  std::unique_ptr<DocumentStore> document_store =
-      DocumentStore::Create(&filesystem, doc_store_dir, &fake_clock,
-                            schema_store.get())
+  DocumentStore::CreateResult create_result =
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -137,17 +171,21 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &fake_clock));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -208,6 +246,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -218,23 +257,35 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  FakeClock fake_clock;
 
   SchemaProto schema;
   auto type_config = schema.add_types();
   type_config->set_schema_type("type1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, schema_dir));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  Clock clock;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, schema_dir, &clock));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
-  std::unique_ptr<DocumentStore> document_store =
-      DocumentStore::Create(&filesystem, doc_store_dir, &fake_clock,
-                            schema_store.get())
+  DocumentStore::CreateResult create_result =
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -263,9 +314,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &fake_clock));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -276,8 +327,12 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -338,6 +393,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -348,23 +404,35 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  FakeClock fake_clock;
 
   SchemaProto schema;
   auto type_config = schema.add_types();
   type_config->set_schema_type("type1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, schema_dir));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  Clock clock;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, schema_dir, &clock));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
-  std::unique_ptr<DocumentStore> document_store =
-      DocumentStore::Create(&filesystem, doc_store_dir, &fake_clock,
-                            schema_store.get())
+  DocumentStore::CreateResult create_result =
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -382,17 +450,21 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &fake_clock));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -453,6 +525,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -463,23 +536,35 @@ void BM_QueryHiragana(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  FakeClock fake_clock;
 
   SchemaProto schema;
   auto type_config = schema.add_types();
   type_config->set_schema_type("type1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, schema_dir));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  Clock clock;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, schema_dir, &clock));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
-  std::unique_ptr<DocumentStore> document_store =
-      DocumentStore::Create(&filesystem, doc_store_dir, &fake_clock,
-                            schema_store.get())
+  DocumentStore::CreateResult create_result =
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -497,17 +582,21 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &fake_clock));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }

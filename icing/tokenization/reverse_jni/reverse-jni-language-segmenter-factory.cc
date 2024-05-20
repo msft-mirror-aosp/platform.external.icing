@@ -13,9 +13,11 @@
 // limitations under the License.
 
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/jni/jni-cache.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/reverse_jni/reverse-jni-language-segmenter.h"
 #include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -32,7 +34,7 @@ constexpr std::string_view kLocaleAmericanEnglishComputer = "en_US_POSIX";
 //   A LanguageSegmenter on success
 //   INVALID_ARGUMENT if locale string is invalid
 //
-// TODO(samzheng): Figure out if we want to verify locale strings and notify
+// TODO(b/156383798): Figure out if we want to verify locale strings and notify
 // users. Right now illegal locale strings will be ignored by ICU. ICU
 // components will be created with its default locale.
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(

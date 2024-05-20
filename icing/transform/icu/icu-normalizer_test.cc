@@ -16,8 +16,8 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/test-data.h"
 #include "icing/transform/normalizer-factory.h"
@@ -83,14 +83,12 @@ TEST_F(IcuNormalizerTest, LatinLetterRemoveAccent) {
               Eq("eeeeeeeeeeeeeeeeeeeeeeeeeee"));
   EXPECT_THAT(normalizer_->NormalizeTerm("Ḟḟ"), Eq("ff"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ĜĞĠĢḠḡĝğġģ"), Eq("gggggggggg"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ĤḢḤḦḨḪḣḥḧḩḫĥẖ"),
-              Eq("hhhhhhhhhhhhh"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ĤḢḤḦḨḪḣḥḧḩḫĥẖ"), Eq("hhhhhhhhhhhhh"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÌÍÎÏĨĪĬḬḭḯìíîïĩīĭ"),
               Eq("iiiiiiiiiiiiiiiii"));
   EXPECT_THAT(normalizer_->NormalizeTerm("Ĵĵ"), Eq("jj"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ĶḰḲḴḵḱḳķ"), Eq("kkkkkkkk"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ĹĻĽḶḸḼḷḹḻḽĺļľ"),
-              Eq("lllllllllllll"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ĹĻĽḶḸḼḷḹḻḽĺļľ"), Eq("lllllllllllll"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ḾṀṂḿṁṃ"), Eq("mmmmmm"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÑŃŅŇṄṆṈṊṅṇṉṋñńņň"),
               Eq("nnnnnnnnnnnnnnnn"));
@@ -109,23 +107,42 @@ TEST_F(IcuNormalizerTest, LatinLetterRemoveAccent) {
   EXPECT_THAT(normalizer_->NormalizeTerm("ŴẀẂẄẆẈẁẃẅẇẉŵ"), Eq("wwwwwwwwwwww"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ẊẌẋẍ"), Eq("xxxx"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÝŶŸẎẏŷýÿ"), Eq("yyyyyyyy"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ŹŻŽẐẒẔẑẓẕźżž"),
-              Eq("zzzzzzzzzzzz"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ŹŻŽẐẒẔẑẓẕźżž"), Eq("zzzzzzzzzzzz"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Barış"), Eq("baris"));
+}
+
+TEST_F(IcuNormalizerTest, GreekLetterRemoveAccent) {
+  EXPECT_THAT(normalizer_->NormalizeTerm("kαλημέρα"), Eq("kαλημερα"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("εγγραφή"), Eq("εγγραφη"));
+  EXPECT_THAT(normalizer_->NormalizeTerm(
+                  "ἈἉἊἋἌἍἎἏᾈᾉᾊᾋᾌᾍᾎᾏᾸᾹᾺΆᾼἀἁἂἃἄἅἆἇὰάᾀᾁᾂᾃᾄᾅᾆᾇᾰᾱᾲᾳᾴᾶᾷ"),
+              Eq("αααααααααααααααααααααααααααααααααααααααααααααα"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ἘἙἚἛἜἝῈΈἐἑἒἓἔἕὲέ"),
+              Eq("εεεεεεεεεεεεεεεε"));
+  EXPECT_THAT(
+      normalizer_->NormalizeTerm("ἨἩἪἫἬἭἮἯᾘᾙᾚᾛᾜᾝᾞᾟῊΉῌἠἡἢἣἤἥἦἧὴήᾐᾑᾒᾓᾔᾕᾖᾗῂῃῄῆῇ"),
+      Eq("ηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηη"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ἸἹἺἻἼἽἾἿῘῙῚΊἰἱἲἳἴἵἶἷὶίῐῑῒΐῖῗ"),
+              Eq("ιιιιιιιιιιιιιιιιιιιιιιιιιιιι"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ὈὉὊὋὌὍῸΌὀὁὂὃὄὅὸό"),
+              Eq("οοοοοοοοοοοοοοοο"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ὙὛὝὟῨῩῪΎὐὑὒὓὔὕὖὗὺύῠῡῢΰῦῧ"),
+              Eq("υυυυυυυυυυυυυυυυυυυυυυυυ"));
+  EXPECT_THAT(
+      normalizer_->NormalizeTerm("ὨὩὪὫὬὭὮὯᾨᾩᾪᾫᾬᾭᾮᾯῺΏῼὠὡὢὣὤὥὦὧὼώᾠᾡᾢᾣᾤᾥᾦᾧῲῳῴῶῷ"),
+      Eq("ωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωω"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Ῥῤῥ"), Eq("ρρρ"));
 }
 
 // Accent / diacritic marks won't be removed in non-latin chars, e.g. in
-// Japanese and Greek
+// Japanese
 TEST_F(IcuNormalizerTest, NonLatinLetterNotRemoveAccent) {
   // Katakana
   EXPECT_THAT(normalizer_->NormalizeTerm("ダヂヅデド"), Eq("ダヂヅデド"));
-  // Greek
-  EXPECT_THAT(normalizer_->NormalizeTerm("kαλημέρα"), Eq("kαλημέρα"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("εγγραφή"), Eq("εγγραφή"));
 
   // Our current ICU rules can't handle Hebrew properly, e.g. the accents in
   // "אָלֶף־בֵּית עִבְרִי"
   // will be removed.
-  // TODO (samzheng): figure out how we should handle Hebrew.
 }
 
 TEST_F(IcuNormalizerTest, FullWidthCharsToASCII) {
@@ -230,6 +247,158 @@ TEST_F(IcuNormalizerTest, Truncate) {
     // string.
     EXPECT_THAT(normalizer->NormalizeTerm("キ"), Eq(""));
   }
+}
+
+TEST_F(IcuNormalizerTest, PrefixMatchLength) {
+  // Verify that FindNormalizedMatchEndPosition will properly find the length of
+  // the prefix match when given a non-normalized term and a normalized term
+  // is a prefix of the non-normalized one.
+  ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
+                                                  /*max_term_byte_size=*/1000));
+
+  // Upper to lower
+  std::string term = "MDI";
+  CharacterIterator match_end =
+      normalizer->FindNormalizedMatchEndPosition(term, "md");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("MD"));
+
+  term = "Icing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "icin");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Icin"));
+
+  // Full-width
+  term = "５２５６００";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "525");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("５２５"));
+
+  term = "ＦＵＬＬＷＩＤＴＨ";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "full");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ＦＵＬＬ"));
+
+  // Hiragana to Katakana
+  term = "あいうえお";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "アイ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("あい"));
+
+  term = "かきくけこ";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "カ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("か"));
+
+  // Latin accents
+  term = "Zürich";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "zur");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Zür"));
+
+  term = "après-midi";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "apre");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("aprè"));
+
+  term = "Buenos días";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "buenos di");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Buenos dí"));
+
+  term = "BarışIcing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "baris");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Barış"));
+
+  term = "ÀĄḁáIcing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "aaaa");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ÀĄḁá"));
+
+  // Greek accents
+  term = "άνθρωπος";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "ανθ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("άνθ"));
+
+  term = "καλημέρα";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "καλημε");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("καλημέ"));
+
+  term = "όχι";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "οχ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("όχ"));
+
+  term = "πότε";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "ποτ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("πότ"));
+
+  term = "ἈἉἊἋIcing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "αααα");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ἈἉἊἋ"));
+}
+
+TEST_F(IcuNormalizerTest, SharedPrefixMatchLength) {
+  // Verify that FindNormalizedMatchEndPosition will properly find the length of
+  // the prefix match when given a non-normalized term and a normalized term
+  // that share a common prefix.
+  ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
+                                                  /*max_term_byte_size=*/1000));
+
+  // Upper to lower
+  std::string term = "MDI";
+  CharacterIterator match_end =
+      normalizer->FindNormalizedMatchEndPosition(term, "mgm");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("M"));
+
+  term = "Icing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "icky");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Ic"));
+
+  // Full-width
+  term = "５２５６００";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "525788");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("５２５"));
+
+  term = "ＦＵＬＬＷＩＤＴＨ";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "fully");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ＦＵＬＬ"));
+
+  // Hiragana to Katakana
+  term = "あいうえお";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "アイエオ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("あい"));
+
+  term = "かきくけこ";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "カケコ");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("か"));
+
+  // Latin accents
+  term = "Zürich";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "zurg");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Zür"));
+
+  term = "après-midi";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "apreciate");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("aprè"));
+
+  term = "días";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "diamond");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("día"));
+
+  term = "BarışIcing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "barismdi");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("Barış"));
+
+  // Greek accents
+  term = "άνθρωπος";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "ανθν");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("άνθ"));
+
+  term = "καλημέρα";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "καλημεος");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("καλημέ"));
+
+  term = "όχι";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "οχκα");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("όχ"));
+
+  term = "πότε";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "ποτρα");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("πότ"));
+
+  term = "ἈἉἊἋIcing";
+  match_end = normalizer->FindNormalizedMatchEndPosition(term, "ααααmdi");
+  EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ἈἉἊἋ"));
 }
 
 }  // namespace
