@@ -83,6 +83,15 @@ class SchemaPropertyIterator {
     return levels_.back().GetLevelNestedIndexable();
   }
 
+  // The set of indexable nested properties that are defined in the
+  // indexable_nested_properties_list but are not found in the schema
+  // definition. These properties still consume sectionIds, but will not be
+  // indexed.
+  const std::vector<std::string>& unknown_indexable_nested_property_paths()
+      const {
+    return unknown_indexable_nested_property_paths_;
+  }
+
   // Advances to the next leaf property.
   //
   // Returns:
@@ -196,6 +205,15 @@ class SchemaPropertyIterator {
   // Current iteration index in the sorted_top_level_indexable_nested_properties
   // list.
   int current_top_level_indexable_nested_properties_idx_ = 0;
+
+  // Vector of indexable nested properties defined in the
+  // indexable_nested_properties_list, but not found in the schema definition.
+  // These properties still consume sectionIds, but will not be indexed.
+  // Properties are inserted into this vector in sorted order.
+  //
+  // TODO(b/289152024): Implement support for indexing these properties if they
+  // are in the child types of polymorphic nested properties.
+  std::vector<std::string> unknown_indexable_nested_property_paths_;
 };
 
 }  // namespace lib

@@ -14,31 +14,38 @@
 
 #include "icing/index/index.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/lite/lite-index.h"
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
+#include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
-#include "icing/index/term-property-id.h"
+#include "icing/index/term-metadata.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/ranker.h"
 #include "icing/store/document-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -58,8 +65,10 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(options.base_dir + "/idx/lite.",
-                            options.index_merge_size);
+  return LiteIndex::Options(
+      options.base_dir + "/idx/lite.", options.index_merge_size,
+      options.lite_index_sort_at_indexing, options.lite_index_sort_size,
+      options.include_property_existence_metadata_hits);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -151,9 +160,17 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
           IcingDynamicTrie::max_value_index(GetMainLexiconOptions()),
           IcingDynamicTrie::max_value_index(
               lite_index_options.lexicon_options)));
+
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<LiteIndex> lite_index,
       LiteIndex::Create(lite_index_options, icing_filesystem));
+  // Sort the lite index if we've enabled sorting the HitBuffer at indexing
+  // time, and there's an unsorted tail exceeding the threshold.
+  if (options.lite_index_sort_at_indexing &&
+      lite_index->HasUnsortedHitsExceedingSortThreshold()) {
+    lite_index->SortHits();
+  }
+
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,

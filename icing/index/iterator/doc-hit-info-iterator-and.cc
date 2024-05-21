@@ -83,7 +83,6 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
     // Didn't find anything for the first iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -106,8 +105,6 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
   // Guaranteed that short_doc_id and long_doc_id match now
   doc_hit_info_ = short_->doc_hit_info();
   doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info().hit_section_ids_mask());
-  hit_intersect_section_ids_mask_ = short_->hit_intersect_section_ids_mask() &
-                                    long_->hit_intersect_section_ids_mask();
   return libtextclassifier3::Status::OK;
 }
 
@@ -122,14 +119,6 @@ DocHitInfoIteratorAnd::TrimRightMostNode() && {
         std::move(short_), std::move(trimmed_long.iterator_));
   }
   return trimmed_long;
-}
-
-int32_t DocHitInfoIteratorAnd::GetNumBlocksInspected() const {
-  return short_->GetNumBlocksInspected() + long_->GetNumBlocksInspected();
-}
-
-int32_t DocHitInfoIteratorAnd::GetNumLeafAdvanceCalls() const {
-  return short_->GetNumLeafAdvanceCalls() + long_->GetNumLeafAdvanceCalls();
 }
 
 std::string DocHitInfoIteratorAnd::ToString() const {
@@ -152,7 +141,6 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
     // Didn't find anything for the first iterator, reset to invalid values and
     // return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -196,14 +184,10 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
 
   // Found a DocumentId which exists in all the iterators
   doc_hit_info_ = iterators_.at(0)->doc_hit_info();
-  hit_intersect_section_ids_mask_ =
-      iterators_.at(0)->hit_intersect_section_ids_mask();
 
   for (size_t i = 1; i < iterators_.size(); i++) {
     doc_hit_info_.MergeSectionsFrom(
         iterators_.at(i)->doc_hit_info().hit_section_ids_mask());
-    hit_intersect_section_ids_mask_ &=
-        iterators_.at(i)->hit_intersect_section_ids_mask();
   }
   return libtextclassifier3::Status::OK;
 }
@@ -229,20 +213,12 @@ DocHitInfoIteratorAndNary::TrimRightMostNode() && {
   return trimmed_right;
 }
 
-int32_t DocHitInfoIteratorAndNary::GetNumBlocksInspected() const {
-  int32_t blockCount = 0;
-  for (const std::unique_ptr<DocHitInfoIterator>& iter : iterators_) {
-    blockCount += iter->GetNumBlocksInspected();
+DocHitInfoIterator::CallStats DocHitInfoIteratorAndNary::GetCallStats() const {
+  CallStats call_stats;
+  for (const auto& iter : iterators_) {
+    call_stats += iter->GetCallStats();
   }
-  return blockCount;
-}
-
-int32_t DocHitInfoIteratorAndNary::GetNumLeafAdvanceCalls() const {
-  int32_t leafCount = 0;
-  for (const std::unique_ptr<DocHitInfoIterator>& iter : iterators_) {
-    leafCount += iter->GetNumLeafAdvanceCalls();
-  }
-  return leafCount;
+  return call_stats;
 }
 
 std::string DocHitInfoIteratorAndNary::ToString() const {
