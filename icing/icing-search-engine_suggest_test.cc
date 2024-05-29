@@ -1550,15 +1550,8 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_InvalidPrefixTest) {
       SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    EXPECT_THAT(response.status(), ProtoIsOk());
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  } else {
-    EXPECT_THAT(response.status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  }
+  EXPECT_THAT(response.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(response.suggestions(), IsEmpty());
 
   // TODO(b/208654892): Update handling for hyphens to only consider it a hyphen
   // within a TEXT token (rather than a MINUS token) when surrounded on both
@@ -1572,28 +1565,14 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_InvalidPrefixTest) {
   // Search for "f:"
   suggestion_spec.set_prefix("f:");
   response = icing.SearchSuggestions(suggestion_spec);
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    EXPECT_THAT(response.status(), ProtoIsOk());
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  } else {
-    EXPECT_THAT(response.status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  }
+  EXPECT_THAT(response.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(response.suggestions(), IsEmpty());
 
   // Search for "OR OR - :"
   suggestion_spec.set_prefix("OR OR - :");
   response = icing.SearchSuggestions(suggestion_spec);
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    EXPECT_THAT(response.status(), ProtoIsOk());
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  } else {
-    EXPECT_THAT(response.status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  }
+  EXPECT_THAT(response.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(response.suggestions(), IsEmpty());
 }
 
 }  // namespace

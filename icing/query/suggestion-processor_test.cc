@@ -667,47 +667,30 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  auto terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
-    EXPECT_THAT(terms, IsEmpty());
-  } else {
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // TODO(b/208654892): Update handling for hyphens to only consider it a hyphen
   // within a TEXT token (rather than a MINUS token) when surrounded on both
   // sides by TEXT rather than just preceded by TEXT.
   suggestion_spec.set_prefix("f-");
-  terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("f OR");
-  terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
-    EXPECT_THAT(terms, IsEmpty());
-  } else {
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    suggestion_spec.set_prefix(
-        "bar OR semanticSearch(getSearchSpecEmbedding(0), 0.5, 1)");
-    terms_or = suggestion_processor_->QuerySuggestions(
-        suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  suggestion_spec.set_prefix(
+      "bar OR semanticSearch(getSearchSpecEmbedding(0), 0.5, 1)");
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
@@ -739,16 +722,9 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  auto terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
-    EXPECT_THAT(terms, IsEmpty());
-  } else {
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace

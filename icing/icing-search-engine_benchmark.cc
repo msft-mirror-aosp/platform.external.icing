@@ -956,8 +956,6 @@ void BM_NumericExactQuery(benchmark::State& state) {
   }
 
   SearchSpecProto search_spec;
-  search_spec.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
   ScoringSpecProto scoring_spec;
@@ -1042,8 +1040,6 @@ void BM_NumericRangeQueryAll(benchmark::State& state) {
   }
 
   SearchSpecProto search_spec;
-  search_spec.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec.add_enabled_features(std::string(kNumericSearchFeature));
   search_spec.set_query("integer >= " +
                         std::to_string(std::numeric_limits<int64_t>::min()));

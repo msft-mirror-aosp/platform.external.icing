@@ -91,8 +91,11 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     double score =
         scorer_->GetScore(doc_hit_info, doc_hit_info_iterator.get()) *
         hit_demotion_factor;
-    scored_document_hits.emplace_back(
-        doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);
+    std::vector<double> additional_scores =
+        scorer_->GetAdditionalScores(doc_hit_info, doc_hit_info_iterator.get());
+    scored_document_hits.push_back(ScoredDocumentHit(
+        doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score,
+        std::move(additional_scores)));
   }
 
   if (search_stats != nullptr) {

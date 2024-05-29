@@ -60,24 +60,24 @@ class ScoreExpression {
   //   - INVALID_ARGUMENT if a non-finite value is reached while evaluating the
   //                      expression.
   //   - INTERNAL if there are inconsistencies.
-  virtual libtextclassifier3::StatusOr<double> eval(
+  virtual libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
     if (type() == ScoreExpressionType::kDouble) {
       return absl_ports::UnimplementedError(
-          "All ScoreExpressions of type Double must provide their own "
-          "implementation of eval!");
+          "All ScoreExpressions of type double must provide their own "
+          "implementation of EvaluateDouble!");
     }
     return absl_ports::InternalError(
         "Runtime type error: the expression should never be evaluated to a "
         "double. There must be inconsistencies in the static type checking.");
   }
 
-  virtual libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+  virtual libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
     if (type() == ScoreExpressionType::kDoubleList) {
       return absl_ports::UnimplementedError(
-          "All ScoreExpressions of type Double List must provide their own "
-          "implementation of eval_list!");
+          "All ScoreExpressions of type double List must provide their own "
+          "implementation of EvaluateList!");
     }
     return absl_ports::InternalError(
         "Runtime type error: the expression should never be evaluated to a "
@@ -85,11 +85,12 @@ class ScoreExpression {
         "checking.");
   }
 
-  virtual libtextclassifier3::StatusOr<std::string_view> eval_string() const {
+  virtual libtextclassifier3::StatusOr<std::string_view> EvaluateString()
+      const {
     if (type() == ScoreExpressionType::kString) {
       return absl_ports::UnimplementedError(
           "All ScoreExpressions of type string must provide their own "
-          "implementation of eval_string!");
+          "implementation of EvaluateString!");
     }
     return absl_ports::InternalError(
         "Runtime type error: the expression should never be evaluated to a "
@@ -128,7 +129,7 @@ class ConstantScoreExpression : public ScoreExpression {
         new ConstantScoreExpression(c, type));
   }
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo&, const DocHitInfoIterator*) const override {
     return c_;
   }
@@ -153,7 +154,8 @@ class StringExpression : public ScoreExpression {
         new StringExpression(std::move(str)));
   }
 
-  libtextclassifier3::StatusOr<std::string_view> eval_string() const override {
+  libtextclassifier3::StatusOr<std::string_view> EvaluateString()
+      const override {
     return str_;
   }
 
@@ -180,7 +182,7 @@ class OperatorScoreExpression : public ScoreExpression {
   static libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> Create(
       OperatorType op, std::vector<std::unique_ptr<ScoreExpression>> children);
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -211,12 +213,16 @@ class MathFunctionScoreExpression : public ScoreExpression {
     kAbs,
     kSin,
     kCos,
-    kTan
+    kTan,
+    kMaxOrDefault,
+    kMinOrDefault,
   };
 
   static const std::unordered_map<std::string, FunctionType> kFunctionNames;
 
   static const std::unordered_set<FunctionType> kVariableArgumentsFunctions;
+
+  static const std::unordered_set<FunctionType> kListArgumentFunctions;
 
   // RETURNS:
   //   - A MathFunctionScoreExpression instance on success if not simplifiable.
@@ -227,7 +233,7 @@ class MathFunctionScoreExpression : public ScoreExpression {
       FunctionType function_type,
       std::vector<std::unique_ptr<ScoreExpression>> args);
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -237,6 +243,38 @@ class MathFunctionScoreExpression : public ScoreExpression {
 
  private:
   explicit MathFunctionScoreExpression(
+      FunctionType function_type,
+      std::vector<std::unique_ptr<ScoreExpression>> args)
+      : function_type_(function_type), args_(std::move(args)) {}
+
+  FunctionType function_type_;
+  std::vector<std::unique_ptr<ScoreExpression>> args_;
+};
+
+class ListOperationFunctionScoreExpression : public ScoreExpression {
+ public:
+  enum class FunctionType { kFilterByRange };
+
+  static const std::unordered_map<std::string, FunctionType> kFunctionNames;
+
+  // RETURNS:
+  //   - A ListOperationFunctionScoreExpression instance on success.
+  //   - FAILED_PRECONDITION on any null pointer in args.
+  //   - INVALID_ARGUMENT on type errors.
+  static libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> Create(
+      FunctionType function_type,
+      std::vector<std::unique_ptr<ScoreExpression>> args);
+
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+      const DocHitInfo& hit_info,
+      const DocHitInfoIterator* query_it) const override;
+
+  ScoreExpressionType type() const override {
+    return ScoreExpressionType::kDoubleList;
+  }
+
+ private:
+  explicit ListOperationFunctionScoreExpression(
       FunctionType function_type,
       std::vector<std::unique_ptr<ScoreExpression>> args)
       : function_type_(function_type), args_(std::move(args)) {}
@@ -267,7 +305,7 @@ class DocumentFunctionScoreExpression : public ScoreExpression {
          const DocumentStore* document_store, double default_score,
          int64_t current_time_ms);
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -307,7 +345,7 @@ class RelevanceScoreFunctionScoreExpression : public ScoreExpression {
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
          Bm25fCalculator* bm25f_calculator, double default_score);
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -337,7 +375,7 @@ class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
          const JoinChildrenFetcher* join_children_fetcher);
 
-  libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -366,7 +404,7 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
          const DocumentStore* document_store,
          const SectionWeights* section_weights, int64_t current_time_ms);
 
-  libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info, const DocHitInfoIterator*) const override;
 
   ScoreExpressionType type() const override {
@@ -400,7 +438,7 @@ class GetSearchSpecEmbeddingFunctionScoreExpression : public ScoreExpression {
   static libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> Create(
       std::vector<std::unique_ptr<ScoreExpression>> args);
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -429,7 +467,7 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
          SearchSpecProto::EmbeddingQueryMetricType::Code default_metric_type,
          const EmbeddingQueryResults* embedding_query_results);
 
-  libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 

@@ -25,7 +25,7 @@ option objc_class_prefix = "ICNG";
 // Encapsulates the configurations on how Icing should score and rank the search
 // results.
 // TODO(b/170347684): Change all timestamps to seconds.
-// Next tag: 12
+// Next tag: 6
 message ScoringSpecProto {
   // OPTIONAL: Indicates how the search results will be ranked.
   message RankingStrategy {
@@ -106,6 +106,13 @@ message ScoringSpecProto {
   // OPTIONAL: Specifies the scoring expression for ADVANCED_SCORING_EXPRESSION
   // RankingStrategy.
   optional string advanced_scoring_expression = 4;
+
+  // OPTIONAL: Specifies additional scoring expressions to return extra helpful
+  // scores for clients. The scores will not be used for ranking.
+  //
+  // To set this field, the ranking strategy must be set to
+  // ADVANCED_SCORING_EXPRESSION.
+  repeated string additional_advanced_scoring_expressions = 5;
 }
 
 // Next tag: 3

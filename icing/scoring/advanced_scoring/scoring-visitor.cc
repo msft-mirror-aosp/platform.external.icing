@@ -129,6 +129,13 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     expression = MathFunctionScoreExpression::Create(
         MathFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
+  } else if (ListOperationFunctionScoreExpression::kFunctionNames.find(
+                 function_name) !=
+             ListOperationFunctionScoreExpression::kFunctionNames.end()) {
+    // List operation functions
+    expression = ListOperationFunctionScoreExpression::Create(
+        ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
+        std::move(args));
   } else if (function_name ==
              GetSearchSpecEmbeddingFunctionScoreExpression::kFunctionName) {
     // getSearchSpecEmbedding function

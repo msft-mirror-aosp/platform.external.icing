@@ -189,12 +189,18 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(embedding_query_results);
 
-  if (!scoring_spec.advanced_scoring_expression().empty() &&
-      scoring_spec.rank_by() !=
-          ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION) {
-    return absl_ports::InvalidArgumentError(
-        "Advanced scoring is not enabled, but the advanced scoring expression "
-        "is not empty!");
+  if (scoring_spec.rank_by() !=
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION) {
+    if (!scoring_spec.advanced_scoring_expression().empty()) {
+      return absl_ports::InvalidArgumentError(
+          "Advanced scoring is not enabled, but the advanced scoring "
+          "expression is not empty!");
+    }
+    if (!scoring_spec.additional_advanced_scoring_expressions().empty()) {
+      return absl_ports::InvalidArgumentError(
+          "Advanced scoring is not enabled, but got additional advanced "
+          "scoring expressions!");
+    }
   }
 
   switch (scoring_spec.rank_by()) {
