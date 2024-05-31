@@ -55,14 +55,19 @@ class AdvancedScorer : public Scorer {
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator* query_it) override {
-    libtextclassifier3::StatusOr<double> result =
-        score_expression_->eval(hit_info, query_it);
-    if (!result.ok()) {
-      ICING_LOG(ERROR) << "Got an error when scoring a document:\n"
-                       << result.status().error_message();
-      return default_score_;
+    return GetScoreFromExpression(score_expression_.get(), hit_info, query_it);
+  }
+
+  std::vector<double> GetAdditionalScores(
+      const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) override {
+    std::vector<double> additional_scores;
+    additional_scores.reserve(additional_score_expressions_.size());
+    for (const auto& additional_score_expression :
+         additional_score_expressions_) {
+      additional_scores.push_back(GetScoreFromExpression(
+          additional_score_expression.get(), hit_info, query_it));
     }
-    return std::move(result).ValueOrDie();
+    return additional_scores;
   }
 
   void PrepareToScore(
@@ -78,10 +83,13 @@ class AdvancedScorer : public Scorer {
 
  private:
   explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,
+                          std::vector<std::unique_ptr<ScoreExpression>>
+                              additional_score_expressions,
                           std::unique_ptr<SectionWeights> section_weights,
                           std::unique_ptr<Bm25fCalculator> bm25f_calculator,
                           double default_score)
       : score_expression_(std::move(score_expression)),
+        additional_score_expressions_(std::move(additional_score_expressions)),
         section_weights_(std::move(section_weights)),
         bm25f_calculator_(std::move(bm25f_calculator)),
         default_score_(default_score) {
@@ -91,7 +99,23 @@ class AdvancedScorer : public Scorer {
     }
   }
 
+  double GetScoreFromExpression(ScoreExpression* expression,
+                                const DocHitInfo& hit_info,
+                                const DocHitInfoIterator* query_it) {
+    libtextclassifier3::StatusOr<double> result =
+        expression->EvaluateDouble(hit_info, query_it);
+    if (!result.ok()) {
+      ICING_LOG(ERROR) << "Got an error when scoring a document:\n"
+                       << result.status().error_message();
+      return default_score_;
+    }
+    return std::move(result).ValueOrDie();
+  }
+
   std::unique_ptr<ScoreExpression> score_expression_;
+  // Additional score expressions that are used to return extra helpful scores
+  // for clients.
+  std::vector<std::unique_ptr<ScoreExpression>> additional_score_expressions_;
   std::unique_ptr<SectionWeights> section_weights_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   double default_score_;

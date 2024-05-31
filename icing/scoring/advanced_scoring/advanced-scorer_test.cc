@@ -54,6 +54,7 @@ namespace lib {
 
 namespace {
 using ::testing::DoubleNear;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::HasSubstr;
 
@@ -1427,6 +1428,131 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
           /*join_children_fetcher=*/nullptr, &embedding_query_results));
   EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(0, kEps));
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0, kEps));
+}
+
+TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
+  DocumentId document_id_0 = 0;
+  DocHitInfo doc_hit_info_0(document_id_0);
+  EmbeddingQueryResults embedding_query_results;
+
+  // Construct a score map so that:
+  // - this.matchedSemanticScores(getSearchSpecEmbedding(0)) returns
+  //   {4, 5, 2, 1, 3}.
+  // - this.matchedSemanticScores(getSearchSpecEmbedding(1)) returns an empty
+  //   list.
+  EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
+      &embedding_query_results
+           .result_scores[0][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
+  AddEntryToEmbeddingQueryScoreMap(*score_map,
+                                   /*semantic_score=*/4, document_id_0);
+  AddEntryToEmbeddingQueryScoreMap(*score_map,
+                                   /*semantic_score=*/5, document_id_0);
+  AddEntryToEmbeddingQueryScoreMap(*score_map,
+                                   /*semantic_score=*/2, document_id_0);
+  AddEntryToEmbeddingQueryScoreMap(*score_map,
+                                   /*semantic_score=*/1, document_id_0);
+  AddEntryToEmbeddingQueryScoreMap(*score_map,
+                                   /*semantic_score=*/3, document_id_0);
+
+  // maxOrDefault({4, 5, 2, 1, 3}, 100) = 5
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("maxOrDefault(this.matchedSemanticScores("
+                                    "getSearchSpecEmbedding(0)), 100)"),
+          kDefaultScore, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &embedding_query_results));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(5, kEps));
+
+  // minOrDefault({4, 5, 2, 1, 3}, -100) = 1
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("minOrDefault(this.matchedSemanticScores("
+                                    "getSearchSpecEmbedding(0)), -100)"),
+          kDefaultScore, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &embedding_query_results));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(1, kEps));
+
+  // maxOrDefault({}, 100) = 100
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("maxOrDefault(this.matchedSemanticScores("
+                                    "getSearchSpecEmbedding(1)), 100)"),
+          kDefaultScore, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &embedding_query_results));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(100, kEps));
+
+  // minOrDefault({}, -100) = -100
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("minOrDefault(this.matchedSemanticScores("
+                                    "getSearchSpecEmbedding(1)), -100)"),
+          kDefaultScore, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &embedding_query_results));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(-100, kEps));
+
+  // sum(filterByRange({4, 5, 2, 1, 3}, 2, 4)) = sum({4, 2, 3}) = 9
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer, AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec(
+                      "sum(filterByRange(this.matchedSemanticScores("
+                      "getSearchSpecEmbedding(0)), 2, 4))"),
+                  kDefaultScore, /*default_semantic_metric_type=*/
+                  SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+                  document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds(),
+                  /*join_children_fetcher=*/nullptr, &embedding_query_results));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(9, kEps));
+}
+
+TEST_F(AdvancedScorerTest, AdditionalScores) {
+  const int64_t creation_timestamp_ms = 123;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/123,
+                                          creation_timestamp_ms)));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  ScoringSpecProto scoring_spec =
+      // This evaluates to 123
+      CreateAdvancedScoringSpec("this.documentScore()");
+  // This evaluates to 4
+  scoring_spec.add_additional_advanced_scoring_expressions("pow(2, 2)");
+  // This evaluates to 123 + 4 = 127
+  scoring_spec.add_additional_advanced_scoring_expressions(
+      "this.documentScore() + pow(2, 2)");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  EXPECT_FALSE(scorer->is_constant());
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(123, kEps));
+  std::vector<double> additional_scores =
+      scorer->GetAdditionalScores(docHitInfo, /*query_it=*/nullptr);
+  EXPECT_THAT(additional_scores,
+              ElementsAre(DoubleNear(4, kEps), DoubleNear(127, kEps)));
 }
 
 }  // namespace
