@@ -12,26 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
-#include "icing/index/numeric/numeric-index.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
+#include "icing/query/query-results.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/logging.h"
 #include "unicode/uloc.h"
@@ -100,8 +114,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
   return DocumentStore::Create(
       filesystem, base_dir, clock, schema_store,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/false,
+      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
@@ -118,6 +132,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string numeric_index_dir = base_dir + "/numeric_index";
+  const std::string embedding_index_dir = base_dir + "/embedding_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -134,6 +149,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -172,8 +190,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get(), &clock));
+                             embedding_index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -247,6 +266,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string numeric_index_dir = base_dir + "/numeric_index";
+  const std::string embedding_index_dir = base_dir + "/embedding_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -263,6 +283,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -315,8 +338,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get(), &clock));
+                             embedding_index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &clock));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -394,6 +418,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string numeric_index_dir = base_dir + "/numeric_index";
+  const std::string embedding_index_dir = base_dir + "/embedding_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -410,6 +435,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -451,8 +479,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get(), &clock));
+                             embedding_index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -526,6 +555,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string numeric_index_dir = base_dir + "/numeric_index";
+  const std::string embedding_index_dir = base_dir + "/embedding_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -542,6 +572,9 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -583,8 +616,9 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get(), &clock));
+                             embedding_index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);

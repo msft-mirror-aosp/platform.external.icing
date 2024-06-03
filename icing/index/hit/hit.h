@@ -60,6 +60,7 @@ class BasicHit {
   explicit BasicHit(SectionId section_id, DocumentId document_id);
 
   explicit BasicHit() : value_(kInvalidValue) {}
+  explicit BasicHit(Value value) : value_(value) {}
 
   bool is_valid() const { return value_ != kInvalidValue; }
   Value value() const { return value_; }

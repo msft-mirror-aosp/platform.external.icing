@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/proto/logging.pb.h"
@@ -47,6 +48,7 @@ class QueryProcessor {
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>> Create(
       Index* index, const NumericIndex<int64_t>* numeric_index,
+      const EmbeddingIndex* embedding_index,
       const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       const Clock* clock);
@@ -74,6 +76,7 @@ class QueryProcessor {
  private:
   explicit QueryProcessor(Index* index,
                           const NumericIndex<int64_t>* numeric_index,
+                          const EmbeddingIndex* embedding_index,
                           const LanguageSegmenter* language_segmenter,
                           const Normalizer* normalizer,
                           const DocumentStore* document_store,
@@ -110,6 +113,7 @@ class QueryProcessor {
   // query time.
   Index& index_;                                 // Does not own.
   const NumericIndex<int64_t>& numeric_index_;   // Does not own.
+  const EmbeddingIndex& embedding_index_;        // Does not own.
   const LanguageSegmenter& language_segmenter_;  // Does not own.
   const Normalizer& normalizer_;                 // Does not own.
   const DocumentStore& document_store_;          // Does not own.

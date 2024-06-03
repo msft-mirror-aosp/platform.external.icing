@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 11
+// Next tag: 13
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -67,27 +67,6 @@ message SearchSpecProto {
   // to native side.
   optional int64 java_to_native_start_timestamp_ms = 5;
 
-  message SearchType {
-    enum Code {
-      UNDEFINED = 0;
-      ICING_RAW_QUERY = 1;
-      EXPERIMENTAL_ICING_ADVANCED_QUERY = 2;
-    }
-  }
-  // This field determines which type of query parsing Icing will use to fulfill
-  // the query.
-  // ICING_RAW_QUERY is the current query language as released, which supports
-  // basic ands, ors and nots as well as grouping and property restricts.
-  // EXPERIMENTAL_ICING_ADVANCED_QUERY is a superset of ICING_RAW_QUERY that
-  // will also support the use of functions defined by Icing Lib.
-  // This field is only temporary. When fully complete, all queries will be
-  // parsed by EXPERIMENTAL_ICING_ADVANCED_QUERY. This field only exists to
-  // enable testing.
-  // TODO(b/208654892) Remove this field once EXPERIMENTAL_ICING_ADVANCED_QUERY
-  // is fully supported.
-  optional SearchType.Code search_type = 6
-      [default = EXPERIMENTAL_ICING_ADVANCED_QUERY];
-
   // OPTIONAL: If this field is present, join documents based on a nested
   // SearchSpec.
   optional JoinSpecProto join_spec = 7;
@@ -112,6 +91,24 @@ message SearchSpecProto {
   // (TypePropertyMask for the given schema type has empty paths field), no
   // properties of that schema type will be searched.
   repeated TypePropertyMask type_property_filters = 10;
+
+  // The vectors to be used in embedding queries.
+  repeated PropertyProto.VectorProto embedding_query_vectors = 11;
+
+  message EmbeddingQueryMetricType {
+    enum Code {
+      UNKNOWN = 0;
+      COSINE = 1;
+      DOT_PRODUCT = 2;
+      EUCLIDEAN = 3;
+    }
+  }
+
+  // The default metric type used to calculate the scores for embedding
+  // queries.
+  optional EmbeddingQueryMetricType.Code embedding_query_metric_type = 12;
+
+  reserved 6;
 }
 
 // Client-supplied specifications on what to include/how to format the search
@@ -348,7 +345,7 @@ message SearchResultProto {
   optional StatusProto status = 1;
 
   // The Results that matched the query. Empty if there was an error.
-  // Next tag: 5
+  // Next tag: 6
   message ResultProto {
     // Document that matches the SearchSpecProto.
     optional DocumentProto document = 1;
@@ -363,6 +360,11 @@ message SearchResultProto {
 
     // The child documents that were joined to a parent document.
     repeated ResultProto joined_results = 4;
+
+    // Extra helpful scores as specified by
+    // ScoringSpecProto.additional_advanced_scoring_expressions. The scores will
+    // not be used for ranking.
+    repeated double additional_scores = 5 [packed = true];
   }
   repeated ResultProto results = 2;
 

@@ -36,7 +36,6 @@
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/proto/storage.pb.h"
@@ -60,6 +59,7 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::Not;
 using ::testing::Return;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
@@ -735,8 +735,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify numeric (integer) search: will get document.
   SearchSpecProto search_spec2;
   search_spec2.set_query("b == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -846,8 +844,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify numeric (integer) search: won't get anything.
   SearchSpecProto search_spec2;
   search_spec2.set_query("a == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -992,8 +988,6 @@ TEST_F(
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results =
@@ -1243,8 +1237,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // 'timestamp'
   SearchSpecProto search_spec2;
   search_spec2.set_query("sender.age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1315,8 +1307,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // document shouldn't match a query for 20 in either 'sender.age' or
   // 'timestamp'
   search_spec2.set_query("sender.age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1523,8 +1513,6 @@ TEST_F(
   // 'timestamp' or 'sender.birthday'
   SearchSpecProto search_spec3;
   search_spec3.set_query("sender.age == 20");
-  search_spec3.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
@@ -1965,8 +1953,6 @@ TEST_F(
   // 'timestamp2'.
   SearchSpecProto search_spec2;
   search_spec2.set_query("timestamp2 == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2022,8 +2008,6 @@ TEST_F(
   // We should be able to retrieve the document by searching for 1234 in
   // 'timestamp'.
   search_spec2.set_query("timestamp2 == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2260,8 +2244,6 @@ TEST_F(
   // 'timestamp'.
   SearchSpecProto search_spec2;
   search_spec2.set_query("timestamp == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2323,8 +2305,6 @@ TEST_F(
   // We should be able to retrieve the document by searching for 1234 in
   // 'timestamp'.
   search_spec2.set_query("timestamp == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -3152,6 +3132,86 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldReturnErrorForExtraSections) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status().message(),
               HasSubstr("Too many properties to be indexed"));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, UpdatedTypeDescriptionIsSaved) {
+  // Create a schema with more sections than allowed.
+  PropertyConfigProto old_property =
+      PropertyConfigBuilder()
+          .SetName("prop0")
+          .SetDescription("old property description")
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build();
+  SchemaTypeConfigProto old_schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("type")
+          .SetDescription("old description")
+          .AddProperty(old_property)
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(old_schema_type_config).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // Update the type description
+  SchemaTypeConfigProto new_schema_type_config =
+      SchemaTypeConfigBuilder(old_schema_type_config)
+          .SetDescription("new description")
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_schema_type_config).Build();
+  ASSERT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  GetSchemaResultProto get_result = icing.GetSchema();
+  ASSERT_THAT(get_result.status(), ProtoIsOk());
+  ASSERT_THAT(get_result.schema(), EqualsProto(new_schema));
+  ASSERT_THAT(get_result.schema(), Not(EqualsProto(old_schema)));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, UpdatedPropertyDescriptionIsSaved) {
+  // Create a schema with more sections than allowed.
+  PropertyConfigProto old_property =
+      PropertyConfigBuilder()
+          .SetName("prop0")
+          .SetDescription("old property description")
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build();
+  SchemaTypeConfigProto old_schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("type")
+          .SetDescription("old description")
+          .AddProperty(old_property)
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(old_schema_type_config).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // Update the property description
+  PropertyConfigProto new_property =
+      PropertyConfigBuilder(old_property)
+          .SetDescription("new property description")
+          .Build();
+  SchemaTypeConfigProto new_schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("type")
+          .SetDescription("old description")
+          .AddProperty(new_property)
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_schema_type_config).Build();
+  ASSERT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  GetSchemaResultProto get_result = icing.GetSchema();
+  ASSERT_THAT(get_result.status(), ProtoIsOk());
+  ASSERT_THAT(get_result.schema(), EqualsProto(new_schema));
+  ASSERT_THAT(get_result.schema(), Not(EqualsProto(old_schema)));
 }
 
 }  // namespace
