@@ -14,15 +14,23 @@
 
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
-#include <array>
-#include <cstddef>
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <numeric>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/lite-index.h"
+#include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -187,7 +195,12 @@ void DocHitInfoIteratorTermLitePrefix::SortAndDedupeDocumentIds() {
             cached_hit_term_frequency_[idx];
         while (curr_mask) {
           SectionId section_id = __builtin_ctzll(curr_mask);
-          collapsed_term_frequency[section_id] =
+          // We add the new term-frequency to the existing term-frequency we've
+          // recorded for the current section-id in case there are multiple hits
+          // matching the query for this section.
+          // - This is the case for a prefix query where there are multiple
+          //   terms matching the prefix from the same sectionId + docId.
+          collapsed_term_frequency[section_id] +=
               cached_hit_term_frequency_[i][section_id];
           curr_mask &= ~(UINT64_C(1) << section_id);
         }

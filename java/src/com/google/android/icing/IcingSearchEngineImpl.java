@@ -38,7 +38,7 @@ public class IcingSearchEngineImpl implements Closeable {
 
   static {
     // NOTE: This can fail with an UnsatisfiedLinkError
-    System.loadLibrary("icing");
+    IcingLibraryLoader.loadLibrary();
   }
 
   /**
@@ -69,13 +69,6 @@ public class IcingSearchEngineImpl implements Closeable {
     }
     nativePointer = 0;
     closed = true;
-  }
-
-  @SuppressWarnings("deprecation")
-  @Override
-  protected void finalize() throws Throwable {
-    close();
-    super.finalize();
   }
 
   @Nullable
