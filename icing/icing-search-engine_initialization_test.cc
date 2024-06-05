@@ -1084,10 +1084,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         DocumentStore::Create(
             filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/
-            icing_options.document_store_namespace_id_fingerprint(),
+            /*namespace_id_fingerprint=*/true,
             /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -5403,169 +5402,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 }
 
-// TODO(b/275121148): deprecate this test after rollout join index v2.
-class IcingSearchEngineInitializationSwitchJoinIndexTest
-    : public IcingSearchEngineInitializationTest,
-      public ::testing::WithParamInterface<bool> {};
-TEST_P(IcingSearchEngineInitializationSwitchJoinIndexTest, SwitchJoinIndex) {
-  bool use_join_index_v2 = GetParam();
-
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("name")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_REQUIRED)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Message")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("body")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("indexableInteger")
-                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("senderQualifiedId")
-                                        .SetDataTypeJoinableString(
-                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
-
-  DocumentProto person =
-      DocumentBuilder()
-          .SetKey("namespace", "person")
-          .SetSchema("Person")
-          .AddStringProperty("name", "person")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  DocumentProto message =
-      DocumentBuilder()
-          .SetKey("namespace", "message/1")
-          .SetSchema("Message")
-          .AddStringProperty("body", kIpsumText)
-          .AddInt64Property("indexableInteger", 123)
-          .AddStringProperty("senderQualifiedId", "namespace#person")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-
-  // 1. Create an index with message 3 documents.
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_document_store_namespace_id_fingerprint(true);
-    options.set_use_new_qualified_id_join_index(use_join_index_v2);
-
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-
-    EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
-    message = DocumentBuilder(message).SetUri("message/2").Build();
-    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
-    message = DocumentBuilder(message).SetUri("message/3").Build();
-    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
-  }
-
-  // 2. Create the index again changing join index version. This should trigger
-  //    join index restoration.
-  {
-    // Mock filesystem to observe and check the behavior of all indices.
-    auto mock_filesystem = std::make_unique<MockFilesystem>();
-    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
-        .WillRepeatedly(DoDefault());
-    // Ensure term index directory should never be discarded.
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(EndsWith("/index_dir")))
-        .Times(0);
-    // Ensure integer index directory should never be discarded, and Clear()
-    // should never be called (i.e. storage sub directory
-    // "*/integer_index_dir/*" should never be discarded).
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
-        .Times(0);
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
-        .Times(0);
-    // Ensure qualified id join index directory should be discarded once, and
-    // Clear() should never be called (i.e. storage sub directory
-    // "*/qualified_id_join_index_dir/*" should never be discarded).
-    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                      EndsWith("/qualified_id_join_index_dir")))
-        .Times(1);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
-        .Times(0);
-
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_document_store_namespace_id_fingerprint(true);
-    options.set_use_new_qualified_id_join_index(!use_join_index_v2);
-
-    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    InitializeResultProto initialize_result = icing.Initialize();
-    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
-    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.initialize_stats().integer_index_restoration_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
-
-    // Verify qualified id join index works normally: join a query for
-    // `name:person` with a child query for `body:consectetur` based on the
-    // child's `senderQualifiedId` field.
-    SearchSpecProto search_spec;
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    search_spec.set_query("name:person");
-    JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-    join_spec->set_parent_property_expression(
-        std::string(JoinProcessor::kQualifiedIdExpr));
-    join_spec->set_child_property_expression("senderQualifiedId");
-    join_spec->set_aggregation_scoring_strategy(
-        JoinSpecProto::AggregationScoringStrategy::COUNT);
-    JoinSpecProto::NestedSpecProto* nested_spec =
-        join_spec->mutable_nested_spec();
-    SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
-    nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
-    nested_search_spec->set_query("body:consectetur");
-    *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
-    *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
-
-    ResultSpecProto result_spec = ResultSpecProto::default_instance();
-    result_spec.set_max_joined_children_per_parent_to_return(
-        std::numeric_limits<int32_t>::max());
-
-    SearchResultProto results = icing.Search(
-        search_spec, ScoringSpecProto::default_instance(), result_spec);
-    ASSERT_THAT(results.results(), SizeIs(1));
-    EXPECT_THAT(results.results(0).document().uri(), Eq("person"));
-    EXPECT_THAT(results.results(0).joined_results(), SizeIs(3));
-    EXPECT_THAT(results.results(0).joined_results(0).document().uri(),
-                Eq("message/3"));
-    EXPECT_THAT(results.results(0).joined_results(1).document().uri(),
-                Eq("message/2"));
-    EXPECT_THAT(results.results(0).joined_results(2).document().uri(),
-                Eq("message/1"));
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(IcingSearchEngineInitializationSwitchJoinIndexTest,
-                         IcingSearchEngineInitializationSwitchJoinIndexTest,
-                         testing::Values(true, false));
-
 class IcingSearchEngineInitializationVersionChangeTest
     : public IcingSearchEngineInitializationTest,
       public ::testing::WithParamInterface<version_util::VersionInfo> {};
@@ -5659,10 +5495,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
         DocumentStore::Create(
             filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/
-            icing_options.document_store_namespace_id_fingerprint(),
+            /*namespace_id_fingerprint=*/true,
             /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));

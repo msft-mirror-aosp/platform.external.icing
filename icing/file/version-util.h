@@ -32,13 +32,15 @@ namespace version_util {
 // - Version 2: M-2023-09, M-2023-11, M-2024-01. Schema is compatible with v1.
 //   (There were no M-2023-10, M-2023-12).
 // - Version 3: M-2024-02. Schema is compatible with v1 and v2.
+// - Version 4: M-2024-06. Schema is compatible with v1, v2 and v3.
 //
 // LINT.IfChange(kVersion)
-inline static constexpr int32_t kVersion = 3;
+inline static constexpr int32_t kVersion = 4;
 // LINT.ThenChange(//depot/google3/icing/schema/schema-store.cc:min_overlay_version_compatibility)
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;
+inline static constexpr int32_t kVersionFour = 4;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
 
