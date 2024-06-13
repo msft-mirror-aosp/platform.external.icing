@@ -1807,6 +1807,7 @@ TEST_P(DocumentStoreTest, GetStorageInfo) {
   doc_store_storage_info = doc_store->GetStorageInfo();
   EXPECT_THAT(doc_store_storage_info.document_store_size(),
               Gt(empty_doc_store_size));
+  doc_store.reset();
 
   // Bad file system
   MockFilesystem mock_filesystem;

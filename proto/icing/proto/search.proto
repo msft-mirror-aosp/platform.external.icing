@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 13
+// Next tag: 14
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -60,7 +60,8 @@ message SearchSpecProto {
   // OPTIONAL: Only search for documents that have the specified schema types.
   // If unset, the query will search over all schema types. Note that this
   // applies to the entire 'query'. To issue different queries for different
-  // schema types, separate Search()'s will need to be made.
+  // schema types, separate Search()'s will need to be made. Also note that
+  // schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 4;
 
   // Timestamp taken just before sending proto across the JNI boundary from java
@@ -107,6 +108,10 @@ message SearchSpecProto {
   // The default metric type used to calculate the scores for embedding
   // queries.
   optional EmbeddingQueryMetricType.Code embedding_query_metric_type = 12;
+
+  // Strings to be used as parameters in the query. The strings will be treated
+  // as pure TEXT and will be normalized and tokenized.
+  repeated string query_parameter_strings = 13;
 
   reserved 6;
 }
@@ -414,7 +419,7 @@ message GetResultSpecProto {
   repeated TypePropertyMask type_property_masks = 1;
 }
 
-// Next tag: 8
+// Next tag: 12
 message SuggestionSpecProto {
   // REQUIRED: The "raw" prefix string that users may type. For example, "f"
   // will search for suggested query that start with "f" like "foo", "fool".
@@ -451,6 +456,7 @@ message SuggestionSpecProto {
   // If unset, the suggestion will search over all schema types. Note that this
   // applies to the entire 'prefix'. To issue different suggestions for
   // different schema typs, separate RunSuggestion()'s will need to be made.
+  // Also note that schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 6;
 
   // OPTIONAL: Only search for suggestions that under the specified types and
@@ -464,6 +470,21 @@ message SuggestionSpecProto {
   // suggestions for different types, separate RunSuggestion()'s will need to be
   // made.
   repeated TypePropertyMask type_property_filters = 7;
+
+  // The vectors to be used in embedding queries.
+  repeated PropertyProto.VectorProto embedding_query_vectors = 8;
+
+  // The default metric type used to calculate the scores for embedding
+  // queries.
+  optional SearchSpecProto.EmbeddingQueryMetricType.Code
+      embedding_query_metric_type = 9;
+
+  // Strings to be used as parameters in the query. The strings will be treated
+  // as pure TEXT and will be normalized and tokenized.
+  repeated string query_parameter_strings = 10;
+
+  // Features enabled in this suggestion spec.
+  repeated string enabled_features = 11;
 }
 
 // A group that holds namespace and document_uris under it.

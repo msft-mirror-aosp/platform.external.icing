@@ -60,6 +60,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::EqualsProto;
 using ::testing::Ge;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
@@ -474,6 +475,86 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentIndexFailureDeletion) {
   GetResultProto get_result =
       icing.Get("namespace", "uri1", GetResultSpecProto::default_instance());
   ASSERT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEnginePutTest, PutAndGetDocumentWithBlobHandle) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing
+          .SetSchema(
+              SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("SchemaType")
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName("blobHandle")
+                                       .SetDataType(TYPE_BLOB_HANDLE)
+                                       .SetCardinality(CARDINALITY_REQUIRED)))
+                  .Build())
+          .status(),
+      ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_digest(std::string(32, ' '));
+  blob_handle.set_label("label");
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("SchemaType")
+          .AddBlobHandleProperty("blobHandle", blob_handle)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  GetResultProto get_result =
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance());
+  EXPECT_THAT(get_result.status(), ProtoIsOk());
+  EXPECT_THAT(get_result.document(), EqualsProto(document));
+}
+
+TEST_F(IcingSearchEnginePutTest, PutDocumentWithInvalidBlobHandle) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing
+          .SetSchema(
+              SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("SchemaType")
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName("blobHandle")
+                                       .SetDataType(TYPE_BLOB_HANDLE)
+                                       .SetCardinality(CARDINALITY_REQUIRED)))
+                  .Build())
+          .status(),
+      ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_digest("invalid digest");
+  blob_handle.set_label("label");
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("SchemaType")
+          .AddBlobHandleProperty("blobHandle", blob_handle)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 }  // namespace

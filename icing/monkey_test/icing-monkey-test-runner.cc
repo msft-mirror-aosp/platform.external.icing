@@ -18,8 +18,11 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <iomanip>
+#include <ios>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,6 +44,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/result/result-state-manager.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -58,21 +62,53 @@ using ::testing::Not;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAreArray;
 
+bool GetRandomBoolean(MonkeyTestRandomEngine* random) {
+  std::uniform_int_distribution<> dist(0, 1);
+  return dist(*random) == 1;
+}
+
 SearchSpecProto GenerateRandomSearchSpecProto(
     MonkeyTestRandomEngine* random,
     MonkeyDocumentGenerator* document_generator) {
-  // Get a random token from the language set as a single term query.
-  std::string query(document_generator->GetToken());
-  std::uniform_int_distribution<> dist(0, 1);
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  if (dist(*random) == 1) {
-    term_match_type = TermMatchType::PREFIX;
-    // Randomly drop a suffix of query to test prefix query.
-    std::uniform_int_distribution<> size_dist(1, query.size());
-    query.resize(size_dist(*random));
+  SearchSpecProto search_spec;
+  std::string query;
+
+  // 50% chance of doing a term query, and 50% chance of doing an embedding
+  // query.
+  if (GetRandomBoolean(random)) {
+    // Get a random token from the language set as a single term query.
+    query = document_generator->GetToken();
+    TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+    if (GetRandomBoolean(random)) {
+      term_match_type = TermMatchType::PREFIX;
+      // Randomly drop a suffix of query to test prefix query.
+      std::uniform_int_distribution<> size_dist(1, query.size());
+      query.resize(size_dist(*random));
+    }
+    search_spec.set_term_match_type(term_match_type);
+  } else {
+    std::uniform_real_distribution<float> range_dist(-1.0, 1.0);
+    float low = range_dist(*random);
+    float high = range_dist(*random);
+    if (low > high) {
+      std::swap(low, high);
+    }
+
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "semanticSearch(getSearchSpecEmbedding(0), " << low << ", "
+           << high << ")";
+    query = stream.str();
+    search_spec.set_embedding_query_metric_type(
+        SearchSpecProto::EmbeddingQueryMetricType::COSINE);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+    *search_spec.add_embedding_query_vectors() =
+        document_generator->GetRandomVector();
   }
+
   // 50% chance of getting a section restriction.
-  if (dist(*random) == 1) {
+  if (GetRandomBoolean(random)) {
     const SchemaTypeConfigProto& type_config = document_generator->GetType();
     if (type_config.properties_size() > 0) {
       std::uniform_int_distribution<> prop_dist(
@@ -82,8 +118,6 @@ SearchSpecProto GenerateRandomSearchSpecProto(
           query);
     }
   }
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(term_match_type);
   search_spec.set_query(query);
   return search_spec;
 }
@@ -425,6 +459,7 @@ void IcingMonkeyTestRunner::DoSearch() {
   const ResultSpecProto::SnippetSpecProto snippet_spec =
       result_spec->snippet_spec();
   bool is_projection_enabled = !result_spec->type_property_masks().empty();
+  bool is_embedding_query = !search_spec->embedding_query_vectors().empty();
 
   ICING_LOG(INFO) << "Monkey searching by query: " << search_spec->query()
                   << ", term_match_type: " << search_spec->term_match_type();
@@ -469,7 +504,8 @@ void IcingMonkeyTestRunner::DoSearch() {
   if (exp_documents.size() >= 30000) {
     return;
   }
-  if (snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled) {
+  if (snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled &&
+      !is_embedding_query) {
     ASSERT_THAT(num_snippeted,
                 Eq(std::min<uint32_t>(exp_documents.size(),
                                       snippet_spec.num_to_snippet())));
@@ -502,9 +538,7 @@ void IcingMonkeyTestRunner::DoOptimize() {
 }
 
 void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
-  std::uniform_int_distribution<> dist(0, 1);
-
-  bool always_rebuild_index_optimize = dist(random_);
+  bool always_rebuild_index_optimize = GetRandomBoolean(&random_);
   float optimize_rebuild_index_threshold =
       always_rebuild_index_optimize ? 0.0 : 0.9;
 
@@ -516,7 +550,7 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   // The method will be called every time when we ReloadFromDisk(), so randomly
   // flip this flag to test document store's compatibility.
   icing_options.set_document_store_namespace_id_fingerprint(
-      (bool)dist(random_));
+      GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

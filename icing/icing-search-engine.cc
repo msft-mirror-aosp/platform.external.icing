@@ -57,6 +57,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/portable/endian.h"
+#include "icing/proto/blob.proto.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -89,6 +90,7 @@
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/scoring/scoring-processor.h"
+#include "icing/store/blob-store.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -106,6 +108,7 @@ namespace lib {
 namespace {
 
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
+constexpr std::string_view kBlobSubfolderName = "blob_dir";
 constexpr std::string_view kIndexSubfolderName = "index_dir";
 constexpr std::string_view kIntegerIndexSubfolderName = "integer_index_dir";
 constexpr std::string_view kQualifiedIdJoinIndexSubfolderName =
@@ -262,6 +265,10 @@ CreateQualifiedIdJoinIndex(const Filesystem& filesystem,
 // anything else.
 std::string MakeDocumentDirectoryPath(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentSubfolderName);
+}
+
+std::string MakeBlobDirectoryPath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kBlobSubfolderName);
 }
 
 // Makes a temporary folder path for the document store which will be used
@@ -421,7 +428,7 @@ libtextclassifier3::StatusOr<bool> ScoringExpressionHasRelevanceScoreFunction(
   // to be called only once.
   Lexer lexer(scoring_expression, Lexer::Language::SCORING);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
+                         std::move(lexer).ExtractTokens());
   for (const Lexer::LexerToken& token : lexer_tokens) {
     if (token.type == Lexer::TokenType::FUNCTION_NAME &&
         token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
@@ -615,7 +622,6 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
 libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
-
   // Make sure the base directory exists
   if (!filesystem_->CreateDirectoryRecursively(options_.base_dir().c_str())) {
     return absl_ports::InternalError(absl_ports::StrCat(
@@ -699,17 +705,24 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
     const std::string embedding_index_dir =
         MakeEmbeddingIndexWorkingPath(options_.base_dir());
+    const std::string blob_store_dir =
+        MakeBlobDirectoryPath(options_.base_dir());
+
     if (!filesystem_->DeleteDirectoryRecursively(doc_store_dir.c_str()) ||
         !filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !IntegerIndex::Discard(*filesystem_, integer_index_dir).ok() ||
         !QualifiedIdJoinIndex::Discard(*filesystem_,
                                        qualified_id_join_index_dir)
              .ok() ||
-        !EmbeddingIndex::Discard(*filesystem_, embedding_index_dir).ok()) {
+        !EmbeddingIndex::Discard(*filesystem_, embedding_index_dir).ok() ||
+        !filesystem_->DeleteDirectoryRecursively(blob_store_dir.c_str())) {
       return absl_ports::InternalError(absl_ports::StrCat(
           "Could not delete directories: ", index_dir, ", ", integer_index_dir,
-          ", ", qualified_id_join_index_dir, ", ", embedding_index_dir, " and ",
-          doc_store_dir));
+          ", ", qualified_id_join_index_dir, ", ", embedding_index_dir, ", ",
+          blob_store_dir, " and ", doc_store_dir));
+    }
+    if (options_.enable_blob_store()) {
+      ICING_RETURN_IF_ERROR(InitializeBlobStore());
     }
     ICING_ASSIGN_OR_RETURN(
         bool document_store_derived_files_regenerated,
@@ -728,6 +741,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // Since we're going to rebuild all indices in this case, the return value
     // of InitializeDocumentStore (document_store_derived_files_regenerated) is
     // unused.
+    if (options_.enable_blob_store()) {
+      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+    }
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
 
@@ -801,6 +817,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     initialize_stats->set_embedding_index_restoration_cause(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
   } else if (version_state_change != version_util::StateChange::kCompatible) {
+    if (options_.enable_blob_store()) {
+      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+    }
     ICING_ASSIGN_OR_RETURN(bool document_store_derived_files_regenerated,
                            InitializeDocumentStore(
                                /*force_recovery_and_revalidate_documents=*/true,
@@ -824,6 +843,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     initialize_stats->set_embedding_index_restoration_cause(
         InitializeStatsProto::VERSION_CHANGED);
   } else {
+    if (options_.enable_blob_store()) {
+      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+    }
     ICING_ASSIGN_OR_RETURN(
         bool document_store_derived_files_regenerated,
         InitializeDocumentStore(
@@ -911,8 +933,22 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
           /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
-
   return create_result.derived_files_regenerated;
+}
+
+libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore() {
+  std::string blob_dir = MakeBlobDirectoryPath(options_.base_dir());
+  // Make sure the sub-directory exists
+  if (!filesystem_->CreateDirectoryRecursively(blob_dir.c_str())) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Could not create directory: ", blob_dir));
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      auto blob_store_or,
+      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get()));
+  blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
@@ -1934,7 +1970,7 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     return result_proto;
   }
   int64_t index_elements_size = index_elements_size_or.ValueOrDie();
-
+  // TODO(b/273591938): add stats for blob store
   // TODO(b/259744228): add stats for integer index
 
   // Sum up the optimizable sizes from DocumentStore and Index
@@ -2015,6 +2051,10 @@ DebugInfoResultProto IcingSearchEngine::GetDebugInfo(
 
 libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
     PersistType::Code persist_type) {
+  // persist blob store for both cases.
+  if (blob_store_ != nullptr) {
+    ICING_RETURN_IF_ERROR(blob_store_->PersistToDisk());
+  }
   if (persist_type == PersistType::LITE) {
     return document_store_->PersistToDisk(persist_type);
   }
@@ -2460,6 +2500,91 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
     return;
   }
   result_state_manager_->InvalidateResultState(next_page_token);
+}
+
+BlobProto IcingSearchEngine::OpenWriteBlob(
+    PropertyProto::BlobHandleProto blob_handle) {
+  BlobProto blob_proto;
+  StatusProto* status = blob_proto.mutable_status();
+
+  absl_ports::unique_lock l(&mutex_);
+  if (blob_store_ == nullptr) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message(
+        "Open write blob is not supported in this Icing instance!");
+    return blob_proto;
+  }
+
+  if (!initialized_) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("IcingSearchEngine has not been initialized!");
+    return blob_proto;
+  }
+
+  auto write_fd_or = blob_store_->OpenWrite(blob_handle);
+  if (!write_fd_or.ok()) {
+    TransformStatus(write_fd_or.status(), status);
+    return blob_proto;
+  }
+  blob_proto.set_file_descriptor(write_fd_or.ValueOrDie());
+  status->set_code(StatusProto::OK);
+  return blob_proto;
+}
+
+BlobProto IcingSearchEngine::OpenReadBlob(
+    PropertyProto::BlobHandleProto blob_handle) {
+  BlobProto blob_proto;
+  StatusProto* status = blob_proto.mutable_status();
+  absl_ports::shared_lock l(&mutex_);
+  if (blob_store_ == nullptr) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message(
+        "Open read blob is not supported in this Icing instance!");
+    return blob_proto;
+  }
+
+  if (!initialized_) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("IcingSearchEngine has not been initialized!");
+    ICING_LOG(ERROR) << status->message();
+    return blob_proto;
+  }
+
+  auto read_fd_or = blob_store_->OpenRead(blob_handle);
+  if (!read_fd_or.ok()) {
+    TransformStatus(read_fd_or.status(), status);
+    return blob_proto;
+  }
+  blob_proto.set_file_descriptor(read_fd_or.ValueOrDie());
+  status->set_code(StatusProto::OK);
+  return blob_proto;
+}
+
+BlobProto IcingSearchEngine::CommitBlob(
+    PropertyProto::BlobHandleProto blob_handle) {
+  BlobProto blob_proto;
+  StatusProto* status = blob_proto.mutable_status();
+  absl_ports::unique_lock l(&mutex_);
+  if (blob_store_ == nullptr) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("Commit blob is not supported in this Icing instance!");
+    return blob_proto;
+  }
+
+  if (!initialized_) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("IcingSearchEngine has not been initialized!");
+    ICING_LOG(ERROR) << status->message();
+    return blob_proto;
+  }
+
+  auto commit_result_or = blob_store_->CommitBlob(blob_handle);
+  if (!commit_result_or.ok()) {
+    TransformStatus(commit_result_or, status);
+    return blob_proto;
+  }
+  status->set_code(StatusProto::OK);
+  return blob_proto;
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>

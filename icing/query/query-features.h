@@ -54,18 +54,18 @@ constexpr Feature kHasPropertyFunctionFeature =
 
 // This feature relates to the use of embedding searches in the advanced query
 // language. Ex. `semanticSearch(getSearchSpecEmbedding(0), 0.5, 1, "COSINE")`.
-constexpr Feature kEmbeddingSearchFeature =
+//
+// Deprecated: This feature is not necessary. The availability of this feature
+// is already controlled by the existence of the embedding_query_vectors in the
+// SearchSpecProto. This API was never publicly released in Jetpack or Android,
+// so it should be safe to delete once all google3 references are removed.
+constexpr Feature kEmbeddingSearchFeatureDeprecated =
     "EMBEDDING_SEARCH";  // Features#EMBEDDING_SEARCH
-
-// This feature relates to the use of the tokenize function which returns an
-// iterator that ANDs all of the normalized tokens in its string.
-// Ex. `tokenize("foo.bar\" baz(")`.
-constexpr Feature kTokenizeFeature = "TOKENIZE";  // Features#TOKENIZE
 
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
   return {kNumericSearchFeature,           kVerbatimSearchFeature,
           kListFilterQueryLanguageFeature, kHasPropertyFunctionFeature,
-          kEmbeddingSearchFeature,         kTokenizeFeature};
+          kEmbeddingSearchFeatureDeprecated};
 }
 
 }  // namespace lib

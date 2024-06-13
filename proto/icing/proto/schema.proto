@@ -275,6 +275,9 @@ message PropertyConfigProto {
 
       // A list of floats. Vector type is used for embedding searches.
       VECTOR = 7;
+
+      // A handle to uniquely identify a large blob of data.
+      BLOB_HANDLE = 8;
     }
   }
   optional DataType.Code data_type = 2;

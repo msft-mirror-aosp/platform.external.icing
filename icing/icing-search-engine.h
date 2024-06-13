@@ -36,6 +36,7 @@
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
+#include "icing/proto/blob.pb.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -52,6 +53,7 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/blob-store.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -346,6 +348,39 @@ class IcingSearchEngine {
   void InvalidateNextPageToken(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Gets or creates a file for write only purpose for the given blob handle.
+  // To mark the blob is completed written, commitBlob must be called. Once
+  // commitBlob is called, the blob is sealed and rewrite is not allowed.
+  //
+  // Returns:
+  //   File descriptor on success
+  //   InvalidArgumentError on invalid blob handle
+  //   PermissionDeniedError on blob is committed
+  //   INTERNAL_ERROR on IO error
+  BlobProto OpenWriteBlob(PropertyProto::BlobHandleProto blob_handle);
+
+  // Gets or creates a file for read only purpose for the given blob handle.
+  // The blob must be committed by calling commitBlob otherwise it is not
+  // accessible.
+  //
+  // Returns:
+  //   File descriptor on success
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError on blob is not found or is not committed
+  BlobProto OpenReadBlob(PropertyProto::BlobHandleProto blob_handle);
+
+  // Commits the given blob, the blob is open to write via openWrite.
+  // Before the blob is committed, it is not visible to any reader via openRead.
+  // After the blob is committed, it is not allowed to rewrite or update the
+  // content.
+  //
+  // Returns:
+  //   True on the blob is successfuly committed.
+  //   False on the blob is already committed.
+  //   InvalidArgumentError on invalid blob handle or digest is mismatch with
+  //     file content NotFoundError on blob is not found.
+  BlobProto CommitBlob(PropertyProto::BlobHandleProto blob_handle);
+
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
   // would be able to fully recover all data written up to this point.
@@ -468,6 +503,9 @@ class IcingSearchEngine {
   // Used to store all valid documents
   std::unique_ptr<DocumentStore> document_store_ ICING_GUARDED_BY(mutex_);
 
+  // Used to store all valid blob data
+  std::unique_ptr<BlobStore> blob_store_ ICING_GUARDED_BY(mutex_);
+
   std::unique_ptr<const LanguageSegmenter> language_segmenter_
       ICING_GUARDED_BY(mutex_);
 
@@ -559,6 +597,14 @@ class IcingSearchEngine {
   libtextclassifier3::StatusOr<bool> InitializeDocumentStore(
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Do any initialization necessary to create a BlobStore instance.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
+  libtextclassifier3::Status InitializeBlobStore()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer

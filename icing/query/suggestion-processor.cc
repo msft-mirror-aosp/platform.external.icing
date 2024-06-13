@@ -259,6 +259,17 @@ SuggestionProcessor::QuerySuggestions(
   search_spec.set_query(suggestion_spec.prefix());
   search_spec.set_term_match_type(
       suggestion_spec.scoring_spec().scoring_match_type());
+  search_spec.mutable_embedding_query_vectors()->Add(
+      suggestion_spec.embedding_query_vectors().begin(),
+      suggestion_spec.embedding_query_vectors().end());
+  search_spec.set_embedding_query_metric_type(
+      suggestion_spec.embedding_query_metric_type());
+  search_spec.mutable_query_parameter_strings()->Add(
+      suggestion_spec.query_parameter_strings().begin(),
+      suggestion_spec.query_parameter_strings().end());
+  search_spec.mutable_enabled_features()->Add(
+      suggestion_spec.enabled_features().begin(),
+      suggestion_spec.enabled_features().end());
   ICING_ASSIGN_OR_RETURN(
       QueryResults query_results,
       query_processor->ParseSearch(search_spec,

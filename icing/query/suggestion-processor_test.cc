@@ -34,6 +34,7 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/platform.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -688,9 +689,66 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
 
   suggestion_spec.set_prefix(
       "bar OR semanticSearch(getSearchSpecEmbedding(0), 0.5, 1)");
+  suggestion_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  suggestion_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  PropertyProto::VectorProto* vector =
+      suggestion_spec.add_embedding_query_vectors();
+  vector->set_model_signature("model_signature");
+  vector->add_values(0.1);
   EXPECT_THAT(suggestion_processor_->QuerySuggestions(
                   suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(SuggestionProcessorTest, SemanticSearchPrefixTest) {
+  // Create the schema and document store
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // namespaces populated.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace1", "1")
+                                                      .SetSchema("email")
+                                                      .Build()));
+
+  ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
+                              TermMatchType::EXACT_ONLY, "foo"),
+              IsOk());
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+
+  // Suggesting without adding embedding query vectors will cause a failure.
+  suggestion_spec.set_prefix(
+      "semanticSearch(getSearchSpecEmbedding(0), 0.5, 1) OR foo");
+  suggestion_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Adding embedding query vectors will allow us to successfully suggest.
+  suggestion_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  PropertyProto::VectorProto* vector =
+      suggestion_spec.add_embedding_query_vectors();
+  vector->set_model_signature("model_signature");
+  vector->add_values(0.1);
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::OK));
 }
 
 TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {

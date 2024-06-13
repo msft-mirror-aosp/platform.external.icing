@@ -42,7 +42,7 @@ namespace version_util {
 // detection
 // LINT.IfChange(kVersion)
 inline static constexpr int32_t kVersion = 4;
-// LINT.ThenChange(//depot/google3/icing/schema/schema-store.cc:min_overlay_version_compatibility)
+// LINT.ThenChange(./icing/schema/schema-store.cc:min_overlay_version_compatibility)
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;

@@ -79,6 +79,8 @@ constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
     PropertyConfigProto::DataType::DOCUMENT;
 constexpr PropertyConfigProto::DataType::Code TYPE_VECTOR =
     PropertyConfigProto::DataType::VECTOR;
+constexpr PropertyConfigProto::DataType::Code TYPE_BLOB_HANDLE =
+    PropertyConfigProto::DataType::BLOB_HANDLE;
 
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
     JoinableConfig::ValueType::NONE;
