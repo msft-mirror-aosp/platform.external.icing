@@ -14,23 +14,26 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 
-#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/query/query-utils.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -39,6 +42,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -283,17 +287,18 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
   DocumentProto document2_namespace1_;
   DocumentProto document1_namespace2_;
   DocumentProto document1_namespace3_;
-  DocHitInfoIteratorFilter::Options options_;
 };
 
 TEST_F(DocHitInfoIteratorNamespaceFilterTest, EmptyOriginalIterator) {
   std::unique_ptr<DocHitInfoIterator> original_iterator_empty =
       std::make_unique<DocHitInfoIteratorDummy>();
 
-  options_.namespaces = std::vector<std::string_view>{};
+  SearchSpecProto search_spec;
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), options_, fake_clock_.GetSystemTimeMilliseconds());
+      schema_store_.get(), options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -308,10 +313,13 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.namespaces = std::vector<std::string_view>{"nonexistent_namespace"};
+  SearchSpecProto search_spec;
+  search_spec.add_namespace_filters("nonexistent_namespace");
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -325,10 +333,12 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, NoNamespacesReturnsAll) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.namespaces = std::vector<std::string_view>{};
+  SearchSpecProto search_spec;
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -349,10 +359,13 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.namespaces = std::vector<std::string_view>{namespace1_};
+  SearchSpecProto search_spec;
+  search_spec.add_namespace_filters(namespace1_);
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id1, document_id2));
@@ -375,10 +388,14 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, FilterForMultipleNamespacesOk) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.namespaces = std::vector<std::string_view>{namespace1_, namespace3_};
+  SearchSpecProto search_spec;
+  search_spec.add_namespace_filters(namespace1_);
+  search_spec.add_namespace_filters(namespace3_);
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id1, document_id2, document_id4));
@@ -457,17 +474,18 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
   DocumentProto document2_schema2_;
   DocumentProto document3_schema3_;
   DocumentProto document4_schema1_;
-  DocHitInfoIteratorFilter::Options options_;
 };
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, EmptyOriginalIterator) {
   std::unique_ptr<DocHitInfoIterator> original_iterator_empty =
       std::make_unique<DocHitInfoIteratorDummy>();
 
-  options_.schema_types = std::vector<std::string_view>{};
+  SearchSpecProto search_spec;
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), options_, fake_clock_.GetSystemTimeMilliseconds());
+      schema_store_.get(), options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -482,11 +500,13 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.schema_types =
-      std::vector<std::string_view>{"nonexistent_schema_type"};
+  SearchSpecProto search_spec;
+  search_spec.add_schema_type_filters("nonexistent_schema_type");
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -500,10 +520,12 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, NoSchemaTypesReturnsAll) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.schema_types = std::vector<std::string_view>{};
+  SearchSpecProto search_spec;
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -521,10 +543,13 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.schema_types = std::vector<std::string_view>{kSchema1};
+  SearchSpecProto search_spec;
+  search_spec.add_schema_type_filters(std::string(kSchema1));
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -544,17 +569,21 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, FilterForMultipleSchemaTypesOk) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.schema_types = std::vector<std::string_view>{kSchema2, kSchema3};
+  SearchSpecProto search_spec;
+  search_spec.add_schema_type_filters(std::string(kSchema2));
+  search_spec.add_schema_type_filters(std::string(kSchema3));
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id2, document_id3));
 }
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
-       FilterForSchemaTypePolymorphismOk) {
+       FilterIsExactForSchemaTypePolymorphism) {
   // Add some irrelevant documents.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(document1_schema1_));
@@ -580,28 +609,34 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
       DocHitInfo(document_id1), DocHitInfo(document_id2),
       DocHitInfo(person_document_id), DocHitInfo(artist_document_id)};
 
-  // Filters for the "person" type should also include the "artist" type.
+  // Filters for the "person" type should NOT include the "artist" type, since
+  // schema filters should not expand for polymorphism.
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  options_.schema_types = {"person"};
+  SearchSpecProto search_spec_1;
+  search_spec_1.add_schema_type_filters("person");
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec_1, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator_1(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(GetDocumentIds(&filtered_iterator_1),
-              ElementsAre(person_document_id, artist_document_id));
+              ElementsAre(person_document_id));
 
   // Filters for the "artist" type should not include the "person" type.
   original_iterator = std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  options_.schema_types = {"artist"};
+  SearchSpecProto search_spec_2;
+  search_spec_2.add_schema_type_filters("artist");
+  options = GetFilterOptions(search_spec_2, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator_2(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(GetDocumentIds(&filtered_iterator_2),
               ElementsAre(artist_document_id));
 }
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
-       FilterForSchemaTypeMultipleParentPolymorphismOk) {
+       FilterIsExactForSchemaTypeMultipleParentPolymorphism) {
   // Create an email and a message document.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId email_document_id,
@@ -629,31 +664,40 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
       DocHitInfo(email_document_id), DocHitInfo(message_document_id),
       DocHitInfo(email_message_document_id)};
 
-  // Filters for the "email" type should also include the "emailMessage" type.
+  // Filters for the "email" type should NOT include the "emailMessage" type,
+  // since schema filters should not expand for polymorphism.
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  options_.schema_types = std::vector<std::string_view>{"email"};
+  SearchSpecProto search_spec_1;
+  search_spec_1.add_schema_type_filters("email");
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec_1, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator_1(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(GetDocumentIds(&filtered_iterator_1),
-              ElementsAre(email_document_id, email_message_document_id));
+              ElementsAre(email_document_id));
 
-  // Filters for the "message" type should also include the "emailMessage" type.
+  // Filters for the "message" type should NOT include the "emailMessage" type,
+  // since schema filters should not expand for polymorphism.
   original_iterator = std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  options_.schema_types = std::vector<std::string_view>{"message"};
+  SearchSpecProto search_spec_2;
+  search_spec_2.add_schema_type_filters("message");
+  options = GetFilterOptions(search_spec_2, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator_2(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(GetDocumentIds(&filtered_iterator_2),
-              ElementsAre(message_document_id, email_message_document_id));
+              ElementsAre(message_document_id));
 
   // Filters for a irrelevant type should return nothing.
   original_iterator = std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  options_.schema_types = std::vector<std::string_view>{"person"};
+  SearchSpecProto search_spec_3;
+  search_spec_3.add_schema_type_filters("person");
+  options = GetFilterOptions(search_spec_3, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator_3(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      options_, fake_clock_.GetSystemTimeMilliseconds());
+      options, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(GetDocumentIds(&filtered_iterator_3), IsEmpty());
 }
 
@@ -950,13 +994,13 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  DocHitInfoIteratorFilter::Options options;
-
+  SearchSpecProto search_spec;
   // Filters out document3 by namespace
-  options.namespaces = std::vector<std::string_view>{namespace1_};
-
+  search_spec.add_namespace_filters(namespace1_);
   // Filters out document4 by schema type
-  options.schema_types = std::vector<std::string_view>{schema1_};
+  search_spec.add_schema_type_filters(schema1_);
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store, *schema_store_);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store.get(), schema_store_.get(),
@@ -1049,9 +1093,11 @@ TEST_F(DocHitInfoIteratorFilterTest, TrimFilterIterator) {
       std::make_unique<DocHitInfoIteratorAnd>(std::move(left_iter),
                                               std::move(right_iter));
 
-  DocHitInfoIteratorFilter::Options options;
+  SearchSpecProto search_spec;
   // Filters out document3 by namespace
-  options.namespaces = std::vector<std::string_view>{namespace1_};
+  search_spec.add_namespace_filters(namespace1_);
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, *document_store_, *schema_store_);
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
       options, fake_clock_.GetSystemTimeMilliseconds());
