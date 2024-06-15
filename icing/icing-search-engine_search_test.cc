@@ -3607,6 +3607,98 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithProjectionMultipleFieldPaths) {
               EqualsProto(projected_document_one));
 }
 
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithPolymorphicProjectionAndExactSchemaFilter) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Artist")
+                       .AddParentType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("company")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add a person document and an artist document
+  DocumentProto document_person =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Foo Person")
+          .AddStringProperty("emailAddress", "person@gmail.com")
+          .Build();
+  DocumentProto document_artist =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Foo Artist")
+          .AddStringProperty("emailAddress", "artist@gmail.com")
+          .AddStringProperty("company", "Company")
+          .Build();
+  ASSERT_THAT(icing.Put(document_person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_artist).status(), ProtoIsOk());
+
+  // Issue a query with a exact schema filter for "Person", which will **not**
+  // be expanded to "Artist" via polymorphism, and test that projection works
+  // for both types even though artist will not be returned at all.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("Foo");
+  search_spec.add_schema_type_filters("Person");
+
+  ResultSpecProto result_spec;
+  TypePropertyMask* person_field_mask = result_spec.add_type_property_masks();
+  person_field_mask->set_schema_type("Person");
+  person_field_mask->add_paths("name");
+  TypePropertyMask* artist_field_mask = result_spec.add_type_property_masks();
+  artist_field_mask->set_schema_type("Artist");
+  artist_field_mask->add_paths("emailAddress");
+
+  // Verify results
+  DocumentProto projected_document_person =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Foo Person")
+          .Build();
+  SearchResultProto results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(projected_document_person));
+}
+
 TEST_F(IcingSearchEngineSearchTest, SearchWithPropertyFilters) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());

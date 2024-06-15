@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -108,6 +109,41 @@ EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path) {
   return index;
 }
 
+libtextclassifier3::Status EmbeddingIndex::CreateStorageDataIfNonEmpty() {
+  if (is_empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  ICING_ASSIGN_OR_RETURN(FlashIndexStorage flash_index_storage,
+                         FlashIndexStorage::Create(
+                             GetFlashIndexStorageFilePath(working_path_),
+                             &filesystem_, posting_list_hit_serializer_.get()));
+  flash_index_storage_ =
+      std::make_unique<FlashIndexStorage>(std::move(flash_index_storage));
+
+  ICING_ASSIGN_OR_RETURN(
+      embedding_posting_list_mapper_,
+      DynamicTrieKeyMapper<PostingListIdentifier>::Create(
+          filesystem_, GetEmbeddingHitListMapperPath(working_path_),
+          kEmbeddingHitListMapperMaxSize));
+
+  ICING_ASSIGN_OR_RETURN(
+      embedding_vectors_,
+      FileBackedVector<float>::Create(
+          filesystem_, GetEmbeddingVectorsFilePath(working_path_),
+          MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status EmbeddingIndex::MarkIndexNonEmpty() {
+  if (!is_empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+  info().is_empty = false;
+  return CreateStorageDataIfNonEmpty();
+}
+
 libtextclassifier3::Status EmbeddingIndex::Initialize() {
   bool is_new = false;
   if (!filesystem_.FileExists(GetMetadataFilePath(working_path_).c_str())) {
@@ -129,30 +165,13 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
   metadata_mmapped_file_ =
       std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file));
 
-  ICING_ASSIGN_OR_RETURN(FlashIndexStorage flash_index_storage,
-                         FlashIndexStorage::Create(
-                             GetFlashIndexStorageFilePath(working_path_),
-                             &filesystem_, posting_list_hit_serializer_.get()));
-  flash_index_storage_ =
-      std::make_unique<FlashIndexStorage>(std::move(flash_index_storage));
-
-  ICING_ASSIGN_OR_RETURN(
-      embedding_posting_list_mapper_,
-      DynamicTrieKeyMapper<PostingListIdentifier>::Create(
-          filesystem_, GetEmbeddingHitListMapperPath(working_path_),
-          kEmbeddingHitListMapperMaxSize));
-
-  ICING_ASSIGN_OR_RETURN(
-      embedding_vectors_,
-      FileBackedVector<float>::Create(
-          filesystem_, GetEmbeddingVectorsFilePath(working_path_),
-          MemoryMappedFile::READ_WRITE_AUTO_SYNC));
-
   if (is_new) {
     ICING_RETURN_IF_ERROR(metadata_mmapped_file_->GrowAndRemapIfNecessary(
         /*file_offset=*/0, /*mmap_size=*/kMetadataFileSize));
     info().magic = Info::kMagic;
     info().last_added_document_id = kInvalidDocumentId;
+    info().is_empty = true;
+    memset(Info().padding_, 0, Info::kPaddingSize);
     ICING_RETURN_IF_ERROR(InitializeNewStorage());
   } else {
     if (metadata_mmapped_file_->available_size() != kMetadataFileSize) {
@@ -162,6 +181,7 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
     if (info().magic != Info::kMagic) {
       return absl_ports::FailedPreconditionError("Incorrect magic value");
     }
+    ICING_RETURN_IF_ERROR(CreateStorageDataIfNonEmpty());
     ICING_RETURN_IF_ERROR(InitializeExistingStorage());
   }
   return libtextclassifier3::Status::OK;
@@ -186,6 +206,10 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
   if (dimension == 0) {
     return absl_ports::InvalidArgumentError("Dimension is 0");
   }
+  if (is_empty()) {
+    return absl_ports::NotFoundError("EmbeddingIndex is empty");
+  }
+
   std::string key = GetPostingListKey(dimension, model_signature);
   ICING_ASSIGN_OR_RETURN(PostingListIdentifier posting_list_id,
                          embedding_posting_list_mapper_->Get(key));
@@ -199,6 +223,7 @@ libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
   if (vector.values_size() == 0) {
     return absl_ports::InvalidArgumentError("Vector dimension is 0");
   }
+  ICING_RETURN_IF_ERROR(MarkIndexNonEmpty());
 
   uint32_t location = embedding_vectors_->num_elements();
   uint32_t dimension = vector.values_size();
@@ -217,6 +242,11 @@ libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
 }
 
 libtextclassifier3::Status EmbeddingIndex::CommitBufferToIndex() {
+  if (pending_embedding_hits_.empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+  ICING_RETURN_IF_ERROR(MarkIndexNonEmpty());
+
   std::sort(pending_embedding_hits_.begin(), pending_embedding_hits_.end());
   auto iter_curr_key = pending_embedding_hits_.rbegin();
   while (iter_curr_key != pending_embedding_hits_.rend()) {
@@ -276,6 +306,10 @@ libtextclassifier3::Status EmbeddingIndex::CommitBufferToIndex() {
 libtextclassifier3::Status EmbeddingIndex::TransferIndex(
     const std::vector<DocumentId>& document_id_old_to_new,
     EmbeddingIndex* new_index) const {
+  if (is_empty()) {
+    return absl_ports::FailedPreconditionError("EmbeddingIndex is empty");
+  }
+
   std::unique_ptr<KeyMapper<PostingListIdentifier>::Iterator> itr =
       embedding_posting_list_mapper_->GetIterator();
   while (itr->Advance()) {
@@ -322,6 +356,7 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
         if (new_document_id == kInvalidDocumentId) {
           continue;
         }
+        ICING_RETURN_IF_ERROR(new_index->MarkIndexNonEmpty());
         uint32_t new_location = new_index->embedding_vectors_->num_elements();
         new_hits.push_back(EmbeddingHit(
             BasicHit(old_hit.basic_hit().section_id(), new_document_id),
@@ -336,7 +371,7 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
     }
     // No hit needs to be added to the new index.
     if (new_hits.empty()) {
-      return libtextclassifier3::Status::OK;
+      continue;
     }
     // Add transferred hits to the new index.
     ICING_ASSIGN_OR_RETURN(
@@ -362,6 +397,11 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
 libtextclassifier3::Status EmbeddingIndex::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
     DocumentId new_last_added_document_id) {
+  if (is_empty()) {
+    info().last_added_document_id = new_last_added_document_id;
+    return libtextclassifier3::Status::OK;
+  }
+
   // This is just for completeness, but this should never be necessary, since we
   // should never have pending hits at the time when Optimize is run.
   ICING_RETURN_IF_ERROR(CommitBufferToIndex());
@@ -413,6 +453,10 @@ libtextclassifier3::Status EmbeddingIndex::PersistMetadataToDisk(bool force) {
 }
 
 libtextclassifier3::Status EmbeddingIndex::PersistStoragesToDisk(bool force) {
+  if (is_empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   if (!flash_index_storage_->PersistToDisk()) {
     return absl_ports::InternalError("Fail to persist flash index to disk");
   }
@@ -428,6 +472,9 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::ComputeInfoChecksum(
 
 libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::ComputeStoragesChecksum(
     bool force) {
+  if (is_empty()) {
+    return Crc32(0);
+  }
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
                          embedding_posting_list_mapper_->ComputeChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_vectors_crc,

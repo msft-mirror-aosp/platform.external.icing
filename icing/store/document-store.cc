@@ -1083,24 +1083,31 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
   // TODO(b/147231617): Make a better way to replace the error message in an
   // existing Status.
   auto document_id_or = GetDocumentId(name_space, uri);
-  if (absl_ports::IsNotFound(document_id_or.status())) {
-    ICING_VLOG(1) << document_id_or.status().error_message();
-    return libtextclassifier3::Status(
-        document_id_or.status().CanonicalCode(),
-        IcingStringUtil::StringPrintf("Document (%s, %s) not found.",
-                                      name_space.data(), uri.data()));
+  if (!document_id_or.ok()) {
+    if (absl_ports::IsNotFound(document_id_or.status())) {
+      ICING_VLOG(1) << document_id_or.status().error_message();
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Document (", name_space, ", ", uri, ") not found."));
+    }
+
+    // Real error. Log it in error level and pass it up.
+    ICING_LOG(ERROR) << document_id_or.status().error_message();
+    return std::move(document_id_or).status();
   }
   DocumentId document_id = document_id_or.ValueOrDie();
 
   // TODO(b/147231617): Make a better way to replace the error message in an
   // existing Status.
-  auto status_or = Get(document_id);
-  if (absl_ports::IsNotFound(status_or.status())) {
-    ICING_LOG(ERROR) << document_id_or.status().error_message();
-    return libtextclassifier3::Status(
-        status_or.status().CanonicalCode(),
-        IcingStringUtil::StringPrintf("Document (%s, %s) not found.",
-                                      name_space.data(), uri.data()));
+  auto status_or = Get(document_id, clear_internal_fields);
+  if (!status_or.ok()) {
+    if (absl_ports::IsNotFound(status_or.status())) {
+      ICING_VLOG(1) << status_or.status().error_message();
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Document (", name_space, ", ", uri, ") not found."));
+    }
+
+    // Real error. Log it in error level.
+    ICING_LOG(ERROR) << status_or.status().error_message();
   }
   return status_or;
 }
@@ -1381,30 +1388,21 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
 
 libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
 DocumentStore::GetCorpusAssociatedScoreData(CorpusId corpus_id) const {
-  auto score_data_or = corpus_score_cache_->GetCopy(corpus_id);
-  if (!score_data_or.ok()) {
-    return score_data_or.status();
-  }
-
-  CorpusAssociatedScoreData corpus_associated_score_data =
-      std::move(score_data_or).ValueOrDie();
-  return corpus_associated_score_data;
+  return corpus_score_cache_->GetCopy(corpus_id);
 }
 
 libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
 DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
   auto corpus_scoring_data_or = GetCorpusAssociatedScoreData(corpus_id);
-  if (corpus_scoring_data_or.ok()) {
-    return std::move(corpus_scoring_data_or).ValueOrDie();
+  if (!corpus_scoring_data_or.ok() &&
+      absl_ports::IsOutOfRange(corpus_scoring_data_or.status())) {
+    // OUT_OF_RANGE is the StatusCode returned when a corpus id is added to
+    // corpus_score_cache_ for the first time. Return a default
+    // CorpusAssociatedScoreData object in this case.
+    return CorpusAssociatedScoreData();
   }
-  CorpusAssociatedScoreData scoringData;
-  // OUT_OF_RANGE is the StatusCode returned when a corpus id is added to
-  // corpus_score_cache_ for the first time.
-  if (corpus_scoring_data_or.status().CanonicalCode() ==
-      libtextclassifier3::StatusCode::OUT_OF_RANGE) {
-    return scoringData;
-  }
-  return corpus_scoring_data_or.status();
+
+  return corpus_scoring_data_or;
 }
 
 // TODO(b/273826815): Decide on and adopt a consistent pattern for handling

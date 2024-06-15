@@ -20,17 +20,17 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -43,32 +43,7 @@ DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
       document_store_(*document_store),
       schema_store_(*schema_store),
       options_(options),
-      current_time_ms_(current_time_ms) {
-  // Precompute all the NamespaceIds
-  for (std::string_view name_space : options_.namespaces) {
-    auto namespace_id_or = document_store_.GetNamespaceId(name_space);
-
-    // If we can't find the NamespaceId, just throw it away
-    if (namespace_id_or.ok()) {
-      target_namespace_ids_.emplace(namespace_id_or.ValueOrDie());
-    }
-  }
-
-  // Precompute all the SchemaTypeIds
-  for (std::string_view schema_type : options_.schema_types) {
-    libtextclassifier3::StatusOr<const std::unordered_set<SchemaTypeId>*>
-        schema_type_ids_or =
-            schema_store_.GetSchemaTypeIdsWithChildren(schema_type);
-
-    // If we can't find the SchemaTypeId, just throw it away
-    if (schema_type_ids_or.ok()) {
-      const std::unordered_set<SchemaTypeId>* schema_type_ids =
-          schema_type_ids_or.ValueOrDie();
-      target_schema_type_ids_.insert(schema_type_ids->begin(),
-                                     schema_type_ids->end());
-    }
-  }
-}
+      current_time_ms_(current_time_ms) {}
 
 libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
   while (delegate_->Advance().ok()) {
@@ -86,14 +61,14 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
     // We should be guaranteed that this exists now.
     DocumentFilterData data = document_filter_data_optional.value();
 
-    if (!options_.namespaces.empty() &&
-        target_namespace_ids_.count(data.namespace_id()) == 0) {
+    if (options_.filter_by_namespace_id_enabled &&
+        options_.target_namespace_ids.count(data.namespace_id()) == 0) {
       // Doesn't match one of the specified namespaces. Keep searching
       continue;
     }
 
-    if (!options_.schema_types.empty() &&
-        target_schema_type_ids_.count(data.schema_type_id()) == 0) {
+    if (options_.filter_by_schema_type_id_enabled &&
+        options_.target_schema_type_ids.count(data.schema_type_id()) == 0) {
       // Doesn't match one of the specified schema types. Keep searching
       continue;
     }
