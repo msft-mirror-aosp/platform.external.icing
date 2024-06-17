@@ -102,40 +102,39 @@ TEST(DocHitInfoIteratorNotTest, AllDocumentIdOverlapOk) {
   EXPECT_THAT(GetDocumentIds(&not_iterator), IsEmpty());
 }
 
-TEST(DocHitInfoIteratorNotTest, GetNumBlocksInspected) {
-  int to_be_excluded_iterator_blocks = 4;  // arbitrary value
+TEST(DocHitInfoIteratorNotTest, GetCallStats) {
+  DocHitInfoIterator::CallStats to_be_excluded_iterator_call_stats(
+      /*num_leaf_advance_calls_lite_index_in=*/2,
+      /*num_leaf_advance_calls_main_index_in=*/5,
+      /*num_leaf_advance_calls_integer_index_in=*/3,
+      /*num_leaf_advance_calls_no_index_in=*/1,
+      /*num_blocks_inspected_in=*/4);  // arbitrary value
   auto to_be_excluded_iterator = std::make_unique<DocHitInfoIteratorDummy>();
-  to_be_excluded_iterator->SetNumBlocksInspected(
-      to_be_excluded_iterator_blocks);
-
-  DocHitInfoIteratorNot not_iterator(std::move(to_be_excluded_iterator),
-                                     /*document_id_limit=*/5);
-
-  // The AllDocumentId iterator doesn't count any blocks as being inspected
-  // since it's just decrementing 1 from the document_id_limit.
-  EXPECT_THAT(not_iterator.GetNumBlocksInspected(),
-              Eq(to_be_excluded_iterator_blocks));
-}
-
-TEST(DocHitInfoIteratorNotTest, GetNumLeafAdvanceCalls) {
-  int to_be_excluded_iterator_leaves = 4;  // arbitrary value
-  auto to_be_excluded_iterator = std::make_unique<DocHitInfoIteratorDummy>();
-  to_be_excluded_iterator->SetNumLeafAdvanceCalls(
-      to_be_excluded_iterator_leaves);
+  to_be_excluded_iterator->SetCallStats(to_be_excluded_iterator_call_stats);
 
   int all_document_id_limit = 5;
   // Since we iterate from [limit, 0] inclusive, add 1 for the 0th advance call
   int all_leaf_advance_calls = all_document_id_limit + 1;
   DocHitInfoIteratorNot not_iterator(std::move(to_be_excluded_iterator),
-                                     all_document_id_limit);
+                                     /*document_id_limit=*/5);
 
   while (not_iterator.Advance().ok()) {
     // Advance through the whole not iterator
   }
 
-  // The AllDocumentId iterator counts each DocumentId as a leaf advance call
-  EXPECT_THAT(not_iterator.GetNumLeafAdvanceCalls(),
-              Eq(to_be_excluded_iterator_leaves + all_leaf_advance_calls));
+  // The AllDocumentId iterator doesn't count lite/main/integer index or blocks
+  // as being inspected since it's just decrementing 1 from the
+  // document_id_limit.
+  EXPECT_THAT(
+      not_iterator.GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          to_be_excluded_iterator_call_stats.num_leaf_advance_calls_lite_index,
+          to_be_excluded_iterator_call_stats.num_leaf_advance_calls_main_index,
+          to_be_excluded_iterator_call_stats
+              .num_leaf_advance_calls_integer_index,
+          to_be_excluded_iterator_call_stats.num_leaf_advance_calls_no_index +
+              all_leaf_advance_calls,
+          to_be_excluded_iterator_call_stats.num_blocks_inspected));
 }
 
 TEST(DocHitInfoIteratorNotTest, SectionIdsAlwaysNone) {
