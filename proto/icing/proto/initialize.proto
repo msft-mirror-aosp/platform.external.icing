@@ -110,9 +110,6 @@ message IcingSearchEngineOptions {
 
   // Whether to use namespace id or namespace name to build up fingerprint for
   // document_key_mapper_ and corpus_mapper_ in document store.
-  // TODO(b/259969017) Flip the default value of this flag to true at the time
-  // when we switch to use persistent hash map for document_key_mapper_ so that
-  // we just need one reconstruction of the internal mappers.
   optional bool document_store_namespace_id_fingerprint = 5;
 
   // The threshold of the percentage of invalid documents to rebuild index
