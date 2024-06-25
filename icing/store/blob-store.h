@@ -18,8 +18,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <unordered_set>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -46,7 +46,9 @@ namespace lib {
 // The BlobStore is not thread-safe.
 class BlobStore {
  public:
-  // BlobInfo holds information about a blob.
+  // BlobInfo holds information about a blob. This struct will be stored as the
+  // value in the dynamic trie key mapper, so it must be packed to avoid
+  // padding (which potentially causes use-of-uninitialized-value errors).
   struct BlobInfo {
     // The creation time of the blob. This is used to determine when to delete
     // the orphaned blobs.
@@ -57,11 +59,12 @@ class BlobStore {
 
     // The param needed for dynamic trie, we shouldn't call this constructor
     // directly.
-    BlobInfo() : BlobInfo(-1, false) {}
+    BlobInfo() : BlobInfo(/*creation_time_ms=*/-1, /*is_committed=*/false) {}
 
     BlobInfo(int64_t creation_time_ms, bool is_committed)
         : creation_time_ms(creation_time_ms), is_committed(is_committed) {}
-  };
+  } __attribute__((packed));
+  static_assert(sizeof(BlobInfo) == 9, "Invalid BlobInfo size");
 
   // Factory function to create a BlobStore instance. The base directory is
   // used to persist blobs. If a blob store was previously created with
@@ -74,30 +77,29 @@ class BlobStore {
   //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::StatusOr<BlobStore> Create(
-      const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock);
+      const Filesystem* filesystem, std::string base_dir, const Clock* clock);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
   // CommitBlob is called, the blob is sealed and rewrite is not allowed.
   //
   // Returns:
-  //   On success, a file descriptor
+  //   File descriptor (writable) on success
   //   INVALID_ARGUMENT on invalid blob handle
   //   FAILED_PRECONDITION if the blob has already been committed
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<int32_t> OpenWrite(
-      PropertyProto::BlobHandleProto blob_handle);
+  libtextclassifier3::StatusOr<int> OpenWrite(
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets a file for read only purpose for the given blob handle.
   // Will only succeed for blobs that were committed by calling CommitBlob.
   //
   // Returns:
-  //   File descriptor on success
+  //   File descriptor (read only) on success
   //   INVALID_ARGUMENT on invalid blob handle
   //   NOT_FOUND on blob is not found or is not committed
-  libtextclassifier3::StatusOr<int32_t> OpenRead(
-      PropertyProto::BlobHandleProto blob_handle);
+  libtextclassifier3::StatusOr<int> OpenRead(
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   // Commits the given blob, if the blob is finished wrote via OpenWrite.
   // Before the blob is committed, it is not visible to any reader via OpenRead.
@@ -111,26 +113,32 @@ class BlobStore {
   //                        file content.
   //   NOT_FOUND on blob is not found.
   libtextclassifier3::Status CommitBlob(
-      PropertyProto::BlobHandleProto blob_handle);
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
 
  private:
-  const Filesystem* const filesystem_;
+  explicit BlobStore(const Filesystem* filesystem, std::string base_dir,
+                     const Clock* clock,
+                     std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
+                     std::unordered_set<std::string> known_file_names)
+      : filesystem_(*filesystem),
+        base_dir_(std::move(base_dir)),
+        clock_(*clock),
+        blob_info_mapper_(std::move(blob_info_mapper)),
+        known_file_names_(std::move(known_file_names)) {}
+
+  libtextclassifier3::StatusOr<BlobStore::BlobInfo> GetOrCreateBlobInfo(
+      const std::string& blob_handle_str);
+
+  const Filesystem& filesystem_;
   std::string base_dir_;
-  Clock clock_;
+  const Clock& clock_;
+
   std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper_;
   std::unordered_set<std::string> known_file_names_;
   bool has_mutated_ = false;
-
-  explicit BlobStore(const Filesystem* filesystem, std::string_view base_dir,
-                     const Clock* clock,
-                     std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
-                     std::unordered_set<std::string> known_file_names);
-
-  libtextclassifier3::StatusOr<BlobStore::BlobInfo> GetOrCreateBlobInfo(
-      std::string blob_handle_str);
 };
 
 }  // namespace lib

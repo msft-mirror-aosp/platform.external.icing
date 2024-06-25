@@ -48,19 +48,10 @@ static constexpr int32_t kBlobInfoMapperMaxSize = 56 * 1024 * 1024;  // 56 MiB
 static constexpr int32_t kSha256LengthBytes = 32;
 static constexpr int32_t kReadBufferSize = 8192;
 
-// TODO(b/273591938): Remove orphan files in optimize().
-BlobStore::BlobStore(const Filesystem* filesystem, std::string_view base_dir,
-                     const Clock* clock,
-                     std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
-                     std::unordered_set<std::string> known_file_names)
-    : filesystem_(filesystem),
-      base_dir_(std::string(base_dir)),
-      clock_(*clock),
-      blob_info_mapper_(std::move(blob_info_mapper)),
-      known_file_names_(std::move(known_file_names)) {}
+namespace {
 
 libtextclassifier3::Status ValidateBlobHandle(
-    PropertyProto::BlobHandleProto blob_handle) {
+    const PropertyProto::BlobHandleProto& blob_handle) {
   if (blob_handle.digest().size() != kSha256LengthBytes) {
     return absl_ports::InvalidArgumentError(
         "Invalid blob handle. The digest is not sha 256 digest.");
@@ -68,29 +59,34 @@ libtextclassifier3::Status ValidateBlobHandle(
   return libtextclassifier3::Status::OK;
 }
 
+}  // namespace
+
+// TODO(b/273591938): Remove orphan files in optimize().
+
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
-    const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock) {
+    const Filesystem* filesystem, std::string base_dir, const Clock* clock) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
                          DynamicTrieKeyMapper<BlobInfo>::Create(
                              *filesystem, base_dir, kBlobInfoMapperMaxSize));
 
-  // Load existing file names.
+  // Load existing file names (excluding the directory of key mapper).
   std::vector<std::string> file_names;
-  if (!filesystem->ListDirectory(base_dir.c_str(), &file_names)) {
+  std::unordered_set<std::string> excludes = {"key_mapper_dir"};
+  if (!filesystem->ListDirectory(base_dir.c_str(), excludes,
+                                 /*recursive=*/false, &file_names)) {
     return absl_ports::InternalError("Failed to list directory.");
   }
   std::unordered_set<std::string> known_file_names(
       std::make_move_iterator(file_names.begin()),
       std::make_move_iterator(file_names.end()));
-  return BlobStore(filesystem, base_dir, clock, std::move(blob_info_mapper),
-                   std::move(known_file_names));
+  return BlobStore(filesystem, std::move(base_dir), clock,
+                   std::move(blob_info_mapper), std::move(known_file_names));
 }
 
-libtextclassifier3::StatusOr<int32_t> BlobStore::OpenWrite(
-    PropertyProto::BlobHandleProto blob_handle) {
+libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
+    const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
   std::string blob_handle_str =
       encode_util::EncodeStringToCString(blob_handle.digest()) +
@@ -103,7 +99,7 @@ libtextclassifier3::StatusOr<int32_t> BlobStore::OpenWrite(
   }
   std::string file_name = absl_ports::StrCat(
       base_dir_, "/", std::to_string(blob_info.creation_time_ms));
-  int32_t file_descriptor = filesystem_->OpenForWrite(file_name.c_str());
+  int file_descriptor = filesystem_.OpenForWrite(file_name.c_str());
   if (file_descriptor < 0) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to open blob file for handle: ", blob_handle.label()));
@@ -111,8 +107,8 @@ libtextclassifier3::StatusOr<int32_t> BlobStore::OpenWrite(
   return file_descriptor;
 }
 
-libtextclassifier3::StatusOr<int32_t> BlobStore::OpenRead(
-    PropertyProto::BlobHandleProto blob_handle) {
+libtextclassifier3::StatusOr<int> BlobStore::OpenRead(
+    const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
   std::string blob_handle_str =
       encode_util::EncodeStringToCString(blob_handle.digest()) +
@@ -125,7 +121,7 @@ libtextclassifier3::StatusOr<int32_t> BlobStore::OpenRead(
 
   std::string file_name = absl_ports::StrCat(
       base_dir_, "/", std::to_string(blob_info.creation_time_ms));
-  int32_t file_descriptor = filesystem_->OpenForRead(file_name.c_str());
+  int file_descriptor = filesystem_.OpenForRead(file_name.c_str());
   if (file_descriptor < 0) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to open blob file for handle: ", blob_handle.label()));
@@ -134,7 +130,7 @@ libtextclassifier3::StatusOr<int32_t> BlobStore::OpenRead(
 }
 
 libtextclassifier3::Status BlobStore::CommitBlob(
-    PropertyProto::BlobHandleProto blob_handle) {
+    const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
   std::string blob_handle_str =
       encode_util::EncodeStringToCString(blob_handle.digest()) +
@@ -145,26 +141,36 @@ libtextclassifier3::Status BlobStore::CommitBlob(
     return absl_ports::AlreadyExistsError(absl_ports::StrCat(
         "The blob is already committed for handle: ", blob_handle.label()));
   }
+
   // Read the file and verify the digest.
   std::string file_name = absl_ports::StrCat(
       base_dir_, "/", std::to_string(blob_info.creation_time_ms));
-  ScopedFd sfd(filesystem_->OpenForRead(file_name.c_str()));
+  ScopedFd sfd(filesystem_.OpenForRead(file_name.c_str()));
   if (!sfd.is_valid()) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to open blob file for handle: ", blob_handle.label()));
   }
-  int64_t file_size = filesystem_->GetFileSize(sfd.get());
-  int32_t offset = 0;
-  // Read 8 KiB per iteration
-  std::unique_ptr<uint8_t[]> buffer =
-      std::make_unique<uint8_t[]>(kReadBufferSize);
+
+  int64_t file_size = filesystem_.GetFileSize(sfd.get());
+  if (file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to get file size for handle: ", blob_handle.label()));
+  }
 
   Sha256 sha256;
-  while (offset < file_size &&
-         filesystem_->PRead(sfd.get(), buffer.get(), kReadBufferSize, offset)) {
-    sha256.Update(buffer.get(),
-                  std::min<int32_t>(kReadBufferSize, file_size - offset));
-    offset += kReadBufferSize;
+  // Read 8 KiB per iteration
+  int64_t prev_total_read_size = 0;
+  auto buffer = std::make_unique<uint8_t[]>(kReadBufferSize);
+  while (prev_total_read_size < file_size) {
+    int32_t size_to_read =
+        std::min<int32_t>(kReadBufferSize, file_size - prev_total_read_size);
+    if (!filesystem_.Read(sfd.get(), buffer.get(), size_to_read)) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Failed to read blob file for handle: ", blob_handle.label()));
+    }
+
+    sha256.Update(buffer.get(), size_to_read);
+    prev_total_read_size += size_to_read;
   }
   std::array<uint8_t, 32> hash = std::move(sha256).Finalize();
 
@@ -181,6 +187,7 @@ libtextclassifier3::Status BlobStore::CommitBlob(
   blob_info.is_committed = true;
   has_mutated_ = true;
   ICING_RETURN_IF_ERROR(blob_info_mapper_->Put(blob_handle_str, blob_info));
+
   return libtextclassifier3::Status::OK;
 }
 
@@ -193,7 +200,7 @@ libtextclassifier3::Status BlobStore::PersistToDisk() {
 }
 
 libtextclassifier3::StatusOr<BlobStore::BlobInfo>
-BlobStore::GetOrCreateBlobInfo(std::string blob_handle_str) {
+BlobStore::GetOrCreateBlobInfo(const std::string& blob_handle_str) {
   libtextclassifier3::StatusOr<BlobInfo> blob_info_or =
       blob_info_mapper_->Get(blob_handle_str);
 
@@ -203,9 +210,11 @@ BlobStore::GetOrCreateBlobInfo(std::string blob_handle_str) {
     int64_t timestamp = clock_.GetSystemTimeMilliseconds();
     std::string file_name = std::to_string(timestamp);
     while (known_file_names_.find(file_name) != known_file_names_.end()) {
-      timestamp++;
+      ++timestamp;
       file_name = std::to_string(timestamp);
     }
+    known_file_names_.insert(file_name);
+
     BlobInfo blob_info = {timestamp, /*is_committed=*/false};
     ICING_RETURN_IF_ERROR(blob_info_mapper_->Put(blob_handle_str, blob_info));
     has_mutated_ = true;

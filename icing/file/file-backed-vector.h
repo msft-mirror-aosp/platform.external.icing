@@ -624,7 +624,8 @@ FileBackedVector<T>::InitializeNewFile(const Filesystem& filesystem,
   // Create header.
   Header header = {FileBackedVector<T>::Header::kMagic, kElementTypeSize,
                    /*num_elements=*/0, /*vector_checksum=*/0,
-                   header.CalculateHeaderChecksum()};
+                   /*header_checksum=*/0};
+  header.header_checksum = header.CalculateHeaderChecksum();
 
   // Create the mmapped file and write the new header to it.
   // Determine the correct pre_mapping size. max_file_size is specified as the

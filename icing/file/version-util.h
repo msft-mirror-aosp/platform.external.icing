@@ -40,9 +40,7 @@ namespace version_util {
 //
 // TODO(b/314816301): Bump kVersion to 4 for Android V rollout with v2 version
 // detection
-// LINT.IfChange(kVersion)
 inline static constexpr int32_t kVersion = 4;
-// LINT.ThenChange(./icing/schema/schema-store.cc:min_overlay_version_compatibility)
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;
