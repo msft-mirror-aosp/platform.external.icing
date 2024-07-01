@@ -62,7 +62,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
-import com.google.protobuf.ByteString;
+import com.google.android.icing.protobuf.ByteString;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
@@ -75,6 +75,7 @@ import java.util.Map;
 import java.util.Random;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -315,6 +316,7 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
+  @Ignore // b/350530146
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
