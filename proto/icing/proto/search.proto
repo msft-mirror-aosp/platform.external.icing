@@ -60,7 +60,8 @@ message SearchSpecProto {
   // OPTIONAL: Only search for documents that have the specified schema types.
   // If unset, the query will search over all schema types. Note that this
   // applies to the entire 'query'. To issue different queries for different
-  // schema types, separate Search()'s will need to be made.
+  // schema types, separate Search()'s will need to be made. Also note that
+  // schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 4;
 
   // Timestamp taken just before sending proto across the JNI boundary from java
@@ -451,6 +452,7 @@ message SuggestionSpecProto {
   // If unset, the suggestion will search over all schema types. Note that this
   // applies to the entire 'prefix'. To issue different suggestions for
   // different schema typs, separate RunSuggestion()'s will need to be made.
+  // Also note that schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 6;
 
   // OPTIONAL: Only search for suggestions that under the specified types and
