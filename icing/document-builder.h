@@ -126,6 +126,13 @@ class DocumentBuilder {
     return AddDocumentProperty(std::move(property_name), {document_values...});
   }
 
+  // Takes a property name and any number of vector values.
+  template <typename... V>
+  DocumentBuilder& AddVectorProperty(std::string property_name,
+                                     V... vector_values) {
+    return AddVectorProperty(std::move(property_name), {vector_values...});
+  }
+
   DocumentProto Build() const { return document_; }
 
  private:
@@ -180,6 +187,17 @@ class DocumentBuilder {
     property->set_name(std::move(property_name));
     for (DocumentProto document_value : document_values) {
       property->mutable_document_values()->Add(std::move(document_value));
+    }
+    return *this;
+  }
+
+  DocumentBuilder& AddVectorProperty(
+      std::string property_name,
+      std::initializer_list<PropertyProto::VectorProto> vector_values) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (PropertyProto::VectorProto vector_value : vector_values) {
+      property->mutable_vector_values()->Add(std::move(vector_value));
     }
     return *this;
   }

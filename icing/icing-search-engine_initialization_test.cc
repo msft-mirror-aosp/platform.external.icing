@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -204,7 +205,7 @@ class IcingSearchEngineInitializationTest : public testing::Test {
 // Non-zero value so we don't override it to be the current time
 constexpr int64_t kDefaultCreationTimestampMs = 1575492852000;
 
-std::string GetVersionFilename() { return GetTestBaseDir() + "/version"; }
+std::string GetVersionFileDir() { return GetTestBaseDir(); }
 
 std::string GetDocumentDir() { return GetTestBaseDir() + "/document_dir"; }
 
@@ -760,8 +761,6 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromMissingHeaderFile) {
   // Checks that the integer index is still ok so we can search over it
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -970,8 +969,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
   search_spec1.add_schema_type_filters("Message");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_google::protobuf;
@@ -1081,16 +1078,15 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/
-            icing_options.document_store_namespace_id_fingerprint(),
-            /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
+                              schema_store.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/true,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -1175,8 +1171,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -1645,8 +1639,6 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIntegerIndex) {
 
   SearchSpecProto search_spec;
   search_spec.set_query("indexableInteger == 123");
-  search_spec.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
@@ -1821,8 +1813,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec;
     search_spec.set_query("indexableInteger == 123");
-    search_spec.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results =
@@ -2161,8 +2151,6 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -2357,8 +2345,6 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIntegerIndex) {
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -2555,8 +2541,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -2782,8 +2766,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3032,8 +3014,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3437,8 +3417,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3633,8 +3611,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec;
     search_spec.set_query("indexableInteger == 123");
-    search_spec.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results =
@@ -3812,8 +3788,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -3878,8 +3852,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec;
     search_spec.set_query("indexableInteger == 456");
-    search_spec.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results =
@@ -4187,8 +4159,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Verify integer index works normally
     SearchSpecProto search_spec2;
     search_spec2.set_query("indexableInteger == 123");
-    search_spec2.set_search_type(
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
     search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
     SearchResultProto results2 =
@@ -5403,175 +5373,26 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 }
 
-// TODO(b/275121148): deprecate this test after rollout join index v2.
-class IcingSearchEngineInitializationSwitchJoinIndexTest
-    : public IcingSearchEngineInitializationTest,
-      public ::testing::WithParamInterface<bool> {};
-TEST_P(IcingSearchEngineInitializationSwitchJoinIndexTest, SwitchJoinIndex) {
-  bool use_join_index_v2 = GetParam();
+struct IcingSearchEngineInitializationVersionChangeTestParam {
+  version_util::VersionInfo existing_version_info;
+  std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+      existing_enabled_features;
 
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("name")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_REQUIRED)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Message")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("body")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("indexableInteger")
-                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("senderQualifiedId")
-                                        .SetDataTypeJoinableString(
-                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
-
-  DocumentProto person =
-      DocumentBuilder()
-          .SetKey("namespace", "person")
-          .SetSchema("Person")
-          .AddStringProperty("name", "person")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  DocumentProto message =
-      DocumentBuilder()
-          .SetKey("namespace", "message/1")
-          .SetSchema("Message")
-          .AddStringProperty("body", kIpsumText)
-          .AddInt64Property("indexableInteger", 123)
-          .AddStringProperty("senderQualifiedId", "namespace#person")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-
-  // 1. Create an index with message 3 documents.
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_document_store_namespace_id_fingerprint(true);
-    options.set_use_new_qualified_id_join_index(use_join_index_v2);
-
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-
-    EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
-    message = DocumentBuilder(message).SetUri("message/2").Build();
-    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
-    message = DocumentBuilder(message).SetUri("message/3").Build();
-    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
-  }
-
-  // 2. Create the index again changing join index version. This should trigger
-  //    join index restoration.
-  {
-    // Mock filesystem to observe and check the behavior of all indices.
-    auto mock_filesystem = std::make_unique<MockFilesystem>();
-    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
-        .WillRepeatedly(DoDefault());
-    // Ensure term index directory should never be discarded.
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(EndsWith("/index_dir")))
-        .Times(0);
-    // Ensure integer index directory should never be discarded, and Clear()
-    // should never be called (i.e. storage sub directory
-    // "*/integer_index_dir/*" should never be discarded).
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
-        .Times(0);
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
-        .Times(0);
-    // Ensure qualified id join index directory should be discarded once, and
-    // Clear() should never be called (i.e. storage sub directory
-    // "*/qualified_id_join_index_dir/*" should never be discarded).
-    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                      EndsWith("/qualified_id_join_index_dir")))
-        .Times(1);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
-        .Times(0);
-
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_document_store_namespace_id_fingerprint(true);
-    options.set_use_new_qualified_id_join_index(!use_join_index_v2);
-
-    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    InitializeResultProto initialize_result = icing.Initialize();
-    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
-    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.initialize_stats().integer_index_restoration_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
-
-    // Verify qualified id join index works normally: join a query for
-    // `name:person` with a child query for `body:consectetur` based on the
-    // child's `senderQualifiedId` field.
-    SearchSpecProto search_spec;
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    search_spec.set_query("name:person");
-    JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-    join_spec->set_parent_property_expression(
-        std::string(JoinProcessor::kQualifiedIdExpr));
-    join_spec->set_child_property_expression("senderQualifiedId");
-    join_spec->set_aggregation_scoring_strategy(
-        JoinSpecProto::AggregationScoringStrategy::COUNT);
-    JoinSpecProto::NestedSpecProto* nested_spec =
-        join_spec->mutable_nested_spec();
-    SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
-    nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
-    nested_search_spec->set_query("body:consectetur");
-    *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
-    *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
-
-    ResultSpecProto result_spec = ResultSpecProto::default_instance();
-    result_spec.set_max_joined_children_per_parent_to_return(
-        std::numeric_limits<int32_t>::max());
-
-    SearchResultProto results = icing.Search(
-        search_spec, ScoringSpecProto::default_instance(), result_spec);
-    ASSERT_THAT(results.results(), SizeIs(1));
-    EXPECT_THAT(results.results(0).document().uri(), Eq("person"));
-    EXPECT_THAT(results.results(0).joined_results(), SizeIs(3));
-    EXPECT_THAT(results.results(0).joined_results(0).document().uri(),
-                Eq("message/3"));
-    EXPECT_THAT(results.results(0).joined_results(1).document().uri(),
-                Eq("message/2"));
-    EXPECT_THAT(results.results(0).joined_results(2).document().uri(),
-                Eq("message/1"));
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(IcingSearchEngineInitializationSwitchJoinIndexTest,
-                         IcingSearchEngineInitializationSwitchJoinIndexTest,
-                         testing::Values(true, false));
+  explicit IcingSearchEngineInitializationVersionChangeTestParam(
+      version_util::VersionInfo version_info_in,
+      std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+          existing_enabled_features_in)
+      : existing_version_info(std::move(version_info_in)),
+        existing_enabled_features(std::move(existing_enabled_features_in)) {}
+};
 
 class IcingSearchEngineInitializationVersionChangeTest
     : public IcingSearchEngineInitializationTest,
-      public ::testing::WithParamInterface<version_util::VersionInfo> {};
+      public ::testing::WithParamInterface<
+          IcingSearchEngineInitializationVersionChangeTestParam> {};
 
 TEST_P(IcingSearchEngineInitializationVersionChangeTest,
-       RecoverFromVersionChange) {
+       RecoverFromVersionChangeOrUnknownFlagChange) {
   // TODO(b/280697513): test backup schema migration
   // Test the following scenario: version change. All derived data should be
   // rebuilt. We test this by manually adding some invalid derived data and
@@ -5656,16 +5477,15 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/
-            icing_options.document_store_namespace_id_fingerprint(),
-            /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
+                              schema_store.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/true,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
     ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, document_store->Put(message));
@@ -5725,10 +5545,27 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                                   std::move(incorrect_message)));
     ICING_ASSERT_OK(index_processor.IndexDocument(tokenized_document, doc_id));
 
-    // Change existing data's version file
-    const version_util::VersionInfo& existing_version_info = GetParam();
-    ICING_ASSERT_OK(version_util::WriteVersion(
-        *filesystem(), GetVersionFilename(), existing_version_info));
+    // Rewrite existing data's version files
+    ICING_ASSERT_OK(
+        version_util::DiscardVersionFiles(*filesystem(), GetVersionFileDir()));
+    const version_util::VersionInfo& existing_version_info =
+        GetParam().existing_version_info;
+    ICING_ASSERT_OK(version_util::WriteV1Version(
+        *filesystem(), GetVersionFileDir(), existing_version_info));
+
+    if (existing_version_info.version >= version_util::kFirstV2Version) {
+      IcingSearchEngineVersionProto version_proto;
+      version_proto.set_version(existing_version_info.version);
+      version_proto.set_max_version(existing_version_info.max_version);
+      auto* enabled_features = version_proto.mutable_enabled_features();
+      for (const auto& feature : GetParam().existing_enabled_features) {
+        enabled_features->Add(version_util::GetFeatureInfoProto(feature));
+      }
+      version_util::WriteV2Version(
+          *filesystem(), GetVersionFileDir(),
+          std::make_unique<IcingSearchEngineVersionProto>(
+              std::move(version_proto)));
+    }
   }
 
   // Mock filesystem to observe and check the behavior of all indices.
@@ -5738,28 +5575,48 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                               std::make_unique<FakeClock>(), GetTestJniCache());
   InitializeResultProto initialize_result = icing.Initialize();
   EXPECT_THAT(initialize_result.status(), ProtoIsOk());
-  // Index Restoration should be triggered here. Incorrect data should be
-  // deleted and correct data of message should be indexed.
+
+  // Derived files restoration should be triggered here. Incorrect data should
+  // be deleted and correct data of message should be indexed.
+  // Here we're recovering from a version change or a flag change that requires
+  // rebuilding all derived files.
+  //
+  // TODO(b/314816301): test individual derived files rebuilds due to change
+  // in trunk stable feature flags.
+  // i.e. Test individual rebuilding for each of:
+  //  - document store
+  //  - schema store
+  //  - term index
+  //  - numeric index
+  //  - qualified id join index
+  InitializeStatsProto::RecoveryCause expected_recovery_cause =
+      GetParam().existing_version_info.version != version_util::kVersion
+          ? InitializeStatsProto::VERSION_CHANGED
+          : InitializeStatsProto::FEATURE_FLAG_CHANGED;
   EXPECT_THAT(
       initialize_result.initialize_stats().document_store_recovery_cause(),
-      Eq(InitializeStatsProto::VERSION_CHANGED));
+      Eq(expected_recovery_cause));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().schema_store_recovery_cause(),
+      Eq(expected_recovery_cause));
   EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::VERSION_CHANGED));
+              Eq(expected_recovery_cause));
   EXPECT_THAT(
       initialize_result.initialize_stats().integer_index_restoration_cause(),
-      Eq(InitializeStatsProto::VERSION_CHANGED));
+      Eq(expected_recovery_cause));
   EXPECT_THAT(initialize_result.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
-              Eq(InitializeStatsProto::VERSION_CHANGED));
+              Eq(expected_recovery_cause));
 
   // Manually check version file
   ICING_ASSERT_OK_AND_ASSIGN(
-      version_util::VersionInfo version_info_after_init,
-      version_util::ReadVersion(*filesystem(), GetVersionFilename(),
+      IcingSearchEngineVersionProto version_proto_after_init,
+      version_util::ReadVersion(*filesystem(), GetVersionFileDir(),
                                 GetIndexDir()));
-  EXPECT_THAT(version_info_after_init.version, Eq(version_util::kVersion));
-  EXPECT_THAT(version_info_after_init.max_version,
-              Eq(std::max(version_util::kVersion, GetParam().max_version)));
+  EXPECT_THAT(version_proto_after_init.version(), Eq(version_util::kVersion));
+  EXPECT_THAT(version_proto_after_init.max_version(),
+              Eq(std::max(version_util::kVersion,
+                          GetParam().existing_version_info.max_version)));
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
@@ -5779,8 +5636,6 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -5836,9 +5691,11 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         // Manually change existing data set's version to kVersion + 1. When
         // initializing, it will detect "rollback".
-        version_util::VersionInfo(
-            /*version_in=*/version_util::kVersion + 1,
-            /*max_version_in=*/version_util::kVersion + 1),
+        IcingSearchEngineInitializationVersionChangeTestParam(
+            version_util::VersionInfo(
+                /*version_in=*/version_util::kVersion + 1,
+                /*max_version_in=*/version_util::kVersion + 1),
+            /*existing_enabled_features_in=*/{}),
 
         // Currently we don't have any "upgrade" that requires rebuild derived
         // files, so skip this case until we have a case for it.
@@ -5846,27 +5703,45 @@ INSTANTIATE_TEST_SUITE_P(
         // Manually change existing data set's version to kVersion - 1 and
         // max_version to kVersion. When initializing, it will detect "roll
         // forward".
-        version_util::VersionInfo(
-            /*version_in=*/version_util::kVersion - 1,
-            /*max_version_in=*/version_util::kVersion),
+        IcingSearchEngineInitializationVersionChangeTestParam(
+            version_util::VersionInfo(
+                /*version_in=*/version_util::kVersion - 1,
+                /*max_version_in=*/version_util::kVersion),
+            /*existing_enabled_features_in=*/{}),
 
         // Manually change existing data set's version to 0 and max_version to
         // 0. When initializing, it will detect "version 0 upgrade".
         //
         // Note: in reality, version 0 won't be written into version file, but
         // it is ok here since it is hack to simulate version 0 situation.
-        version_util::VersionInfo(
-            /*version_in=*/0,
-            /*max_version_in=*/0),
+        IcingSearchEngineInitializationVersionChangeTestParam(
+            version_util::VersionInfo(
+                /*version_in=*/0,
+                /*max_version_in=*/0),
+            /*existing_enabled_features_in=*/{}),
 
         // Manually change existing data set's version to 0 and max_version to
         // kVersion. When initializing, it will detect "version 0 roll forward".
         //
         // Note: in reality, version 0 won't be written into version file, but
         // it is ok here since it is hack to simulate version 0 situation.
-        version_util::VersionInfo(
-            /*version_in=*/0,
-            /*max_version_in=*/version_util::kVersion)));
+        IcingSearchEngineInitializationVersionChangeTestParam(
+            version_util::VersionInfo(
+                /*version_in=*/0,
+                /*max_version_in=*/version_util::kVersion),
+            /*existing_enabled_features_in=*/{}),
+
+        // Manually write an unknown feature in the version proto while keeping
+        // version the same as kVersion.
+        //
+        // Result: this will rebuild all derived files with restoration cause
+        // FEATURE_FLAG_CHANGED
+        IcingSearchEngineInitializationVersionChangeTestParam(
+            version_util::VersionInfo(
+                /*version_in=*/version_util::kVersion,
+                /*max_version_in=*/version_util::kVersion),
+            /*existing_enabled_features_in=*/{
+                IcingSearchEngineFeatureInfoProto::UNKNOWN})));
 
 class IcingSearchEngineInitializationChangePropertyExistenceHitsFlagTest
     : public IcingSearchEngineInitializationTest,
@@ -5962,7 +5837,7 @@ TEST_P(IcingSearchEngineInitializationChangePropertyExistenceHitsFlagTest,
   ASSERT_THAT(initialize_result.status(), ProtoIsOk());
   // Ensure that the term index is rebuilt if the flag is changed.
   EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-              Eq(flag_changed ? InitializeStatsProto::IO_ERROR
+              Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
                               : InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result.initialize_stats().integer_index_restoration_cause(),
@@ -5974,8 +5849,6 @@ TEST_P(IcingSearchEngineInitializationChangePropertyExistenceHitsFlagTest,
   // Get all documents that have "body".
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-  search_spec.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec.add_enabled_features(std::string(kHasPropertyFunctionFeature));
   search_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
