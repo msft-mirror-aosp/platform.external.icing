@@ -37,10 +37,16 @@ class DocHitInfoIteratorAllDocumentId : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
+  void MapChildren(const ChildrenMapper& mapper) override {}
 
-  int32_t GetNumLeafAdvanceCalls() const override {
-    return document_id_limit_ - current_document_id_;
+  CallStats GetCallStats() const override {
+    return CallStats(
+        /*num_leaf_advance_calls_lite_index_in=*/0,
+        /*num_leaf_advance_calls_main_index_in=*/0,
+        /*num_leaf_advance_calls_integer_index_in=*/0,
+        /*num_leaf_advance_calls_no_index_in=*/document_id_limit_ -
+            current_document_id_,
+        /*num_blocks_inspected_in=*/0);
   }
 
   std::string ToString() const override {
