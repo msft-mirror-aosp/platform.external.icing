@@ -110,7 +110,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     }
   }
 
-  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, document_store_, schema_store_);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
       options, current_time_ms);
@@ -155,7 +156,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
           StringIndexingConfig::TokenizerType::PLAIN, &language_segmenter_));
-  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
+  DocHitInfoIteratorFilter::Options options =
+      GetFilterOptions(search_spec, document_store_, schema_store_);
   bool needs_term_frequency_info =
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
 
