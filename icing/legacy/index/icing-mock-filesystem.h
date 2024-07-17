@@ -114,6 +114,11 @@ class IcingMockFilesystem : public IcingFilesystem {
       return real_icing_filesystem_.Grow(fd, new_size);
     });
 
+    ON_CALL(*this, GrowUsingPWrite)
+        .WillByDefault([this](int fd, uint64_t new_size) {
+          return real_icing_filesystem_.GrowUsingPWrite(fd, new_size);
+        });
+
     ON_CALL(*this, Write)
         .WillByDefault([this](int fd, const void *data, size_t data_size) {
           return real_icing_filesystem_.Write(fd, data, data_size);
@@ -208,6 +213,9 @@ class IcingMockFilesystem : public IcingFilesystem {
               (const, override));
 
   MOCK_METHOD(bool, Grow, (int fd, uint64_t new_size), (const, override));
+
+  MOCK_METHOD(bool, GrowUsingPWrite, (int fd, uint64_t new_size),
+              (const, override));
 
   MOCK_METHOD(bool, Write, (int fd, const void *data, size_t data_size),
               (const, override));

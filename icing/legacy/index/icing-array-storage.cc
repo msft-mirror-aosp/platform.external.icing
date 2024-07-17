@@ -17,7 +17,9 @@
 #include <sys/mman.h>
 
 #include <algorithm>
-#include <cinttypes>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
@@ -199,7 +201,7 @@ bool IcingArrayStorage::GrowIfNecessary(uint32_t num_elts) {
   uint64_t new_file_size = fd_offset_ + uint64_t{num_elts} * elt_size_;
   // Grow to kGrowElts boundary.
   new_file_size = AlignUp(new_file_size, kGrowElts * elt_size_);
-  if (!filesystem_.Grow(fd_, new_file_size)) {
+  if (!filesystem_.GrowUsingPWrite(fd_, new_file_size)) {
     return false;
   }
   capacity_num_ = (new_file_size - fd_offset_) / elt_size_;
