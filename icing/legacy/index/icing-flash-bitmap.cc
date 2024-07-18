@@ -16,12 +16,17 @@
 
 #include <sys/mman.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <memory>
+#include <string>
 
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-mmapper.h"
 #include "icing/util/logging.h"
 
 namespace icing {
@@ -125,7 +130,7 @@ bool IcingFlashBitmap::Init() {
 
   // Make sure we have something to mmap.
   if (orig_file_size < kGrowSize) {
-    if (!filesystem_->Grow(fd.get(), kGrowSize)) {
+    if (!filesystem_->GrowUsingPWrite(fd.get(), kGrowSize)) {
       goto error;
     }
     file_size = kGrowSize;
@@ -258,8 +263,8 @@ uint32_t IcingFlashBitmap::UpdateCrc() const {
 
 bool IcingFlashBitmap::Grow(size_t new_file_size) {
   IcingScopedFd fd(filesystem_->OpenForWrite(filename_.c_str()));
-  if (!filesystem_->Grow(fd.get(), new_file_size)) {
-    ICING_LOG(ERROR) << "Grow " << filename_ << " to new size " << new_file_size << " failed";
+  if (!filesystem_->GrowUsingPWrite(fd.get(), new_file_size)) {
+    ICING_LOG(ERROR) << "GrowUsingPWrite " << filename_ << " to new size " << new_file_size << " failed";
     return false;
   }
   if (!mmapper_->Remap(fd.get(), 0, new_file_size)) {
