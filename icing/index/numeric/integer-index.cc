@@ -641,7 +641,7 @@ libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum(
   }
 
   ICING_ASSIGN_OR_RETURN(Crc32 wildcard_properties_crc,
-                         wildcard_property_storage_->ComputeChecksum());
+                         wildcard_property_storage_->GetChecksum());
   storages_checksum ^= wildcard_properties_crc.Get();
 
   return Crc32(storages_checksum);

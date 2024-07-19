@@ -575,13 +575,11 @@ TEST_P(IntegerIndexStorageTest,
         FileBackedVector<Bucket>::Create(
             filesystem_, sorted_buckets_file_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, sorted_buckets->UpdateChecksum());
     ICING_ASSERT_OK(sorted_buckets->Append(Bucket(
         /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
     ICING_ASSERT_OK(sorted_buckets->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, sorted_buckets->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -630,12 +628,12 @@ TEST_P(IntegerIndexStorageTest,
             /*max_file_size=*/sizeof(Bucket) * 100 +
                 FileBackedVector<Bucket>::Header::kHeaderSize));
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               unsorted_buckets->ComputeChecksum());
+                               unsorted_buckets->UpdateChecksum());
     ICING_ASSERT_OK(unsorted_buckets->Append(Bucket(
         /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
     ICING_ASSERT_OK(unsorted_buckets->PersistToDisk());
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               unsorted_buckets->ComputeChecksum());
+                               unsorted_buckets->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 

@@ -43,6 +43,12 @@ namespace stemmer_factory {
 libtextclassifier3::StatusOr<std::unique_ptr<Stemmer>> Create(
     std::string language_code);
 
+// Whether stemming is enabled.
+//
+// This is false for the none-stemmer implementation and true for the
+// snowball-stemmer implementation.
+bool IsStemmingEnabled();
+
 }  // namespace stemmer_factory
 
 }  // namespace lib

@@ -486,14 +486,6 @@ class IcingSearchEngine {
   // components in Icing search engine.
   const PerformanceConfiguration performance_configuration_;
 
-  // Used to manage pagination state of query results. Even though
-  // ResultStateManager has its own reader-writer lock, mutex_ must still be
-  // acquired first in order to adhere to the global lock ordering:
-  //   1. mutex_
-  //   2. result_state_manager_.lock_
-  std::unique_ptr<ResultStateManager> result_state_manager_
-      ICING_GUARDED_BY(mutex_);
-
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
 
@@ -501,7 +493,19 @@ class IcingSearchEngine {
   std::unique_ptr<SchemaStore> schema_store_ ICING_GUARDED_BY(mutex_);
 
   // Used to store all valid documents
+  //
+  // Dependencies: schema_store_
   std::unique_ptr<DocumentStore> document_store_ ICING_GUARDED_BY(mutex_);
+
+  // Used to manage pagination state of query results. Even though
+  // ResultStateManager has its own reader-writer lock, mutex_ must still be
+  // acquired first in order to adhere to the global lock ordering:
+  //   1. mutex_
+  //   2. result_state_manager_.lock_
+  //
+  // Dependencies: document_store_
+  std::unique_ptr<ResultStateManager> result_state_manager_
+      ICING_GUARDED_BY(mutex_);
 
   // Used to store all valid blob data
   std::unique_ptr<BlobStore> blob_store_ ICING_GUARDED_BY(mutex_);

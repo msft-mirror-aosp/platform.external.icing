@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -49,6 +50,7 @@
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
+#include "icing/util/crc32.h"
 #include "icing/util/i18n-utils.h"
 #include "unicode/utf8.h"
 
@@ -311,9 +313,6 @@ class IcingDynamicTrie : public IIcingStorage {
   // Tell kernel we will access the memory shortly.
   void Warm() const;
 
-  // Potentially about to get nuked.
-  void OnSleep() override;
-
   // Insert value at key. If key already exists and replace == true,
   // replaces old value with value. We take a copy of value.
   //
@@ -327,14 +326,14 @@ class IcingDynamicTrie : public IIcingStorage {
   //   OK on success
   //   RESOURCE_EXHAUSTED if no disk space is available
   //   INTERNAL_ERROR if there are inconsistencies in the dynamic trie.
-  libtextclassifier3::Status Insert(const char *key, const void *value) {
+  libtextclassifier3::Status Insert(std::string_view key, const void *value) {
     return Insert(key, value, nullptr, true, nullptr);
   }
-  libtextclassifier3::Status Insert(const char *key, const void *value,
+  libtextclassifier3::Status Insert(std::string_view key, const void *value,
                                     uint32_t *value_index, bool replace) {
     return Insert(key, value, value_index, replace, nullptr);
   }
-  libtextclassifier3::Status Insert(const char *key, const void *value,
+  libtextclassifier3::Status Insert(std::string_view key, const void *value,
                                     uint32_t *value_index, bool replace,
                                     bool *pnew_key);
 
@@ -355,10 +354,10 @@ class IcingDynamicTrie : public IIcingStorage {
   // value_index is modified.
   //
   // REQUIRES: value a buffer of size value_size()
-  bool Find(const char *key, void *value) const {
+  bool Find(std::string_view key, void *value) const {
     return Find(key, value, nullptr);
   }
-  bool Find(const char *key, void *value, uint32_t *value_index) const;
+  bool Find(std::string_view key, void *value, uint32_t *value_index) const;
 
   // Find the input key and all keys that are a variant of the input
   // key according to a variant map. Currently supports
@@ -383,18 +382,19 @@ class IcingDynamicTrie : public IIcingStorage {
   // Return prefix of any new branches created if key were inserted. If utf8 is
   // true, does not cut key mid-utf8. Returns kNoBranchFound if no branches
   // would be created.
-  int FindNewBranchingPrefixLength(const char *key, bool utf8) const;
+  int FindNewBranchingPrefixLength(std::string_view key, bool utf8) const;
 
   // Find all prefixes of key where the trie branches. Excludes the key
   // itself. If utf8 is true, does not cut key mid-utf8.
-  std::vector<int> FindBranchingPrefixLengths(const char *key, bool utf8) const;
+  std::vector<int> FindBranchingPrefixLengths(std::string_view key,
+                                              bool utf8) const;
 
   // Check if key is a branching term.
   //
   // key is a branching term, if and only if there exists terms s1 and s2 in the
   // trie such that key is the maximum common prefix of s1 and s2, but s1 and s2
   // are not prefixes of each other.
-  bool IsBranchingTerm(const char *key) const;
+  bool IsBranchingTerm(std::string_view key) const;
 
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
@@ -407,7 +407,12 @@ class IcingDynamicTrie : public IIcingStorage {
   // If in kMapSharedWithCrc mode, update crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files
   // and property bitmaps.
-  uint32_t UpdateCrc();
+  Crc32 UpdateCrc();
+
+  // If in kMapSharedWithCrc mode, calculates crcs and return the master
+  // crc, else return kNoCrc. This crc includes both the trie files
+  // and property bitmaps. Does NOT update any stored crcs.
+  Crc32 GetCrc() const;
 
   // Store dynamic properties for each value.  When a property is added to
   // a value, the deleted flag is cleared for it (if it was previously set).
@@ -509,15 +514,15 @@ class IcingDynamicTrie : public IIcingStorage {
   //                    iterator pattern in our codebase.
   class Iterator {
    public:
-    Iterator(const IcingDynamicTrie &trie, const char *prefix,
+    Iterator(const IcingDynamicTrie &trie, std::string prefix,
              bool reverse = false);
     void Reset();
     bool Advance();
 
-    // If !IsValid(), GetKey() will return NULL and GetValue() will
-    // return 0.
+    // If !IsValid(), GetKey() will return a std::string_view object with
+    // data() == nullptr and size() == 0, and GetValue() will return nullptr.
     bool IsValid() const;
-    const char *GetKey() const;
+    std::string_view GetKey() const;
     // This points directly to the underlying data and is valid while
     // the trie is alive. We keep ownership of the pointer.
     const void *GetValue() const;
@@ -620,8 +625,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // Returns the number of valid nexts in the array.
   int GetValidNextsSize(const IcingDynamicTrie::Next *next_array_start,
                         int next_array_length) const;
-  void FindBestNode(const char *key, uint32_t *best_node_index, int *key_offset,
-                    bool prefix, bool utf8 = false) const;
+  void FindBestNode(std::string_view key, uint32_t *best_node_index,
+                    int *key_offset, bool prefix, bool utf8 = false) const;
 
   // For value properties.  This truncates the data by clearing it, but leaving
   // the storage intact.

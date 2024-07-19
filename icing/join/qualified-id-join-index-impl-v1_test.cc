@@ -512,12 +512,12 @@ TEST_P(QualifiedIdJoinIndexImplV1Test,
             filesystem_, qualified_id_storage_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               qualified_id_storage->ComputeChecksum());
+                               qualified_id_storage->UpdateChecksum());
     ICING_ASSERT_OK(qualified_id_storage->Append('a'));
     ICING_ASSERT_OK(qualified_id_storage->Append('b'));
     ICING_ASSERT_OK(qualified_id_storage->PersistToDisk());
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               qualified_id_storage->ComputeChecksum());
+                               qualified_id_storage->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 

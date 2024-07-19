@@ -214,7 +214,7 @@ libtextclassifier3::Status UsageStore::PersistToDisk() {
 }
 
 libtextclassifier3::StatusOr<Crc32> UsageStore::ComputeChecksum() {
-  return usage_score_cache_->ComputeChecksum();
+  return usage_score_cache_->UpdateChecksum();
 }
 
 libtextclassifier3::StatusOr<int64_t> UsageStore::GetElementsFileSize() const {

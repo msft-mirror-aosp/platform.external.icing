@@ -478,7 +478,7 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::ComputeStoragesChecksum(
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
                          embedding_posting_list_mapper_->ComputeChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_vectors_crc,
-                         embedding_vectors_->ComputeChecksum());
+                         embedding_vectors_->UpdateChecksum());
   return Crc32(embedding_posting_list_mapper_crc.Get() ^
                embedding_vectors_crc.Get());
 }

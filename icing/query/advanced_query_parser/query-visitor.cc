@@ -255,18 +255,26 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert(
       {has_property_function.name(), std::move(has_property_function)});
 
-  // vector_index getSearchSpecEmbedding(long);
-  auto get_search_spec_embedding = [](std::vector<PendingValue>&& args) {
+  // vector_index getEmbeddingParameter(long);
+  auto get_embedding_parameter = [](std::vector<PendingValue>&& args) {
     return PendingValue::CreateVectorIndexPendingValue(
         args.at(0).long_val().ValueOrDie());
   };
-  Function get_search_spec_embedding_function =
-      Function::Create(DataType::kVectorIndex, "getSearchSpecEmbedding",
+  Function get_embedding_parameter_function =
+      Function::Create(DataType::kVectorIndex, "getEmbeddingParameter",
                        {Param(DataType::kLong)},
-                       std::move(get_search_spec_embedding))
+                       std::move(get_embedding_parameter))
           .ValueOrDie();
-  registered_functions_.insert({get_search_spec_embedding_function.name(),
-                                std::move(get_search_spec_embedding_function)});
+  registered_functions_.insert({get_embedding_parameter_function.name(),
+                                get_embedding_parameter_function});
+
+  // vector_index getSearchSpecEmbedding(long);
+  // DEPRECATED: This function has been deprecated in favor of
+  // getEmbeddingParameter. It just trivially calls that function.
+  // TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding
+  // are migrated.
+  registered_functions_.insert(
+      {"getSearchSpecEmbedding", std::move(get_embedding_parameter_function)});
 
   // DocHitInfoIterator semanticSearch(vector_index, double, double, string);
   auto semantic_search = [this](std::vector<PendingValue>&& args) {
@@ -283,17 +291,18 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert(
       {semantic_search_function.name(), std::move(semantic_search_function)});
 
-  // DocHitInfoIterator getSearchSpecString(long);
-  auto get_search_spec_string = [this](std::vector<PendingValue>&& args) {
-    return this->GetSearchSpecStringFunction(std::move(args));
+  // DocHitInfoIterator getSearchStringParameter(long);
+  auto get_search_string_parameter = [this](std::vector<PendingValue>&& args) {
+    return this->GetSearchStringParameterFunction(std::move(args));
   };
-  Function get_search_spec_string_function =
-      Function::Create(DataType::kDocumentIterator, "getSearchSpecString",
+  Function get_search_string_parameter_function =
+      Function::Create(DataType::kDocumentIterator, "getSearchStringParameter",
                        {Param(DataType::kLong)},
-                       std::move(get_search_spec_string))
+                       std::move(get_search_string_parameter))
           .ValueOrDie();
-  registered_functions_.insert({get_search_spec_string_function.name(),
-                                std::move(get_search_spec_string_function)});
+  registered_functions_.insert(
+      {get_search_string_parameter_function.name(),
+       std::move(get_search_string_parameter_function)});
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
@@ -467,7 +476,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
 }
 
 libtextclassifier3::StatusOr<PendingValue>
-QueryVisitor::GetSearchSpecStringFunction(std::vector<PendingValue>&& args) {
+QueryVisitor::GetSearchStringParameterFunction(
+    std::vector<PendingValue>&& args) {
   int64_t string_index = args.at(0).long_val().ValueOrDie();
   if (string_index < 0 ||
       string_index >= search_spec_.query_parameter_strings_size()) {

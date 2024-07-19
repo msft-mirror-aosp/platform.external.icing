@@ -578,10 +578,10 @@ libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeStoragesChecksum(
 
   // Compute crcs
   ICING_ASSIGN_OR_RETURN(Crc32 bucket_storage_crc,
-                         bucket_storage_->ComputeChecksum());
+                         bucket_storage_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 entry_storage_crc,
-                         entry_storage_->ComputeChecksum());
-  ICING_ASSIGN_OR_RETURN(Crc32 kv_storage_crc, kv_storage_->ComputeChecksum());
+                         entry_storage_->UpdateChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 kv_storage_crc, kv_storage_->UpdateChecksum());
 
   return Crc32(bucket_storage_crc.Get() ^ entry_storage_crc.Get() ^
                kv_storage_crc.Get());

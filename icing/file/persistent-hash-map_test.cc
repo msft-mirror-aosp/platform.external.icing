@@ -666,12 +666,10 @@ TEST_P(PersistentHashMapTest,
         FileBackedVector<Bucket>::Create(
             filesystem_, bucket_storage_file_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               bucket_storage->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, bucket_storage->UpdateChecksum());
     ICING_ASSERT_OK(bucket_storage->Append(Bucket()));
     ICING_ASSERT_OK(bucket_storage->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               bucket_storage->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, bucket_storage->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -712,11 +710,11 @@ TEST_P(PersistentHashMapTest,
         FileBackedVector<Entry>::Create(
             filesystem_, entry_storage_file_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, entry_storage->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, entry_storage->UpdateChecksum());
     ICING_ASSERT_OK(entry_storage->Append(
         Entry(/*key_value_index=*/-1, /*next_entry_index=*/-1)));
     ICING_ASSERT_OK(entry_storage->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, entry_storage->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, entry_storage->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -757,10 +755,10 @@ TEST_P(PersistentHashMapTest,
         FileBackedVector<char>::Create(
             filesystem_, kv_storage_file_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, kv_storage->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, kv_storage->UpdateChecksum());
     ICING_ASSERT_OK(kv_storage->Append('z'));
     ICING_ASSERT_OK(kv_storage->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, kv_storage->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, kv_storage->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 

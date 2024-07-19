@@ -112,10 +112,7 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
       return itr_.Advance();
     }
 
-    std::string_view GetKey() const override {
-      const char* key = itr_.GetKey();
-      return std::string_view(key);
-    }
+    std::string_view GetKey() const override { return itr_.GetKey(); }
 
     T GetValue() const override {
       T value;
@@ -229,13 +226,12 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Initialize(
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
     std::string_view key, T next_value) {
-  std::string string_key(key);
   uint32_t value_index;
   libtextclassifier3::Status status =
-      trie_.Insert(string_key.c_str(), &next_value, &value_index,
+      trie_.Insert(key, &next_value, &value_index,
                    /*replace=*/false);
   if (!status.ok()) {
-    ICING_LOG(DBG) << "Unable to insert key " << string_key
+    ICING_LOG(DBG) << "Unable to insert key " << key
                    << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
                    << status.error_message();
     return status;
@@ -256,10 +252,9 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
 template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
     std::string_view key, T value) {
-  std::string string_key(key);
-  libtextclassifier3::Status status = trie_.Insert(string_key.c_str(), &value);
+  libtextclassifier3::Status status = trie_.Insert(key, &value);
   if (!status.ok()) {
-    ICING_LOG(DBG) << "Unable to insert key " << string_key
+    ICING_LOG(DBG) << "Unable to insert key " << key
                    << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
                    << status.error_message();
     return status;
@@ -270,11 +265,10 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::Get(
     std::string_view key) const {
-  std::string string_key(key);
   T value;
-  if (!trie_.Find(string_key.c_str(), &value)) {
+  if (!trie_.Find(key, &value)) {
     return absl_ports::NotFoundError(
-        absl_ports::StrCat("Key not found ", Formatter()(string_key),
+        absl_ports::StrCat("Key not found ", Formatter()(key),
                            " in DynamicTrieKeyMapper ", file_prefix_, "."));
   }
   return value;

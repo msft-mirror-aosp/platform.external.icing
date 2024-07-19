@@ -503,13 +503,20 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<OptimizeInfo> GetOptimizeInfo() const;
 
-  // Computes the combined checksum of the document store - includes the ground
-  // truth and all derived files.
+  // Update, replace and persist the header file. Creates the header file if it
+  // doesn't exist.
   //
   // Returns:
-  //   Combined checksum on success
-  //   INTERNAL_ERROR on compute error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the checksum of the document store.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
   // Get debug information for the document store.
   // verbosity <= 0, simplest debug information
@@ -698,14 +705,6 @@ class DocumentStore {
   // Checks if the header exists already. This does not create the header file
   // if it doesn't exist.
   bool HeaderExists();
-
-  // Update, replace and persist the header file. Creates the header file if it
-  // doesn't exist.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL on I/O error
-  libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
 
   libtextclassifier3::StatusOr<DocumentId> InternalPut(
       DocumentProto&& document,

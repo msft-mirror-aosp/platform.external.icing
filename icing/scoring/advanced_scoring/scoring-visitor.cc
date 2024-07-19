@@ -137,10 +137,12 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
   } else if (function_name ==
-             GetSearchSpecEmbeddingFunctionScoreExpression::kFunctionName) {
-    // getSearchSpecEmbedding function
+                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName ||
+             function_name == GetEmbeddingParameterFunctionScoreExpression::
+                                  kOldFunctionName) {
+    // getEmbeddingParameter function
     expression =
-        GetSearchSpecEmbeddingFunctionScoreExpression::Create(std::move(args));
+        GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));
   } else if (function_name ==
              MatchedSemanticScoresFunctionScoreExpression::kFunctionName) {
     // matchedSemanticScores function

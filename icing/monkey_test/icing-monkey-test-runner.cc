@@ -96,8 +96,8 @@ SearchSpecProto GenerateRandomSearchSpecProto(
 
     std::ostringstream stream;
     stream << std::fixed << std::setprecision(2)
-           << "semanticSearch(getSearchSpecEmbedding(0), " << low << ", "
-           << high << ")";
+           << "semanticSearch(getEmbeddingParameter(0), " << low << ", " << high
+           << ")";
     query = stream.str();
     search_spec.set_embedding_query_metric_type(
         SearchSpecProto::EmbeddingQueryMetricType::COSINE);

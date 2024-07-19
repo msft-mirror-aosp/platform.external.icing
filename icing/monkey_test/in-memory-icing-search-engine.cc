@@ -52,7 +52,7 @@ bool IsPrefix(std::string_view s1, std::string_view s2) {
 }
 
 const std::string_view kSemanticSearchPrefix =
-    "semanticSearch(getSearchSpecEmbedding(0)";
+    "semanticSearch(getEmbeddingParameter(0)";
 
 libtextclassifier3::StatusOr<std::pair<double, double>> GetEmbeddingSearchRange(
     std::string_view s) {

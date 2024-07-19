@@ -506,14 +506,18 @@ InitializeResultProto IcingSearchEngine::Initialize() {
 }
 
 void IcingSearchEngine::ResetMembers() {
-  schema_store_.reset();
-  document_store_.reset();
-  language_segmenter_.reset();
-  normalizer_.reset();
-  index_.reset();
-  integer_index_.reset();
-  qualified_id_join_index_.reset();
+  // Reset all members in the reverse order of their initialization to ensure
+  // the dependencies are not violated.
   embedding_index_.reset();
+  qualified_id_join_index_.reset();
+  integer_index_.reset();
+  index_.reset();
+  normalizer_.reset();
+  language_segmenter_.reset();
+  blob_store_.reset();
+  result_state_manager_.reset();
+  document_store_.reset();
+  schema_store_.reset();
 }
 
 libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(

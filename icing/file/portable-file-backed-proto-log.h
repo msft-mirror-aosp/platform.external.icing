@@ -489,12 +489,21 @@ class PortableFileBackedProtoLog {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates the checksum of the log contents. Excludes the header content.
+  // Calculates the checksum of the log contents (excluding the header) and
+  // updates the header.
   //
   // Returns:
   //   Crc of the log content
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the checksum of the log contents (excluding the
+  // header). Does NOT update the header.
+  //
+  // Returns:
+  //   Crc of the log content
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
  private:
   // Object can only be instantiated via the ::Create factory.
@@ -532,7 +541,7 @@ class PortableFileBackedProtoLog {
   //   Crc of the content between `start`, inclusive, and `end`, exclusive.
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT_ERROR if start and end aren't within the file size
-  static libtextclassifier3::StatusOr<Crc32> ComputeChecksum(
+  static libtextclassifier3::StatusOr<Crc32> GetPartialChecksum(
       const Filesystem* filesystem, const std::string& file_path,
       Crc32 initial_crc, int64_t start, int64_t end, int64_t file_size);
 
@@ -775,9 +784,9 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   if (header->GetDirtyFlag()) {
     // Recompute the log's checksum to detect which scenario we're in.
     ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
-                           ComputeChecksum(filesystem, file_path, Crc32(),
-                                           /*start=*/kHeaderReservedBytes,
-                                           /*end=*/file_size, file_size));
+                           GetPartialChecksum(filesystem, file_path, Crc32(),
+                                              /*start=*/kHeaderReservedBytes,
+                                              /*end=*/file_size, file_size));
 
     if (header->GetLogChecksum() != calculated_log_checksum.Get()) {
       // Still doesn't match, we're in Scenario 2. Throw out all our data now
@@ -819,7 +828,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
 
 template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
-PortableFileBackedProtoLog<ProtoT>::ComputeChecksum(
+PortableFileBackedProtoLog<ProtoT>::GetPartialChecksum(
     const Filesystem* filesystem, const std::string& file_path,
     Crc32 initial_crc, int64_t start, int64_t end, int64_t file_size) {
   ICING_ASSIGN_OR_RETURN(
@@ -1203,17 +1212,10 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
     return libtextclassifier3::Status::OK;
   }
 
-  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
-
-  header_->SetLogChecksum(crc.Get());
-  header_->SetRewindOffset(file_size_);
-  header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
-
-  if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
-                           sizeof(Header)) ||
-      !filesystem_->DataSync(fd_.get())) {
+  ICING_RETURN_IF_ERROR(UpdateChecksum());
+  if (!filesystem_->DataSync(fd_.get())) {
     return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to update header to: ", file_path_));
+        absl_ports::StrCat("Failed to sync data to disk: ", file_path_));
   }
 
   return libtextclassifier3::Status::OK;
@@ -1221,27 +1223,41 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
 
 template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
-PortableFileBackedProtoLog<ProtoT>::ComputeChecksum() {
+PortableFileBackedProtoLog<ProtoT>::UpdateChecksum() {
+  if (file_size_ == header_->GetRewindOffset()) {
+    return Crc32(header_->GetLogChecksum());
+  }
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, GetChecksum());
+  header_->SetLogChecksum(crc.Get());
+  header_->SetRewindOffset(file_size_);
+  header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
+
+  if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
+                           sizeof(Header))) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Failed to update header to: ", file_path_));
+  }
+  return crc;
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<Crc32>
+PortableFileBackedProtoLog<ProtoT>::GetChecksum() const {
   int64_t new_content_size = file_size_ - header_->GetRewindOffset();
-  Crc32 crc;
   if (new_content_size == 0) {
     // No new protos appended, return cached checksum
     return Crc32(header_->GetLogChecksum());
   } else if (new_content_size < 0) {
     // File shrunk, recalculate the entire checksum.
-    ICING_ASSIGN_OR_RETURN(
-        crc, ComputeChecksum(filesystem_, file_path_, Crc32(),
-                             /*start=*/kHeaderReservedBytes, /*end=*/file_size_,
-                             file_size_));
+    return GetPartialChecksum(filesystem_, file_path_, Crc32(),
+                              /*start=*/kHeaderReservedBytes,
+                              /*end=*/file_size_, file_size_);
   } else {
     // Append new changes to the existing checksum.
-    ICING_ASSIGN_OR_RETURN(crc,
-                           ComputeChecksum(filesystem_, file_path_,
-                                           Crc32(header_->GetLogChecksum()),
-                                           /*start=*/header_->GetRewindOffset(),
-                                           /*end=*/file_size_, file_size_));
+    return GetPartialChecksum(
+        filesystem_, file_path_, Crc32(header_->GetLogChecksum()),
+        /*start=*/header_->GetRewindOffset(), /*end=*/file_size_, file_size_);
   }
-  return crc;
 }
 
 }  // namespace lib

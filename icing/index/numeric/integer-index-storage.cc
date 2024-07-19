@@ -993,9 +993,9 @@ IntegerIndexStorage::ComputeStoragesChecksum(bool force) {
 
   // Compute crcs
   ICING_ASSIGN_OR_RETURN(Crc32 sorted_buckets_crc,
-                         sorted_buckets_->ComputeChecksum());
+                         sorted_buckets_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 unsorted_buckets_crc,
-                         unsorted_buckets_->ComputeChecksum());
+                         unsorted_buckets_->UpdateChecksum());
 
   // TODO(b/259744228): implement and include flash_index_storage checksum
   return Crc32(sorted_buckets_crc.Get() ^ unsorted_buckets_crc.Get());

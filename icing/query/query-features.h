@@ -53,7 +53,7 @@ constexpr Feature kHasPropertyFunctionFeature =
     "HAS_PROPERTY_FUNCTION";  // Features#HAS_PROPERTY_FUNCTION
 
 // This feature relates to the use of embedding searches in the advanced query
-// language. Ex. `semanticSearch(getSearchSpecEmbedding(0), 0.5, 1, "COSINE")`.
+// language. Ex. `semanticSearch(getEmbeddingParameter(0), 0.5, 1, "COSINE")`.
 //
 // Deprecated: This feature is not necessary. The availability of this feature
 // is already controlled by the existence of the embedding_query_vectors in the

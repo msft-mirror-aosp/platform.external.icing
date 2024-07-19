@@ -399,11 +399,21 @@ class FileBackedVector {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
-  // Updates checksum of the vector contents and returns it.
+  // Calculates the checksum of the vector contents and updates the header to
+  // hold this updated value.
   //
   // Returns:
-  //   INTERNAL_ERROR if the vector's internal state is inconsistent
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+  //   Checksum of the vector on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates the checksum of the vector contents and returns it. Does NOT
+  // update the header.
+  //
+  // Returns:
+  //   Checksum of the vector on success
+  //   INTERNAL_ERROR on IO error
+  Crc32 GetChecksum() const;
 
   // Accessors.
   const T* array() const {
@@ -987,7 +997,7 @@ void FileBackedVector<T>::SetDirty(int32_t idx) {
 }
 
 template <typename T>
-libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
+libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::UpdateChecksum() {
   // First apply the modified area. Keep a bitmap of already updated
   // regions so we don't double-update.
   std::vector<bool> updated(changes_end_);
@@ -1086,18 +1096,29 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
 
   // Commit new crc.
   header()->vector_checksum = cur_crc.Get();
+  header()->header_checksum = header()->CalculateHeaderChecksum();
+  return cur_crc;
+}
+
+template <typename T>
+Crc32 FileBackedVector<T>::GetChecksum() const {
+  if (changes_.empty() && changes_end_ == header()->num_elements) {
+    // No changes, just return the checksum cached in the header.
+    return Crc32(header()->vector_checksum);
+  }
+  // TODO(b/352778910): Mirror the same logic in UpdateChecksum() to reduce the
+  // cost of GetChecksum.
+  Crc32 cur_crc(std::string_view(reinterpret_cast<const char*>(array()),
+                                 header()->num_elements * kElementTypeSize));
   return cur_crc;
 }
 
 template <typename T>
 libtextclassifier3::Status FileBackedVector<T>::PersistToDisk() {
   // Update and write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  header()->vector_checksum = checksum.Get();
-  header()->header_checksum = header()->CalculateHeaderChecksum();
-  MemoryMappedFile::Strategy strategy = mmapped_file_->strategy();
-
-  if (strategy == MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC) {
+  ICING_RETURN_IF_ERROR(UpdateChecksum());
+  if (mmapped_file_->strategy() ==
+      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC) {
     // Changes should have been applied to the underlying file, but call msync()
     // as an extra safety step to ensure they are written out.
     ICING_RETURN_IF_ERROR(mmapped_file_->PersistToDisk());

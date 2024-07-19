@@ -50,6 +50,7 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
 constexpr TermMatchType::Code TERM_MATCH_PREFIX = TermMatchType::PREFIX;
+constexpr TermMatchType::Code TERM_MATCH_STEMMING = TermMatchType::STEMMING;
 
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_UNKNOWN =
     IntegerIndexingConfig::NumericMatchType::UNKNOWN;

@@ -688,7 +688,7 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   suggestion_spec.set_prefix(
-      "bar OR semanticSearch(getSearchSpecEmbedding(0), 0.5, 1)");
+      "bar OR semanticSearch(getEmbeddingParameter(0), 0.5, 1)");
   suggestion_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
   suggestion_spec.set_embedding_query_metric_type(
@@ -732,7 +732,7 @@ TEST_F(SuggestionProcessorTest, SemanticSearchPrefixTest) {
 
   // Suggesting without adding embedding query vectors will cause a failure.
   suggestion_spec.set_prefix(
-      "semanticSearch(getSearchSpecEmbedding(0), 0.5, 1) OR foo");
+      "semanticSearch(getEmbeddingParameter(0), 0.5, 1) OR foo");
   suggestion_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
   EXPECT_THAT(suggestion_processor_->QuerySuggestions(

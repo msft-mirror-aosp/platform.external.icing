@@ -467,7 +467,7 @@ QualifiedIdJoinIndexImplV1::ComputeStoragesChecksum(bool force) {
   ICING_ASSIGN_OR_RETURN(Crc32 doc_join_info_mapper_crc,
                          doc_join_info_mapper_->ComputeChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 qualified_id_storage_crc,
-                         qualified_id_storage_->ComputeChecksum());
+                         qualified_id_storage_->UpdateChecksum());
 
   return Crc32(doc_join_info_mapper_crc.Get() ^ qualified_id_storage_crc.Get());
 }

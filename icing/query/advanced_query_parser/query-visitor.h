@@ -289,7 +289,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
 
   // Implementation of the semanticSearch(vector, low, high, metric) custom
   // function. This function is used for supporting vector search with a
-  // syntax like `semanticSearch(getSearchSpecEmbedding(0), 0.5, 1, "COSINE")`.
+  // syntax like `semanticSearch(getEmbeddingParameter(0), 0.5, 1, "COSINE")`.
   //
   // low, high, metric are optional parameters:
   //   - low is default to negative infinity
@@ -299,14 +299,14 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   // Returns:
   //   - a Pending Value of type DocHitIterator that returns all documents with
   //     an embedding vector that has a score within [low, high].
-  //   - OUT_OF_RANGE if index provided to getSearchSpecEmbedding is out of
+  //   - OUT_OF_RANGE if index provided to getEmbeddingParameter is out of
   //     bounds of SearchSpec.embedding_query_vectors()
   //   - any errors returned by Lexer::ExtractTokens
   libtextclassifier3::StatusOr<PendingValue> SemanticSearchFunction(
       std::vector<PendingValue>&& args);
 
-  // Implementation of the getSearchSpecString(index) custom function. Retrieves
-  // the parameterized string stored at
+  // Implementation of the getSearchStringParameter(index) custom function.
+  // Retrieves the parameterized string stored at
   // SearchSpec.query_parameter_strings(index).
   //
   // Returns:
@@ -315,7 +315,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   //   - OUT_OF_RANGE if index is out of bounds of
   //     SearchSpec.query_parameter_strings()
   //   - any errors returned by ProduceTextTokenIterators
-  libtextclassifier3::StatusOr<PendingValue> GetSearchSpecStringFunction(
+  libtextclassifier3::StatusOr<PendingValue> GetSearchStringParameterFunction(
       std::vector<PendingValue>&& args);
 
   // Handles a NaryOperatorNode where the operator is HAS (':') and pushes an

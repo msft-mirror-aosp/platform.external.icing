@@ -31,6 +31,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<Stemmer>> Create(
   return std::make_unique<NoneStemmer>();
 }
 
+bool IsStemmingEnabled() { return false; }
+
 }  // namespace stemmer_factory
 
 }  // namespace lib

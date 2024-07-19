@@ -49,6 +49,15 @@ message SearchSpecProto {
   // the token.
   // Ex. A query term "foo" will match indexed tokens like "foo", "foot", and
   // "football".
+  //
+  // TermMatchType.Code=STEMMING
+  // Query terms will match indexed tokens when the query term is a stem of
+  // the token, or relates to the token via the same stem.
+  // Ex. A query term "dance" will match indexed tokens like "dance", "dances",
+  // and "dancing".
+  //
+  // TODO: b/344915547 - Refactor this to be a repeated field so that clients
+  // can choose multiple fuzzy match types.
   optional TermMatchType.Code term_match_type = 2;
 
   // OPTIONAL: Only search for documents that have the specified namespaces. If

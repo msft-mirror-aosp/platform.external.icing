@@ -117,7 +117,7 @@ class InMemoryIcingSearchEngine {
   // restrictions are supported.
   //
   // For embedding based queries, only the fixed format of
-  // `semanticSearch(getSearchSpecEmbedding(0), low, high)` is supported, where
+  // `semanticSearch(getEmbeddingParameter(0), low, high)` is supported, where
   // `low` and `high` are floating point numbers that specify the score range.
   // Section restrictions are also recognized.
   libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
