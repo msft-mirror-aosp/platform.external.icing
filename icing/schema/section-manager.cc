@@ -15,15 +15,9 @@
 #include "icing/schema/section-manager.h"
 
 #include <algorithm>
-#include <cinttypes>
-#include <cstddef>
 #include <cstdint>
-#include <iterator>
-#include <memory>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -35,7 +29,6 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/property-util.h"
-#include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
@@ -68,6 +61,7 @@ libtextclassifier3::Status AppendNewSectionMetadata(
       property_config.string_indexing_config().tokenizer_type(),
       property_config.string_indexing_config().term_match_type(),
       property_config.integer_indexing_config().numeric_match_type(),
+      property_config.embedding_indexing_config().embedding_indexing_type(),
       std::move(concatenated_path)));
   return libtextclassifier3::Status::OK;
 }
@@ -99,12 +93,14 @@ SectionManager::Builder::ProcessSchemaTypePropertyConfig(
     return absl_ports::InvalidArgumentError("Invalid schema type id");
   }
 
-  if (SchemaUtil::IsIndexedProperty(property_config)) {
-    ICING_RETURN_IF_ERROR(
-        AppendNewSectionMetadata(&section_metadata_cache_[schema_type_id],
-                                 std::move(property_path), property_config));
-  }
-
+  // We don't need to check if the property is indexable. This method will
+  // only be called properties that should consume sectionIds, even if the
+  // property's indexing configuration itself is not indexable.
+  // This would be the case for unknown and non-indexable property paths that
+  // are defined in the indexable_nested_properties_list.
+  ICING_RETURN_IF_ERROR(
+      AppendNewSectionMetadata(&section_metadata_cache_[schema_type_id],
+                               std::move(property_path), property_config));
   return libtextclassifier3::Status::OK;
 }
 
@@ -141,6 +137,13 @@ libtextclassifier3::StatusOr<SectionGroup> SectionManager::ExtractSections(
   for (const SectionMetadata& section_metadata : *metadata_list) {
     switch (section_metadata.data_type) {
       case PropertyConfigProto::DataType::STRING: {
+        if (section_metadata.term_match_type == TermMatchType::UNKNOWN ||
+            section_metadata.tokenizer ==
+                StringIndexingConfig::TokenizerType::NONE) {
+          // Skip if term-match type is UNKNOWN, or if the tokenizer-type is
+          // NONE.
+          break;
+        }
         AppendSection(
             section_metadata,
             property_util::ExtractPropertyValuesFromDocument<std::string_view>(
@@ -149,10 +152,28 @@ libtextclassifier3::StatusOr<SectionGroup> SectionManager::ExtractSections(
         break;
       }
       case PropertyConfigProto::DataType::INT64: {
+        if (section_metadata.numeric_match_type ==
+            IntegerIndexingConfig::NumericMatchType::UNKNOWN) {
+          // Skip if numeric-match type is UNKNOWN.
+          break;
+        }
         AppendSection(section_metadata,
                       property_util::ExtractPropertyValuesFromDocument<int64_t>(
                           document, section_metadata.path),
                       section_group.integer_sections);
+        break;
+      }
+      case PropertyConfigProto::DataType::VECTOR: {
+        if (section_metadata.embedding_indexing_type ==
+            EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN) {
+          // Skip if embedding indexing type is UNKNOWN.
+          break;
+        }
+        AppendSection(
+            section_metadata,
+            property_util::ExtractPropertyValuesFromDocument<
+                PropertyProto::VectorProto>(document, section_metadata.path),
+            section_group.vector_sections);
         break;
       }
       default: {

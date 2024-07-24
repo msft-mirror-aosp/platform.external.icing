@@ -15,6 +15,9 @@
 #ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
 #define ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
 
+#include <cstddef>
+#include <cstdint>
+
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/store/document-id.h"
 
@@ -50,7 +53,7 @@ class LiteIndex_Header {
 class LiteIndex_HeaderImpl : public LiteIndex_Header {
  public:
   struct HeaderData {
-    static const uint32_t kMagic = 0xb4fb8792;
+    static const uint32_t kMagic = 0xC2EAD682;
 
     uint32_t lite_index_crc;
     uint32_t magic;

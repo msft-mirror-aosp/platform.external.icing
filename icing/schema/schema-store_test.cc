@@ -14,8 +14,10 @@
 
 #include "icing/schema/schema-store.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -23,6 +25,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/file/version-util.h"
@@ -32,10 +35,7 @@
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
@@ -142,7 +142,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
               IsOkAndHolds(Eq(expected_checksum)));
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
-                                    "prop1");
+                                    EMBEDDING_INDEXING_UNKNOWN, "prop1");
   EXPECT_THAT(move_constructed_schema_store.GetSectionMetadata("type_a"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
 }
@@ -193,7 +193,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
               IsOkAndHolds(Eq(expected_checksum)));
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
-                                    "prop1");
+                                    EMBEDDING_INDEXING_UNKNOWN, "prop1");
   EXPECT_THAT(move_assigned_schema_store->GetSectionMetadata("type_a"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
 }
@@ -1084,6 +1084,137 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
 }
 
+TEST_F(SchemaStoreTest, SetSchemaWithAddedIndexableNestedTypeOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with a optional property, and a type that
+  //    references the ContactPoint type.
+  SchemaTypeConfigBuilder contact_point =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point).AddType(person).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // 2. Add another nested document property to "Person" that has type
+  //    "ContactPoint"
+  SchemaTypeConfigBuilder new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("contactPoints")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("anotherContactPoint")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(contact_point).AddType(new_person).Build();
+
+  // 3. Set to new schema. "Person" should be index-incompatible since we need
+  //    to index an additional property: 'anotherContactPoint.label'.
+  // - "Person" is also considered join-incompatible since the added nested
+  //   document property could also contain a joinable property.
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_index_incompatible_by_name.insert("Person");
+  expected_result.schema_types_join_incompatible_by_name.insert("Person");
+
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with a optional property, and a type that
+  //    references the ContactPoint type.
+  SchemaTypeConfigBuilder contact_point =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_REQUIRED));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_OPTIONAL));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point).AddType(person).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // 2. Add another nested document property to "Person" that has type
+  //    "ContactPoint", but make it non-indexable
+  SchemaTypeConfigBuilder new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("contactPoints")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("anotherContactPoint")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL));
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(contact_point).AddType(new_person).Build();
+
+  // 3. Set to new schema. "Person" should be join-incompatible but
+  //    index-compatible.
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_join_incompatible_by_name.insert("Person");
+
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
 TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -1396,10 +1527,10 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
             .Build();
     SectionMetadata expected_int_prop1_metadata(
         /*id_in=*/0, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
-        NUMERIC_MATCH_RANGE, "intProp1");
+        NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN, "intProp1");
     SectionMetadata expected_string_prop1_metadata(
         /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
-        NUMERIC_MATCH_UNKNOWN, "stringProp1");
+        NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN, "stringProp1");
     ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                                schema_store->ExtractSections(document));
     ASSERT_THAT(section_group.string_sections, SizeIs(1));
@@ -2722,7 +2853,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionZeroUpgradeNoChange) {
   }
 }
 
-TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
+TEST_F(SchemaStoreTest,
+       MigrateSchemaRollbackDiscardsIncompatibleOverlaySchema) {
   // Because we are upgrading from version zero, the schema must be compatible
   // with version zero.
   SchemaTypeConfigProto type_a =
@@ -2749,12 +2881,12 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
-  // Rollback to a version before kVersion. The schema header will declare that
-  // the overlay is compatible with any version starting with kVersion. So
-  // kVersion - 1 is incompatible and will throw out the schema.
+  // Rollback to a version before kVersionOne. The schema header will declare
+  // that the overlay is compatible with any version starting with kVersionOne.
+  // So kVersionOne - 1 is incompatible and will throw out the schema.
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
-      version_util::kVersion - 1));
+      version_util::kVersionOne - 1));
 
   {
     // Create a new of the schema store and check that we fell back to the
@@ -2777,7 +2909,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
   }
 }
 
-TEST_F(SchemaStoreTest, MigrateSchemaCompatibleRollbackKeepsOverlaySchema) {
+TEST_F(SchemaStoreTest, MigrateSchemaRollbackKeepsCompatibleOverlaySchema) {
   // Because we are upgrading from version zero, the schema must be compatible
   // with version zero.
   SchemaTypeConfigProto type_a =
@@ -2846,12 +2978,12 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
-  // Rollback to a version before kVersion. The schema header will declare that
-  // the overlay is compatible with any version starting with kVersion. So
-  // kVersion - 1 is incompatible and will throw out the schema.
+  // Rollback to a version before kVersionOne. The schema header will declare
+  // that the overlay is compatible with any version starting with kVersionOne.
+  // So kVersionOne - 1 is incompatible and will throw out the schema.
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
-      version_util::kVersion - 1));
+      version_util::kVersionOne - 1));
 
   SchemaTypeConfigProto other_type_a =
       SchemaTypeConfigBuilder()

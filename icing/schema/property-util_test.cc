@@ -22,6 +22,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/testing/common-matchers.h"
 
@@ -30,6 +31,7 @@ namespace lib {
 
 namespace {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
@@ -38,10 +40,29 @@ static constexpr std::string_view kPropertySingleString = "singleString";
 static constexpr std::string_view kPropertyRepeatedString = "repeatedString";
 static constexpr std::string_view kPropertySingleInteger = "singleInteger";
 static constexpr std::string_view kPropertyRepeatedInteger = "repeatedInteger";
+static constexpr std::string_view kPropertySingleVector = "singleVector";
+static constexpr std::string_view kPropertyRepeatedVector = "repeatedVector";
 
 static constexpr std::string_view kTypeNestedTest = "NestedTest";
 static constexpr std::string_view kPropertyStr = "str";
 static constexpr std::string_view kPropertyNestedDocument = "nestedDocument";
+
+TEST(PropertyUtilTest, IsParentPropertyPath) {
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo.bar"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo.bar.foo"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo", "foo.foo.bar"));
+  EXPECT_TRUE(property_util::IsParentPropertyPath("foo.bar", "foo.bar.foo"));
+
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo", "foofoo.bar"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar", "foo.foo.bar"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar", "foofoo.bar"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar.foo", "foo"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo.bar.foo", "foo.bar"));
+  EXPECT_FALSE(
+      property_util::IsParentPropertyPath("foo.foo.bar", "foo.bar.foo"));
+  EXPECT_FALSE(property_util::IsParentPropertyPath("foo", "foo#bar.foo"));
+}
 
 TEST(PropertyUtilTest, ExtractPropertyValuesTypeString) {
   PropertyProto property;
@@ -64,6 +85,28 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeInteger) {
 
   EXPECT_THAT(property_util::ExtractPropertyValues<int64_t>(property),
               IsOkAndHolds(ElementsAre(123, -456, 0)));
+}
+
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeVector) {
+  PropertyProto::VectorProto vector1;
+  vector1.set_model_signature("my_model1");
+  vector1.add_values(1.0f);
+  vector1.add_values(2.0f);
+
+  PropertyProto::VectorProto vector2;
+  vector2.set_model_signature("my_model2");
+  vector2.add_values(-1.0f);
+  vector2.add_values(-2.0f);
+  vector2.add_values(-3.0f);
+
+  PropertyProto property;
+  *property.mutable_vector_values()->Add() = vector1;
+  *property.mutable_vector_values()->Add() = vector2;
+
+  EXPECT_THAT(
+      property_util::ExtractPropertyValues<PropertyProto::VectorProto>(
+          property),
+      IsOkAndHolds(ElementsAre(EqualsProto(vector1), EqualsProto(vector2))));
 }
 
 TEST(PropertyUtilTest, ExtractPropertyValuesMismatchedType) {
@@ -93,6 +136,16 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeUnimplemented) {
 }
 
 TEST(PropertyUtilTest, ExtractPropertyValuesFromDocument) {
+  PropertyProto::VectorProto vector1;
+  vector1.set_model_signature("my_model1");
+  vector1.add_values(1.0f);
+  vector1.add_values(2.0f);
+  PropertyProto::VectorProto vector2;
+  vector2.set_model_signature("my_model2");
+  vector2.add_values(-1.0f);
+  vector2.add_values(-2.0f);
+  vector2.add_values(-3.0f);
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "test/1")
@@ -102,6 +155,9 @@ TEST(PropertyUtilTest, ExtractPropertyValuesFromDocument) {
                              "repeated2", "repeated3")
           .AddInt64Property(std::string(kPropertySingleInteger), 123)
           .AddInt64Property(std::string(kPropertyRepeatedInteger), 1, 2, 3)
+          .AddVectorProperty(std::string(kPropertySingleVector), vector1)
+          .AddVectorProperty(std::string(kPropertyRepeatedVector), vector1,
+                             vector2)
           .Build();
 
   // Single string
@@ -122,9 +178,33 @@ TEST(PropertyUtilTest, ExtractPropertyValuesFromDocument) {
   EXPECT_THAT(property_util::ExtractPropertyValuesFromDocument<int64_t>(
                   document, /*property_path=*/kPropertyRepeatedInteger),
               IsOkAndHolds(ElementsAre(1, 2, 3)));
+  // Single vector
+  EXPECT_THAT(property_util::ExtractPropertyValuesFromDocument<
+                  PropertyProto::VectorProto>(
+                  document, /*property_path=*/kPropertySingleVector),
+              IsOkAndHolds(ElementsAre(EqualsProto(vector1))));
+  // Repeated vector
+  EXPECT_THAT(
+      property_util::ExtractPropertyValuesFromDocument<
+          PropertyProto::VectorProto>(
+          document, /*property_path=*/kPropertyRepeatedVector),
+      IsOkAndHolds(ElementsAre(EqualsProto(vector1), EqualsProto(vector2))));
 }
 
 TEST(PropertyUtilTest, ExtractPropertyValuesFromDocumentNested) {
+  PropertyProto::VectorProto vector1;
+  vector1.set_model_signature("my_model1");
+  vector1.add_values(1.0f);
+  vector1.add_values(2.0f);
+  PropertyProto::VectorProto vector2;
+  vector2.set_model_signature("my_model2");
+  vector2.add_values(-1.0f);
+  vector2.add_values(-2.0f);
+  vector2.add_values(-3.0f);
+  PropertyProto::VectorProto vector3;
+  vector3.set_model_signature("my_model3");
+  vector3.add_values(1.0f);
+
   DocumentProto nested_document =
       DocumentBuilder()
           .SetKey("icing", "nested/1")
@@ -141,6 +221,10 @@ TEST(PropertyUtilTest, ExtractPropertyValuesFromDocumentNested) {
                   .AddInt64Property(std::string(kPropertySingleInteger), 123)
                   .AddInt64Property(std::string(kPropertyRepeatedInteger), 1, 2,
                                     3)
+                  .AddVectorProperty(std::string(kPropertySingleVector),
+                                     vector1)
+                  .AddVectorProperty(std::string(kPropertyRepeatedVector),
+                                     vector1, vector2)
                   .Build(),
               DocumentBuilder()
                   .SetSchema(std::string(kTypeTest))
@@ -151,6 +235,10 @@ TEST(PropertyUtilTest, ExtractPropertyValuesFromDocumentNested) {
                   .AddInt64Property(std::string(kPropertySingleInteger), 456)
                   .AddInt64Property(std::string(kPropertyRepeatedInteger), 4, 5,
                                     6)
+                  .AddVectorProperty(std::string(kPropertySingleVector),
+                                     vector2)
+                  .AddVectorProperty(std::string(kPropertyRepeatedVector),
+                                     vector2, vector3)
                   .Build())
           .Build();
 
@@ -172,6 +260,17 @@ TEST(PropertyUtilTest, ExtractPropertyValuesFromDocumentNested) {
       property_util::ExtractPropertyValuesFromDocument<int64_t>(
           nested_document, /*property_path=*/"nestedDocument.repeatedInteger"),
       IsOkAndHolds(ElementsAre(1, 2, 3, 4, 5, 6)));
+  EXPECT_THAT(
+      property_util::ExtractPropertyValuesFromDocument<
+          PropertyProto::VectorProto>(
+          nested_document, /*property_path=*/"nestedDocument.singleVector"),
+      IsOkAndHolds(ElementsAre(EqualsProto(vector1), EqualsProto(vector2))));
+  EXPECT_THAT(
+      property_util::ExtractPropertyValuesFromDocument<
+          PropertyProto::VectorProto>(
+          nested_document, /*property_path=*/"nestedDocument.repeatedVector"),
+      IsOkAndHolds(ElementsAre(EqualsProto(vector1), EqualsProto(vector2),
+                               EqualsProto(vector2), EqualsProto(vector3))));
 
   // Test the property at first level
   EXPECT_THAT(

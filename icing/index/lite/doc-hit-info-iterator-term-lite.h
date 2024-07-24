@@ -28,7 +28,7 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
+class DocHitInfoIteratorTermLite : public DocHitInfoLeafIterator {
  public:
   explicit DocHitInfoIteratorTermLite(const TermIdCodec* term_id_codec,
                                       LiteIndex* lite_index,
@@ -51,8 +51,14 @@ class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
-  int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
+  CallStats GetCallStats() const override {
+    return CallStats(
+        /*num_leaf_advance_calls_lite_index_in=*/num_advance_calls_,
+        /*num_leaf_advance_calls_main_index_in=*/0,
+        /*num_leaf_advance_calls_integer_index_in=*/0,
+        /*num_leaf_advance_calls_no_index_in=*/0,
+        /*num_blocks_inspected_in=*/0);
+  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,

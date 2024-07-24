@@ -14,13 +14,13 @@
 
 #include "icing/schema/property-util.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/proto/document.pb.h"
@@ -85,6 +85,23 @@ std::vector<PropertyInfo> ParsePropertyPathExpr(
   return property_infos;
 }
 
+bool IsParentPropertyPath(std::string_view property_path_expr1,
+                          std::string_view property_path_expr2) {
+  if (property_path_expr2.length() < property_path_expr1.length()) {
+    return false;
+  }
+  if (property_path_expr1 !=
+      property_path_expr2.substr(0, property_path_expr1.length())) {
+    return false;
+  }
+  if (property_path_expr2.length() > property_path_expr1.length() &&
+      property_path_expr2[property_path_expr1.length()] !=
+          kPropertyPathSeparator[0]) {
+    return false;
+  }
+  return true;
+}
+
 const PropertyProto* GetPropertyProto(const DocumentProto& document,
                                       std::string_view property_name) {
   for (const PropertyProto& property : document.properties()) {
@@ -114,6 +131,14 @@ libtextclassifier3::StatusOr<std::vector<int64_t>>
 ExtractPropertyValues<int64_t>(const PropertyProto& property) {
   return std::vector<int64_t>(property.int64_values().begin(),
                               property.int64_values().end());
+}
+
+template <>
+libtextclassifier3::StatusOr<std::vector<PropertyProto::VectorProto>>
+ExtractPropertyValues<PropertyProto::VectorProto>(
+    const PropertyProto& property) {
+  return std::vector<PropertyProto::VectorProto>(
+      property.vector_values().begin(), property.vector_values().end());
 }
 
 }  // namespace property_util

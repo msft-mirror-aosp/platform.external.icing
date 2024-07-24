@@ -14,14 +14,37 @@
 
 #include "icing/query/suggestion-processor.h"
 
-#include "icing/proto/schema.pb.h"
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/index.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/index/term-metadata.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/query-processor.h"
+#include "icing/query/query-results.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 #include "icing/store/suggestion-result-checker-impl.h"
-#include "icing/tokenization/tokenizer-factory.h"
-#include "icing/tokenization/tokenizer.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -29,20 +52,24 @@ namespace lib {
 libtextclassifier3::StatusOr<std::unique_ptr<SuggestionProcessor>>
 SuggestionProcessor::Create(Index* index,
                             const NumericIndex<int64_t>* numeric_index,
+                            const EmbeddingIndex* embedding_index,
                             const LanguageSegmenter* language_segmenter,
                             const Normalizer* normalizer,
                             const DocumentStore* document_store,
-                            const SchemaStore* schema_store) {
+                            const SchemaStore* schema_store,
+                            const Clock* clock) {
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(numeric_index);
+  ICING_RETURN_ERROR_IF_NULL(embedding_index);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(clock);
 
-  return std::unique_ptr<SuggestionProcessor>(
-      new SuggestionProcessor(index, numeric_index, language_segmenter,
-                              normalizer, document_store, schema_store));
+  return std::unique_ptr<SuggestionProcessor>(new SuggestionProcessor(
+      index, numeric_index, embedding_index, language_segmenter, normalizer,
+      document_store, schema_store, clock));
 }
 
 libtextclassifier3::StatusOr<
@@ -224,8 +251,9 @@ SuggestionProcessor::QuerySuggestions(
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(&index_, &numeric_index_, &language_segmenter_,
-                             &normalizer_, &document_store_, &schema_store_));
+      QueryProcessor::Create(&index_, &numeric_index_, &embedding_index_,
+                             &language_segmenter_, &normalizer_,
+                             &document_store_, &schema_store_, &clock_));
 
   SearchSpecProto search_spec;
   search_spec.set_query(suggestion_spec.prefix());
@@ -298,14 +326,18 @@ SuggestionProcessor::QuerySuggestions(
 
 SuggestionProcessor::SuggestionProcessor(
     Index* index, const NumericIndex<int64_t>* numeric_index,
+    const EmbeddingIndex* embedding_index,
     const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
-    const DocumentStore* document_store, const SchemaStore* schema_store)
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const Clock* clock)
     : index_(*index),
       numeric_index_(*numeric_index),
+      embedding_index_(*embedding_index),
       language_segmenter_(*language_segmenter),
       normalizer_(*normalizer),
       document_store_(*document_store),
-      schema_store_(*schema_store) {}
+      schema_store_(*schema_store),
+      clock_(*clock) {}
 
 }  // namespace lib
 }  // namespace icing

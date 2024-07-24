@@ -651,7 +651,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor->GetNextHitsBatch());
   }
 
-  Hit last_added_hit;
+  Hit last_added_hit(Hit::kInvalidValue);
   // The hits in backfill_hits are in the reverse order of how they were added.
   // Iterate in reverse to add them to this new posting list in the correct
   // order.
@@ -751,6 +751,13 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
                          old_pl_accessor.GetNextHitsBatch());
   while (!tmp.empty()) {
     for (const Hit& hit : tmp) {
+      // A safety check to add robustness to the codebase, so to make sure that
+      // we never access invalid memory, in case that hit from the posting list
+      // is corrupted.
+      if (hit.document_id() < 0 ||
+          hit.document_id() >= document_id_old_to_new.size()) {
+        continue;
+      }
       DocumentId new_document_id = document_id_old_to_new[hit.document_id()];
       // Transfer the document id of the hit, if the document is not deleted
       // or outdated.

@@ -15,8 +15,13 @@
 #ifndef ICING_SCORING_SCORER_FACTORY_H_
 #define ICING_SCORING_SCORER_FACTORY_H_
 
+#include <cstdint>
+#include <memory>
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scorer.h"
 #include "icing/store/document-store.h"
 
@@ -37,9 +42,11 @@ namespace scorer_factory {
 //   INVALID_ARGUMENT if fails to create an instance
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
+    SearchSpecProto::EmbeddingQueryMetricType::Code
+        default_semantic_metric_type,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    int64_t current_time_ms,
-    const JoinChildrenFetcher* join_children_fetcher = nullptr);
+    int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
+    const EmbeddingQueryResults* embedding_query_results);
 
 }  // namespace scorer_factory
 

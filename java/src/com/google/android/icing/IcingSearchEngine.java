@@ -77,12 +77,6 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
     icingSearchEngineImpl.close();
   }
 
-  @Override
-  protected void finalize() throws Throwable {
-    icingSearchEngineImpl.close();
-    super.finalize();
-  }
-
   @NonNull
   @Override
   public InitializeResultProto initialize() {

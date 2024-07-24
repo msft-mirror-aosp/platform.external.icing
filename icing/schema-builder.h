@@ -56,6 +56,13 @@ constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_UNKNOWN =
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_RANGE =
     IntegerIndexingConfig::NumericMatchType::RANGE;
 
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_UNKNOWN =
+        EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_LINEAR_SEARCH =
+        EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
+
 constexpr PropertyConfigProto::DataType::Code TYPE_UNKNOWN =
     PropertyConfigProto::DataType::UNKNOWN;
 constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
@@ -70,6 +77,8 @@ constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
     PropertyConfigProto::DataType::BYTES;
 constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
     PropertyConfigProto::DataType::DOCUMENT;
+constexpr PropertyConfigProto::DataType::Code TYPE_VECTOR =
+    PropertyConfigProto::DataType::VECTOR;
 
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
     JoinableConfig::ValueType::NONE;
@@ -127,6 +136,31 @@ class PropertyConfigBuilder {
     property_.set_schema_type(std::string(schema_type));
     property_.mutable_document_indexing_config()->set_index_nested_properties(
         index_nested_properties);
+    property_.mutable_document_indexing_config()
+        ->clear_indexable_nested_properties_list();
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDataTypeDocument(
+      std::string_view schema_type,
+      std::initializer_list<std::string> indexable_nested_properties_list) {
+    property_.set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+    property_.set_schema_type(std::string(schema_type));
+    property_.mutable_document_indexing_config()->set_index_nested_properties(
+        false);
+    for (const std::string& property : indexable_nested_properties_list) {
+      property_.mutable_document_indexing_config()
+          ->add_indexable_nested_properties_list(property);
+    }
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDataTypeVector(
+      EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+          embedding_indexing_type) {
+    property_.set_data_type(PropertyConfigProto::DataType::VECTOR);
+    property_.mutable_embedding_indexing_config()->set_embedding_indexing_type(
+        embedding_indexing_type);
     return *this;
   }
 
@@ -140,6 +174,11 @@ class PropertyConfigBuilder {
   PropertyConfigBuilder& SetCardinality(
       PropertyConfigProto::Cardinality::Code cardinality) {
     property_.set_cardinality(cardinality);
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDescription(std::string description) {
+    property_.set_description(std::move(description));
     return *this;
   }
 
@@ -167,6 +206,11 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetVersion(int version) {
     type_config_.set_version(version);
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetDescription(std::string description) {
+    type_config_.set_description(std::move(description));
     return *this;
   }
 

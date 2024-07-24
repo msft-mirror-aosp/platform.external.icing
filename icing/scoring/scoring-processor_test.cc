@@ -15,22 +15,39 @@
 #include "icing/scoring/scoring-processor.h"
 
 #include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer-test-utils.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -62,13 +79,14 @@ class ScoringProcessorTest
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -109,6 +127,10 @@ class ScoringProcessorTest
   SchemaStore* schema_store() { return schema_store_.get(); }
 
   const FakeClock& fake_clock() const { return fake_clock_; }
+
+  SearchSpecProto::EmbeddingQueryMetricType::Code default_semantic_metric_type =
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT;
+  EmbeddingQueryResults empty_embedding_query_results;
 
  private:
   const std::string test_dir_;
@@ -186,27 +208,31 @@ PropertyWeight CreatePropertyWeight(std::string path, double weight) {
 
 TEST_F(ScoringProcessorTest, CreationWithNullDocumentStoreShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(ScoringProcessor::Create(
-                  spec_proto, /*document_store=*/nullptr, schema_store(),
-                  fake_clock().GetSystemTimeMilliseconds()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, /*document_store=*/nullptr,
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
   ScoringSpecProto spec_proto;
   EXPECT_THAT(
-      ScoringProcessor::Create(spec_proto, document_store(),
-                               /*schema_store=*/nullptr,
-                               fake_clock().GetSystemTimeMilliseconds()),
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          /*schema_store=*/nullptr, fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_P(ScoringProcessorTest, ShouldCreateInstance) {
   ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
       ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
-  ICING_EXPECT_OK(
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(ScoringProcessor::Create(
+      spec_proto, default_semantic_metric_type, document_store(),
+      schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 }
 
 TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
@@ -221,8 +247,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/5),
@@ -248,8 +276,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/-1),
@@ -279,8 +309,10 @@ TEST_P(ScoringProcessorTest, ShouldRespectNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/2),
@@ -312,8 +344,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByDocumentScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -368,8 +402,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -438,8 +474,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -512,8 +550,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -562,8 +602,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -628,8 +670,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -699,8 +743,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -761,8 +807,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor with no explicit weights set.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   ScoringSpecProto spec_proto_with_weights =
       CreateScoringSpecForRankingStrategy(
@@ -777,9 +825,11 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor with default weight set for "body" property.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor_with_weights,
-      ScoringProcessor::Create(spec_proto_with_weights, document_store(),
-                               schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto_with_weights, default_semantic_metric_type,
+          document_store(), schema_store(),
+          fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -865,8 +915,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -928,8 +980,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -989,8 +1043,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1050,8 +1106,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1087,8 +1145,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleNoScores) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/4),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
@@ -1137,8 +1197,10 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
