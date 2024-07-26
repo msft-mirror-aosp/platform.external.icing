@@ -33,9 +33,11 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -58,6 +60,7 @@ using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::IsEmpty;
+using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Ne;
 using ::testing::NiceMock;
@@ -75,7 +78,9 @@ class IndexTest : public Test {
  protected:
   void SetUp() override {
     index_dir_ = GetTestTempDir() + "/index_test/";
-    Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+    Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
   }
@@ -146,7 +151,9 @@ MATCHER_P2(EqualsTermMetadata, content, hit_count, "") {
 }
 
 TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(
       Index::Create(options, &filesystem_, /*icing_filesystem=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
@@ -190,6 +197,36 @@ TEST_F(IndexTest, EmptyIndexAfterMerge) {
                                kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+}
+
+TEST_F(IndexTest, CreationWithLiteIndexSortAtIndexingEnabledShouldSort) {
+  // Make the index with lite_index_sort_at_indexing=false and a very small sort
+  // threshold.
+  Index::Options options(index_dir_, /*index_merge_size=*/1024,
+                         /*lite_index_sort_at_indexing=*/false,
+                         /*lite_index_sort_size=*/16);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("bar"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("baz"), IsOk());
+  ASSERT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Persist and recreate the index with lite_index_sort_at_indexing=true
+  ASSERT_THAT(index_->PersistToDisk(), IsOk());
+  options = Index::Options(index_dir_, /*index_merge_size=*/1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/16);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+
+  // Check that the index is sorted after recreating with
+  // lite_index_sort_at_indexing, with the unsorted HitBuffer exceeding the sort
+  // threshold.
+  EXPECT_THAT(index_->LiteIndexNeedSort(), IsFalse());
 }
 
 TEST_F(IndexTest, AdvancePastEnd) {
@@ -246,6 +283,228 @@ TEST_F(IndexTest, AdvancePastEndAfterMerge) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(itr->doc_hit_info(),
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
+}
+
+TEST_F(IndexTest, IteratorGetCallStats_mainIndexOnly) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Merge the index.
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+
+  // Before Advance().
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 1st Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 2nd Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 3rd Advance().
+  ASSERT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+}
+
+TEST_F(IndexTest, IteratorGetCallStats_liteIndexOnly) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+
+  // Before Advance().
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 1st Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/1,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 2nd Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 3rd Advance().
+  ASSERT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+}
+
+TEST_F(IndexTest, IteratorGetCallStats) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Merge the index. 2 hits for "foo" will be merged into the main index.
+  ICING_ASSERT_OK(index_->Merge());
+
+  // Insert 2 more hits for "foo". It will be in the lite index.
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+
+  // Before Advance().
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 1st Advance(). DocHitInfoIteratorOr will advance both left and right
+  // iterator (i.e. lite and main index iterator) once, compare document ids,
+  // and return the hit with larger document id. In this case, hit from lite
+  // index will be chosen and returned.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/1,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 2nd Advance(). Since lite index iterator has larger document id in the
+  // previous round, we advance lite index iterator in this round. We still
+  // choose and return hit from lite index.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 3rd Advance(). Since lite index iterator has larger document id in the
+  // previous round, we advance lite index iterator in this round. However,
+  // there is no hit from lite index anymore, so we choose and return hit from
+  // main index.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 4th Advance(). Advance main index.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 5th Advance(). Reach the end.
+  ASSERT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
 }
 
 TEST_F(IndexTest, SingleHitSingleTermIndex) {
@@ -967,7 +1226,9 @@ TEST_F(IndexTest, NonAsciiTermsAfterMerge) {
 
 TEST_F(IndexTest, FullIndex) {
   // Make a smaller index so that it's easier to fill up.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
@@ -1035,7 +1296,9 @@ TEST_F(IndexTest, FullIndex) {
 
 TEST_F(IndexTest, FullIndexMerge) {
   // Make a smaller index so that it's easier to fill up.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
@@ -1368,7 +1631,9 @@ TEST_F(IndexTest, IndexCreateIOFailure) {
   NiceMock<IcingMockFilesystem> mock_icing_filesystem;
   ON_CALL(mock_icing_filesystem, CreateDirectoryRecursively)
       .WillByDefault(Return(false));
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, &mock_icing_filesystem),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
@@ -1399,7 +1664,9 @@ TEST_F(IndexTest, IndexCreateCorruptionFailure) {
       IsTrue());
 
   // Recreate the index.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_),
               StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
 }
@@ -1417,7 +1684,9 @@ TEST_F(IndexTest, IndexPersistence) {
   index_.reset();
 
   // Recreate the index.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
@@ -1446,7 +1715,9 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
   index_.reset();
 
   // Recreate the index.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
@@ -1463,7 +1734,8 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
 
 TEST_F(IndexTest, InvalidHitBufferSize) {
   Index::Options options(
-      index_dir_, /*index_merge_size=*/std::numeric_limits<uint32_t>::max());
+      index_dir_, /*index_merge_size=*/std::numeric_limits<uint32_t>::max(),
+      /*lite_index_sort_at_indexing=*/true, /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -2464,9 +2736,45 @@ TEST_F(IndexTest, IndexStorageInfoProto) {
   EXPECT_THAT(storage_info.main_index_lexicon_size(), Ge(0));
   EXPECT_THAT(storage_info.main_index_storage_size(), Ge(0));
   EXPECT_THAT(storage_info.main_index_block_size(), Ge(0));
-  // There should be 1 block for the header and 1 block for two posting lists.
+  // There should be 1 block for the header and 1 block for three posting lists
+  // ("fo", "foo", "foul").
   EXPECT_THAT(storage_info.num_blocks(), Eq(2));
   EXPECT_THAT(storage_info.min_free_fraction(), Ge(0));
+}
+
+TEST_F(IndexTest, PublishQueryStats) {
+  // Add two documents to the lite index without merging.
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("foul"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Verify query stats.
+  QueryStatsProto query_stats1;
+  index_->PublishQueryStats(&query_stats1);
+  EXPECT_THAT(query_stats1.lite_index_hit_buffer_byte_size(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  EXPECT_THAT(query_stats1.lite_index_hit_buffer_unsorted_byte_size(),
+              Ge(2 * sizeof(TermIdHitPair::Value)));
+
+  // Sort lite index.
+  index_->SortLiteIndex();
+  QueryStatsProto query_stats2;
+  index_->PublishQueryStats(&query_stats2);
+  EXPECT_THAT(query_stats2.lite_index_hit_buffer_byte_size(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  EXPECT_THAT(query_stats2.lite_index_hit_buffer_unsorted_byte_size(), Eq(0));
+
+  // Merge lite index to main index.
+  ICING_ASSERT_OK(index_->Merge());
+  QueryStatsProto query_stats3;
+  index_->PublishQueryStats(&query_stats3);
+  EXPECT_THAT(query_stats3.lite_index_hit_buffer_byte_size(), Eq(0));
+  EXPECT_THAT(query_stats3.lite_index_hit_buffer_unsorted_byte_size(), Eq(0));
 }
 
 }  // namespace

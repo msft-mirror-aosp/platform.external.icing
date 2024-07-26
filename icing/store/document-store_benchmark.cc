@@ -132,8 +132,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
   return DocumentStore::Create(
       filesystem, base_dir, clock, schema_store,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/false,
+      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
@@ -163,8 +163,9 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
     // stuff.
     ICING_ASSERT_OK(document_store->Put(
         CreateDocument("namespace", /*uri=*/std::to_string(i))));
-    document_store->Delete("namespace", /*uri=*/std::to_string(i),
-                           clock.GetSystemTimeMilliseconds());
+    ICING_ASSERT_OK(document_store->Delete("namespace",
+                                           /*uri=*/std::to_string(i),
+                                           clock.GetSystemTimeMilliseconds()));
   }
 
   std::default_random_engine random;

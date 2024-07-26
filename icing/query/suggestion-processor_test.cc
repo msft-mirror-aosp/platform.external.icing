@@ -14,14 +14,30 @@
 
 #include "icing/query/suggestion-processor.h"
 
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
+#include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/index.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
+#include "icing/index/numeric/numeric-index.h"
 #include "icing/index/term-metadata.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/platform.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -30,7 +46,9 @@
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -59,7 +77,8 @@ class SuggestionProcessorTest : public Test {
         store_dir_(test_dir_ + "/store"),
         schema_store_dir_(test_dir_ + "/schema_store"),
         index_dir_(test_dir_ + "/index"),
-        numeric_index_dir_(test_dir_ + "/numeric_index") {}
+        numeric_index_dir_(test_dir_ + "/numeric_index"),
+        embedding_index_dir_(test_dir_ + "/embedding_index") {}
 
   void SetUp() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
@@ -88,21 +107,26 @@ class SuggestionProcessorTest : public Test {
         DocumentStore::Create(
             &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
-                           /*index_merge_size=*/1024 * 1024);
+                           /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
     // TODO(b/249829533): switch to use persistent numeric index.
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
         DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        embedding_index_,
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -116,8 +140,9 @@ class SuggestionProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         suggestion_processor_,
         SuggestionProcessor::Create(
-            index_.get(), numeric_index_.get(), language_segmenter_.get(),
-            normalizer_.get(), document_store_.get(), schema_store_.get()));
+            index_.get(), numeric_index_.get(), embedding_index_.get(),
+            language_segmenter_.get(), normalizer_.get(), document_store_.get(),
+            schema_store_.get(), &fake_clock_));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
@@ -144,10 +169,12 @@ class SuggestionProcessorTest : public Test {
   IcingFilesystem icing_filesystem_;
   const std::string index_dir_;
   const std::string numeric_index_dir_;
+  const std::string embedding_index_dir_;
 
  protected:
   std::unique_ptr<Index> index_;
   std::unique_ptr<NumericIndex<int64_t>> numeric_index_;
+  std::unique_ptr<EmbeddingIndex> embedding_index_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
   FakeClock fake_clock_;
@@ -640,37 +667,30 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  auto terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
-    EXPECT_THAT(terms, IsEmpty());
-  } else {
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // TODO(b/208654892): Update handling for hyphens to only consider it a hyphen
   // within a TEXT token (rather than a MINUS token) when surrounded on both
   // sides by TEXT rather than just preceded by TEXT.
   suggestion_spec.set_prefix("f-");
-  terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("f OR");
-  terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
-    EXPECT_THAT(terms, IsEmpty());
-  } else {
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  suggestion_spec.set_prefix(
+      "bar OR semanticSearch(getSearchSpecEmbedding(0), 0.5, 1)");
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
@@ -702,16 +722,9 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  auto terms_or = suggestion_processor_->QuerySuggestions(
-      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
-    EXPECT_THAT(terms, IsEmpty());
-  } else {
-    EXPECT_THAT(terms_or,
-                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  }
+  EXPECT_THAT(suggestion_processor_->QuerySuggestions(
+                  suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace
