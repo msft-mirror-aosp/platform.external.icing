@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -309,6 +310,7 @@ QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
   // Initialize info content.
   new_index->info().magic = Info::kMagic;
   new_index->info().last_added_document_id = kInvalidDocumentId;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_index->InitializeNewStorage());
@@ -372,6 +374,7 @@ QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
           filesystem, std::move(working_path), std::move(metadata_buffer),
           std::move(doc_join_info_mapper), std::move(qualified_id_storage),
           pre_mapping_fbv, use_persistent_hash_map));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(type_joinable_index->InitializeExistingStorage());
 
@@ -409,66 +412,88 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::TransferIndex(
   }
 
   // TODO(b/268521214): transfer delete propagation storage
-
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk(
-    bool force) {
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   std::string metadata_file_path = GetMetadataFilePath(working_path_);
-
   ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  if (!sfd.is_valid()) {
-    return absl_ports::InternalError("Fail to open metadata file for write");
-  }
-
-  if (!filesystem_.PWrite(sfd.get(), /*offset=*/0, metadata_buffer_.get(),
-                          kMetadataFileSize)) {
-    return absl_ports::InternalError("Fail to write metadata file");
-  }
-
+  ICING_RETURN_IF_ERROR(InternalWriteMetadata(sfd));
   if (!filesystem_.DataSync(sfd.get())) {
     return absl_ports::InternalError("Fail to sync metadata to disk");
   }
-
+  is_info_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   ICING_RETURN_IF_ERROR(doc_join_info_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(qualified_id_storage_->PersistToDisk());
+  is_storage_dirty_ = false;
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::WriteMetadata() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  std::string metadata_file_path = GetMetadataFilePath(working_path_);
+  ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
+  return InternalWriteMetadata(std::move(sfd));
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::InternalWriteMetadata(
+    const ScopedFd& sfd) {
+  if (!sfd.is_valid()) {
+    return absl_ports::InternalError("Fail to open metadata file for write");
+  }
+  if (!filesystem_.PWrite(sfd.get(), /*offset=*/0, metadata_buffer_.get(),
+                          kMetadataFileSize)) {
+    return absl_ports::InternalError("Fail to write metadata file");
+  }
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV1::ComputeInfoChecksum(bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
-}
-
-libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV1::ComputeStoragesChecksum(bool force) {
-  if (!force && !is_storage_dirty()) {
+QualifiedIdJoinIndexImplV1::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
   ICING_ASSIGN_OR_RETURN(Crc32 doc_join_info_mapper_crc,
-                         doc_join_info_mapper_->ComputeChecksum());
+                         doc_join_info_mapper_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 qualified_id_storage_crc,
-                         qualified_id_storage_->ComputeChecksum());
+                         qualified_id_storage_->UpdateChecksum());
+  return Crc32(doc_join_info_mapper_crc.Get() ^ qualified_id_storage_crc.Get());
+}
 
+libtextclassifier3::StatusOr<Crc32>
+QualifiedIdJoinIndexImplV1::GetInfoChecksum() const {
+  // Info checksum is not cached and is calculated on the fly. Just call Get.
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32>
+QualifiedIdJoinIndexImplV1::GetStoragesChecksum() const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  ICING_ASSIGN_OR_RETURN(Crc32 doc_join_info_mapper_crc,
+                         doc_join_info_mapper_->GetChecksum());
+  Crc32 qualified_id_storage_crc = qualified_id_storage_->GetChecksum();
   return Crc32(doc_join_info_mapper_crc.Get() ^ qualified_id_storage_crc.Get());
 }
 

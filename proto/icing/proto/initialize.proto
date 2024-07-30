@@ -73,7 +73,7 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 16
+// Next tag: 17
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -179,6 +179,10 @@ message IcingSearchEngineOptions {
   // Whether to build the metadata hits used for property existence check, which
   // is required to support the hasProperty function in advanced query.
   optional bool build_property_existence_metadata_hits = 15;
+
+  // Whether to enable blob store.
+  // If set to true, the BlobStore will be created to store and retrieve blobs.
+  optional bool enable_blob_store = 16;
 
   reserved 2;
 }

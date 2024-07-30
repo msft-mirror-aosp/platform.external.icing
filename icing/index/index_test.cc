@@ -1671,6 +1671,37 @@ TEST_F(IndexTest, IndexCreateCorruptionFailure) {
               StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
 }
 
+TEST_F(IndexTest, UpdateChecksum) {
+  // Add some content to the index
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  Crc32 lite_only_crc = index_->GetChecksum();
+  EXPECT_THAT(index_->UpdateChecksum(), Eq(lite_only_crc));
+  EXPECT_THAT(index_->GetChecksum(), Eq(lite_only_crc));
+
+  // Merge content into the main index.
+  ASSERT_THAT(index_->Merge(), IsOk());
+  Crc32 main_only_crc = index_->GetChecksum();
+  EXPECT_THAT(main_only_crc, Not(Eq(lite_only_crc)));
+  EXPECT_THAT(index_->UpdateChecksum(), Eq(main_only_crc));
+  EXPECT_THAT(index_->GetChecksum(), Eq(main_only_crc));
+
+  // Add some more content to the lite index
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.BufferTerm("baz"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("bat"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  Crc32 both_crc = index_->GetChecksum();
+  EXPECT_THAT(both_crc, Not(Eq(lite_only_crc)));
+  EXPECT_THAT(both_crc, Not(Eq(main_only_crc)));
+  EXPECT_THAT(index_->UpdateChecksum(), Eq(both_crc));
+  EXPECT_THAT(index_->GetChecksum(), Eq(both_crc));
+}
+
 TEST_F(IndexTest, IndexPersistence) {
   // Add some content to the index
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
