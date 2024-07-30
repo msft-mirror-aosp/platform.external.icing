@@ -275,15 +275,12 @@ TEST(ParserIntegrationTest, EmptyFunction) {
 
   // Expected AST:
   //    function
-  //       |
-  // function_name
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, function }
+  //   { function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionSingleArg) {
@@ -297,16 +294,15 @@ TEST(ParserIntegrationTest, FunctionSingleArg) {
 
   // Expected AST:
   //           function
-  //           /     \
-  // function_name  string
+  //              |
+  //           string
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, string, function }
+  //   { string, function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kString),
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionMultiArg) {
@@ -320,17 +316,16 @@ TEST(ParserIntegrationTest, FunctionMultiArg) {
 
   // Expected AST:
   //                function
-  //              /    |    \
-  // function_name  string  string
+  //                /     \
+  //            string  string
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, string, string, function }
+  //   { string, string, function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kString),
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kString),
                           EqualsNodeInfo("baz", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionNested) {
@@ -344,19 +339,15 @@ TEST(ParserIntegrationTest, FunctionNested) {
 
   // Expected AST:
   //          function
-  //          /      \
-  // function_name  function
-  //                    |
-  //              function_name
+  //             |
+  //          function
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, function_name, function, function }
+  //   { function, function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kFunction),
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionWithTrailingSequence) {
@@ -372,15 +363,14 @@ TEST(ParserIntegrationTest, FunctionWithTrailingSequence) {
   //             OR
   //          /      \
   //     function   member
-  //        |         |
-  //  function_name  text
+  //                  |
+  //                text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, function, text, member, OR }
+  //   { function, text, member, OR }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction),
+              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunction),
                           EqualsNodeInfo("bar", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("OR", NodeType::kNaryOperator)));
@@ -465,15 +455,15 @@ TEST(ParserIntegrationTest, Complex) {
   //     member            OR
   //       |          /         \
   //     text      :             function
-  //              / \            /       \
-  //         member member  function_name string
+  //              / \               |
+  //         member member        string
   //           |       |
   //          text    text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { text, member, text, member, text, member, :, function_name, string,
-  //     function, OR, AND }
+  //   { text, member, text, member, text, member, :, string, function, OR,
+  //     AND }
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("foo", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
@@ -482,9 +472,8 @@ TEST(ParserIntegrationTest, Complex) {
                           EqualsNodeInfo("baz", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo(":", NodeType::kNaryOperator),
-                          EqualsNodeInfo("pal", NodeType::kFunctionName),
                           EqualsNodeInfo("bat", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("pal", NodeType::kFunction),
                           EqualsNodeInfo("OR", NodeType::kNaryOperator),
                           EqualsNodeInfo("AND", NodeType::kNaryOperator)));
 }
@@ -804,17 +793,15 @@ TEST(ParserIntegrationTest, ComplexScoring) {
   EXPECT_THAT(node,
               ElementsAre(EqualsNodeInfo("1", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("pow", NodeType::kFunctionName),
                           EqualsNodeInfo("2", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("sin", NodeType::kFunctionName),
                           EqualsNodeInfo("3", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("sin", NodeType::kFunction),
                           EqualsNodeInfo("TIMES", NodeType::kNaryOperator),
                           EqualsNodeInfo("4", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("pow", NodeType::kFunction),
                           EqualsNodeInfo("5", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("MINUS", NodeType::kUnaryOperator),
@@ -847,15 +834,12 @@ TEST(ParserIntegrationTest, ScoringMemberFunction) {
   //       member
   //     /        \
   //  text     function
-  //               |
-  //          function_name
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(
       visitor.nodes(),
       ElementsAre(EqualsNodeInfo("this", NodeType::kText),
-                  EqualsNodeInfo("CreationTimestamp", NodeType::kFunctionName),
-                  EqualsNodeInfo("", NodeType::kFunction),
+                  EqualsNodeInfo("CreationTimestamp", NodeType::kFunction),
                   EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -872,14 +856,11 @@ TEST(ParserIntegrationTest, QueryMemberFunction) {
   //       member
   //     /        \
   //  text     function
-  //               |
-  //          function_name
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("this", NodeType::kText),
-                          EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("foo", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -896,21 +877,20 @@ TEST(ParserIntegrationTest, ScoringComplexMemberFunction) {
   //                member
   //         /        |          \
   //  text          text         function
-  //                        /        |       \
-  //               function_name   member    member
-  //                                 |         |
-  //                                text      text
+  //                              /     \
+  //                          member    member
+  //                            |         |
+  //                           text      text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("a", NodeType::kText),
                           EqualsNodeInfo("b", NodeType::kText),
-                          EqualsNodeInfo("fun", NodeType::kFunctionName),
                           EqualsNodeInfo("c", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("d", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("fun", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -927,21 +907,20 @@ TEST(ParserTest, QueryComplexMemberFunction) {
   //                member
   //         /        |          \
   //  text          text         function
-  //                        /        |       \
-  //               function_name   member    member
-  //                                 |         |
-  //                                text      text
+  //                            /       \
+  //                         member    member
+  //                           |         |
+  //                          text      text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("this", NodeType::kText),
                           EqualsNodeInfo("abc", NodeType::kText),
-                          EqualsNodeInfo("fun", NodeType::kFunctionName),
                           EqualsNodeInfo("def", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("ghi", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("fun", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
 }
 

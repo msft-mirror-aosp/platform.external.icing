@@ -845,7 +845,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::GetChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = document_key_mapper_->ComputeChecksum();
+  checksum_or = document_key_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of DocumentKeyMapper";
@@ -885,7 +885,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::GetChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = namespace_mapper_->ComputeChecksum();
+  checksum_or = namespace_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of namespace mapper";
@@ -895,7 +895,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::GetChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = corpus_mapper_->ComputeChecksum();
+  checksum_or = corpus_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of corpus mapper";
@@ -944,7 +944,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = document_key_mapper_->ComputeChecksum();
+  checksum_or = document_key_mapper_->UpdateChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of DocumentKeyMapper";
@@ -984,7 +984,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = namespace_mapper_->ComputeChecksum();
+  checksum_or = namespace_mapper_->UpdateChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of namespace mapper";
@@ -994,7 +994,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = corpus_mapper_->ComputeChecksum();
+  checksum_or = corpus_mapper_->UpdateChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of corpus mapper";

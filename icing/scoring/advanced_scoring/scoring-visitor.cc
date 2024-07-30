@@ -29,11 +29,6 @@
 namespace icing {
 namespace lib {
 
-void ScoringVisitor::VisitFunctionName(const FunctionNameNode* node) {
-  pending_error_ = absl_ports::InternalError(
-      "FunctionNameNode should be handled in VisitFunction!");
-}
-
 void ScoringVisitor::VisitString(const StringNode* node) {
   stack_.push_back(StringExpression::Create(node->value()));
 }
@@ -97,7 +92,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     }
     args.push_back(pop_stack());
   }
-  const std::string& function_name = node->function_name()->value();
+  const std::string& function_name = node->function_name();
   libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> expression =
       absl_ports::InvalidArgumentError(
           absl_ports::StrCat("Unknown function: ", function_name));

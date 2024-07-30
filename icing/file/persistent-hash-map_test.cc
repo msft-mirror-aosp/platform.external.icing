@@ -359,6 +359,42 @@ TEST_P(PersistentHashMapTest,
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
+TEST_P(PersistentHashMapTest, InitializationShouldSucceedWithUpdateChecksums) {
+  Options options(/*value_type_size_in=*/sizeof(int));
+  options.pre_mapping_fbv = GetParam();
+
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map1,
+      PersistentHashMap::Create(filesystem_, working_path_, options));
+
+  // Put some key value pairs.
+  ICING_ASSERT_OK(persistent_hash_map1->Put("a", Serialize(1).data()));
+  ICING_ASSERT_OK(persistent_hash_map1->Put("b", Serialize(2).data()));
+  ICING_ASSERT_OK(persistent_hash_map1->Put("c", Serialize(3).data()));
+  // Call Delete() to change PersistentHashMap metadata info
+  // (num_deleted_entries)
+  ICING_ASSERT_OK(persistent_hash_map1->Delete("c"));
+
+  ASSERT_THAT(persistent_hash_map1, Pointee(SizeIs(2)));
+  ASSERT_THAT(GetValueByKey(persistent_hash_map1.get(), "a"), IsOkAndHolds(1));
+  ASSERT_THAT(GetValueByKey(persistent_hash_map1.get(), "b"), IsOkAndHolds(2));
+
+  // After calling UpdateChecksums, all checksums should be recomputed, so
+  // initializing another instance on the same files should succeed, and we
+  // should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, persistent_hash_map1->GetChecksum());
+  EXPECT_THAT(persistent_hash_map1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(persistent_hash_map1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map2,
+      PersistentHashMap::Create(filesystem_, working_path_, options));
+  EXPECT_THAT(persistent_hash_map2, Pointee(SizeIs(2)));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map2.get(), "a"), IsOkAndHolds(1));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map2.get(), "b"), IsOkAndHolds(2));
+}
+
 TEST_P(PersistentHashMapTest, InitializationShouldSucceedWithPersistToDisk) {
   Options options(/*value_type_size_in=*/sizeof(int));
   options.pre_mapping_fbv = GetParam();
@@ -460,8 +496,8 @@ TEST_P(PersistentHashMapTest,
 
     // Manually change magic and update checksums.
     info.magic += kCorruptedValueOffset;
-    crcs.component_crcs.info_crc = info.ComputeChecksum().Get();
-    crcs.all_crc = crcs.component_crcs.ComputeChecksum().Get();
+    crcs.component_crcs.info_crc = info.GetChecksum().Get();
+    crcs.all_crc = crcs.component_crcs.GetChecksum().Get();
     ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
                                    PersistentHashMap::kCrcsMetadataFileOffset,
                                    &crcs, sizeof(Crcs)));

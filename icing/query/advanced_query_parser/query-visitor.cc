@@ -826,11 +826,6 @@ libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
   return libtextclassifier3::Status::OK;
 }
 
-void QueryVisitor::VisitFunctionName(const FunctionNameNode* node) {
-  pending_error_ = absl_ports::UnimplementedError(
-      "Function Name node visiting not implemented yet.");
-}
-
 void QueryVisitor::VisitString(const StringNode* node) {
   // A STRING node can only be a term. Create the iterator now.
   auto unescaped_string_or = string_util::UnescapeStringValue(node->value());
@@ -931,10 +926,10 @@ void QueryVisitor::VisitMember(const MemberNode* node) {
 
 void QueryVisitor::VisitFunction(const FunctionNode* node) {
   // 1. Get the associated function.
-  auto itr = registered_functions_.find(node->function_name()->value());
+  auto itr = registered_functions_.find(node->function_name());
   if (itr == registered_functions_.end()) {
     pending_error_ = absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Function ", node->function_name()->value(), " is not supported."));
+        "Function ", node->function_name(), " is not supported."));
     return;
   }
   const Function& function = itr->second;

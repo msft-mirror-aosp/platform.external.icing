@@ -168,6 +168,8 @@ TEST_P(QualifiedIdJoinIndexImplV1Test,
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20),
                  /*ref_qualified_id_str=*/"namespace#uriC"));
+  // GetChecksum should succeed without updating the checksum.
+  ICING_EXPECT_OK(index->GetChecksum());
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
@@ -177,6 +179,53 @@ TEST_P(QualifiedIdJoinIndexImplV1Test,
               StatusIs(param.use_persistent_hash_map
                            ? libtextclassifier3::StatusCode::FAILED_PRECONDITION
                            : libtextclassifier3::StatusCode::INTERNAL));
+}
+
+TEST_P(QualifiedIdJoinIndexImplV1Test,
+       InitializationShouldSucceedWithUpdateChecksums) {
+  const QualifiedIdJoinIndexImplV1TestParam& param = GetParam();
+
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV1> index1,
+      QualifiedIdJoinIndexImplV1::Create(filesystem_, working_path_,
+                                         param.pre_mapping_fbv,
+                                         param.use_persistent_hash_map));
+
+  // Insert some data.
+  ICING_ASSERT_OK(
+      index1->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
+                  /*ref_qualified_id_str=*/"namespace#uriA"));
+  ICING_ASSERT_OK(
+      index1->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/20),
+                  /*ref_qualified_id_str=*/"namespace#uriB"));
+  ICING_ASSERT_OK(
+      index1->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20),
+                  /*ref_qualified_id_str=*/"namespace#uriC"));
+  ASSERT_THAT(index1, Pointee(SizeIs(3)));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // synced correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, index1->GetChecksum());
+  EXPECT_THAT(index1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(index1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV1> index2,
+      QualifiedIdJoinIndexImplV1::Create(filesystem_, working_path_,
+                                         param.pre_mapping_fbv,
+                                         param.use_persistent_hash_map));
+  EXPECT_THAT(index2, Pointee(SizeIs(3)));
+  EXPECT_THAT(
+      index2->Get(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20)),
+      IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriA"));
+  EXPECT_THAT(
+      index2->Get(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/20)),
+      IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriB"));
+  EXPECT_THAT(
+      index2->Get(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20)),
+      IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriC"));
 }
 
 TEST_P(QualifiedIdJoinIndexImplV1Test,
@@ -312,8 +361,8 @@ TEST_P(QualifiedIdJoinIndexImplV1Test,
         metadata_buffer.get() +
         QualifiedIdJoinIndexImplV1::kInfoMetadataBufferOffset);
     info->magic += kCorruptedValueOffset;
-    crcs->component_crcs.info_crc = info->ComputeChecksum().Get();
-    crcs->all_crc = crcs->component_crcs.ComputeChecksum().Get();
+    crcs->component_crcs.info_crc = info->GetChecksum().Get();
+    crcs->all_crc = crcs->component_crcs.GetChecksum().Get();
     ASSERT_THAT(filesystem_.PWrite(
                     metadata_sfd.get(), /*offset=*/0, metadata_buffer.get(),
                     QualifiedIdJoinIndexImplV1::kMetadataFileSize),
@@ -468,10 +517,10 @@ TEST_P(QualifiedIdJoinIndexImplV1Test,
                                      filesystem_, mapper_working_path,
                                      /*maximum_size_bytes=*/128 * 1024 * 1024));
     }
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->UpdateChecksum());
     ICING_ASSERT_OK(mapper->Put("foo", 12345));
     ICING_ASSERT_OK(mapper->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, mapper->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, mapper->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 

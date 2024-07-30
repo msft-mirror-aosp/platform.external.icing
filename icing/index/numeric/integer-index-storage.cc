@@ -856,6 +856,7 @@ IntegerIndexStorage::InitializeNewFiles(
   Info& info_ref = new_integer_index_storage->info();
   info_ref.magic = Info::kMagic;
   info_ref.num_data = 0;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_integer_index_storage->InitializeNewStorage());
@@ -913,6 +914,7 @@ IntegerIndexStorage::InitializeExistingFiles(
           std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
           std::move(sorted_buckets), std::move(unsorted_buckets),
           std::make_unique<FlashIndexStorage>(std::move(flash_index_storage))));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(integer_index_storage->InitializeExistingStorage());
 
@@ -947,9 +949,8 @@ IntegerIndexStorage::FlushDataIntoNewSortedBucket(
       Bucket(key_lower, key_upper, pl_id, data.size()));
 }
 
-libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -959,35 +960,28 @@ libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk(
     return absl_ports::InternalError(
         "Fail to persist FlashIndexStorage to disk");
   }
+  is_storage_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndexStorage::PersistMetadataToDisk(
-    bool force) {
+libtextclassifier3::Status IntegerIndexStorage::PersistMetadataToDisk() {
   // We can skip persisting metadata to disk only if both info and storage are
   // clean.
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   // Changes should have been applied to the underlying file when using
   // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
   // extra safety step to ensure they are written out.
-  return metadata_mmapped_file_->PersistToDisk();
-}
-
-libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::ComputeInfoChecksum(
-    bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file_->PersistToDisk());
+  is_info_dirty_ = false;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32>
-IntegerIndexStorage::ComputeStoragesChecksum(bool force) {
-  if (!force && !is_storage_dirty()) {
+IntegerIndexStorage::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
@@ -997,6 +991,28 @@ IntegerIndexStorage::ComputeStoragesChecksum(bool force) {
   ICING_ASSIGN_OR_RETURN(Crc32 unsorted_buckets_crc,
                          unsorted_buckets_->UpdateChecksum());
 
+  // TODO(b/259744228): implement and include flash_index_storage checksum
+  return Crc32(sorted_buckets_crc.Get() ^ unsorted_buckets_crc.Get());
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::GetInfoChecksum()
+    const {
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::GetStoragesChecksum()
+    const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  // Compute crcs
+  Crc32 sorted_buckets_crc = sorted_buckets_->GetChecksum();
+  Crc32 unsorted_buckets_crc = unsorted_buckets_->GetChecksum();
   // TODO(b/259744228): implement and include flash_index_storage checksum
   return Crc32(sorted_buckets_crc.Get() ^ unsorted_buckets_crc.Get());
 }

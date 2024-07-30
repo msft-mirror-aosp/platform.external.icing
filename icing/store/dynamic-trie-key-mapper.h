@@ -94,7 +94,9 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
 
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const override;
 
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const override;
 
  private:
   class Iterator : public KeyMapper<T, Formatter>::Iterator {
@@ -318,8 +320,14 @@ DynamicTrieKeyMapper<T, Formatter>::GetElementsSize() const {
 
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<Crc32>
-DynamicTrieKeyMapper<T, Formatter>::ComputeChecksum() {
-  return Crc32(trie_.UpdateCrc());
+DynamicTrieKeyMapper<T, Formatter>::UpdateChecksum() {
+  return trie_.UpdateCrc();
+}
+
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<Crc32>
+DynamicTrieKeyMapper<T, Formatter>::GetChecksum() const {
+  return trie_.GetCrc();
 }
 
 }  // namespace lib

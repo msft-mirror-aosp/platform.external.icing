@@ -69,7 +69,6 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
                      PendingPropertyRestricts(), /*processing_not=*/false,
                      current_time_ms) {}
 
-  void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
   void VisitText(const TextNode* node) override;
   void VisitMember(const MemberNode* node) override;

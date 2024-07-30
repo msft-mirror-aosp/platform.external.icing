@@ -448,15 +448,14 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   return Initialize();
 }
 
-libtextclassifier3::Status EmbeddingIndex::PersistMetadataToDisk(bool force) {
+libtextclassifier3::Status EmbeddingIndex::PersistMetadataToDisk() {
   return metadata_mmapped_file_->PersistToDisk();
 }
 
-libtextclassifier3::Status EmbeddingIndex::PersistStoragesToDisk(bool force) {
+libtextclassifier3::Status EmbeddingIndex::PersistStoragesToDisk() {
   if (is_empty()) {
     return libtextclassifier3::Status::OK;
   }
-
   if (!flash_index_storage_->PersistToDisk()) {
     return absl_ports::InternalError("Fail to persist flash index to disk");
   }
@@ -465,20 +464,26 @@ libtextclassifier3::Status EmbeddingIndex::PersistStoragesToDisk(bool force) {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::ComputeInfoChecksum(
-    bool force) {
-  return info().ComputeChecksum();
-}
-
-libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::ComputeStoragesChecksum(
-    bool force) {
+libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::UpdateStoragesChecksum() {
   if (is_empty()) {
     return Crc32(0);
   }
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
-                         embedding_posting_list_mapper_->ComputeChecksum());
+                         embedding_posting_list_mapper_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_vectors_crc,
                          embedding_vectors_->UpdateChecksum());
+  return Crc32(embedding_posting_list_mapper_crc.Get() ^
+               embedding_vectors_crc.Get());
+}
+
+libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetStoragesChecksum()
+    const {
+  if (is_empty()) {
+    return Crc32(0);
+  }
+  ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
+                         embedding_posting_list_mapper_->GetChecksum());
+  Crc32 embedding_vectors_crc = embedding_vectors_->GetChecksum();
   return Crc32(embedding_posting_list_mapper_crc.Get() ^
                embedding_vectors_crc.Get());
 }

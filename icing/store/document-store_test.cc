@@ -2483,6 +2483,50 @@ TEST_P(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
                   /*length_in_tokens=*/0)));
 }
 
+TEST_P(DocumentStoreTest, GetChecksumDoesntUpdateStoredChecksum) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  // GetChecksum should succeed without updating the checksum.
+  ICING_EXPECT_OK(document_store->GetChecksum());
+
+  // Create another instance of DocumentStore
+  ICING_ASSERT_OK_AND_ASSIGN(
+      create_result, CreateDocumentStore(&filesystem_, document_store_dir_,
+                                         &fake_clock_, schema_store_.get()));
+  EXPECT_TRUE(create_result.derived_files_regenerated);
+}
+
+TEST_P(DocumentStoreTest, UpdateChecksumNextInitializationSucceeds) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->GetChecksum());
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
+
+  // Create another instance of DocumentStore
+  ICING_ASSERT_OK_AND_ASSIGN(
+      create_result, CreateDocumentStore(&filesystem_, document_store_dir_,
+                                         &fake_clock_, schema_store_.get()));
+  EXPECT_FALSE(create_result.derived_files_regenerated);
+
+  std::unique_ptr<DocumentStore> document_store_two = std::move(create_result.document_store);
+  EXPECT_THAT(document_store_two->GetChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store_two->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store_two->GetChecksum(), IsOkAndHolds(checksum));
+}
+
 TEST_P(DocumentStoreTest, UpdateChecksumSameBetweenCalls) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -2499,31 +2543,6 @@ TEST_P(DocumentStoreTest, UpdateChecksumSameBetweenCalls) {
 
   // Calling UpdateChecksum again shouldn't change anything
   EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
-}
-
-TEST_P(DocumentStoreTest, UpdateChecksumSameAcrossInstances) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->GetChecksum());
-  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
-  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
-
-  // Destroy the previous instance and recreate DocumentStore
-  document_store.reset();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      create_result, CreateDocumentStore(&filesystem_, document_store_dir_,
-                                         &fake_clock_, schema_store_.get()));
-  document_store = std::move(create_result.document_store);
-
-  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
-  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
-  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
 }
 
 TEST_P(DocumentStoreTest, UpdateChecksumChangesOnNewDocument) {

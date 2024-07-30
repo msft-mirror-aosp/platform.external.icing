@@ -407,7 +407,7 @@ class IcingDynamicTrie : public IIcingStorage {
   // If in kMapSharedWithCrc mode, update crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files
   // and property bitmaps.
-  Crc32 UpdateCrc();
+  Crc32 UpdateCrc() override;
 
   // If in kMapSharedWithCrc mode, calculates crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files

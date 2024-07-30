@@ -592,7 +592,7 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
   }
 
   ICING_ASSIGN_OR_RETURN(Crc32 schema_type_mapper_checksum,
-                         schema_type_mapper_->ComputeChecksum());
+                         schema_type_mapper_->UpdateChecksum());
 
   Crc32 total_checksum;
   total_checksum.Append(std::to_string(schema_checksum.Get()));
