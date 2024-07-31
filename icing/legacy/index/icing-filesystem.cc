@@ -27,7 +27,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -403,6 +410,31 @@ bool IcingFilesystem::Grow(int fd, uint64_t new_size) const {
     ICING_LOG(ERROR) << "Unable to grow file: " << strerror(errno);
   }
   return (ret == 0);
+}
+
+bool IcingFilesystem::GrowUsingPWrite(int fd, uint64_t new_size) const {
+  uint64_t curr_file_size = GetFileSize(fd);
+  if (curr_file_size == kBadFileSize) {
+    return false;
+  }
+  if (new_size <= curr_file_size) {
+    return true;
+  }
+
+  uint64_t page_size = IcingMMapper::system_page_size();
+  auto buf = std::make_unique<uint8_t[]>(page_size);
+  uint64_t size_to_write = std::min(page_size - (curr_file_size % page_size),
+                                    new_size - curr_file_size);
+  while (size_to_write > 0 && curr_file_size < new_size) {
+    if (!PWrite(fd, curr_file_size, buf.get(), size_to_write)) {
+      ICING_LOG(ERROR) << "Failed to grow file using pwrite.";
+      return false;
+    }
+    curr_file_size += size_to_write;
+    size_to_write = std::min(page_size - (curr_file_size % page_size),
+                             new_size - curr_file_size);
+  }
+  return true;
 }
 
 bool IcingFilesystem::Write(int fd, const void *data, size_t data_size) const {
