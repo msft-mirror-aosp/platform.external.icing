@@ -37,6 +37,8 @@
 namespace icing {
 namespace lib {
 
+static constexpr int32_t kSha256LengthBytes = 32;
+
 using PropertyConfigMap =
     std::unordered_map<std::string_view, const PropertyConfigProto*>;
 
@@ -139,10 +141,22 @@ libtextclassifier3::Status DocumentValidator::Validate(
       for (const PropertyProto::VectorProto& vector_value :
            property.vector_values()) {
         if (vector_value.values_size() == 0) {
-          return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-              "Property '%s' contains empty vectors for key: (%s, %s).",
-              property.name().c_str(), document.namespace_().c_str(),
-              document.uri().c_str()));
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains empty vectors for key: (", document.namespace_(),
+              ", ", document.uri(), ")."));
+        }
+      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::BLOB_HANDLE) {
+      value_size = property.blob_handle_values_size();
+      for (const PropertyProto::BlobHandleProto& blob_handle_value :
+           property.blob_handle_values()) {
+        if (blob_handle_value.digest().size() != kSha256LengthBytes) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains non sha-256 blob digest for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
         }
       }
     }
