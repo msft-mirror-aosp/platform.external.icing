@@ -17,8 +17,8 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -26,7 +26,9 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -34,6 +36,7 @@
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
+#include "icing/proto/blob.pb.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -50,11 +53,12 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/blob-store.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
-#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -344,6 +348,39 @@ class IcingSearchEngine {
   void InvalidateNextPageToken(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Gets or creates a file for write only purpose for the given blob handle.
+  // To mark the blob is completed written, commitBlob must be called. Once
+  // commitBlob is called, the blob is sealed and rewrite is not allowed.
+  //
+  // Returns:
+  //   File descriptor on success
+  //   InvalidArgumentError on invalid blob handle
+  //   PermissionDeniedError on blob is committed
+  //   INTERNAL_ERROR on IO error
+  BlobProto OpenWriteBlob(PropertyProto::BlobHandleProto blob_handle);
+
+  // Gets or creates a file for read only purpose for the given blob handle.
+  // The blob must be committed by calling commitBlob otherwise it is not
+  // accessible.
+  //
+  // Returns:
+  //   File descriptor on success
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError on blob is not found or is not committed
+  BlobProto OpenReadBlob(PropertyProto::BlobHandleProto blob_handle);
+
+  // Commits the given blob, the blob is open to write via openWrite.
+  // Before the blob is committed, it is not visible to any reader via openRead.
+  // After the blob is committed, it is not allowed to rewrite or update the
+  // content.
+  //
+  // Returns:
+  //   True on the blob is successfuly committed.
+  //   False on the blob is already committed.
+  //   InvalidArgumentError on invalid blob handle or digest is mismatch with
+  //     file content NotFoundError on blob is not found.
+  BlobProto CommitBlob(PropertyProto::BlobHandleProto blob_handle);
+
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
   // would be able to fully recover all data written up to this point.
@@ -449,14 +486,6 @@ class IcingSearchEngine {
   // components in Icing search engine.
   const PerformanceConfiguration performance_configuration_;
 
-  // Used to manage pagination state of query results. Even though
-  // ResultStateManager has its own reader-writer lock, mutex_ must still be
-  // acquired first in order to adhere to the global lock ordering:
-  //   1. mutex_
-  //   2. result_state_manager_.lock_
-  std::unique_ptr<ResultStateManager> result_state_manager_
-      ICING_GUARDED_BY(mutex_);
-
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
 
@@ -464,7 +493,22 @@ class IcingSearchEngine {
   std::unique_ptr<SchemaStore> schema_store_ ICING_GUARDED_BY(mutex_);
 
   // Used to store all valid documents
+  //
+  // Dependencies: schema_store_
   std::unique_ptr<DocumentStore> document_store_ ICING_GUARDED_BY(mutex_);
+
+  // Used to manage pagination state of query results. Even though
+  // ResultStateManager has its own reader-writer lock, mutex_ must still be
+  // acquired first in order to adhere to the global lock ordering:
+  //   1. mutex_
+  //   2. result_state_manager_.lock_
+  //
+  // Dependencies: document_store_
+  std::unique_ptr<ResultStateManager> result_state_manager_
+      ICING_GUARDED_BY(mutex_);
+
+  // Used to store all valid blob data
+  std::unique_ptr<BlobStore> blob_store_ ICING_GUARDED_BY(mutex_);
 
   std::unique_ptr<const LanguageSegmenter> language_segmenter_
       ICING_GUARDED_BY(mutex_);
@@ -481,6 +525,9 @@ class IcingSearchEngine {
   // Storage for all join qualified ids from the document store.
   std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index_
       ICING_GUARDED_BY(mutex_);
+
+  // Storage for all hits of embedding contents from the document store.
+  std::unique_ptr<EmbeddingIndex> embedding_index_ ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
@@ -546,16 +593,29 @@ class IcingSearchEngine {
   // force_recovery_and_revalidate_documents.
   //
   // Returns:
-  //   OK on success
+  //   On success, a boolean flag indicating whether derived files of the
+  //     document store have been regenerated or not. If true, any other
+  //     components depending on them should also be rebuilt if true.
   //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeDocumentStore(
+  libtextclassifier3::StatusOr<bool> InitializeDocumentStore(
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Do any initialization necessary to create a BlobStore instance.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
+  libtextclassifier3::Status InitializeBlobStore()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Do any initialization/recovery necessary to create term index, integer
   // index, and qualified id join index instances.
+  //
+  // If document_store_derived_files_regenerated is true, then we have to
+  // rebuild qualified id join index since NamespaceIds were reassigned.
   //
   // Returns:
   //   OK on success
@@ -564,6 +624,7 @@ class IcingSearchEngine {
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL on I/O error
   libtextclassifier3::Status InitializeIndex(
+      bool document_store_derived_files_regenerated,
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -571,8 +632,8 @@ class IcingSearchEngine {
   // read-lock, allowing for parallel non-exclusive operations.
   // This implementation is used if search_spec.use_read_only_search is true.
   SearchResultProto SearchLockedShared(const SearchSpecProto& search_spec,
-                                   const ScoringSpecProto& scoring_spec,
-                                   const ResultSpecProto& result_spec)
+                                       const ScoringSpecProto& scoring_spec,
+                                       const ResultSpecProto& result_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Implementation of IcingSearchEngine::Search that requires the overall
@@ -580,8 +641,8 @@ class IcingSearchEngine {
   // this version is used.
   // This implementation is used if search_spec.use_read_only_search is false.
   SearchResultProto SearchLockedExclusive(const SearchSpecProto& search_spec,
-                                 const ScoringSpecProto& scoring_spec,
-                                 const ResultSpecProto& result_spec)
+                                          const ScoringSpecProto& scoring_spec,
+                                          const ResultSpecProto& result_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Helper method for the actual work to Search. We need this separate
@@ -603,24 +664,20 @@ class IcingSearchEngine {
     libtextclassifier3::Status status;
     SectionRestrictQueryTermsMap query_terms;
     std::vector<ScoredDocumentHit> scored_document_hits;
-    int64_t parse_query_latency_ms;
-    int64_t scoring_latency_ms;
 
     explicit QueryScoringResults(
         libtextclassifier3::Status status_in,
         SectionRestrictQueryTermsMap&& query_terms_in,
-        std::vector<ScoredDocumentHit>&& scored_document_hits_in,
-        int64_t parse_query_latency_ms_in, int64_t scoring_latency_ms_in)
+        std::vector<ScoredDocumentHit>&& scored_document_hits_in)
         : status(std::move(status_in)),
           query_terms(std::move(query_terms_in)),
-          scored_document_hits(std::move(scored_document_hits_in)),
-          parse_query_latency_ms(parse_query_latency_ms_in),
-          scoring_latency_ms(scoring_latency_ms_in) {}
+          scored_document_hits(std::move(scored_document_hits_in)) {}
   };
   QueryScoringResults ProcessQueryAndScore(
       const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
       const ResultSpecProto& result_spec,
-      const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms)
+      const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms,
+      QueryStatsProto::SearchStats* search_stats)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
@@ -638,13 +695,14 @@ class IcingSearchEngine {
   libtextclassifier3::Status CheckConsistency()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Discards all derived data.
+  // Discards derived data that requires rebuild based on rebuild_result.
   //
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION_ERROR if those instances are valid (non nullptr)
   //   INTERNAL_ERROR on any I/O errors
-  libtextclassifier3::Status DiscardDerivedFiles()
+  libtextclassifier3::Status DiscardDerivedFiles(
+      const version_util::DerivedFilesRebuildResult& rebuild_result)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Repopulates derived data off our ground truths.
@@ -664,17 +722,18 @@ class IcingSearchEngine {
   // would need call Initialize() to reinitialize everything into a valid state.
   //
   // Returns:
-  //   On success, a vector that maps from old document id to new document id. A
-  //   value of kInvalidDocumentId indicates that the old document id has been
-  //   deleted.
+  //   On success, OptimizeResult which contains a vector mapping from old
+  //   document id to new document id and another vector mapping from old
+  //   namespace id to new namespace id. A value of kInvalidDocumentId indicates
+  //   that the old document id has been deleted.
   //   ABORTED_ERROR if any error happens before the actual optimization, the
   //                 original document store should be still available
   //   DATA_LOSS_ERROR on errors that could potentially cause data loss,
   //                   document store is still available
   //   INTERNAL_ERROR on any IO errors or other errors that we can't recover
   //                  from
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeDocumentStore(
-      OptimizeStatsProto* optimize_stats)
+  libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
+  OptimizeDocumentStore(OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to restore missing document data in index_, integer_index_,
@@ -696,6 +755,7 @@ class IcingSearchEngine {
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
     bool qualified_id_join_index_needed_restoration;
+    bool embedding_index_needed_restoration;
   };
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -736,17 +796,21 @@ class IcingSearchEngine {
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
     bool qualified_id_join_index_needed_restoration;
+    bool embedding_index_needed_restoration;
 
     explicit TruncateIndexResult(
         DocumentId first_document_to_reindex_in,
         bool index_needed_restoration_in,
         bool integer_index_needed_restoration_in,
-        bool qualified_id_join_index_needed_restoration_in)
+        bool qualified_id_join_index_needed_restoration_in,
+        bool embedding_index_needed_restoration_in)
         : first_document_to_reindex(first_document_to_reindex_in),
           index_needed_restoration(index_needed_restoration_in),
           integer_index_needed_restoration(integer_index_needed_restoration_in),
           qualified_id_join_index_needed_restoration(
-              qualified_id_join_index_needed_restoration_in) {}
+              qualified_id_join_index_needed_restoration_in),
+          embedding_index_needed_restoration(
+              embedding_index_needed_restoration_in) {}
   };
   libtextclassifier3::StatusOr<TruncateIndexResult> TruncateIndicesTo(
       DocumentId last_stored_document_id)
