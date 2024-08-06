@@ -80,7 +80,7 @@ class FileBackedProto {
   // RETURNS:
   //   - the checksum of the proto or 0 if the file is empty/non-existent
   //   - INTERNAL_ERROR if an IO error or a corruption was encountered.
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns a reference to the proto read from the file. It
@@ -140,7 +140,7 @@ FileBackedProto<ProtoT>::FileBackedProto(const Filesystem& filesystem,
     : filesystem_(&filesystem), file_path_(file_path) {}
 
 template <typename ProtoT>
-libtextclassifier3::StatusOr<Crc32> FileBackedProto<ProtoT>::ComputeChecksum()
+libtextclassifier3::StatusOr<Crc32> FileBackedProto<ProtoT>::GetChecksum()
     const {
   absl_ports::unique_lock l(&mutex_);
   if (cached_proto_ == nullptr) {

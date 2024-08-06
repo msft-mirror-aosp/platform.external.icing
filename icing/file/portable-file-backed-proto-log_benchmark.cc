@@ -204,7 +204,7 @@ void BM_Erase(benchmark::State& state) {
 }
 BENCHMARK(BM_Erase);
 
-void BM_ComputeChecksum(benchmark::State& state) {
+void BM_UpdateChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -238,15 +238,15 @@ void BM_ComputeChecksum(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksum)->Range(1024, 1 << 20);
+BENCHMARK(BM_UpdateChecksum)->Range(1024, 1 << 20);
 
-void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
+void BM_UpdateChecksumWithCachedChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -279,18 +279,18 @@ void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
   ICING_ASSERT_OK(proto_log->WriteProto(document));
   ICING_ASSERT_OK(proto_log->PersistToDisk());
 
-  // This ComputeChecksum call shouldn't need to do any computation since we can
+  // This UpdateChecksum call shouldn't need to do any computation since we can
   // reuse our cached checksum.
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksumWithCachedChecksum);
+BENCHMARK(BM_UpdateChecksumWithCachedChecksum);
 
-void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
+void BM_UpdateChecksumOnlyForTail(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -327,16 +327,16 @@ void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
   // checksum since we didn't call persist.
   ICING_ASSERT_OK(proto_log->WriteProto(document));
 
-  // ComputeChecksum should be calculating the checksum of the tail and adding
+  // UpdateChecksum should be calculating the checksum of the tail and adding
   // it to the cached checksum we have.
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksumOnlyForTail);
+BENCHMARK(BM_UpdateChecksumOnlyForTail);
 
 }  // namespace
 }  // namespace lib
