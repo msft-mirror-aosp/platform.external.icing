@@ -465,6 +465,7 @@ QualifiedIdJoinIndexImplV2::InitializeNewFiles(const Filesystem& filesystem,
   new_join_index->info().magic = Info::kMagic;
   new_join_index->info().num_data = 0;
   new_join_index->info().last_added_document_id = kInvalidDocumentId;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_join_index->InitializeNewStorage());
@@ -513,6 +514,7 @@ QualifiedIdJoinIndexImplV2::InitializeExistingFiles(
           std::move(posting_list_serializer),
           std::make_unique<FlashIndexStorage>(std::move(flash_index_storage)),
           pre_mapping_fbv));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(join_index->InitializeExistingStorage());
 
@@ -614,34 +616,23 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV2::PersistMetadataToDisk(
-    bool force) {
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV2::PersistMetadataToDisk() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   std::string metadata_file_path = GetMetadataFilePath(working_path_);
-
   ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  if (!sfd.is_valid()) {
-    return absl_ports::InternalError("Fail to open metadata file for write");
-  }
-
-  if (!filesystem_.PWrite(sfd.get(), /*offset=*/0, metadata_buffer_.get(),
-                          kMetadataFileSize)) {
-    return absl_ports::InternalError("Fail to write metadata file");
-  }
-
+  ICING_RETURN_IF_ERROR(InternalWriteMetadata(sfd));
   if (!filesystem_.DataSync(sfd.get())) {
     return absl_ports::InternalError("Fail to sync metadata to disk");
   }
-
+  is_info_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV2::PersistStoragesToDisk(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV2::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -651,30 +642,54 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::PersistStoragesToDisk(
     return absl_ports::InternalError(
         "Fail to persist FlashIndexStorage to disk");
   }
+  is_storage_dirty_ = false;
+  return libtextclassifier3::Status::OK;
+}
 
+libtextclassifier3::Status QualifiedIdJoinIndexImplV2::WriteMetadata() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  std::string metadata_file_path = GetMetadataFilePath(working_path_);
+  ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
+  return InternalWriteMetadata(sfd);
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV2::InternalWriteMetadata(
+    const ScopedFd& sfd) {
+  if (!sfd.is_valid()) {
+    return absl_ports::InternalError("Fail to open metadata file for write");
+  }
+  if (!filesystem_.PWrite(sfd.get(), /*offset=*/0, metadata_buffer_.get(),
+                          kMetadataFileSize)) {
+    return absl_ports::InternalError("Fail to write metadata file");
+  }
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV2::ComputeInfoChecksum(bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
+QualifiedIdJoinIndexImplV2::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
   }
-
-  return info().ComputeChecksum();
+  return schema_joinable_id_to_posting_list_mapper_->UpdateChecksum();
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV2::ComputeStoragesChecksum(bool force) {
-  if (!force && !is_storage_dirty()) {
+QualifiedIdJoinIndexImplV2::GetInfoChecksum() const {
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32>
+QualifiedIdJoinIndexImplV2::GetStoragesChecksum() const {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
-
-  ICING_ASSIGN_OR_RETURN(
-      Crc32 schema_joinable_id_to_posting_list_mapper_crc,
-      schema_joinable_id_to_posting_list_mapper_->ComputeChecksum());
-
-  return Crc32(schema_joinable_id_to_posting_list_mapper_crc.Get());
+  return schema_joinable_id_to_posting_list_mapper_->GetChecksum();
 }
 
 }  // namespace lib

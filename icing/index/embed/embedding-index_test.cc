@@ -37,6 +37,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -45,6 +46,7 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Test;
 
@@ -64,12 +66,18 @@ class EmbeddingIndexTest : public Test {
 
   libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetHits(
       uint32_t dimension, std::string_view model_signature) {
+    return GetHits(embedding_index_.get(), dimension, model_signature);
+  }
+
+  static libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetHits(
+      const EmbeddingIndex* embedding_index, uint32_t dimension,
+      std::string_view model_signature) {
     std::vector<EmbeddingHit> hits;
 
     libtextclassifier3::StatusOr<
         std::unique_ptr<PostingListEmbeddingHitAccessor>>
         pl_accessor_or =
-            embedding_index_->GetAccessor(dimension, model_signature);
+            embedding_index->GetAccessor(dimension, model_signature);
     std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor;
     if (pl_accessor_or.ok()) {
       pl_accessor = std::move(pl_accessor_or).ValueOrDie();
@@ -90,13 +98,16 @@ class EmbeddingIndexTest : public Test {
   }
 
   std::vector<float> GetRawEmbeddingData() {
-    auto data_or = embedding_index_->GetRawEmbeddingData();
-    if (!data_or.ok()) {
-      return std::vector<float>();
-    }
-    return std::vector<float>(
-        data_or.ValueOrDie(),
-        data_or.ValueOrDie() + embedding_index_->GetTotalVectorSize());
+    return GetRawEmbeddingData(embedding_index_.get());
+  }
+
+  static std::vector<float> GetRawEmbeddingData(
+      const EmbeddingIndex* embedding_index) {
+    ICING_ASSIGN_OR_RETURN(const float* data,
+                           embedding_index->GetRawEmbeddingData(),
+                           std::vector<float>());
+    return std::vector<float>(data,
+                              data + embedding_index->GetTotalVectorSize());
   }
 
   libtextclassifier3::StatusOr<bool> IndexContainsMetadataOnly() {
@@ -115,6 +126,133 @@ class EmbeddingIndexTest : public Test {
 
 TEST_F(EmbeddingIndexTest, EmptyIndexContainsMetadataOnly) {
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
+}
+
+TEST_F(EmbeddingIndexTest,
+       InitializationShouldFailWithoutPersistToDiskOrDestruction) {
+  // 1. Create index and confirm that data was properly added.
+  std::string embedding_index_dir =
+      GetTestTempDir() + "/embedding_index_test_local";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> embedding_index,
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+  ICING_ASSERT_OK(embedding_index->CommitBufferToIndex());
+  embedding_index->set_last_added_document_id(0);
+
+  EXPECT_THAT(
+      GetHits(embedding_index.get(), /*dimension=*/3,
+              /*model_signature=*/"model"),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingData(embedding_index.get()),
+              ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_EQ(embedding_index->last_added_document_id(), 0);
+  // GetChecksum should succeed without updating the checksum.
+  ICING_EXPECT_OK(embedding_index->GetChecksum());
+
+  // 2. Try to create another index with the same directory. This should fail
+  // due to checksum mismatch.
+  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  embedding_index.reset();
+  filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
+}
+
+TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
+  // 1. Create index and confirm that data was properly added.
+  std::string embedding_index_dir =
+      GetTestTempDir() + "/embedding_index_test_local";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> embedding_index,
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+  ICING_ASSERT_OK(embedding_index->CommitBufferToIndex());
+  embedding_index->set_last_added_document_id(0);
+
+  EXPECT_THAT(
+      GetHits(embedding_index.get(), /*dimension=*/3,
+              /*model_signature=*/"model"),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingData(embedding_index.get()),
+              ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_EQ(embedding_index->last_added_document_id(), 0);
+
+  // 2. Update checksums to reflect the new content.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, embedding_index->GetChecksum());
+  EXPECT_THAT(embedding_index->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(embedding_index->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  // 3. Create another index and confirm that the data is still there.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> embedding_index_two,
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+
+  EXPECT_THAT(
+      GetHits(embedding_index_two.get(), /*dimension=*/3,
+              /*model_signature=*/"model"),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingData(embedding_index_two.get()),
+              ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_EQ(embedding_index_two->last_added_document_id(), 0);
+
+  embedding_index.reset();
+  embedding_index_two.reset();
+  filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
+}
+
+TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
+  // 1. Create index and confirm that data was properly added.
+  std::string embedding_index_dir =
+      GetTestTempDir() + "/embedding_index_test_local";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> embedding_index,
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+  ICING_ASSERT_OK(embedding_index->CommitBufferToIndex());
+  embedding_index->set_last_added_document_id(0);
+
+  EXPECT_THAT(
+      GetHits(embedding_index.get(), /*dimension=*/3,
+              /*model_signature=*/"model"),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingData(embedding_index.get()),
+              ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_EQ(embedding_index->last_added_document_id(), 0);
+
+  // 2. Update checksums to reflect the new content.
+  ICING_EXPECT_OK(embedding_index->PersistToDisk());
+
+  // 3. Create another index and confirm that the data is still there.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> embedding_index_two,
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+
+  EXPECT_THAT(
+      GetHits(embedding_index_two.get(), /*dimension=*/3,
+              /*model_signature=*/"model"),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingData(embedding_index_two.get()),
+              ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_EQ(embedding_index_two->last_added_document_id(), 0);
+
+  embedding_index.reset();
+  embedding_index_two.reset();
+  filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
 }
 
 TEST_F(EmbeddingIndexTest, AddSingleEmbedding) {
