@@ -2785,15 +2785,55 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeFailedPrecondition) {
 TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaTypeConfigProto schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("SchemaType")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("string")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("document")
+                  .SetDataTypeDocument("NestedType",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("boolean")
+                           .SetDataType(TYPE_BOOLEAN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("int64")
+                           .SetDataType(TYPE_INT64)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("double")
+                           .SetDataType(TYPE_DOUBLE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("byte")
+                           .SetDataType(TYPE_BYTES)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blobHandle")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("NestedType").Build())
+          .AddType(schema_type_config)
+          .Build();
 
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
   GetSchemaTypeResultProto expected_get_schema_type_result_proto;
   expected_get_schema_type_result_proto.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_type_result_proto.mutable_schema_type_config() =
-      CreateMessageSchema().types(0);
-  EXPECT_THAT(icing.GetSchemaType(CreateMessageSchema().types(0).schema_type()),
+      schema_type_config;
+  EXPECT_THAT(icing.GetSchemaType("SchemaType"),
               EqualsProto(expected_get_schema_type_result_proto));
 }
 
