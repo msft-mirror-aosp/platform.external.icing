@@ -1210,7 +1210,7 @@ TEST_F(AdvancedScorerTest,
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              "sum(matchedSemanticScores(getSearchSpecEmbedding(0)))"),
+              "sum(matchedSemanticScores(getEmbeddingParameter(0)))"),
           kDefaultSemanticMetricType, kDefaultSemanticMetricType,
           document_store_.get(), schema_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds(),
@@ -1233,7 +1233,7 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec(
-          "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0), 0))"),
+          "sum(this.matchedSemanticScores(getEmbeddingParameter(0), 0))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
@@ -1245,7 +1245,7 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                "getSearchSpecEmbedding(0), \"COSINE\", 0))"),
+                                "getEmbeddingParameter(0), \"COSINE\", 0))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
@@ -1257,7 +1257,7 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                "getSearchSpecEmbedding(0), \"COSIGN\"))"),
+                                "getEmbeddingParameter(0), \"COSIGN\"))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
@@ -1269,7 +1269,7 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec(
-          "sum(this.matchedSemanticScores(getSearchSpecEmbedding(\"0\")))"),
+          "sum(this.matchedSemanticScores(getEmbeddingParameter(\"0\")))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
@@ -1277,11 +1277,11 @@ TEST_F(AdvancedScorerTest,
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
-              HasSubstr("getSearchSpecEmbedding got invalid argument type"));
+              HasSubstr("getEmbeddingParameter got invalid argument type"));
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec(
-          "sum(this.matchedSemanticScores(getSearchSpecEmbedding()))"),
+          "sum(this.matchedSemanticScores(getEmbeddingParameter()))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
@@ -1289,7 +1289,7 @@ TEST_F(AdvancedScorerTest,
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
-              HasSubstr("getSearchSpecEmbedding must have 1 argument"));
+              HasSubstr("getEmbeddingParameter must have 1 argument"));
 }
 
 void AddEntryToEmbeddingQueryScoreMap(
@@ -1357,7 +1357,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))"),
+              "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1372,7 +1372,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(0), \"COSINE\"))"),
+                                    "getEmbeddingParameter(0), \"COSINE\"))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1385,11 +1385,11 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(
                   CreateAdvancedScoringSpec(
-                      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)"
+                      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)"
                       ", \"COSINE\")) + "
-                      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)"
+                      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)"
                       ", \"DOT_PRODUCT\")) + "
-                      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)"
+                      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)"
                       ", \"EUCLIDEAN\"))"),
                   kDefaultScore, /*default_semantic_metric_type=*/
                   SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
@@ -1406,7 +1406,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))"),
+              "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1420,7 +1420,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(1), \"COSINE\"))"),
+                                    "getEmbeddingParameter(1), \"COSINE\"))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1428,6 +1428,23 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
           /*join_children_fetcher=*/nullptr, &embedding_query_results));
   EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(0, kEps));
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0, kEps));
+
+  // TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding
+  // are migrated.
+  // Get semantic scores for default metric (DOT_PRODUCT) for the first query
+  // via the old deprecated getSearchSpecEmbedding function.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec(
+              "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))"),
+          kDefaultScore, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &embedding_query_results));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(0.5, kEps));
+  EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0.6, kEps));
 }
 
 TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
@@ -1436,9 +1453,9 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
   EmbeddingQueryResults embedding_query_results;
 
   // Construct a score map so that:
-  // - this.matchedSemanticScores(getSearchSpecEmbedding(0)) returns
+  // - this.matchedSemanticScores(getEmbeddingParameter(0)) returns
   //   {4, 5, 2, 1, 3}.
-  // - this.matchedSemanticScores(getSearchSpecEmbedding(1)) returns an empty
+  // - this.matchedSemanticScores(getEmbeddingParameter(1)) returns an empty
   //   list.
   EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
       &embedding_query_results
@@ -1459,7 +1476,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("maxOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(0)), 100)"),
+                                    "getEmbeddingParameter(0)), 100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1472,7 +1489,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("minOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(0)), -100)"),
+                                    "getEmbeddingParameter(0)), -100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1485,7 +1502,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("maxOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(1)), 100)"),
+                                    "getEmbeddingParameter(1)), 100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1498,7 +1515,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("minOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(1)), -100)"),
+                                    "getEmbeddingParameter(1)), -100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1511,7 +1528,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer, AdvancedScorer::Create(
                   CreateAdvancedScoringSpec(
                       "sum(filterByRange(this.matchedSemanticScores("
-                      "getSearchSpecEmbedding(0)), 2, 4))"),
+                      "getEmbeddingParameter(0)), 2, 4))"),
                   kDefaultScore, /*default_semantic_metric_type=*/
                   SearchSpecProto::EmbeddingQueryMetricType::COSINE,
                   document_store_.get(), schema_store_.get(),

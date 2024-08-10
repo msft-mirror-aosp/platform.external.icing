@@ -307,7 +307,7 @@ void BM_Create(benchmark::State& state) {
 }
 BENCHMARK(BM_Create);
 
-void BM_ComputeChecksum(benchmark::State& state) {
+void BM_UpdateChecksum(benchmark::State& state) {
   Filesystem filesystem;
   Clock clock;
 
@@ -331,10 +331,10 @@ void BM_ComputeChecksum(benchmark::State& state) {
   ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::LITE));
 
   for (auto s : state) {
-    benchmark::DoNotOptimize(document_store->ComputeChecksum());
+    benchmark::DoNotOptimize(document_store->UpdateChecksum());
   }
 }
-BENCHMARK(BM_ComputeChecksum);
+BENCHMARK(BM_UpdateChecksum);
 
 }  // namespace
 

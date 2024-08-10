@@ -362,6 +362,51 @@ TEST_P(IntegerIndexStorageTest,
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
+TEST_P(IntegerIndexStorageTest,
+       InitializationShouldSucceedWithUpdateChecksums) {
+  // Create new integer index storage
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage1,
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
+
+  // Insert some data.
+  ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/0, /*section_id=*/20,
+                                    /*new_keys=*/{0, 100, -100}));
+  ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/1, /*section_id=*/2,
+                                    /*new_keys=*/{3, -1000, 500}));
+  ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/2, /*section_id=*/15,
+                                    /*new_keys=*/{-6, 321, 98}));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> doc_hit_info_vec,
+      Query(storage1.get(),
+            /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // synced correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, storage1->GetChecksum());
+  EXPECT_THAT(storage1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(storage1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage2,
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
+  EXPECT_THAT(
+      Query(storage2.get(), /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()),
+      IsOkAndHolds(
+          ElementsAreArray(doc_hit_info_vec.begin(), doc_hit_info_vec.end())));
+}
+
 TEST_P(IntegerIndexStorageTest, InitializationShouldSucceedWithPersistToDisk) {
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -575,13 +620,11 @@ TEST_P(IntegerIndexStorageTest,
         FileBackedVector<Bucket>::Create(
             filesystem_, sorted_buckets_file_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, sorted_buckets->UpdateChecksum());
     ICING_ASSERT_OK(sorted_buckets->Append(Bucket(
         /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
     ICING_ASSERT_OK(sorted_buckets->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, sorted_buckets->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -630,12 +673,12 @@ TEST_P(IntegerIndexStorageTest,
             /*max_file_size=*/sizeof(Bucket) * 100 +
                 FileBackedVector<Bucket>::Header::kHeaderSize));
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               unsorted_buckets->ComputeChecksum());
+                               unsorted_buckets->UpdateChecksum());
     ICING_ASSERT_OK(unsorted_buckets->Append(Bucket(
         /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
     ICING_ASSERT_OK(unsorted_buckets->PersistToDisk());
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               unsorted_buckets->ComputeChecksum());
+                               unsorted_buckets->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 

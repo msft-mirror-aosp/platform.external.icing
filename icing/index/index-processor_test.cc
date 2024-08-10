@@ -435,10 +435,10 @@ TEST_F(IndexProcessorTest, OneDoc) {
                           TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kExactSectionId, 1}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
+                        kDocumentId0, expected_map)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator(
@@ -491,33 +491,34 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
                           TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap1{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map_1{
       {kPrefixedSectionId, 2}};
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap2{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map_2{
       {kExactSectionId, 1}};
   EXPECT_THAT(
-      hits, ElementsAre(
-                EqualsDocHitInfoWithTermFrequency(kDocumentId1, expectedMap1),
-                EqualsDocHitInfoWithTermFrequency(kDocumentId0, expectedMap2)));
+      hits,
+      ElementsAre(
+          EqualsDocHitInfoWithTermFrequency(kDocumentId1, expected_map_1),
+          EqualsDocHitInfoWithTermFrequency(kDocumentId0, expected_map_2)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator(
                "world", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
                1U << kPrefixedSectionId, TermMatchType::EXACT_ONLY));
   hits = GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId1, expectedMap)));
+                        kDocumentId1, expected_map)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("coffee", /*term_start_index=*/0,
                                /*unnormalized_term_length=*/0,
                                kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   hits = GetHitsWithTermFrequency(std::move(itr));
-  expectedMap = {{kExactSectionId, Hit::kMaxTermFrequency}};
+  expected_map = {{kExactSectionId, Hit::kMaxTermFrequency}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId1, expectedMap)));
+                        kDocumentId1, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, DocWithNestedProperty) {
@@ -1153,11 +1154,11 @@ TEST_F(IndexProcessorTest, ExactVerbatimProperty) {
                           TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kVerbatimExactSectionId, 1}};
 
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
+                        kDocumentId0, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
@@ -1187,11 +1188,11 @@ TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
                           TermMatchType::PREFIX));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kVerbatimPrefixedSectionId, 1}};
 
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
+                        kDocumentId0, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, VerbatimPropertyDoesntMatchSubToken) {

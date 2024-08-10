@@ -23,31 +23,34 @@ option objc_class_prefix = "APSC";
 // Defines proto contains visibility overlay settings.
 // Next tag: 3
 message AndroidVOverlayProto {
-  // OPTIONAL: the standard visibility settings. Caller could have access if they match ANY of the
-  // requirements in this VisibilityConfig.
+  // OPTIONAL: the standard visibility settings. Caller could have access if
+  // they match ANY of the requirements in this VisibilityConfig.
   optional VisibilityConfigProto visibility_config = 1;
 
-  // OPTIONAL: The set of VisibilityConfig that have access. Caller could have access only if they
-  // match ALL of the requirements in a VisibilityConfig.
+  // OPTIONAL: The set of VisibilityConfig that have access. Caller could have
+  // access only if they match ALL of the requirements in a VisibilityConfig.
   repeated VisibilityConfigProto visible_to_configs = 2;
 }
 
-// Defines proto contains all required requirements of a nested VisibilityConfig.
-// The requirements in a VisibleToConfigProto is "AND" relationship. A caller must match ALL
-// requirements to access the schema. For example, a caller must hold required permissions AND it is
-// a specified package.
-// Next tag: 5
+// Defines proto contains all required requirements of a nested
+// VisibilityConfig. The requirements in a VisibleToConfigProto is "AND"
+// relationship. A caller must match ALL requirements to access the schema. For
+// example, a caller must hold required permissions AND it is a specified
+// package. Next tag: 5
 message VisibilityConfigProto {
   // OPTIONAL: whether this schema could be visible to the platform.
   optional bool not_platform_surfaceable = 1;
 
-  // OPTIONAL: the package identifiers of the while list packages that have access to this schema.
+  // OPTIONAL: the package identifiers of the while list packages that have
+  // access to this schema.
   repeated PackageIdentifierProto visible_to_packages = 2;
 
-  // OPTIONAL: the required permission combinations that the caller need to hold.
+  // OPTIONAL: the required permission combinations that the caller need to
+  // hold.
   repeated VisibleToPermissionProto visible_to_permissions = 3;
 
-  // OPTIONAL: the package identifier of the target package for public visibility.
+  // OPTIONAL: the package identifier of the target package for public
+  // visibility.
   optional PackageIdentifierProto publicly_visible_target_package = 4;
 }
 
@@ -61,9 +64,10 @@ message PackageIdentifierProto {
   optional bytes package_sha256cert = 2;
 }
 
-// Defines a proto to represent a set of required Android permission combination.
-// Next tag: 2
+// Defines a proto to represent a set of required Android permission
+// combination. Next tag: 2
 message VisibleToPermissionProto {
-  // REQUIRED: the required permissions that the caller need to hold to get access.
-  repeated uint32 permissions = 1;
+  // REQUIRED: the required permissions that the caller need to hold to get
+  // access.
+  repeated uint32 permissions = 1 [packed = true];
 }

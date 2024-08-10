@@ -58,7 +58,6 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
         embedding_query_results_(*embedding_query_results),
         current_time_ms_(current_time_ms) {}
 
-  void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
   void VisitText(const TextNode* node) override;
   void VisitMember(const MemberNode* node) override;

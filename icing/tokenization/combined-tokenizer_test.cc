@@ -35,6 +35,8 @@
 #include "icing/portable/platform.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/query/query-processor.h"
+#include "icing/query/query-results.h"
+#include "icing/query/query-terms.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -52,8 +54,6 @@
 #include "icing/transform/normalizer.h"
 #include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
-#include "icing/query/query-results.h"
-#include "icing/query/query-terms.h"
 
 namespace icing {
 namespace lib {

@@ -27,7 +27,6 @@
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/util/clock.h"
 
 namespace icing {
@@ -56,8 +55,7 @@ class MonkeySchemaGenerator {
  private:
   PropertyConfigProto GenerateProperty(
       const SchemaTypeConfigProto& type_config,
-      PropertyConfigProto::Cardinality::Code cardinality,
-      TermMatchType::Code term_match_type);
+      PropertyConfigProto::Cardinality::Code cardinality, bool indexable);
 
   void UpdateProperty(const SchemaTypeConfigProto& type_config,
                       PropertyConfigProto& property,
@@ -102,13 +100,20 @@ class MonkeyDocumentGenerator {
     return kCommonWords[dist(*random_)];
   }
 
+  PropertyProto::VectorProto GetRandomVector() const;
+
   std::string GetNamespace() const;
 
   std::string GetUri() const;
 
   int GetNumTokens() const;
 
-  std::vector<std::string> GetPropertyContent() const;
+  int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
+
+  std::vector<std::string> GetStringPropertyContent() const;
+
+  std::vector<PropertyProto::VectorProto> GetVectorPropertyContent(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
 
   MonkeyTokenizedDocument GenerateDocument();
 

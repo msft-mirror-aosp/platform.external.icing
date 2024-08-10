@@ -183,12 +183,67 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
       /*ref_namespace_fingerprint_ids=*/{id4}));
+  // GetChecksum should succeed without updating the checksum.
+  ICING_EXPECT_OK(index->GetChecksum());
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
   EXPECT_THAT(QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
                                                  /*pre_mapping_fbv=*/false),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV2Test,
+       InitializationShouldSucceedWithUpdateChecksums) {
+  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/56);
+  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/78);
+
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> index1,
+      QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
+                                         /*pre_mapping_fbv=*/false));
+
+  // Insert some data.
+  ICING_ASSERT_OK(index1->Put(
+      /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
+      /*ref_namespace_fingerprint_ids=*/{id2, id1}));
+  ICING_ASSERT_OK(index1->Put(
+      /*schema_type_id=*/3, /*joinable_property_id=*/10, /*document_id=*/6,
+      /*ref_namespace_fingerprint_ids=*/{id3}));
+  ICING_ASSERT_OK(index1->Put(
+      /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
+      /*ref_namespace_fingerprint_ids=*/{id4}));
+  ASSERT_THAT(index1, Pointee(SizeIs(4)));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // synced correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, index1->GetChecksum());
+  EXPECT_THAT(index1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(index1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> index2,
+      QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
+                                         /*pre_mapping_fbv=*/false));
+  EXPECT_THAT(index2, Pointee(SizeIs(4)));
+  EXPECT_THAT(
+      GetJoinData(*index2, /*schema_type_id=*/2, /*joinable_property_id=*/1),
+      IsOkAndHolds(
+          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+                          /*document_id=*/12, /*join_info=*/id4),
+                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+                          /*document_id=*/5, /*join_info=*/id2),
+                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+                          /*document_id=*/5, /*join_info=*/id1))));
+  EXPECT_THAT(
+      GetJoinData(*index2, /*schema_type_id=*/3, /*joinable_property_id=*/10),
+      IsOkAndHolds(
+          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+              /*document_id=*/6, /*join_info=*/id3))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test,
@@ -334,8 +389,8 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
         metadata_buffer.get() +
         QualifiedIdJoinIndexImplV2::kInfoMetadataBufferOffset);
     info->magic += kCorruptedValueOffset;
-    crcs->component_crcs.info_crc = info->ComputeChecksum().Get();
-    crcs->all_crc = crcs->component_crcs.ComputeChecksum().Get();
+    crcs->component_crcs.info_crc = info->GetChecksum().Get();
+    crcs->all_crc = crcs->component_crcs.GetChecksum().Get();
     ASSERT_THAT(filesystem_.PWrite(
                     metadata_sfd.get(), /*offset=*/0, metadata_buffer.get(),
                     QualifiedIdJoinIndexImplV2::kMetadataFileSize),
@@ -478,10 +533,10 @@ TEST_F(
         PersistentHashMapKeyMapper<PostingListIdentifier>::Create(
             filesystem_, std::move(mapper_working_path),
             /*pre_mapping_fbv=*/false));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->UpdateChecksum());
     ICING_ASSERT_OK(mapper->Put("foo", PostingListIdentifier::kInvalid));
     ICING_ASSERT_OK(mapper->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, mapper->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, mapper->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 

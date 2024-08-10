@@ -18,6 +18,7 @@
 #include "unicode/uconfig.h"  // IWYU pragma: keep
 // clang-format: do not reorder the above include.
 
+#include "icing/expand/stemming/stemmer-factory.h"
 #include "unicode/uvernum.h"
 
 namespace icing {
@@ -46,6 +47,11 @@ inline bool IsIcuTokenization() {
 inline int GetIcuTokenizationVersion() {
   return IsIcuTokenization() ? U_ICU_VERSION_MAJOR_NUM : 0;
 }
+// Indicates whether stemming is enabled.
+//
+// This is false if stemmer_factory is compiled with the none-stemmer
+// implementation and true for the snowball-stemmer implementation.
+inline bool IsStemmingEnabled() { return stemmer_factory::IsStemmingEnabled(); }
 
 // Whether we're running on android_x86
 inline bool IsAndroidX86() {

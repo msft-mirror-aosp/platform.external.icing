@@ -50,6 +50,7 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
 constexpr TermMatchType::Code TERM_MATCH_PREFIX = TermMatchType::PREFIX;
+constexpr TermMatchType::Code TERM_MATCH_STEMMING = TermMatchType::STEMMING;
 
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_UNKNOWN =
     IntegerIndexingConfig::NumericMatchType::UNKNOWN;
@@ -79,6 +80,8 @@ constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
     PropertyConfigProto::DataType::DOCUMENT;
 constexpr PropertyConfigProto::DataType::Code TYPE_VECTOR =
     PropertyConfigProto::DataType::VECTOR;
+constexpr PropertyConfigProto::DataType::Code TYPE_BLOB_HANDLE =
+    PropertyConfigProto::DataType::BLOB_HANDLE;
 
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
     JoinableConfig::ValueType::NONE;

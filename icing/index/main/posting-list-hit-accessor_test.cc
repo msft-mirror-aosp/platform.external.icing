@@ -108,7 +108,8 @@ TEST_F(PostingListHitAccessorTest, PreexistingPLKeepOnSameBlock) {
                                      serializer_.get()));
   // Add a single hit. This will fit in a min-sized posting list.
   Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(pl_accessor->PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
       std::move(*pl_accessor).Finalize();
@@ -341,16 +342,19 @@ TEST_F(PostingListHitAccessorTest, HitsNotDecreasingReturnsInvalidArgument) {
       PostingListHitAccessor::Create(flash_index_storage_.get(),
                                      serializer_.get()));
   Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(pl_accessor->PrependHit(hit1));
 
   Hit hit2(/*section_id=*/6, /*document_id=*/1, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   EXPECT_THAT(pl_accessor->PrependHit(hit2),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   Hit hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/true);
   EXPECT_THAT(pl_accessor->PrependHit(hit3),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -372,7 +376,8 @@ TEST_F(PostingListHitAccessorTest, PreexistingPostingListNoHitsAdded) {
       PostingListHitAccessor::Create(flash_index_storage_.get(),
                                      serializer_.get()));
   Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(pl_accessor->PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
       std::move(*pl_accessor).Finalize();

@@ -175,7 +175,7 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
   }
   TermMatchType::Code match_type = GetTermMatchType(query_term.is_prefix_val);
   int unnormalized_term_start =
-      query_term.raw_term.data() - raw_query_text_.data();
+      query_term.raw_term.data() - search_spec_.query().c_str();
   if (!processing_not_) {
     // 1. Add term to property_query_terms_map
     if (pending_property_restricts_.has_active_property_restricts()) {
@@ -193,7 +193,8 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
           std::unique_ptr<DocHitInfoIterator> term_iterator,
           index_.GetIterator(query_term.term, unnormalized_term_start,
                              query_term.raw_term.length(), kSectionIdMaskAll,
-                             match_type_, needs_term_frequency_info_));
+                             search_spec_.term_match_type(),
+                             needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
           std::make_unique<DocHitInfoIteratorFilter>(
               std::move(term_iterator), &document_store_, &schema_store_,
@@ -254,18 +255,26 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert(
       {has_property_function.name(), std::move(has_property_function)});
 
-  // vector_index getSearchSpecEmbedding(long);
-  auto get_search_spec_embedding = [](std::vector<PendingValue>&& args) {
+  // vector_index getEmbeddingParameter(long);
+  auto get_embedding_parameter = [](std::vector<PendingValue>&& args) {
     return PendingValue::CreateVectorIndexPendingValue(
         args.at(0).long_val().ValueOrDie());
   };
-  Function get_search_spec_embedding_function =
-      Function::Create(DataType::kVectorIndex, "getSearchSpecEmbedding",
+  Function get_embedding_parameter_function =
+      Function::Create(DataType::kVectorIndex, "getEmbeddingParameter",
                        {Param(DataType::kLong)},
-                       std::move(get_search_spec_embedding))
+                       std::move(get_embedding_parameter))
           .ValueOrDie();
-  registered_functions_.insert({get_search_spec_embedding_function.name(),
-                                std::move(get_search_spec_embedding_function)});
+  registered_functions_.insert({get_embedding_parameter_function.name(),
+                                get_embedding_parameter_function});
+
+  // vector_index getSearchSpecEmbedding(long);
+  // DEPRECATED: This function has been deprecated in favor of
+  // getEmbeddingParameter. It just trivially calls that function.
+  // TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding
+  // are migrated.
+  registered_functions_.insert(
+      {"getSearchSpecEmbedding", std::move(get_embedding_parameter_function)});
 
   // DocHitInfoIterator semanticSearch(vector_index, double, double, string);
   auto semantic_search = [this](std::vector<PendingValue>&& args) {
@@ -282,16 +291,18 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert(
       {semantic_search_function.name(), std::move(semantic_search_function)});
 
-  // DocHitInfoIterator tokenize(std::string);
-  auto tokenize = [this](std::vector<PendingValue>&& args) {
-    return this->TokenizeFunction(std::move(args));
+  // DocHitInfoIterator getSearchStringParameter(long);
+  auto get_search_string_parameter = [this](std::vector<PendingValue>&& args) {
+    return this->GetSearchStringParameterFunction(std::move(args));
   };
-  Function tokenize_function =
-      Function::Create(DataType::kDocumentIterator, "tokenize",
-                       {Param(DataType::kString)}, std::move(tokenize))
+  Function get_search_string_parameter_function =
+      Function::Create(DataType::kDocumentIterator, "getSearchStringParameter",
+                       {Param(DataType::kLong)},
+                       std::move(get_search_string_parameter))
           .ValueOrDie();
   registered_functions_.insert(
-      {tokenize_function.name(), std::move(tokenize_function)});
+      {get_search_string_parameter_function.name(),
+       std::move(get_search_string_parameter_function)});
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
@@ -316,7 +327,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
   const QueryTerm* query = args.at(0).string_val().ValueOrDie();
   Lexer lexer(query->term, Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
+                         std::move(lexer).ExtractTokens());
 
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> tree_root,
@@ -330,9 +341,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
   } else {
     QueryVisitor query_visitor(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
-        &schema_store_, &normalizer_, &tokenizer_, query->raw_term,
-        embedding_query_vectors_, filter_options_, match_type_,
-        embedding_query_metric_type_, needs_term_frequency_info_,
+        &schema_store_, &normalizer_, &tokenizer_, search_spec_,
+        filter_options_, needs_term_frequency_info_,
         pending_property_restricts_, processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);
     ICING_ASSIGN_OR_RETURN(query_result,
@@ -413,19 +423,17 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::HasPropertyFunction(
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
     std::vector<PendingValue>&& args) {
-  features_.insert(kEmbeddingSearchFeature);
-
   int64_t vector_index = args.at(0).vector_index_val().ValueOrDie();
-  if (embedding_query_vectors_ == nullptr || vector_index < 0 ||
-      vector_index >= embedding_query_vectors_->size()) {
-    return absl_ports::InvalidArgumentError("Got invalid vector search index!");
+  if (vector_index < 0 ||
+      vector_index >= search_spec_.embedding_query_vectors_size()) {
+    return absl_ports::OutOfRangeError("Got invalid vector search index!");
   }
 
   // Handle default values for the optional arguments.
   double low = -std::numeric_limits<double>::infinity();
   double high = std::numeric_limits<double>::infinity();
   SearchSpecProto::EmbeddingQueryMetricType::Code metric_type =
-      embedding_query_metric_type_;
+      search_spec_.embedding_query_metric_type();
   if (args.size() >= 2) {
     low = args.at(1).double_val().ValueOrDie();
   }
@@ -458,20 +466,27 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   // Create and return iterator.
   EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
       &embedding_query_results_.result_scores[vector_index][metric_type];
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
-                         DocHitInfoIteratorEmbedding::Create(
-                             &embedding_query_vectors_->at(vector_index),
-                             std::move(section_restrict_data), metric_type, low,
-                             high, score_map, &embedding_index_));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<DocHitInfoIterator> iterator,
+      DocHitInfoIteratorEmbedding::Create(
+          &search_spec_.embedding_query_vectors(vector_index),
+          std::move(section_restrict_data), metric_type, low, high, score_map,
+          &embedding_index_));
   return PendingValue(std::move(iterator));
 }
 
-libtextclassifier3::StatusOr<PendingValue> QueryVisitor::TokenizeFunction(
+libtextclassifier3::StatusOr<PendingValue>
+QueryVisitor::GetSearchStringParameterFunction(
     std::vector<PendingValue>&& args) {
-  features_.insert(kTokenizeFeature);
-
-  QueryTerm text_value = std::move(args.at(0)).string_val().ValueOrDie();
-  text_value.is_prefix_val = false;  // the prefix operator cannot be used here.
+  int64_t string_index = args.at(0).long_val().ValueOrDie();
+  if (string_index < 0 ||
+      string_index >= search_spec_.query_parameter_strings_size()) {
+    return absl_ports::OutOfRangeError("Got invalid string search index!");
+  }
+  const std::string& string_value =
+      search_spec_.query_parameter_strings(string_index);
+  // the prefix operator cannot be used here.
+  QueryTerm text_value = {string_value, string_value, /*is_prefix_val=*/false};
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
                          ProduceTextTokenIterators(std::move(text_value)));
   return PendingValue(std::move(iterator));
@@ -811,11 +826,6 @@ libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
   return libtextclassifier3::Status::OK;
 }
 
-void QueryVisitor::VisitFunctionName(const FunctionNameNode* node) {
-  pending_error_ = absl_ports::UnimplementedError(
-      "Function Name node visiting not implemented yet.");
-}
-
 void QueryVisitor::VisitString(const StringNode* node) {
   // A STRING node can only be a term. Create the iterator now.
   auto unescaped_string_or = string_util::UnescapeStringValue(node->value());
@@ -916,10 +926,10 @@ void QueryVisitor::VisitMember(const MemberNode* node) {
 
 void QueryVisitor::VisitFunction(const FunctionNode* node) {
   // 1. Get the associated function.
-  auto itr = registered_functions_.find(node->function_name()->value());
+  auto itr = registered_functions_.find(node->function_name());
   if (itr == registered_functions_.end()) {
     pending_error_ = absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Function ", node->function_name()->value(), " is not supported."));
+        "Function ", node->function_name(), " is not supported."));
     return;
   }
   const Function& function = itr->second;

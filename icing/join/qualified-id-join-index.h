@@ -165,17 +165,18 @@ class QualifiedIdJoinIndex : public PersistentStorage {
       : PersistentStorage(filesystem, std::move(working_path),
                           kWorkingPathType) {}
 
-  virtual libtextclassifier3::Status PersistStoragesToDisk(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status PersistStoragesToDisk() override = 0;
 
-  virtual libtextclassifier3::Status PersistMetadataToDisk(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status PersistMetadataToDisk() override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(
-      bool force) override = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum()
+      override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> GetInfoChecksum()
+      const override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum()
+      const override = 0;
 
   virtual Crcs& crcs() override = 0;
   virtual const Crcs& crcs() const override = 0;

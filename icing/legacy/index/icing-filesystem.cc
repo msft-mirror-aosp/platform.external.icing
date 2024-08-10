@@ -37,7 +37,6 @@
 #include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/portable/icing-zlib.h"
 #include "icing/util/logging.h"
@@ -77,7 +76,8 @@ void LogOpenFileDescriptors() {
   }
   int fd_lim = rlim.rlim_cur;
   if (fd_lim > kMaxFileDescriptorsToStat) {
-    ICING_LOG(ERROR) << "Maximum number of file descriptors (" << fd_lim << ") too large.";
+    ICING_LOG(ERROR) << "Maximum number of file descriptors (" << fd_lim
+                     << ") too large.";
     fd_lim = kMaxFileDescriptorsToStat;
   }
   ICING_LOG(ERROR) << "Listing up to " << fd_lim << " file descriptors.";
@@ -184,7 +184,8 @@ bool IcingFilesystem::DeleteFile(const char *file_name) const {
   int ret = unlink(file_name);
   bool success = (ret == 0) || (errno == ENOENT);
   if (!success) {
-    ICING_LOG(ERROR) << "Deleting file " << file_name << " failed: " << strerror(errno);
+    ICING_LOG(ERROR) << "Deleting file " << file_name
+                     << " failed: " << strerror(errno);
   }
   return success;
 }
@@ -193,7 +194,8 @@ bool IcingFilesystem::DeleteDirectory(const char *dir_name) const {
   int ret = rmdir(dir_name);
   bool success = (ret == 0) || (errno == ENOENT);
   if (!success) {
-    ICING_LOG(ERROR) << "Deleting directory " << dir_name << " failed: " << strerror(errno);
+    ICING_LOG(ERROR) << "Deleting directory " << dir_name
+                     << " failed: " << strerror(errno);
   }
   return success;
 }
@@ -241,7 +243,8 @@ bool IcingFilesystem::FileExists(const char *file_name) const {
     exists = S_ISREG(st.st_mode) != 0;
   } else {
     if (errno != ENOENT) {
-      ICING_LOG(ERROR) << "Unable to stat file " << file_name << ": " << strerror(errno);
+      ICING_LOG(ERROR) << "Unable to stat file " << file_name << ": "
+                       << strerror(errno);
     }
     exists = false;
   }
@@ -255,7 +258,8 @@ bool IcingFilesystem::DirectoryExists(const char *dir_name) const {
     exists = S_ISDIR(st.st_mode) != 0;
   } else {
     if (errno != ENOENT) {
-      ICING_LOG(ERROR) << "Unable to stat directory " << dir_name << ": " << strerror(errno);
+      ICING_LOG(ERROR) << "Unable to stat directory " << dir_name << ": "
+                       << strerror(errno);
     }
     exists = false;
   }
@@ -377,7 +381,8 @@ uint64_t IcingFilesystem::GetFileSize(const char *filename) const {
   struct stat st;
   uint64_t size = kBadFileSize;
   if (stat(filename, &st) < 0) {
-    ICING_LOG(ERROR) << "Unable to stat file " << filename << ": " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to stat file " << filename << ": "
+                     << strerror(errno);
   } else {
     size = st.st_size;
   }
@@ -488,7 +493,8 @@ bool IcingFilesystem::DataSync(int fd) const {
 bool IcingFilesystem::RenameFile(const char *old_name,
                                  const char *new_name) const {
   if (rename(old_name, new_name) < 0) {
-    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to " << new_name << ": " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to "
+                     << new_name << ": " << strerror(errno);
     return false;
   }
   return true;
@@ -526,7 +532,8 @@ bool IcingFilesystem::CreateDirectory(const char *dir_name) const {
     if (mkdir(dir_name, S_IRUSR | S_IWUSR | S_IXUSR) == 0) {
       success = true;
     } else {
-      ICING_LOG(ERROR) << "Creating directory " << dir_name << " failed: " << strerror(errno);
+      ICING_LOG(ERROR) << "Creating directory " << dir_name
+                       << " failed: " << strerror(errno);
     }
   }
   return success;

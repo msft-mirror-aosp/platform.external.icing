@@ -91,7 +91,7 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
     int32_t num_data;
     DocumentId last_added_document_id;
 
-    Crc32 ComputeChecksum() const {
+    Crc32 GetChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
@@ -163,59 +163,21 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
-  // Puts a list of referenced (parent) NamespaceFingerprintIdentifiers into
-  // the join index, given the (child) DocumentId, SchemaTypeId and
-  // JoinablePropertyId.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if schema_type_id, joinable_property_id, or
-  //     document_id is invalid
-  //   - Any KeyMapper/FlashIndexStorage errors
   libtextclassifier3::Status Put(SchemaTypeId schema_type_id,
                                  JoinablePropertyId joinable_property_id,
                                  DocumentId document_id,
                                  std::vector<NamespaceFingerprintIdentifier>&&
                                      ref_namespace_fingerprint_ids) override;
 
-  // Returns a JoinDataIterator for iterating through all join data of the
-  // specified (schema_type_id, joinable_property_id).
-  //
-  // Returns:
-  //   - On success: a JoinDataIterator
-  //   - INVALID_ARGUMENT_ERROR if schema_type_id or joinable_property_id is
-  //     invalid
-  //   - Any KeyMapper/FlashIndexStorage errors
   libtextclassifier3::StatusOr<std::unique_ptr<JoinDataIteratorBase>>
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const override;
 
-  // Reduces internal file sizes by reclaiming space and ids of deleted
-  // documents. Qualified id join index will convert all entries to the new
-  // document ids and namespace ids.
-  //
-  // - document_id_old_to_new: a map for converting old document id to new
-  //   document id.
-  // - namespace_id_old_to_new: a map for converting old namespace id to new
-  //   namespace id.
-  // - new_last_added_document_id: will be used to update the last added
-  //                               document id in the qualified id join index.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error. This could potentially leave the index in
-  //     an invalid state and the caller should handle it properly (e.g. discard
-  //     and rebuild)
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) override;
 
-  // Clears all data and set last_added_document_id to kInvalidDocumentId.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status Clear() override;
 
   bool is_v2() const override { return true; }
@@ -280,33 +242,19 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       QualifiedIdJoinIndexImplV2* new_index) const;
 
-  // Flushes contents of metadata file.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
+  libtextclassifier3::Status PersistMetadataToDisk() override;
 
-  // Flushes contents of all storages to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
+  libtextclassifier3::Status PersistStoragesToDisk() override;
 
-  // Computes and returns Info checksum.
-  //
-  // Returns:
-  //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
+  libtextclassifier3::Status WriteMetadata() override;
 
-  // Computes and returns all storages checksum.
-  //
-  // Returns:
-  //   - Crc of all storages on success
-  //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override;
+  libtextclassifier3::Status InternalWriteMetadata(const ScopedFd& sfd);
+
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override;
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_buffer_.get() +

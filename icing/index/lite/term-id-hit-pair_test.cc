@@ -40,11 +40,17 @@ static constexpr uint32_t kSomeLargerTermId = 0b101010101111111100000001;
 
 TEST(TermIdHitPairTest, Accessors) {
   Hit hit1(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   Hit hit2(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-           /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+           /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+           /*is_stemmed_hit=*/false);
   Hit hit3(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit4(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
+           /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+           /*is_stemmed_hit=*/true);
   Hit invalid_hit(Hit::kInvalidValue);
 
   TermIdHitPair term_id_hit_pair_1(kSomeTermId, hit1);
@@ -58,13 +64,19 @@ TEST(TermIdHitPairTest, Accessors) {
   TermIdHitPair term_id_hit_pair_3(kSomeTermId, invalid_hit);
   EXPECT_THAT(term_id_hit_pair_3.term_id(), Eq(kSomeTermId));
   EXPECT_THAT(term_id_hit_pair_3.hit(), Eq(invalid_hit));
+
+  TermIdHitPair term_id_hit_pair_4(kSomeTermId, hit4);
+  EXPECT_THAT(term_id_hit_pair_4.term_id(), Eq(kSomeTermId));
+  EXPECT_THAT(term_id_hit_pair_4.hit(), Eq(hit4));
 }
 
 TEST(TermIdHitPairTest, Comparison) {
   Hit hit(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false);
   Hit smaller_hit(/*section_id=*/1, /*document_id=*/100, /*term_frequency=*/1,
-                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                  /*is_stemmed_hit=*/false);
 
   TermIdHitPair term_id_hit_pair(kSomeTermId, hit);
   TermIdHitPair term_id_hit_pair_equal(kSomeTermId, hit);

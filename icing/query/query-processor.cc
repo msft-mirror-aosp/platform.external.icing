@@ -131,7 +131,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
   std::unique_ptr<Timer> lexer_timer = clock_.GetNewTimer();
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
+                         std::move(lexer).ExtractTokens());
   if (search_stats != nullptr) {
     search_stats->set_query_processor_lexer_extract_token_latency_ms(
         lexer_timer->GetElapsedMilliseconds());
@@ -164,10 +164,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
   std::unique_ptr<Timer> query_visitor_timer = clock_.GetNewTimer();
   QueryVisitor query_visitor(
       &index_, &numeric_index_, &embedding_index_, &document_store_,
-      &schema_store_, &normalizer_, plain_tokenizer.get(), search_spec.query(),
-      &search_spec.embedding_query_vectors(), std::move(options),
-      search_spec.term_match_type(), search_spec.embedding_query_metric_type(),
-      needs_term_frequency_info, current_time_ms);
+      &schema_store_, &normalizer_, plain_tokenizer.get(), search_spec,
+      std::move(options), needs_term_frequency_info, current_time_ms);
   tree_root->Accept(&query_visitor);
   ICING_ASSIGN_OR_RETURN(QueryResults results,
                          std::move(query_visitor).ConsumeResults());

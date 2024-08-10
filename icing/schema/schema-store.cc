@@ -14,7 +14,6 @@
 
 #include "icing/schema/schema-store.h"
 
-#include <algorithm>
 #include <cinttypes>
 #include <cstdint>
 #include <limits>
@@ -34,6 +33,7 @@
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/version-util.h"
+#include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/logging.pb.h"
@@ -48,6 +48,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -213,7 +214,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
   if (header.overlay_created()) {
     header.SetOverlayInfo(
         /*overlay_created=*/false,
-        /*min_overlay_version_compatibility=*/ std::numeric_limits<
+        /*min_overlay_version_compatibility=*/std::numeric_limits<
             int32_t>::max());
     ICING_RETURN_IF_ERROR(header.Write(filesystem, header_filename));
   }
@@ -591,7 +592,7 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
   }
 
   ICING_ASSIGN_OR_RETURN(Crc32 schema_type_mapper_checksum,
-                         schema_type_mapper_->ComputeChecksum());
+                         schema_type_mapper_->UpdateChecksum());
 
   Crc32 total_checksum;
   total_checksum.Append(std::to_string(schema_checksum.Get()));
@@ -627,15 +628,15 @@ libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
                        bool ignore_errors_and_delete_documents,
                        bool allow_circular_schema_definitions) {
-  ICING_ASSIGN_OR_RETURN(
-      SchemaUtil::DependentMap new_dependent_map,
-      SchemaUtil::Validate(new_schema, allow_circular_schema_definitions));
-
   SetSchemaResult result;
 
   auto schema_proto_or = GetSchema();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
-    // We don't have a pre-existing schema, so anything is valid.
+    // We don't have a pre-existing schema, so anything is valid as long as the
+    // new schema is valid.
+    ICING_RETURN_IF_ERROR(
+        SchemaUtil::Validate(new_schema, allow_circular_schema_definitions));
+
     result.success = true;
     for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
       result.schema_types_new_by_name.insert(type_config.schema_type());
@@ -655,7 +656,11 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
       return result;
     }
 
-    // Different schema, track the differences and see if we can still write it
+    // Different schema -- validate the new schema, track the differences and
+    // see if we can still write it
+    ICING_ASSIGN_OR_RETURN(
+        SchemaUtil::DependentMap new_dependent_map,
+        SchemaUtil::Validate(new_schema, allow_circular_schema_definitions));
     SchemaUtil::SchemaDelta schema_delta =
         SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                               new_dependent_map);
@@ -781,7 +786,7 @@ libtextclassifier3::StatusOr<SchemaTypeId> SchemaStore::GetSchemaTypeId(
 }
 
 libtextclassifier3::StatusOr<const std::string*> SchemaStore::GetSchemaType(
-      SchemaTypeId schema_type_id) const {
+    SchemaTypeId schema_type_id) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
   if (const auto it = reverse_schema_type_mapper_.find(schema_type_id);
       it == reverse_schema_type_mapper_.end()) {

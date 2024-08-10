@@ -69,7 +69,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
 
   // Make used.
   Hit hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/56,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
   // Size = sizeof(uncompressed hit0::Value)
   //        + sizeof(hit0::Flags)
@@ -80,7 +81,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   EXPECT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(ElementsAre(hit0)));
 
   Hit hit1(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   uint8_t delta_buf[VarInt::kMaxEncodedLen64];
   size_t delta_len = PostingListHitSerializer::EncodeNextHitValue(
       /*next_hit_value=*/hit1.value(),
@@ -96,7 +98,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
               IsOkAndHolds(ElementsAre(hit1, hit0)));
 
   Hit hit2(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/56,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   delta_len = PostingListHitSerializer::EncodeNextHitValue(
       /*next_hit_value=*/hit2.value(),
       /*curr_hit_value=*/hit1.value(), delta_buf);
@@ -113,7 +116,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
               IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
 
   Hit hit3(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   delta_len = PostingListHitSerializer::EncodeNextHitValue(
       /*next_hit_value=*/hit3.value(),
       /*curr_hit_value=*/hit2.value(), delta_buf);
@@ -147,11 +151,12 @@ TEST(PostingListHitSerializerTest,
   // Adding hit1: NOT_FULL -> NOT_FULL
   // Adding hit2: NOT_FULL -> NOT_FULL
   Hit hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/3);
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/2, /*term_frequency=*/57,
                        /*is_in_prefix_section=*/true,
-                       /*is_prefix_hit=*/true);
+                       /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
   EXPECT_THAT(hit2.has_flags(), IsTrue());
   EXPECT_THAT(hit2.has_term_frequency(), IsTrue());
   ICING_EXPECT_OK(serializer.PrependHit(&pl_used, hit0));
@@ -168,7 +173,8 @@ TEST(PostingListHitSerializerTest,
   // Add one more hit to transition NOT_FULL -> ALMOST_FULL
   Hit hit3 =
       CreateHit(hit2, /*desired_byte_length=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   EXPECT_THAT(hit3.has_flags(), IsFalse());
   ICING_EXPECT_OK(serializer.PrependHit(&pl_used, hit3));
   // Storing them in the compressed region requires 4 (hit3::Value) + 3
@@ -229,7 +235,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
   // Adding hit1: NOT_FULL -> NOT_FULL
   // Adding hit2: NOT_FULL -> NOT_FULL
   Hit hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/3);
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/3);
   ICING_EXPECT_OK(serializer.PrependHit(&pl_used, hit0));
@@ -299,11 +306,12 @@ TEST(PostingListHitSerializerTest, PrependHitsWithSameValue) {
 
   // Fill up the compressed region.
   Hit hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/3);
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/2, /*term_frequency=*/57,
                        /*is_in_prefix_section=*/true,
-                       /*is_prefix_hit=*/true);
+                       /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
   // Create hit3 with the same value but different flags as hit2 (hit3_flags
   // is set to have all currently-defined flags enabled)
   Hit::Flags hit3_flags = 0;
@@ -352,7 +360,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
   // Add a hit, PL should shift to ALMOST_FULL state
   Hit hit0(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/0,
            /*is_in_prefix_section=*/false,
-           /*is_prefix_hit=*/true);
+           /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
   ICING_EXPECT_OK(serializer.PrependHit(&pl_used, hit0));
   // Size = sizeof(uncompressed hit0)
   int expected_size = sizeof(Hit);
@@ -363,7 +371,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
   // delta of 0b10. PL should shift to FULL state.
   Hit hit1(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/0,
            /*is_in_prefix_section=*/false,
-           /*is_prefix_hit=*/false);
+           /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_EXPECT_OK(serializer.PrependHit(&pl_used, hit1));
   // Size = sizeof(uncompressed hit1) + sizeof(uncompressed hit0)
   expected_size += sizeof(Hit);
@@ -374,7 +382,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
   // Try to add the smallest hit possible. Should fail
   Hit hit2(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/0,
            /*is_in_prefix_section=*/false,
-           /*is_prefix_hit=*/false);
+           /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   EXPECT_THAT(serializer.PrependHit(&pl_used, hit2),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Le(expected_size));
@@ -396,7 +404,7 @@ TEST(PostingListHitSerializerTest,
   hits_in.emplace_back(Hit(/*section_id=*/1, /*document_id=*/0,
                            Hit::kDefaultTermFrequency,
                            /*is_in_prefix_section=*/false,
-                           /*is_prefix_hit=*/false));
+                           /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false));
   hits_in.emplace_back(
       CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
   hits_in.emplace_back(
@@ -446,7 +454,7 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
   hits_in.emplace_back(Hit(/*section_id=*/1, /*document_id=*/0,
                            Hit::kDefaultTermFrequency,
                            /*is_in_prefix_section=*/false,
-                           /*is_prefix_hit=*/false));
+                           /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false));
   hits_in.emplace_back(
       CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
   hits_in.emplace_back(
@@ -678,7 +686,8 @@ TEST(PostingListHitSerializerTest,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
 
   Hit max_valued_hit(kMaxSectionId, kMinDocumentId, Hit::kMaxTermFrequency,
-                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                     /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(serializer.PrependHit(&pl, max_valued_hit));
   uint32_t bytes_used = serializer.GetBytesUsed(&pl);
   ASSERT_THAT(bytes_used, sizeof(Hit::Value) + sizeof(Hit::Flags) +
@@ -688,7 +697,8 @@ TEST(PostingListHitSerializerTest,
               Le(pl_size - PostingListHitSerializer::kSpecialHitsSize));
 
   Hit min_valued_hit(kMinSectionId, kMaxDocumentId, Hit::kMaxTermFrequency,
-                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                     /*is_stemmed_hit=*/false);
   uint8_t delta_buf[VarInt::kMaxEncodedLen64];
   size_t delta_len = PostingListHitSerializer::EncodeNextHitValue(
       /*next_hit_value=*/min_valued_hit.value(),
@@ -701,7 +711,8 @@ TEST(PostingListHitSerializerTest,
   ASSERT_THAT(delta_len, Gt(4));
   ICING_ASSERT_OK(serializer.PrependHit(
       &pl, Hit(kMinSectionId, kMaxDocumentId, Hit::kMaxTermFrequency,
-               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true)));
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+               /*is_stemmed_hit=*/false)));
   // Status should jump to full directly.
   ASSERT_THAT(serializer.GetBytesUsed(&pl), Eq(pl_size));
   ICING_ASSERT_OK(serializer.PopFrontHits(&pl, 1));
@@ -839,7 +850,8 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForTwoHits) {
 
   // Create and add 2 hits
   Hit first_hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   std::vector<Hit> hits_in =
       CreateHits(first_hit, /*num_hits=*/2, /*desired_byte_length=*/4);
   for (const Hit &hit : hits_in) {
@@ -1141,7 +1153,8 @@ TEST(PostingListHitSerializerTest, PopHitsWithTermFrequenciesAndFlags) {
   int bytes_used = 18;
 
   Hit hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/5,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/2);
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/2);
   Hit hit3 = CreateHit(hit2, /*desired_byte_length=*/2);

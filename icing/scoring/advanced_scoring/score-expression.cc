@@ -671,7 +671,7 @@ SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
-GetSearchSpecEmbeddingFunctionScoreExpression::Create(
+GetEmbeddingParameterFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args) {
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
@@ -683,9 +683,8 @@ GetSearchSpecEmbeddingFunctionScoreExpression::Create(
   }
   bool is_constant = args[0]->is_constant();
   std::unique_ptr<ScoreExpression> expression =
-      std::unique_ptr<GetSearchSpecEmbeddingFunctionScoreExpression>(
-          new GetSearchSpecEmbeddingFunctionScoreExpression(
-              std::move(args[0])));
+      std::unique_ptr<GetEmbeddingParameterFunctionScoreExpression>(
+          new GetEmbeddingParameterFunctionScoreExpression(std::move(args[0])));
   if (is_constant) {
     return ConstantScoreExpression::Create(
         expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr),
@@ -695,7 +694,7 @@ GetSearchSpecEmbeddingFunctionScoreExpression::Create(
 }
 
 libtextclassifier3::StatusOr<double>
-GetSearchSpecEmbeddingFunctionScoreExpression::EvaluateDouble(
+GetEmbeddingParameterFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
                          arg_->EvaluateDouble(hit_info, query_it));

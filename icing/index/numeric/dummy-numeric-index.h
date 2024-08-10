@@ -197,21 +197,28 @@ class DummyNumericIndex : public NumericIndex<T> {
     memset(dummy_crcs_buffer_.get(), 0, sizeof(PersistentStorage::Crcs));
   }
 
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override {
+  libtextclassifier3::Status PersistStoragesToDisk() override {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override {
+  libtextclassifier3::Status PersistMetadataToDisk() override {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override {
-    return Crc32(0);
+  libtextclassifier3::Status WriteMetadata() override {
+    return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override {
-    return Crc32(0);
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override {
+    return Crc32();
+  }
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override {
+    return Crc32();
+  }
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override {
+    return Crc32();
   }
 
   PersistentStorage::Crcs& crcs() override {

@@ -27,6 +27,7 @@
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 
 namespace icing {
@@ -87,11 +88,13 @@ bool IcingFlashBitmap::Verify() const {
   }
   Accessor accessor(mmapper_.get());
   if (accessor.header()->magic != kMagic) {
-    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect magic header";
+    ICING_LOG(ERROR) << "Flash bitmap " << filename_
+                     << " has incorrect magic header";
     return false;
   }
   if (accessor.header()->version != kCurVersion) {
-    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect version";
+    ICING_LOG(ERROR) << "Flash bitmap " << filename_
+                     << " has incorrect version";
     return false;
   }
   if (accessor.header()->dirty) {
@@ -101,7 +104,8 @@ bool IcingFlashBitmap::Verify() const {
   uint32_t crc =
       IcingStringUtil::UpdateCrc32(0, accessor.data(), accessor.data_size());
   if (accessor.header()->crc != crc) {
-    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect CRC32 " << accessor.header()->crc << " " << crc;
+    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect CRC32 "
+                     << accessor.header()->crc << " " << crc;
     return false;
   }
   return true;
@@ -231,7 +235,7 @@ bool IcingFlashBitmap::Delete() {
   return filesystem_->DeleteFile(filename_.c_str());
 }
 
-bool IcingFlashBitmap::Sync() const {
+bool IcingFlashBitmap::Sync() {
   if (!is_initialized()) {
     ICING_LOG(FATAL) << "Bitmap not initialized";
   }
@@ -248,23 +252,37 @@ uint64_t IcingFlashBitmap::GetDiskUsage() const {
   return filesystem_->GetFileDiskUsage(filename_.c_str());
 }
 
-uint32_t IcingFlashBitmap::UpdateCrc() const {
+Crc32 IcingFlashBitmap::UpdateCrc() {
+  if (mmapper_ == nullptr) {
+    // Non-existent mmapper means file does not exist.
+    return Crc32();
+  }
   Accessor accessor(mmapper_.get());
   if (open_type_ == READ_WRITE && accessor.header()->dirty) {
-    accessor.header()->crc = IcingStringUtil::UpdateCrc32(
-        kEmptyCrc, accessor.data(), accessor.data_size());
+    Crc32 crc(std::string_view(accessor.data(), accessor.data_size()));
+    accessor.header()->crc = crc.Get();
     accessor.header()->dirty = false;
   }
+  return Crc32(accessor.header()->crc);
+}
 
-  // Non-existent mmapper means file does not exist. An empty file has
-  // a crc of kEmptyCrc, so just return that.
-  return mmapper_.get() ? accessor.header()->crc : kEmptyCrc;
+Crc32 IcingFlashBitmap::GetCrc() const {
+  if (mmapper_ == nullptr) {
+    // Non-existent mmapper means file does not exist.
+    return Crc32();
+  }
+  Accessor accessor(mmapper_.get());
+  if (open_type_ != READ_WRITE || !accessor.header()->dirty) {
+    return Crc32(accessor.header()->crc);
+  }
+  return Crc32(std::string_view(accessor.data(), accessor.data_size()));
 }
 
 bool IcingFlashBitmap::Grow(size_t new_file_size) {
   IcingScopedFd fd(filesystem_->OpenForWrite(filename_.c_str()));
   if (!filesystem_->GrowUsingPWrite(fd.get(), new_file_size)) {
-    ICING_LOG(ERROR) << "GrowUsingPWrite " << filename_ << " to new size " << new_file_size << " failed";
+    ICING_LOG(ERROR) << "GrowUsingPWrite " << filename_ << " to new size "
+                     << new_file_size << " failed";
     return false;
   }
   if (!mmapper_->Remap(fd.get(), 0, new_file_size)) {

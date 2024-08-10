@@ -52,7 +52,7 @@ GetScoreExpression(std::string_view scoring_expression, double default_score,
                    Bm25fCalculator* bm25f_calculator) {
   Lexer lexer(scoring_expression, Lexer::Language::SCORING);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
+                         std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> tree_root,
                          parser.ConsumeScoring());

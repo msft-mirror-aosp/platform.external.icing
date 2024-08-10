@@ -130,6 +130,22 @@ class Index {
     return main_index_->PersistToDisk();
   }
 
+  // Updates all checksums in the index and returns the combined index checksum.
+  Crc32 UpdateChecksum() {
+    Crc32 lite_crc = lite_index_->UpdateChecksum();
+    Crc32 main_crc = main_index_->UpdateChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
+  // Calculates and returns the combined index checksum.
+  Crc32 GetChecksum() const {
+    Crc32 lite_crc = lite_index_->GetChecksum();
+    Crc32 main_crc = main_index_->GetChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
   // Discard parts of the index if they contain data for document ids greater
   // than document_id.
   //
