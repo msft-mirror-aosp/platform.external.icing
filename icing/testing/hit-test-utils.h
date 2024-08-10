@@ -32,7 +32,7 @@ Hit CreateHit(const Hit& last_hit, int desired_byte_length);
 // the desired term_frequency and flags
 Hit CreateHit(const Hit& last_hit, int desired_byte_length,
               Hit::TermFrequency term_frequency, bool is_in_prefix_section,
-              bool is_prefix_hit);
+              bool is_prefix_hit, bool is_stemmed_hit);
 
 // Returns a vector of num_hits Hits with the first hit starting at start_docid
 // and with desired_byte_length deltas.
