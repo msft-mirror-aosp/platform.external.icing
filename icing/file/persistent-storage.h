@@ -72,10 +72,13 @@ namespace lib {
 //       - If the derived class uses memory-mapped region directly for metadata,
 //         then it should call MemoryMappedFile::PersistToDisk.
 //       - See crcs() for more details.
-//     - ComputeInfoChecksum: compute the checksum for custom Info.
-//     - ComputeStoragesChecksum: compute the (combined) checksum for all
+//     - GetInfoChecksum: compute the checksum for custom Info.
+//     - GetStoragesChecksum: compute the (combined) checksum for all
 //       (composite) storages. In general, the implementation will be calling
-//       UpdateChecksums for all composite storages and XOR all checksums.
+//       GetChecksum for all composite storages and XOR all checksums.
+//     - UpdateStoragesChecksum: update the (combined) checksum for all
+//       (composite) storages. In general, the implementation will be calling
+//       UpdateChecksum for all composite storages and XOR all checksums.
 //     - crcs(): provide the reference for PersistentStorage to write checksums.
 //       The derived class can either maintain a concrete Crcs instance, or
 //       reinterpret_cast the memory-mapped region to Crcs reference. Either
@@ -104,7 +107,7 @@ class PersistentStorage {
         return info_crc == other.info_crc && storages_crc == other.storages_crc;
       }
 
-      Crc32 ComputeChecksum() const {
+      Crc32 GetChecksum() const {
         return Crc32(std::string_view(reinterpret_cast<const char*>(this),
                                       sizeof(ComponentCrcs)));
       }
@@ -141,16 +144,16 @@ class PersistentStorage {
   //
   // Returns:
   //   - OK on success or already initialized
-  //   - Any errors from ComputeInfoChecksum, ComputeStoragesChecksum, depending
-  //     on actual implementation
+  //   - Any errors from GetInfoChecksum, UpdateStoragesChecksum, depending on
+  //     actual implementation
   libtextclassifier3::Status InitializeNewStorage() {
     if (is_initialized_) {
       return libtextclassifier3::Status::OK;
     }
 
-    ICING_RETURN_IF_ERROR(UpdateChecksumsInternal(/*force=*/true));
-    ICING_RETURN_IF_ERROR(PersistStoragesToDisk(/*force=*/true));
-    ICING_RETURN_IF_ERROR(PersistMetadataToDisk(/*force=*/true));
+    ICING_RETURN_IF_ERROR(UpdateChecksumsInternal());
+    ICING_RETURN_IF_ERROR(PersistStoragesToDisk());
+    ICING_RETURN_IF_ERROR(PersistMetadataToDisk());
 
     is_initialized_ = true;
     return libtextclassifier3::Status::OK;
@@ -167,8 +170,8 @@ class PersistentStorage {
   // Returns:
   //   - OK on success or already initialized
   //   - FAILED_PRECONDITION_ERROR if checksum validation fails.
-  //   - Any errors from ComputeInfoChecksum, ComputeStoragesChecksum, depending
-  //     on actual implementation
+  //   - Any errors from GetInfoChecksum, GetStoragesChecksum, depending on
+  //     actual implementation
   libtextclassifier3::Status InitializeExistingStorage() {
     if (is_initialized_) {
       return libtextclassifier3::Status::OK;
@@ -185,52 +188,59 @@ class PersistentStorage {
   // 2) Updates all checksums by new data.
   // 3) Flushes metadata.
   //
-  // Force flag will be passed down to PersistMetadataToDisk,
-  // PersistStoragesToDisk, ComputeInfoChecksum, ComputeStoragesChecksum.
-  // - If force == true, then performs actual persisting operations/recomputes
-  //   the checksum.
-  // - Otherwise, the derived class can decide itself whether skipping
-  //   persisting operations/doing lazy checksum recomputing if the storage is
-  //   not dirty.
-  //
   // Returns:
   //   - OK on success
   //   - FAILED_PRECONDITION_ERROR if PersistentStorage is uninitialized
   //   - Any errors from PersistStoragesToDisk, UpdateChecksums,
   //     PersistMetadataToDisk, depending on actual implementation
-  libtextclassifier3::Status PersistToDisk(bool force = false) {
+  libtextclassifier3::Status PersistToDisk() {
     if (!is_initialized_) {
       return absl_ports::FailedPreconditionError(absl_ports::StrCat(
           "PersistentStorage ", working_path_, " not initialized"));
     }
 
-    ICING_RETURN_IF_ERROR(UpdateChecksumsInternal(force));
-    ICING_RETURN_IF_ERROR(PersistStoragesToDisk(force));
-    ICING_RETURN_IF_ERROR(PersistMetadataToDisk(force));
+    ICING_RETURN_IF_ERROR(UpdateChecksumsInternal());
+    ICING_RETURN_IF_ERROR(PersistStoragesToDisk());
+    ICING_RETURN_IF_ERROR(PersistMetadataToDisk());
     return libtextclassifier3::Status::OK;
   }
 
   // Updates checksums of all components and returns the overall crc (all_crc)
   // of the persistent storage.
   //
-  // Force flag will be passed down ComputeInfoChecksum,
-  // ComputeStoragesChecksum.
-  // - If force == true, then recomputes the checksum.
-  // - Otherwise, the derived class can decide itself whether doing lazy
-  //   checksum recomputing if the storage is not dirty.
-  //
   // Returns:
   //   - Overall crc of the persistent storage on success
   //   - FAILED_PRECONDITION_ERROR if PersistentStorage is uninitialized
-  //   - Any errors from ComputeInfoChecksum, ComputeStoragesChecksum, depending
+  //   - Any errors from UpdateInfoChecksum, UpdateStoragesChecksum, depending
   //     on actual implementation
-  libtextclassifier3::StatusOr<Crc32> UpdateChecksums(bool force = false) {
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksums() {
     if (!is_initialized_) {
       return absl_ports::FailedPreconditionError(absl_ports::StrCat(
           "PersistentStorage ", working_path_, " not initialized"));
     }
 
-    return UpdateChecksumsInternal(force);
+    ICING_ASSIGN_OR_RETURN(Crc32 crc, UpdateChecksumsInternal());
+    ICING_RETURN_IF_ERROR(WriteMetadata());
+    return crc;
+  }
+
+  // Calculates and returns the overall crc (all_crc) of the persistent storage.
+  //
+  // Returns:
+  //   - Overall crc of the persistent storage on success
+  //   - FAILED_PRECONDITION_ERROR if PersistentStorage is uninitialized
+  //   - Any errors from GetInfoChecksum, GetStoragesChecksum, depending on
+  //     actual implementation
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
+    if (!is_initialized_) {
+      return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+          "PersistentStorage ", working_path_, " not initialized"));
+    }
+
+    ICING_ASSIGN_OR_RETURN(Crc32 info_crc, GetInfoChecksum());
+    ICING_ASSIGN_OR_RETURN(Crc32 storages_crc, GetStoragesChecksum());
+    Crcs::ComponentCrcs crcs = {info_crc.Get(), storages_crc.Get()};
+    return crcs.GetChecksum();
   }
 
  protected:
@@ -246,44 +256,66 @@ class PersistentStorage {
   // correctly, depending on whether they're using memory-mapped regions or
   // concrete instances in the derived class.
   //
+  // It is valid to call this function even when is_initialized_ is false.
+  //
   // Returns:
   //   - OK on success
   //   - Any other errors, depending on actual implementation
-  virtual libtextclassifier3::Status PersistMetadataToDisk(bool force) = 0;
+  virtual libtextclassifier3::Status PersistMetadataToDisk() = 0;
 
   // Flushes contents of all storages to underlying files.
   //
+  // It is valid to call this function even when is_initialized_ is false.
+  //
   // Returns:
   //   - OK on success
   //   - Any other errors, depending on actual implementation
-  virtual libtextclassifier3::Status PersistStoragesToDisk(bool force) = 0;
+  virtual libtextclassifier3::Status PersistStoragesToDisk() = 0;
 
-  // Computes and returns Info checksum.
-  // - If force = true, then recompute the entire checksum.
-  // - Otherwise, the derived class can decide itself whether doing lazy
-  //   checksum computing if the storage is not dirty.
-  //
-  // This function will be mainly called by UpdateChecksums.
+  // Writes the contents of the metadata, if necessary. Unlike
+  // PersistMetadataToDisk this method does not explicitly flush the metadata to
+  // disk.
   //
   // Returns:
-  //   - Crc of the Info on success
+  //   - OK on success
   //   - Any other errors, depending on actual implementation
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(
-      bool force) = 0;
+  virtual libtextclassifier3::Status WriteMetadata() = 0;
 
-  // Computes and returns all storages checksum. If there are multiple storages,
-  // usually we XOR their checksums together to a single checksum.
-  // - If force = true, then recompute the entire checksum.
-  // - Otherwise, the derived class can decide itself whether doing lazy
-  //   checksum computing if the storage is not dirty.
+  // Computes and updates all storages checksums and returns a combined checksum
+  // of all storages. If there are multiple storages, usually we XOR their
+  // checksums together to a single checksum.
   //
   // This function will be mainly called by UpdateChecksums.
+  //
+  // It is valid to call this function even when is_initialized_ is false.
   //
   // Returns:
   //   - Crc of all storages on success
   //   - Any other errors from depending on actual implementation
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() = 0;
+
+  // Computes and returns Info checksum.
+  //
+  // This function will be mainly called by GetChecksum.
+  //
+  // It is valid to call this function even when is_initialized_ is false.
+  //
+  // Returns:
+  //   - Crc of the Info on success
+  //   - Any other errors, depending on actual implementation
+  virtual libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const = 0;
+
+  // Computes and returns all storages checksum. If there are multiple storages,
+  // usually we XOR their checksums together to a single checksum.
+  //
+  // This function will be mainly called by GetChecksum.
+  //
+  // It is valid to call this function even when is_initialized_ is false.
+  //
+  // Returns:
+  //   - Crc of all storages on success
+  //   - Any other errors, depending on actual implementation
+  virtual libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const = 0;
 
   // Returns the Crcs instance reference. The derived class can either own a
   // concrete Crcs instance, or reinterpret_cast the memory-mapped region to
@@ -313,13 +345,13 @@ class PersistentStorage {
   //
   // Returns:
   //   - Overall crc of the persistent storage on success
-  //   - Any errors from ComputeInfoChecksum, ComputeStoragesChecksum, depending
-  //     on actual implementation
-  libtextclassifier3::StatusOr<Crc32> UpdateChecksumsInternal(bool force) {
+  //   - Any errors from GetInfoChecksum, UpdateStoragesChecksum, depending on
+  //     actual implementation
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksumsInternal() {
     Crcs& crcs_ref = crcs();
     // Compute and update storages + info checksums.
-    ICING_ASSIGN_OR_RETURN(Crc32 info_crc, ComputeInfoChecksum(force));
-    ICING_ASSIGN_OR_RETURN(Crc32 storages_crc, ComputeStoragesChecksum(force));
+    ICING_ASSIGN_OR_RETURN(Crc32 info_crc, GetInfoChecksum());
+    ICING_ASSIGN_OR_RETURN(Crc32 storages_crc, UpdateStoragesChecksum());
     if (crcs_ref.component_crcs.info_crc == info_crc.Get() &&
         crcs_ref.component_crcs.storages_crc == storages_crc.Get()) {
       // If info and storages crc haven't changed, then we don't have to update
@@ -331,8 +363,9 @@ class PersistentStorage {
     crcs_ref.component_crcs.storages_crc = storages_crc.Get();
 
     // Finally compute and update overall checksum.
-    crcs_ref.all_crc = crcs_ref.component_crcs.ComputeChecksum().Get();
-    return Crc32(crcs_ref.all_crc);
+    Crc32 all_crc = crcs_ref.component_crcs.GetChecksum();
+    crcs_ref.all_crc = all_crc.Get();
+    return all_crc;
   }
 
   // Validates all checksums of the persistent storage.
@@ -340,25 +373,23 @@ class PersistentStorage {
   // Returns:
   //   - OK on success
   //   - FAILED_PRECONDITION_ERROR if any checksum is incorrect.
-  //   - Any errors from ComputeInfoChecksum, ComputeStoragesChecksum, depending
-  //     on actual implementation
-  libtextclassifier3::Status ValidateChecksums() {
+  //   - Any errors from GetInfoChecksum, GetStoragesChecksum, depending on
+  //     actual implementation
+  libtextclassifier3::Status ValidateChecksums() const {
     const Crcs& crcs_ref = crcs();
-    if (crcs_ref.all_crc != crcs_ref.component_crcs.ComputeChecksum().Get()) {
+    if (crcs_ref.all_crc != crcs_ref.component_crcs.GetChecksum().Get()) {
       return absl_ports::FailedPreconditionError("Invalid all crc");
     }
 
-    ICING_ASSIGN_OR_RETURN(Crc32 info_crc, ComputeInfoChecksum(/*force=*/true));
+    ICING_ASSIGN_OR_RETURN(Crc32 info_crc, GetInfoChecksum());
     if (crcs_ref.component_crcs.info_crc != info_crc.Get()) {
       return absl_ports::FailedPreconditionError("Invalid info crc");
     }
 
-    ICING_ASSIGN_OR_RETURN(Crc32 storages_crc,
-                           ComputeStoragesChecksum(/*force=*/true));
+    ICING_ASSIGN_OR_RETURN(Crc32 storages_crc, GetStoragesChecksum());
     if (crcs_ref.component_crcs.storages_crc != storages_crc.Get()) {
       return absl_ports::FailedPreconditionError("Invalid storages crc");
     }
-
     return libtextclassifier3::Status::OK;
   }
 };
