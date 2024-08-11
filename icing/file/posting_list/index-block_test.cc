@@ -119,15 +119,20 @@ TEST_F(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
 
   std::vector<Hit> test_hits{
       Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
   };
   PostingListIndex allocated_index;
   {
@@ -172,27 +177,37 @@ TEST_F(IndexBlockTest, IndexBlockMultiplePostingLists) {
 
   std::vector<Hit> hits_in_posting_list1{
       Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
   };
   std::vector<Hit> hits_in_posting_list2{
       Hit(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
   };
   PostingListIndex allocated_index_1;
   PostingListIndex allocated_index_2;
@@ -273,15 +288,20 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
   // Add hits to the first posting list.
   std::vector<Hit> hits_in_posting_list1{
       Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
   };
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_1,
                              block.AllocatePostingList());
@@ -296,15 +316,20 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
   // Add hits to the second posting list.
   std::vector<Hit> hits_in_posting_list2{
       Hit(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
   };
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_2,
                              block.AllocatePostingList());
@@ -327,11 +352,14 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
 
   std::vector<Hit> hits_in_posting_list3{
       Hit(/*section_id=*/12, /*document_id=*/0, /*term_frequency=*/88,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/17, /*document_id=*/1, Hit::kDefaultTermFrequency,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
       Hit(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/2,
-            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false),
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false),
   };
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_3,
                              block.AllocatePostingList());
