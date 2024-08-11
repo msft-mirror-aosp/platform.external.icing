@@ -94,6 +94,8 @@ static_assert(sizeof(BasicHit) == 4, "");
 //   - bitmasks in flags fields:
 //     - whether the Hit has a TermFrequency other than the default value
 //       (has_term_frequency)
+//     - whether the Hit is a stemmed hit derived by stemming an original token
+//       in the document (is_stemmed_hit)
 //   - a term frequency for the hit
 //
 // The hit is the most basic unit of the index and, when grouped together by
@@ -128,7 +130,9 @@ class Hit {
     // Whether or not the hit has a term_frequency other than
     // kDefaultTermFrequency.
     kHasTermFrequency = 0,
-    kNumFlagsInFlagsField = 1,
+    // Whether or not the hit is a stemmed hit.
+    kIsStemmedHit = 1,
+    kNumFlagsInFlagsField = 2,
   };
 
   enum FlagOffsetsInValueField {
@@ -173,7 +177,7 @@ class Hit {
   explicit Hit(Value value, Flags flags, TermFrequency term_frequency);
   explicit Hit(SectionId section_id, DocumentId document_id,
                TermFrequency term_frequency, bool is_in_prefix_section,
-               bool is_prefix_hit);
+               bool is_prefix_hit, bool is_stemmed_hit);
 
   bool is_valid() const { return value() != kInvalidValue; }
 
@@ -191,6 +195,8 @@ class Hit {
   bool has_flags() const;
 
   Flags flags() const { return flags_; }
+  // Whether or not the hit is a stemmed hit.
+  bool is_stemmed_hit() const;
   // Whether or not the hit contains a valid term frequency.
   bool has_term_frequency() const;
 
@@ -222,7 +228,8 @@ class Hit {
   // Value bits layout: 1 unused + 22 document_id + 6 section_id + 1
   // is_prefix_hit + 1 is_in_prefix_section + 1 has_flags.
   std::array<char, sizeof(Value)> value_;
-  // Flags bits layout: 1 reserved + 6 unused + 1 has_term_frequency.
+  // Flags bits layout: 1 reserved + 5 unused + 1 is_stemmed_hit + 1
+  // has_term_frequency.
   // The left-most bit is reserved for chaining additional fields in case of
   // future hit expansions.
   Flags flags_;

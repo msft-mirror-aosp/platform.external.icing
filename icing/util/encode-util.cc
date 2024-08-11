@@ -44,6 +44,29 @@ uint64_t DecodeIntFromCString(std::string_view encoded_str) {
   return value;
 }
 
+std::string EncodeStringToCString(std::string input) {
+  std::string encoded_str;
+  // use uint32_t to store 4 bytes, using unsigned types to keep automatically
+  // remove extra left most bits.
+  uint32_t bit_buffer = 0;
+  int bit_count = 0;
+  for (unsigned char c : input) {
+    // Add the next byte to the buffer.
+    bit_buffer = (bit_buffer << 8) | c;
+    bit_count += 8;
+    // Encode the first 7 bits of the byte buffer by adding 1 in front.
+    while (bit_count >= 7) {
+      bit_count -= 7;
+      encoded_str += ((bit_buffer >> bit_count) & 0x7F) | 0x80;
+    }
+  }
+  // Encode the remaining byte.
+  if (bit_count > 0) {
+    encoded_str += ((bit_buffer << (7 - bit_count)) & 0x7F) | 0x80;
+  }
+  return encoded_str;
+}
+
 }  // namespace encode_util
 
 }  // namespace lib

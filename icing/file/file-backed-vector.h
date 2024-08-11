@@ -325,7 +325,7 @@ class FileBackedVector {
   //   OUT_OF_RANGE_ERROR if file cannot be grown (i.e. reach
   //                      mmapped_file_->max_file_size())
   libtextclassifier3::Status Append(const T& value) {
-    return Set(header_->num_elements, value);
+    return Set(header()->num_elements, value);
   }
 
   // Allocates spaces with given length in the end of the vector and returns a
@@ -399,18 +399,28 @@ class FileBackedVector {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
-  // Updates checksum of the vector contents and returns it.
+  // Calculates the checksum of the vector contents and updates the header to
+  // hold this updated value.
   //
   // Returns:
-  //   INTERNAL_ERROR if the vector's internal state is inconsistent
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+  //   Checksum of the vector on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates the checksum of the vector contents and returns it. Does NOT
+  // update the header.
+  //
+  // Returns:
+  //   Checksum of the vector on success
+  //   INTERNAL_ERROR on IO error
+  Crc32 GetChecksum() const;
 
   // Accessors.
   const T* array() const {
-    return reinterpret_cast<const T*>(mmapped_file_->region());
+    return reinterpret_cast<const T*>(mmapped_file_->region() + sizeof(Header));
   }
 
-  int32_t num_elements() const { return header_->num_elements; }
+  int32_t num_elements() const { return header()->num_elements; }
 
  public:
   class MutableArrayView {
@@ -489,21 +499,21 @@ class FileBackedVector {
   // Can only be created through the factory ::Create function
   explicit FileBackedVector(const Filesystem& filesystem,
                             const std::string& file_path,
-                            std::unique_ptr<Header> header,
                             MemoryMappedFile&& mmapped_file);
 
   // Initialize a new FileBackedVector, and create the file.
   static libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
   InitializeNewFile(const Filesystem& filesystem, const std::string& file_path,
-                    ScopedFd fd, MemoryMappedFile::Strategy mmap_strategy,
+                    MemoryMappedFile::Strategy mmap_strategy,
                     int32_t max_file_size, int32_t pre_mapping_mmap_size);
 
   // Initialize a FileBackedVector from an existing file.
   static libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
   InitializeExistingFile(const Filesystem& filesystem,
-                         const std::string& file_path, ScopedFd fd,
+                         const std::string& file_path,
                          MemoryMappedFile::Strategy mmap_strategy,
-                         int32_t max_file_size, int32_t pre_mapping_mmap_size);
+                         int64_t file_size, int32_t max_file_size,
+                         int32_t pre_mapping_mmap_size);
 
   // Grows the underlying file to hold at least num_elements
   //
@@ -512,13 +522,20 @@ class FileBackedVector {
   libtextclassifier3::Status GrowIfNecessary(int32_t num_elements);
 
   T* mutable_array() const {
-    return reinterpret_cast<T*>(mmapped_file_->mutable_region());
+    return reinterpret_cast<T*>(mmapped_file_->mutable_region() +
+                                sizeof(Header));
+  }
+
+  const Header* header() const {
+    return reinterpret_cast<const Header*>(mmapped_file_->region());
+  }
+  Header* header() {
+    return reinterpret_cast<Header*>(mmapped_file_->mutable_region());
   }
 
   // Cached constructor params.
   const Filesystem* const filesystem_;
   const std::string file_path_;
-  std::unique_ptr<Header> header_;
   std::unique_ptr<MemoryMappedFile> mmapped_file_;
 
   // Offset before which all the elements have been included in the calculation
@@ -579,97 +596,95 @@ FileBackedVector<T>::Create(const Filesystem& filesystem,
         "Invalid max file size for FileBackedVector");
   }
 
-  ScopedFd fd(filesystem.OpenForWrite(file_path.c_str()));
-  if (!fd.is_valid()) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to open ", file_path));
+  int64_t file_size = 0;
+  {
+    ScopedFd fd(filesystem.OpenForWrite(file_path.c_str()));
+    if (!fd.is_valid()) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to open ", file_path));
+    }
+
+    file_size = filesystem.GetFileSize(fd.get());
+    if (file_size == Filesystem::kBadFileSize) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Bad file size for file ", file_path));
+    }
+
+    if (max_file_size < file_size) {
+      return absl_ports::InvalidArgumentError(
+          "Max file size should not be smaller than the existing file size");
+    }
   }
 
-  int64_t file_size = filesystem.GetFileSize(file_path.c_str());
-  if (file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Bad file size for file ", file_path));
+  if (file_size == 0) {
+    return InitializeNewFile(filesystem, file_path, mmap_strategy,
+                             max_file_size, pre_mapping_mmap_size);
   }
-
-  if (max_file_size < file_size) {
-    return absl_ports::InvalidArgumentError(
-        "Max file size should not be smaller than the existing file size");
-  }
-
-  const bool new_file = file_size == 0;
-  if (new_file) {
-    return InitializeNewFile(filesystem, file_path, std::move(fd),
-                             mmap_strategy, max_file_size,
-                             pre_mapping_mmap_size);
-  }
-  return InitializeExistingFile(filesystem, file_path, std::move(fd),
-                                mmap_strategy, max_file_size,
-                                pre_mapping_mmap_size);
+  return InitializeExistingFile(filesystem, file_path, mmap_strategy, file_size,
+                                max_file_size, pre_mapping_mmap_size);
 }
 
 template <typename T>
 libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
 FileBackedVector<T>::InitializeNewFile(const Filesystem& filesystem,
                                        const std::string& file_path,
-                                       ScopedFd fd,
                                        MemoryMappedFile::Strategy mmap_strategy,
                                        int32_t max_file_size,
                                        int32_t pre_mapping_mmap_size) {
   // Create header.
-  auto header = std::make_unique<Header>();
-  header->magic = FileBackedVector<T>::Header::kMagic;
-  header->element_size = kElementTypeSize;
-  header->header_checksum = header->CalculateHeaderChecksum();
+  Header header = {FileBackedVector<T>::Header::kMagic, kElementTypeSize,
+                   /*num_elements=*/0, /*vector_checksum=*/0,
+                   /*header_checksum=*/0};
+  header.header_checksum = header.CalculateHeaderChecksum();
 
-  // We use Write() here, instead of writing through the mmapped region
-  // created below, so we can gracefully handle errors that occur when the
-  // disk is full. See b/77309668 for details.
-  if (!filesystem.PWrite(fd.get(), /*offset=*/0, header.get(),
-                         Header::kHeaderSize)) {
-    return absl_ports::InternalError("Failed to write header");
-  }
-
-  // Close the fd since constructor of MemoryMappedFile calls mmap() and we need
-  // to flush fd before mmap().
-  fd.reset();
-
+  // Create the mmapped file and write the new header to it.
+  // Determine the correct pre_mapping size. max_file_size is specified as the
+  // size of the whole file whereas pre_mapping_mmap_size is just the size of
+  // elements, not including the header.
+  int64_t pre_mapping_mmap_size_long =
+      std::min(max_file_size, pre_mapping_mmap_size + Header::kHeaderSize);
   ICING_ASSIGN_OR_RETURN(
       MemoryMappedFile mmapped_file,
       MemoryMappedFile::Create(filesystem, file_path, mmap_strategy,
-                               max_file_size,
-                               /*pre_mapping_file_offset=*/Header::kHeaderSize,
-                               /*pre_mapping_mmap_size=*/
-                               std::min(max_file_size - Header::kHeaderSize,
-                                        pre_mapping_mmap_size)));
+                               max_file_size, /*pre_mapping_file_offset=*/0,
+                               pre_mapping_mmap_size_long));
+  ICING_RETURN_IF_ERROR(mmapped_file.GrowAndRemapIfNecessary(
+      /*new_file_offset=*/0, sizeof(Header)));
+  memcpy(mmapped_file.mutable_region(), &header, sizeof(header));
 
-  return std::unique_ptr<FileBackedVector<T>>(new FileBackedVector<T>(
-      filesystem, file_path, std::move(header), std::move(mmapped_file)));
+  return std::unique_ptr<FileBackedVector<T>>(
+      new FileBackedVector<T>(filesystem, file_path, std::move(mmapped_file)));
 }
 
 template <typename T>
 libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
 FileBackedVector<T>::InitializeExistingFile(
     const Filesystem& filesystem, const std::string& file_path,
-    const ScopedFd fd, MemoryMappedFile::Strategy mmap_strategy,
+    MemoryMappedFile::Strategy mmap_strategy, int64_t file_size,
     int32_t max_file_size, int32_t pre_mapping_mmap_size) {
-  int64_t file_size = filesystem.GetFileSize(file_path.c_str());
-  if (file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Bad file size for file ", file_path));
-  }
-
   if (file_size < Header::kHeaderSize) {
     return absl_ports::InternalError(
         absl_ports::StrCat("File header too short for ", file_path));
   }
 
-  auto header = std::make_unique<Header>();
-  if (!filesystem.PRead(fd.get(), header.get(), Header::kHeaderSize,
-                        /*offset=*/0)) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to read header of ", file_path));
-  }
+  // Mmap the content of the file so its easier to access elements from the
+  // mmapped region. Although users can specify their own pre_mapping_mmap_size,
+  // we should make sure that the pre-map size is at least file_size to make all
+  // existing elements available.
+  // As noted above, pre_mapping_mmap_size is just the size of elements, not
+  // including the header. So we need to add the header size to make it
+  // comparable to file size.
+  int64_t pre_mapping_mmap_size_long = std::max(
+      file_size,
+      static_cast<int64_t>(std::min(
+          max_file_size, pre_mapping_mmap_size + Header::kHeaderSize)));
+  ICING_ASSIGN_OR_RETURN(MemoryMappedFile mmapped_file,
+                         MemoryMappedFile::Create(filesystem, file_path,
+                                                  mmap_strategy, max_file_size,
+                                                  /*pre_mapping_file_offset=*/0,
+                                                  pre_mapping_mmap_size_long));
 
+  const Header* header = reinterpret_cast<const Header*>(mmapped_file.region());
   // Make sure the header is still valid before we use any of its values. This
   // should technically be included in the header_checksum check below, but this
   // is a quick/fast check that can save us from an extra crc computation.
@@ -699,34 +714,19 @@ FileBackedVector<T>::InitializeExistingFile(
         min_file_size, file_size));
   }
 
-  // Mmap the content of the vector, excluding the header so its easier to
-  // access elements from the mmapped region
-  // Although users can specify their own pre_mapping_mmap_size, we should make
-  // sure that the pre-map size is at least file_size - Header::kHeaderSize to
-  // make all existing elements available.
-  ICING_ASSIGN_OR_RETURN(
-      MemoryMappedFile mmapped_file,
-      MemoryMappedFile::Create(
-          filesystem, file_path, mmap_strategy, max_file_size,
-          /*pre_mapping_file_offset=*/Header::kHeaderSize,
-          /*pre_mapping_mmap_size=*/
-          std::max(
-              file_size - Header::kHeaderSize,
-              static_cast<int64_t>(std::min(max_file_size - Header::kHeaderSize,
-                                            pre_mapping_mmap_size)))));
-
   // Check vector contents
-  Crc32 vector_checksum(
-      std::string_view(reinterpret_cast<const char*>(mmapped_file.region()),
-                       header->num_elements * kElementTypeSize));
+  const char* vector_contents =
+      reinterpret_cast<const char*>(mmapped_file.region() + sizeof(Header));
+  Crc32 vector_checksum(std::string_view(
+      vector_contents, header->num_elements * kElementTypeSize));
 
   if (vector_checksum.Get() != header->vector_checksum) {
     return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid vector contents for ", file_path));
   }
 
-  return std::unique_ptr<FileBackedVector<T>>(new FileBackedVector<T>(
-      filesystem, file_path, std::move(header), std::move(mmapped_file)));
+  return std::unique_ptr<FileBackedVector<T>>(
+      new FileBackedVector<T>(filesystem, file_path, std::move(mmapped_file)));
 }
 
 template <typename T>
@@ -742,14 +742,12 @@ libtextclassifier3::Status FileBackedVector<T>::Delete(
 template <typename T>
 FileBackedVector<T>::FileBackedVector(const Filesystem& filesystem,
                                       const std::string& file_path,
-                                      std::unique_ptr<Header> header,
                                       MemoryMappedFile&& mmapped_file)
     : filesystem_(&filesystem),
       file_path_(file_path),
-      header_(std::move(header)),
       mmapped_file_(
           std::make_unique<MemoryMappedFile>(std::move(mmapped_file))),
-      changes_end_(header_->num_elements) {}
+      changes_end_(header()->num_elements) {}
 
 template <typename T>
 FileBackedVector<T>::~FileBackedVector() {
@@ -778,10 +776,10 @@ libtextclassifier3::StatusOr<const T*> FileBackedVector<T>::Get(
         IcingStringUtil::StringPrintf("Index, %d, was less than 0", idx));
   }
 
-  if (idx >= header_->num_elements) {
+  if (idx >= header()->num_elements) {
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
         "Index, %d, was greater than vector size, %d", idx,
-        header_->num_elements));
+        header()->num_elements));
   }
 
   return &array()[idx];
@@ -795,10 +793,10 @@ FileBackedVector<T>::GetMutable(int32_t idx) {
         IcingStringUtil::StringPrintf("Index, %d, was less than 0", idx));
   }
 
-  if (idx >= header_->num_elements) {
+  if (idx >= header()->num_elements) {
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
         "Index, %d, was greater than vector size, %d", idx,
-        header_->num_elements));
+        header()->num_elements));
   }
 
   return MutableView(this, &mutable_array()[idx]);
@@ -812,10 +810,10 @@ FileBackedVector<T>::GetMutable(int32_t idx, int32_t len) {
         IcingStringUtil::StringPrintf("Index, %d, was less than 0", idx));
   }
 
-  if (idx > header_->num_elements - len) {
+  if (idx > header()->num_elements - len) {
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
         "Index with len, %d %d, was greater than vector size, %d", idx, len,
-        header_->num_elements));
+        header()->num_elements));
   }
 
   return MutableArrayView(this, &mutable_array()[idx], len);
@@ -848,8 +846,8 @@ libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx, int32_t len,
 
   ICING_RETURN_IF_ERROR(GrowIfNecessary(idx + len));
 
-  if (idx + len > header_->num_elements) {
-    header_->num_elements = idx + len;
+  if (idx + len > header()->num_elements) {
+    header()->num_elements = idx + len;
   }
 
   for (int32_t i = 0; i < len; ++i) {
@@ -872,19 +870,19 @@ FileBackedVector<T>::Allocate(int32_t len) {
     return absl_ports::OutOfRangeError("Invalid allocate length");
   }
 
-  if (len > kMaxNumElements - header_->num_elements) {
+  if (len > kMaxNumElements - header()->num_elements) {
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Cannot allocate %d elements", len));
   }
 
-  // Although header_->num_elements + len doesn't exceed kMaxNumElements, the
+  // Although header()->num_elements + len doesn't exceed kMaxNumElements, the
   // actual max # of elements are determined by mmapped_file_->max_file_size(),
   // kElementTypeSize, and kHeaderSize. Thus, it is still possible to fail to
   // grow the file.
-  ICING_RETURN_IF_ERROR(GrowIfNecessary(header_->num_elements + len));
+  ICING_RETURN_IF_ERROR(GrowIfNecessary(header()->num_elements + len));
 
-  int32_t start_idx = header_->num_elements;
-  header_->num_elements += len;
+  int32_t start_idx = header()->num_elements;
+  header()->num_elements += len;
 
   return MutableArrayView(this, &mutable_array()[start_idx], len);
 }
@@ -897,7 +895,7 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
     return libtextclassifier3::Status::OK;
   }
 
-  if (num_elements <= header_->num_elements) {
+  if (num_elements <= header()->num_elements) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -916,8 +914,8 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
   }
 
   int64_t round_up_file_size_needed = math_util::RoundUpTo(
-      int64_t{least_file_size_needed},
-      int64_t{FileBackedVector<T>::kGrowElements} * kElementTypeSize);
+      static_cast<int64_t>(least_file_size_needed),
+      static_cast<int64_t>(FileBackedVector<T>::kGrowElements) * kElementTypeSize);
 
   // Call GrowAndRemapIfNecessary. It handles file growth internally and remaps
   // intelligently.
@@ -926,10 +924,9 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
   // round_up_file_size_needed exceeds it, so use the smaller value of them as
   // new_mmap_size.
   ICING_RETURN_IF_ERROR(mmapped_file_->GrowAndRemapIfNecessary(
-      /*new_file_offset=*/Header::kHeaderSize,
+      /*new_file_offset=*/0,
       /*new_mmap_size=*/std::min(round_up_file_size_needed,
-                                 mmapped_file_->max_file_size()) -
-          Header::kHeaderSize));
+                                 mmapped_file_->max_file_size())));
 
   return libtextclassifier3::Status::OK;
 }
@@ -942,10 +939,10 @@ libtextclassifier3::Status FileBackedVector<T>::TruncateTo(
         "Truncated length %d must be >= 0", new_num_elements));
   }
 
-  if (new_num_elements >= header_->num_elements) {
+  if (new_num_elements >= header()->num_elements) {
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
         "Truncated length %d must be less than the current size %d",
-        new_num_elements, header_->num_elements));
+        new_num_elements, header()->num_elements));
   }
 
   ICING_VLOG(2)
@@ -953,9 +950,9 @@ libtextclassifier3::Status FileBackedVector<T>::TruncateTo(
   changes_.clear();
   saved_original_buffer_.clear();
   changes_end_ = 0;
-  header_->vector_checksum = 0;
+  header()->vector_checksum = 0;
 
-  header_->num_elements = new_num_elements;
+  header()->num_elements = new_num_elements;
   return libtextclassifier3::Status::OK;
 }
 
@@ -963,7 +960,7 @@ template <typename T>
 libtextclassifier3::Status FileBackedVector<T>::Sort(int32_t begin_idx,
                                                      int32_t end_idx) {
   if (begin_idx < 0 || begin_idx >= end_idx ||
-      end_idx > header_->num_elements) {
+      end_idx > header()->num_elements) {
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
         "Invalid sort index, %d, %d", begin_idx, end_idx));
   }
@@ -987,7 +984,7 @@ void FileBackedVector<T>::SetDirty(int32_t idx) {
       changes_.clear();
       saved_original_buffer_.clear();
       changes_end_ = 0;
-      header_->vector_checksum = 0;
+      header()->vector_checksum = 0;
     } else {
       int32_t start_byte = idx * kElementTypeSize;
 
@@ -1000,12 +997,12 @@ void FileBackedVector<T>::SetDirty(int32_t idx) {
 }
 
 template <typename T>
-libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
+libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::UpdateChecksum() {
   // First apply the modified area. Keep a bitmap of already updated
   // regions so we don't double-update.
   std::vector<bool> updated(changes_end_);
   uint32_t cur_offset = 0;
-  Crc32 cur_crc(header_->vector_checksum);
+  Crc32 cur_crc(header()->vector_checksum);
   int num_partial_crcs = 0;
   int num_truncated = 0;
   int num_overlapped = 0;
@@ -1018,7 +1015,7 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
     }
 
     // Skip truncated tracked changes.
-    if (change_offset >= header_->num_elements) {
+    if (change_offset >= header()->num_elements) {
       ++num_truncated;
       continue;
     }
@@ -1080,43 +1077,48 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
   }
 
   // Now update with grown area.
-  if (changes_end_ < header_->num_elements) {
+  if (changes_end_ < header()->num_elements) {
     // Explicitly create the string_view with length
     std::string_view update_str(
         reinterpret_cast<const char*>(array()) +
             changes_end_ * kElementTypeSize,
-        (header_->num_elements - changes_end_) * kElementTypeSize);
+        (header()->num_elements - changes_end_) * kElementTypeSize);
     cur_crc.Append(update_str);
     ICING_VLOG(2) << IcingStringUtil::StringPrintf(
         "Array update tail crc offset %d -> %d", changes_end_,
-        header_->num_elements);
+        header()->num_elements);
   }
 
   // Clear, now that we've applied changes.
   changes_.clear();
   saved_original_buffer_.clear();
-  changes_end_ = header_->num_elements;
+  changes_end_ = header()->num_elements;
 
   // Commit new crc.
-  header_->vector_checksum = cur_crc.Get();
+  header()->vector_checksum = cur_crc.Get();
+  header()->header_checksum = header()->CalculateHeaderChecksum();
+  return cur_crc;
+}
+
+template <typename T>
+Crc32 FileBackedVector<T>::GetChecksum() const {
+  if (changes_.empty() && changes_end_ == header()->num_elements) {
+    // No changes, just return the checksum cached in the header.
+    return Crc32(header()->vector_checksum);
+  }
+  // TODO(b/352778910): Mirror the same logic in UpdateChecksum() to reduce the
+  // cost of GetChecksum.
+  Crc32 cur_crc(std::string_view(reinterpret_cast<const char*>(array()),
+                                 header()->num_elements * kElementTypeSize));
   return cur_crc;
 }
 
 template <typename T>
 libtextclassifier3::Status FileBackedVector<T>::PersistToDisk() {
   // Update and write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  header_->vector_checksum = checksum.Get();
-  header_->header_checksum = header_->CalculateHeaderChecksum();
-
-  if (!filesystem_->PWrite(file_path_.c_str(), /*offset=*/0, header_.get(),
-                           Header::kHeaderSize)) {
-    return absl_ports::InternalError("Failed to sync header");
-  }
-
-  MemoryMappedFile::Strategy strategy = mmapped_file_->strategy();
-
-  if (strategy == MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC) {
+  ICING_RETURN_IF_ERROR(UpdateChecksum());
+  if (mmapped_file_->strategy() ==
+      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC) {
     // Changes should have been applied to the underlying file, but call msync()
     // as an extra safety step to ensure they are written out.
     ICING_RETURN_IF_ERROR(mmapped_file_->PersistToDisk());
