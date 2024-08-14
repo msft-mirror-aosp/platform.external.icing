@@ -20,9 +20,11 @@
 #define ICING_INDEX_LITE_INDEX_H_
 
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -48,7 +50,6 @@
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/suggestion-result-checker.h"
-#include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -62,6 +63,9 @@ class LiteIndex {
  public:
   // An entry in the hit buffer.
   using Options = LiteIndexOptions;
+
+  // Offset for the LiteIndex_Header in the hit buffer mmap.
+  static constexpr uint32_t kHeaderFileOffset = 0;
 
   // Updates checksum of subcomponents.
   ~LiteIndex();
@@ -104,7 +108,7 @@ class LiteIndex {
 
     void Advance() { delegate_.Advance(); }
 
-    const char* GetKey() const { return delegate_.GetKey(); }
+    std::string_view GetKey() const { return delegate_.GetKey(); }
 
     uint32_t GetValueIndex() const { return delegate_.GetValueIndex(); }
 
@@ -117,7 +121,7 @@ class LiteIndex {
   PrefixIterator FindTermPrefixes(const std::string& prefix) const
       ICING_LOCKS_EXCLUDED(mutex_) {
     absl_ports::shared_lock l(&mutex_);
-    return PrefixIterator(IcingDynamicTrie::Iterator(lexicon_, prefix.c_str()));
+    return PrefixIterator(IcingDynamicTrie::Iterator(lexicon_, prefix));
   }
 
   // Inserts a term with its properties.
@@ -152,8 +156,8 @@ class LiteIndex {
   // Add all hits with term_id from the sections specified in section_id_mask,
   // skipping hits in non-prefix sections if only_from_prefix_sections is true,
   // to hits_out. If hits_out is nullptr, no hits will be added. The
-  // corresponding hit term frequencies will also be added if term_frequency_out
-  // is nullptr.
+  // corresponding hit term frequencies will also not be added if
+  // term_frequency_out is nullptr.
   //
   // Only those hits which belongs to the given namespaces will be counted and
   // fetched. A nullptr namespace checker will disable this check.
@@ -181,14 +185,28 @@ class LiteIndex {
 
   uint32_t size() const ICING_LOCKS_EXCLUDED(mutex_) {
     absl_ports::shared_lock l(&mutex_);
-    return sizeLocked();
+    return size_impl();
   }
 
   bool WantsMerge() const ICING_LOCKS_EXCLUDED(mutex_) {
     absl_ports::shared_lock l(&mutex_);
-    return is_full() || sizeLocked() >= (options_.hit_buffer_want_merge_bytes /
-                        sizeof(TermIdHitPair::Value));
+    return is_full() || size_impl() >= (options_.hit_buffer_want_merge_bytes /
+                                        sizeof(TermIdHitPair::Value));
   }
+
+  // Whether or not the HitBuffer's unsorted tail size exceeds the sort
+  // threshold.
+  bool HasUnsortedHitsExceedingSortThreshold() const
+      ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return HasUnsortedHitsExceedingSortThresholdImpl();
+  }
+
+  // Sort hits stored in the index.
+  void SortHits() ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::unique_lock l(&mutex_);
+    SortHitsImpl();
+  };
 
   class const_iterator {
     friend class LiteIndex;
@@ -271,7 +289,7 @@ class LiteIndex {
   // Returns debug information for the index in out.
   // verbosity = BASIC, simplest debug information - size of lexicon, hit buffer
   // verbosity = DETAILED, more detailed debug information from the lexicon.
-  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity)
+  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity) const
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns the byte size of all the elements held in the index. This excludes
@@ -291,6 +309,24 @@ class LiteIndex {
   IndexStorageInfoProto GetStorageInfo(IndexStorageInfoProto storage_info) const
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Returns the size of unsorted part of hit_buffer_.
+  uint32_t GetHitBufferByteSize() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return size_impl() * sizeof(TermIdHitPair::Value);
+  }
+
+  // Returns the size of unsorted part of hit_buffer_.
+  uint32_t GetHitBufferUnsortedSize() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return GetHitBufferUnsortedSizeImpl();
+  }
+
+  // Returns the byte size of unsorted part of hit_buffer_.
+  uint64_t GetHitBufferUnsortedByteSize() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return GetHitBufferUnsortedSizeImpl() * sizeof(TermIdHitPair::Value);
+  }
+
   // Reduces internal file sizes by reclaiming space of deleted documents.
   //
   // This method also sets the last_added_docid of the index to
@@ -304,6 +340,14 @@ class LiteIndex {
       const std::vector<DocumentId>& document_id_old_to_new,
       const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id)
       ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Updates the checksums of all index components, updates the combined
+  // checksum and returns it.
+  Crc32 UpdateChecksum() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Calculates the checksum of the index components and returns the combined
+  // checksum.
+  Crc32 GetChecksum() const ICING_LOCKS_EXCLUDED(mutex_);
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
@@ -326,25 +370,23 @@ class LiteIndex {
   // Check if the hit buffer has reached its capacity.
   bool is_full() const ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
-  uint32_t sizeLocked() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
-    return header_->cur_size();
-  }
-
   // Non-locking implementation for empty().
   bool empty_impl() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     return size_impl() == 0;
   }
 
   // Non-locking implementation for size().
-  bool size_impl() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+  uint32_t size_impl() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     return header_->cur_size();
   }
 
-  // Calculate the checksum of all sub-components of the LiteIndex
-  Crc32 ComputeChecksum() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  // Calculate the checksum of all sub-components of the LiteIndex and set it in
+  // the header.
+  Crc32 UpdateChecksumInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Sets the computed checksum in the header
-  void UpdateChecksum() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  // Calculates the checksum of all sub-components of the LiteIndex. Does NOT
+  // update the header.
+  Crc32 GetChecksumInternal() const ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Non-locking implementation for UpdateTermProperties.
   libtextclassifier3::Status UpdateTermPropertiesImpl(uint32_t tvi,
@@ -352,18 +394,54 @@ class LiteIndex {
                                                       NamespaceId namespace_id)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Whether or not the HitBuffer requires sorting.
-  bool NeedSort() ICING_LOCKS_EXCLUDED(mutex_) {
-    absl_ports::shared_lock l(&mutex_);
-    return header_->cur_size() - header_->searchable_end() > 0;
+  // We need to sort during querying time when:
+  // 1. Sorting at indexing time is not enabled and there is an unsorted tail
+  //    section in the HitBuffer.
+  // 2. The unsorted tail size exceeds the hit_buffer_sort_threshold, regardless
+  //    of whether or not hit_buffer_sort_at_indexing is enabled. This is to
+  //    prevent performing sequential search on a large unsorted tail section,
+  //    which would result in bad query performance.
+  //    This is more of a sanity check. We should not really be encountering
+  //    this case.
+  bool NeedSortAtQuerying() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+    return HasUnsortedHitsExceedingSortThresholdImpl() ||
+           (!options_.hit_buffer_sort_at_indexing &&
+            GetHitBufferUnsortedSizeImpl() > 0);
   }
 
-  // Sort hits stored in the index.
-  void SortHits() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  // Non-locking implementation for HasUnsortedHitsExceedingSortThresholdImpl().
+  bool HasUnsortedHitsExceedingSortThresholdImpl() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+    return GetHitBufferUnsortedSizeImpl() >=
+           (options_.hit_buffer_sort_threshold_bytes /
+            sizeof(TermIdHitPair::Value));
+  }
 
-  // Returns the position of the first element with term_id, or the searchable
-  // end of the hit buffer if term_id is not present.
-  uint32_t Seek(uint32_t term_id) const ICING_SHARED_LOCKS_REQUIRED(mutex_);
+  // Non-locking implementation for SortHits().
+  void SortHitsImpl() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Calculates and adds the score for a fetched hit to total_score_out, while
+  // updating last_document_id (which keeps track of the last added docId so
+  // far), and is_last_document_desired (which keeps track of whether that last
+  // added docId belongs to the query's desired namespace.)
+  //
+  // Also appends the hit to hits_out and term_frequency_out if the vectors are
+  // not null.
+  void ScoreAndAppendFetchedHit(
+      const Hit& hit, SectionIdMask section_id_mask,
+      bool only_from_prefix_sections,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+      const SuggestionResultChecker* suggestion_result_checker,
+      DocumentId& last_document_id, bool& is_last_document_desired,
+      int& total_score_out, std::vector<DocHitInfo>* hits_out,
+      std::vector<Hit::TermFrequencyArray>* term_frequency_out) const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
+
+  // Returns the size of unsorted part of hit_buffer_.
+  uint32_t GetHitBufferUnsortedSizeImpl() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+    return header_->cur_size() - header_->searchable_end();
+  }
 
   // File descriptor that points to where the header and hit buffer are written
   // to.

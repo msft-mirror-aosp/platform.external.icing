@@ -15,7 +15,11 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
-#include "unicode/uversion.h"
+#include "unicode/uconfig.h"  // IWYU pragma: keep
+// clang-format: do not reorder the above include.
+
+#include "icing/expand/stemming/stemmer-factory.h"
+#include "unicode/uvernum.h"
 
 namespace icing {
 namespace lib {
@@ -40,14 +44,14 @@ inline bool IsIcuTokenization() {
   return !IsReverseJniTokenization() && !IsCfStringTokenization();
 }
 
-inline bool IsIcu72PlusTokenization() {
-  if (!IsIcuTokenization()) {
-    return false;
-  }
-  UVersionInfo version_array;
-  u_getVersion(version_array);
-  return version_array[0] >= 72;
+inline int GetIcuTokenizationVersion() {
+  return IsIcuTokenization() ? U_ICU_VERSION_MAJOR_NUM : 0;
 }
+// Indicates whether stemming is enabled.
+//
+// This is false if stemmer_factory is compiled with the none-stemmer
+// implementation and true for the snowball-stemmer implementation.
+inline bool IsStemmingEnabled() { return stemmer_factory::IsStemmingEnabled(); }
 
 // Whether we're running on android_x86
 inline bool IsAndroidX86() {

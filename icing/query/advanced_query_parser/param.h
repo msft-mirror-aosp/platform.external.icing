@@ -35,11 +35,17 @@ struct Param {
 
   libtextclassifier3::Status Matches(PendingValue& arg) const {
     bool matches = arg.data_type() == data_type;
-    // Values of type kText could also potentially be valid kLong values. If
-    // we're expecting a kLong and we have a kText, try to parse it as a kLong.
+    // Values of type kText could also potentially be valid kLong or kDouble
+    // values. If we're expecting a kLong or kDouble and we have a kText, try to
+    // parse it as what we expect.
     if (!matches && data_type == DataType::kLong &&
         arg.data_type() == DataType::kText) {
       ICING_RETURN_IF_ERROR(arg.ParseInt());
+      matches = true;
+    }
+    if (!matches && data_type == DataType::kDouble &&
+        arg.data_type() == DataType::kText) {
+      ICING_RETURN_IF_ERROR(arg.ParseDouble());
       matches = true;
     }
     return matches ? libtextclassifier3::Status::OK

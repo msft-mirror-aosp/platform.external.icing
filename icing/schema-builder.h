@@ -50,11 +50,19 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
 constexpr TermMatchType::Code TERM_MATCH_PREFIX = TermMatchType::PREFIX;
+constexpr TermMatchType::Code TERM_MATCH_STEMMING = TermMatchType::STEMMING;
 
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_UNKNOWN =
     IntegerIndexingConfig::NumericMatchType::UNKNOWN;
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_RANGE =
     IntegerIndexingConfig::NumericMatchType::RANGE;
+
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_UNKNOWN =
+        EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_LINEAR_SEARCH =
+        EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
 
 constexpr PropertyConfigProto::DataType::Code TYPE_UNKNOWN =
     PropertyConfigProto::DataType::UNKNOWN;
@@ -70,6 +78,10 @@ constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
     PropertyConfigProto::DataType::BYTES;
 constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
     PropertyConfigProto::DataType::DOCUMENT;
+constexpr PropertyConfigProto::DataType::Code TYPE_VECTOR =
+    PropertyConfigProto::DataType::VECTOR;
+constexpr PropertyConfigProto::DataType::Code TYPE_BLOB_HANDLE =
+    PropertyConfigProto::DataType::BLOB_HANDLE;
 
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
     JoinableConfig::ValueType::NONE;
@@ -146,6 +158,15 @@ class PropertyConfigBuilder {
     return *this;
   }
 
+  PropertyConfigBuilder& SetDataTypeVector(
+      EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+          embedding_indexing_type) {
+    property_.set_data_type(PropertyConfigProto::DataType::VECTOR);
+    property_.mutable_embedding_indexing_config()->set_embedding_indexing_type(
+        embedding_indexing_type);
+    return *this;
+  }
+
   PropertyConfigBuilder& SetJoinable(
       JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
     property_.mutable_joinable_config()->set_value_type(join_value_type);
@@ -156,6 +177,11 @@ class PropertyConfigBuilder {
   PropertyConfigBuilder& SetCardinality(
       PropertyConfigProto::Cardinality::Code cardinality) {
     property_.set_cardinality(cardinality);
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDescription(std::string description) {
+    property_.set_description(std::move(description));
     return *this;
   }
 
@@ -183,6 +209,11 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetVersion(int version) {
     type_config_.set_version(version);
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetDescription(std::string description) {
+    type_config_.set_description(std::move(description));
     return *this;
   }
 

@@ -36,7 +36,6 @@
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/proto/storage.pb.h"
@@ -44,6 +43,7 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -59,6 +59,7 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::Not;
 using ::testing::Return;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
@@ -114,6 +115,8 @@ std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_document_store_namespace_id_fingerprint(true);
+  icing_options.set_use_new_qualified_id_join_index(true);
   return icing_options;
 }
 
@@ -732,8 +735,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify numeric (integer) search: will get document.
   SearchSpecProto search_spec2;
   search_spec2.set_query("b == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -843,8 +844,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify numeric (integer) search: won't get anything.
   SearchSpecProto search_spec2;
   search_spec2.set_query("a == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -897,8 +896,17 @@ TEST_F(
   // - "age": integer type, indexed. Section id = 0
   // - "name": string type, indexed. Section id = 1.
   // - "worksFor.name": string type, (nested) indexed. Section id = 2.
+  //
+  // Joinable property id assignment for 'Person':
+  // - "worksFor.listRef": string type, Qualified Id type joinable. Joinable
+  //   property id = 0.
   SchemaProto schema_one =
       SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("List").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Person")
                        .AddProperty(PropertyConfigBuilder()
@@ -922,38 +930,47 @@ TEST_F(
                                         .SetName("name")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("listRef")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
+  ASSERT_THAT(icing.SetSchema(schema_one).status(), ProtoIsOk());
 
-  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
-  // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
-  SetSchemaResultProto expected_set_schema_result;
-  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("Organization");
-  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
-  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
-
-  DocumentProto personDocument =
+  DocumentProto list_document = DocumentBuilder()
+                                    .SetKey("namespace", "list/1")
+                                    .SetSchema("List")
+                                    .SetCreationTimestampMs(1000)
+                                    .AddStringProperty("title", "title")
+                                    .Build();
+  DocumentProto person_document =
       DocumentBuilder()
           .SetKey("namespace", "person/2")
           .SetSchema("Person")
           .SetCreationTimestampMs(1000)
           .AddStringProperty("name", "John")
           .AddInt64Property("age", 20)
-          .AddDocumentProperty("worksFor",
-                               DocumentBuilder()
-                                   .SetKey("namespace", "org/1")
-                                   .SetSchema("Organization")
-                                   .AddStringProperty("name", "Google")
-                                   .Build())
+          .AddDocumentProperty(
+              "worksFor", DocumentBuilder()
+                              .SetKey("namespace", "org/1")
+                              .SetSchema("Organization")
+                              .AddStringProperty("name", "Google")
+                              .AddStringProperty("listRef", "namespace#list/1")
+                              .Build())
           .Build();
-  EXPECT_THAT(icing.Put(personDocument).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(list_document).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      personDocument;
+      person_document;
 
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
@@ -964,22 +981,52 @@ TEST_F(
   search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   SearchResultProto actual_results =
-      icing.Search(search_spec1, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec1, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
+  actual_results =
+      icing.Search(search_spec2, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
+
+  // Verify join search: join a query for `title:title` (which will get
+  // list_document) with a child query for `name:John` (which will get
+  // person_document) based on the child's `worksFor.listRef` field.
+  SearchSpecProto search_spec_with_join;
+  search_spec_with_join.set_query("title:title");
+  search_spec_with_join.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec_with_join.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("worksFor.listRef");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("name:John");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = result_spec;
+
+  SearchResultProto expected_join_search_result_proto;
+  expected_join_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_join_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = list_document;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() =
+      person_document;
+
+  actual_results =
+      icing.Search(search_spec_with_join, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_join_search_result_proto));
 
   // Change the schema to add another nested document property to 'Person'
   //
@@ -988,8 +1035,19 @@ TEST_F(
   // - "almaMater.name", string type, indexed. Section id = 1
   // - "name": string type, indexed. Section id = 2
   // - "worksFor.name": string type, (nested) indexed. Section id = 3
+  //
+  // New joinable property id assignment for 'Person':
+  // - "almaMater.listRef": string type, Qualified Id type joinable. Joinable
+  //   property id = 0.
+  // - "worksFor.listRef": string type, Qualified Id type joinable. Joinable
+  //   property id = 1.
   SchemaProto schema_two =
       SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("List").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Person")
                        .AddProperty(PropertyConfigBuilder()
@@ -1019,6 +1077,11 @@ TEST_F(
                                         .SetName("name")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("listRef")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -1028,10 +1091,10 @@ TEST_F(
   // Index restoration should be triggered here because new schema requires more
   // properties to be indexed. Also new section ids will be reassigned and index
   // restoration should use new section ids to rebuild.
-  set_schema_result = icing.SetSchema(schema_two);
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_latency_ms();
-  expected_set_schema_result = SetSchemaResultProto();
+  SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Person");
@@ -1041,8 +1104,8 @@ TEST_F(
 
   // Verify term search:
   // Searching for "worksFor.name:Google" should still match document
-  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
+  actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 
@@ -1051,16 +1114,22 @@ TEST_F(
   // rebuild was not triggered and Icing is still searching the old index, where
   // 'worksFor.name' was indexed at section id 2.
   search_spec1.set_query("name:Google");
-  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
+  actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
   // Verify numeric (integer) search: should still match document
-  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
+  actual_results =
+      icing.Search(search_spec2, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
+
+  // Verify join search: should still able to join by `worksFor.listRef`
+  actual_results =
+      icing.Search(search_spec_with_join, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_join_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
@@ -1168,8 +1237,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // 'timestamp'
   SearchSpecProto search_spec2;
   search_spec2.set_query("sender.age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1240,8 +1307,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // document shouldn't match a query for 20 in either 'sender.age' or
   // 'timestamp'
   search_spec2.set_query("sender.age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1448,8 +1513,6 @@ TEST_F(
   // 'timestamp' or 'sender.birthday'
   SearchSpecProto search_spec3;
   search_spec3.set_query("sender.age == 20");
-  search_spec3.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
@@ -1890,8 +1953,6 @@ TEST_F(
   // 'timestamp2'.
   SearchSpecProto search_spec2;
   search_spec2.set_query("timestamp2 == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1947,8 +2008,6 @@ TEST_F(
   // We should be able to retrieve the document by searching for 1234 in
   // 'timestamp'.
   search_spec2.set_query("timestamp2 == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2185,8 +2244,6 @@ TEST_F(
   // 'timestamp'.
   SearchSpecProto search_spec2;
   search_spec2.set_query("timestamp == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2248,8 +2305,6 @@ TEST_F(
   // We should be able to retrieve the document by searching for 1234 in
   // 'timestamp'.
   search_spec2.set_query("timestamp == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2730,15 +2785,55 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeFailedPrecondition) {
 TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaTypeConfigProto schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("SchemaType")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("string")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("document")
+                  .SetDataTypeDocument("NestedType",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("boolean")
+                           .SetDataType(TYPE_BOOLEAN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("int64")
+                           .SetDataType(TYPE_INT64)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("double")
+                           .SetDataType(TYPE_DOUBLE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("byte")
+                           .SetDataType(TYPE_BYTES)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blobHandle")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("NestedType").Build())
+          .AddType(schema_type_config)
+          .Build();
 
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
   GetSchemaTypeResultProto expected_get_schema_type_result_proto;
   expected_get_schema_type_result_proto.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_type_result_proto.mutable_schema_type_config() =
-      CreateMessageSchema().types(0);
-  EXPECT_THAT(icing.GetSchemaType(CreateMessageSchema().types(0).schema_type()),
+      schema_type_config;
+  EXPECT_THAT(icing.GetSchemaType("SchemaType"),
               EqualsProto(expected_get_schema_type_result_proto));
 }
 
@@ -3057,6 +3152,106 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, IcingShouldReturnErrorForExtraSections) {
+  // Create a schema with more sections than allowed.
+  SchemaTypeConfigBuilder schema_type_config_builder =
+      SchemaTypeConfigBuilder().SetType("type");
+  for (int i = 0; i <= kMaxSectionId + 1; ++i) {
+    schema_type_config_builder.AddProperty(
+        PropertyConfigBuilder()
+            .SetName("prop" + std::to_string(i))
+            .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+            .SetCardinality(CARDINALITY_OPTIONAL));
+  }
+  SchemaProto schema =
+      SchemaBuilder().AddType(schema_type_config_builder).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status().message(),
+              HasSubstr("Too many properties to be indexed"));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, UpdatedTypeDescriptionIsSaved) {
+  // Create a schema with more sections than allowed.
+  PropertyConfigProto old_property =
+      PropertyConfigBuilder()
+          .SetName("prop0")
+          .SetDescription("old property description")
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build();
+  SchemaTypeConfigProto old_schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("type")
+          .SetDescription("old description")
+          .AddProperty(old_property)
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(old_schema_type_config).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // Update the type description
+  SchemaTypeConfigProto new_schema_type_config =
+      SchemaTypeConfigBuilder(old_schema_type_config)
+          .SetDescription("new description")
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_schema_type_config).Build();
+  ASSERT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  GetSchemaResultProto get_result = icing.GetSchema();
+  ASSERT_THAT(get_result.status(), ProtoIsOk());
+  ASSERT_THAT(get_result.schema(), EqualsProto(new_schema));
+  ASSERT_THAT(get_result.schema(), Not(EqualsProto(old_schema)));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, UpdatedPropertyDescriptionIsSaved) {
+  // Create a schema with more sections than allowed.
+  PropertyConfigProto old_property =
+      PropertyConfigBuilder()
+          .SetName("prop0")
+          .SetDescription("old property description")
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build();
+  SchemaTypeConfigProto old_schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("type")
+          .SetDescription("old description")
+          .AddProperty(old_property)
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(old_schema_type_config).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // Update the property description
+  PropertyConfigProto new_property =
+      PropertyConfigBuilder(old_property)
+          .SetDescription("new property description")
+          .Build();
+  SchemaTypeConfigProto new_schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("type")
+          .SetDescription("old description")
+          .AddProperty(new_property)
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_schema_type_config).Build();
+  ASSERT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  GetSchemaResultProto get_result = icing.GetSchema();
+  ASSERT_THAT(get_result.status(), ProtoIsOk());
+  ASSERT_THAT(get_result.schema(), EqualsProto(new_schema));
+  ASSERT_THAT(get_result.schema(), Not(EqualsProto(old_schema)));
 }
 
 }  // namespace

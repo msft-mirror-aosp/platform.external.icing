@@ -14,15 +14,23 @@
 
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
-#include <array>
-#include <cstddef>
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <numeric>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/lite-index.h"
+#include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -65,12 +73,11 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
+  ++num_advance_calls_;
   doc_hit_info_ = cached_hits_.at(cached_hits_idx_);
-  hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
 }
 
@@ -110,7 +117,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
   int terms_matched = 0;
   for (LiteIndex::PrefixIterator it = lite_index_->FindTermPrefixes(term_);
        it.IsValid(); it.Advance()) {
-    bool exact_match = strlen(it.GetKey()) == term_len;
+    bool exact_match = it.GetKey().size() == term_len;
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
@@ -188,7 +195,12 @@ void DocHitInfoIteratorTermLitePrefix::SortAndDedupeDocumentIds() {
             cached_hit_term_frequency_[idx];
         while (curr_mask) {
           SectionId section_id = __builtin_ctzll(curr_mask);
-          collapsed_term_frequency[section_id] =
+          // We add the new term-frequency to the existing term-frequency we've
+          // recorded for the current section-id in case there are multiple hits
+          // matching the query for this section.
+          // - This is the case for a prefix query where there are multiple
+          //   terms matching the prefix from the same sectionId + docId.
+          collapsed_term_frequency[section_id] +=
               cached_hit_term_frequency_[i][section_id];
           curr_mask &= ~(UINT64_C(1) << section_id);
         }
