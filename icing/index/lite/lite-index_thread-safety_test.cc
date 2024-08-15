@@ -120,10 +120,10 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousFetchHits_singleTerm) {
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
                Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-               /*is_prefix_hit=*/false);
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   Hit doc_hit1(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId1,
                Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-               /*is_prefix_hit=*/false);
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit1));
 
@@ -168,10 +168,10 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousFetchHits_multipleTerms) {
                                term_id_codec_->EncodeTvi(tvi, TviType::LITE));
     Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                 /*is_prefix_hit=*/false);
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     Hit doc_hit1(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId1,
                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                 /*is_prefix_hit=*/false);
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit0));
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit1));
   }
@@ -223,7 +223,7 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousAddHitAndFetchHits_singleTerm) {
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
                Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-               /*is_prefix_hit=*/false);
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
 
   // Create kNumThreads threads. Every even-numbered thread calls FetchHits and
@@ -244,7 +244,7 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousAddHitAndFetchHits_singleTerm) {
       // Odd-numbered thread calls AddHit.
       Hit doc_hit(/*section_id=*/thread_id / 2, /*document_id=*/kDocumentId0,
                   Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                  /*is_prefix_hit=*/false);
+                  /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
       ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
     }
   };
@@ -290,7 +290,7 @@ TEST_F(LiteIndexThreadSafetyTest,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
                Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-               /*is_prefix_hit=*/false);
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
 
   // Create kNumThreads threads. Every even-numbered thread calls FetchHits and
@@ -320,7 +320,7 @@ TEST_F(LiteIndexThreadSafetyTest,
       // AddHit to section 0 of a new doc.
       Hit doc_hit(/*section_id=*/kSectionId0, /*document_id=*/thread_id / 2,
                   Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                  /*is_prefix_hit=*/false);
+                  /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
       ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit));
     }
   };
@@ -354,10 +354,10 @@ TEST_F(LiteIndexThreadSafetyTest, ManyAddHitAndOneFetchHits_multipleTerms) {
                                term_id_codec_->EncodeTvi(tvi, TviType::LITE));
     Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                 /*is_prefix_hit=*/false);
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     Hit doc_hit1(/*section_id=*/kSectionId1, /*document_id=*/kDocumentId0,
                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                 /*is_prefix_hit=*/false);
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit0));
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit1));
   }
@@ -390,7 +390,8 @@ TEST_F(LiteIndexThreadSafetyTest, ManyAddHitAndOneFetchHits_multipleTerms) {
       // AddHit to section (thread_id % 5 + 1) of doc 0.
       Hit doc_hit(/*section_id=*/thread_id % 5 + 1,
                   /*document_id=*/kDocumentId0, Hit::kDefaultTermFrequency,
-                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                  /*is_stemmed_hit=*/false);
       ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit));
     }
   };

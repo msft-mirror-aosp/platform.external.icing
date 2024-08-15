@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "icing/proto/document.pb.h"
 
@@ -113,6 +114,14 @@ class DocumentBuilder {
     return AddBooleanProperty(std::move(property_name), {boolean_values...});
   }
 
+  // Takes a property name and any number of blob handle values.
+  template <typename... V>
+  DocumentBuilder& AddBlobHandleProperty(std::string property_name,
+                                         V... blob_handle_values) {
+    return AddBlobHandleProperty(std::move(property_name),
+                                 {blob_handle_values...});
+  }
+
   // Takes a property name and any number of bytes values.
   template <typename... V>
   DocumentBuilder& AddBytesProperty(std::string property_name,
@@ -131,6 +140,18 @@ class DocumentBuilder {
   DocumentBuilder& AddVectorProperty(std::string property_name,
                                      V... vector_values) {
     return AddVectorProperty(std::move(property_name), {vector_values...});
+  }
+
+  // Takes a property name and a list of vector values.
+  DocumentBuilder& AddVectorProperty(
+      std::string property_name,
+      std::vector<PropertyProto::VectorProto> vector_values) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (PropertyProto::VectorProto vector_value : vector_values) {
+      property->mutable_vector_values()->Add(std::move(vector_value));
+    }
+    return *this;
   }
 
   DocumentProto Build() const { return document_; }
@@ -165,6 +186,19 @@ class DocumentBuilder {
     property->set_name(std::move(property_name));
     for (bool boolean_value : boolean_values) {
       property->mutable_boolean_values()->Add(boolean_value);
+    }
+    return *this;
+  }
+
+  DocumentBuilder& AddBlobHandleProperty(
+      std::string property_name,
+      std::initializer_list<PropertyProto::BlobHandleProto>
+          blob_handle_values) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (PropertyProto::BlobHandleProto blob_handle_value :
+         blob_handle_values) {
+      property->mutable_blob_handle_values()->Add(std::move(blob_handle_value));
     }
     return *this;
   }
