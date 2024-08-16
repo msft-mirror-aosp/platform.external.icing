@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "icing/legacy/index/icing-storage.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -44,7 +45,9 @@ class IcingStorageCollection : public IIcingStorage {
   bool Remove() override;
   bool Sync() override;
   uint64_t GetDiskUsage() const override;
-  void OnSleep() override;
+
+  Crc32 UpdateCrc() override;
+
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
  private:
