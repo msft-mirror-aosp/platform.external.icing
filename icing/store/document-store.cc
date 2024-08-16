@@ -535,8 +535,9 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   ICING_RETURN_IF_ERROR(
       usage_store_->TruncateTo(document_id_mapper_->num_elements()));
 
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  if (checksum.Get() != header.checksum) {
+  Crc32 expected_checksum(header.checksum);
+  ICING_ASSIGN_OR_RETURN(Crc32 checksum, GetChecksum());
+  if (checksum != expected_checksum) {
     return absl_ports::InternalError(
         "Combined checksum of DocStore was inconsistent");
   }
@@ -682,9 +683,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
       usage_store_->TruncateTo(document_id_mapper_->num_elements()));
 
   // Write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
-
+  ICING_RETURN_IF_ERROR(UpdateChecksum());
   return libtextclassifier3::Status::OK;
 }
 
@@ -831,12 +830,12 @@ libtextclassifier3::Status DocumentStore::ResetCorpusMapper() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
+libtextclassifier3::StatusOr<Crc32> DocumentStore::GetChecksum() const {
   Crc32 total_checksum;
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto checksum_or = document_log_->ComputeChecksum();
+  auto checksum_or = document_log_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of DocumentLog";
@@ -846,7 +845,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = document_key_mapper_->ComputeChecksum();
+  checksum_or = document_key_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of DocumentKeyMapper";
@@ -856,7 +855,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = document_id_mapper_->ComputeChecksum();
+  checksum_or = document_id_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of DocumentIdMapper";
@@ -866,7 +865,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = score_cache_->ComputeChecksum();
+  checksum_or = score_cache_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of score cache";
@@ -876,7 +875,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = filter_cache_->ComputeChecksum();
+  checksum_or = filter_cache_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of filter cache";
@@ -886,7 +885,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = namespace_mapper_->ComputeChecksum();
+  checksum_or = namespace_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of namespace mapper";
@@ -896,7 +895,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = corpus_mapper_->ComputeChecksum();
+  checksum_or = corpus_mapper_->GetChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(ERROR) << checksum_or.status().error_message()
                      << "Failed to compute checksum of corpus mapper";
@@ -906,7 +905,106 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  checksum_or = corpus_score_cache_->ComputeChecksum();
+  checksum_or = corpus_score_cache_->GetChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(WARNING) << checksum_or.status().error_message()
+                       << "Failed to compute checksum of score cache";
+    return checksum_or.status();
+  }
+  Crc32 corpus_score_cache_checksum = std::move(checksum_or).ValueOrDie();
+
+  // NOTE: We purposely don't include usage_store checksum here because we can't
+  // regenerate it from ground truth documents. If it gets corrupted, we'll just
+  // clear all usage reports, but we shouldn't throw everything else in the
+  // document store out.
+
+  total_checksum.Append(std::to_string(document_log_checksum.Get()));
+  total_checksum.Append(std::to_string(document_key_mapper_checksum.Get()));
+  total_checksum.Append(std::to_string(document_id_mapper_checksum.Get()));
+  total_checksum.Append(std::to_string(score_cache_checksum.Get()));
+  total_checksum.Append(std::to_string(filter_cache_checksum.Get()));
+  total_checksum.Append(std::to_string(namespace_mapper_checksum.Get()));
+  total_checksum.Append(std::to_string(corpus_mapper_checksum.Get()));
+  total_checksum.Append(std::to_string(corpus_score_cache_checksum.Get()));
+  return total_checksum;
+}
+
+libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
+  Crc32 total_checksum;
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  auto checksum_or = document_log_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of DocumentLog";
+    return checksum_or.status();
+  }
+  Crc32 document_log_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = document_key_mapper_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of DocumentKeyMapper";
+    return checksum_or.status();
+  }
+  Crc32 document_key_mapper_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = document_id_mapper_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of DocumentIdMapper";
+    return checksum_or.status();
+  }
+  Crc32 document_id_mapper_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = score_cache_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of score cache";
+    return checksum_or.status();
+  }
+  Crc32 score_cache_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = filter_cache_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of filter cache";
+    return checksum_or.status();
+  }
+  Crc32 filter_cache_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = namespace_mapper_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of namespace mapper";
+    return checksum_or.status();
+  }
+  Crc32 namespace_mapper_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = corpus_mapper_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of corpus mapper";
+    return checksum_or.status();
+  }
+  Crc32 corpus_mapper_checksum = std::move(checksum_or).ValueOrDie();
+
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = corpus_score_cache_->UpdateChecksum();
   if (!checksum_or.ok()) {
     ICING_LOG(WARNING) << checksum_or.status().error_message()
                        << "Failed to compute checksum of score cache";
@@ -928,6 +1026,21 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
   total_checksum.Append(std::to_string(corpus_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(corpus_score_cache_checksum.Get()));
 
+  // Write the header
+  DocumentStore::Header header;
+  header.magic =
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
+  header.checksum = total_checksum.Get();
+
+  // This should overwrite the header.
+  ScopedFd sfd(
+      filesystem_->OpenForWrite(MakeHeaderFilename(base_dir_).c_str()));
+  if (!sfd.is_valid() ||
+      !filesystem_->Write(sfd.get(), &header, sizeof(header)) ||
+      !filesystem_->DataSync(sfd.get())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to write DocStore header: ", MakeHeaderFilename(base_dir_)));
+  }
   return total_checksum;
 }
 
@@ -941,25 +1054,6 @@ bool DocumentStore::HeaderExists() {
 
   // If it's been truncated to size 0 before, we consider it to be a new file
   return file_size != 0 && file_size != Filesystem::kBadFileSize;
-}
-
-libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
-  // Write the header
-  DocumentStore::Header header;
-  header.magic =
-      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
-  header.checksum = checksum.Get();
-
-  // This should overwrite the header.
-  ScopedFd sfd(
-      filesystem_->OpenForWrite(MakeHeaderFilename(base_dir_).c_str()));
-  if (!sfd.is_valid() ||
-      !filesystem_->Write(sfd.get(), &header, sizeof(header)) ||
-      !filesystem_->DataSync(sfd.get())) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to write DocStore header: ", MakeHeaderFilename(base_dir_)));
-  }
-  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
@@ -1083,24 +1177,31 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
   // TODO(b/147231617): Make a better way to replace the error message in an
   // existing Status.
   auto document_id_or = GetDocumentId(name_space, uri);
-  if (absl_ports::IsNotFound(document_id_or.status())) {
-    ICING_VLOG(1) << document_id_or.status().error_message();
-    return libtextclassifier3::Status(
-        document_id_or.status().CanonicalCode(),
-        IcingStringUtil::StringPrintf("Document (%s, %s) not found.",
-                                      name_space.data(), uri.data()));
+  if (!document_id_or.ok()) {
+    if (absl_ports::IsNotFound(document_id_or.status())) {
+      ICING_VLOG(1) << document_id_or.status().error_message();
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Document (", name_space, ", ", uri, ") not found."));
+    }
+
+    // Real error. Log it in error level and pass it up.
+    ICING_LOG(ERROR) << document_id_or.status().error_message();
+    return std::move(document_id_or).status();
   }
   DocumentId document_id = document_id_or.ValueOrDie();
 
   // TODO(b/147231617): Make a better way to replace the error message in an
   // existing Status.
-  auto status_or = Get(document_id);
-  if (absl_ports::IsNotFound(status_or.status())) {
-    ICING_LOG(ERROR) << document_id_or.status().error_message();
-    return libtextclassifier3::Status(
-        status_or.status().CanonicalCode(),
-        IcingStringUtil::StringPrintf("Document (%s, %s) not found.",
-                                      name_space.data(), uri.data()));
+  auto status_or = Get(document_id, clear_internal_fields);
+  if (!status_or.ok()) {
+    if (absl_ports::IsNotFound(status_or.status())) {
+      ICING_VLOG(1) << status_or.status().error_message();
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Document (", name_space, ", ", uri, ") not found."));
+    }
+
+    // Real error. Log it in error level.
+    ICING_LOG(ERROR) << status_or.status().error_message();
   }
   return status_or;
 }
@@ -1381,30 +1482,21 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
 
 libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
 DocumentStore::GetCorpusAssociatedScoreData(CorpusId corpus_id) const {
-  auto score_data_or = corpus_score_cache_->GetCopy(corpus_id);
-  if (!score_data_or.ok()) {
-    return score_data_or.status();
-  }
-
-  CorpusAssociatedScoreData corpus_associated_score_data =
-      std::move(score_data_or).ValueOrDie();
-  return corpus_associated_score_data;
+  return corpus_score_cache_->GetCopy(corpus_id);
 }
 
 libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
 DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
   auto corpus_scoring_data_or = GetCorpusAssociatedScoreData(corpus_id);
-  if (corpus_scoring_data_or.ok()) {
-    return std::move(corpus_scoring_data_or).ValueOrDie();
+  if (!corpus_scoring_data_or.ok() &&
+      absl_ports::IsOutOfRange(corpus_scoring_data_or.status())) {
+    // OUT_OF_RANGE is the StatusCode returned when a corpus id is added to
+    // corpus_score_cache_ for the first time. Return a default
+    // CorpusAssociatedScoreData object in this case.
+    return CorpusAssociatedScoreData();
   }
-  CorpusAssociatedScoreData scoringData;
-  // OUT_OF_RANGE is the StatusCode returned when a corpus id is added to
-  // corpus_score_cache_ for the first time.
-  if (corpus_scoring_data_or.status().CanonicalCode() ==
-      libtextclassifier3::StatusCode::OUT_OF_RANGE) {
-    return scoringData;
-  }
-  return corpus_scoring_data_or.status();
+
+  return corpus_scoring_data_or;
 }
 
 // TODO(b/273826815): Decide on and adopt a consistent pattern for handling
@@ -1557,11 +1649,11 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 
 libtextclassifier3::Status DocumentStore::PersistToDisk(
     PersistType::Code persist_type) {
+  ICING_RETURN_IF_ERROR(document_log_->PersistToDisk());
   if (persist_type == PersistType::LITE) {
     // only persist the document log.
-    return document_log_->PersistToDisk();
+    return libtextclassifier3::Status::OK;
   }
-  ICING_RETURN_IF_ERROR(document_log_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
@@ -1572,9 +1664,7 @@ libtextclassifier3::Status DocumentStore::PersistToDisk(
   ICING_RETURN_IF_ERROR(corpus_score_cache_->PersistToDisk());
 
   // Update the combined checksum and write to header file.
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
-
+  ICING_RETURN_IF_ERROR(UpdateChecksum());
   return libtextclassifier3::Status::OK;
 }
 
@@ -2138,7 +2228,7 @@ libtextclassifier3::StatusOr<DocumentDebugInfoProto>
 DocumentStore::GetDebugInfo(int verbosity) const {
   DocumentDebugInfoProto debug_info;
   *debug_info.mutable_document_storage_info() = GetStorageInfo();
-  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, GetChecksum());
   debug_info.set_crc(crc.Get());
   if (verbosity > 0) {
     ICING_ASSIGN_OR_RETURN(

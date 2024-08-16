@@ -61,16 +61,14 @@ libtextclassifier3::StatusOr<std::unique_ptr<TextNode>> Parser::ConsumeText() {
   return text_node;
 }
 
-libtextclassifier3::StatusOr<std::unique_ptr<FunctionNameNode>>
-Parser::ConsumeFunctionName() {
+libtextclassifier3::StatusOr<std::string> Parser::ConsumeFunctionName() {
   if (!Match(Lexer::TokenType::FUNCTION_NAME)) {
     return absl_ports::InvalidArgumentError(
         "Unable to consume token as FUNCTION_NAME.");
   }
-  auto function_name_node =
-      std::make_unique<FunctionNameNode>(std::move(current_token_->text));
+  std::string function_name = std::move(current_token_->text);
   ++current_token_;
-  return function_name_node;
+  return function_name;
 }
 
 // stringElement
@@ -147,8 +145,7 @@ Parser::ConsumeMember() {
 //    ;
 libtextclassifier3::StatusOr<std::unique_ptr<FunctionNode>>
 Parser::ConsumeFunction() {
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<FunctionNameNode> function_name,
-                         ConsumeFunctionName());
+  ICING_ASSIGN_OR_RETURN(std::string function_name, ConsumeFunctionName());
   ICING_RETURN_IF_ERROR(Consume(Lexer::TokenType::LPAREN));
 
   std::vector<std::unique_ptr<Node>> args;
