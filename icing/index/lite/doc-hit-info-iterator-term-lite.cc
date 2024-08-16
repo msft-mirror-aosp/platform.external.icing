@@ -117,7 +117,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
   int terms_matched = 0;
   for (LiteIndex::PrefixIterator it = lite_index_->FindTermPrefixes(term_);
        it.IsValid(); it.Advance()) {
-    bool exact_match = strlen(it.GetKey()) == term_len;
+    bool exact_match = it.GetKey().size() == term_len;
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
