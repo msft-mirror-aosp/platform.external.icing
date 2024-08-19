@@ -45,24 +45,29 @@ namespace lib {
 class EmbeddingIndex : public PersistentStorage {
  public:
   struct Info {
-    static constexpr int32_t kMagic = 0xfbe13cbb;
+    static constexpr int32_t kMagic = 0x61e7cbf1;
 
     int32_t magic;
     DocumentId last_added_document_id;
+    bool is_empty;
 
-    Crc32 ComputeChecksum() const {
+    static constexpr int kPaddingSize = 1000;
+    // Padding exists just to reserve space for additional values.
+    uint8_t padding_[kPaddingSize];
+
+    Crc32 GetChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
-  } __attribute__((packed));
-  static_assert(sizeof(Info) == 8, "");
+  };
+  static_assert(sizeof(Info) == 1012, "");
 
   // Metadata file layout: <Crcs><Info>
   static constexpr int32_t kCrcsMetadataBufferOffset = 0;
   static constexpr int32_t kInfoMetadataBufferOffset =
       static_cast<int32_t>(sizeof(Crcs));
   static constexpr int32_t kMetadataFileSize = sizeof(Crcs) + sizeof(Info);
-  static_assert(kMetadataFileSize == 20, "");
+  static_assert(kMetadataFileSize == 1024, "");
 
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
@@ -145,21 +150,33 @@ class EmbeddingIndex : public PersistentStorage {
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id);
 
+  // Returns a pointer to the embedding vector for the given hit.
+  //
+  // Returns:
+  //   - a pointer to the embedding vector on success.
+  //   - OUT_OF_RANGE error if the referred vector is out of range based on the
+  //     location and dimension.
   libtextclassifier3::StatusOr<const float*> GetEmbeddingVector(
       const EmbeddingHit& hit, uint32_t dimension) const {
     if (static_cast<int64_t>(hit.location()) + dimension >
         GetTotalVectorSize()) {
-      return absl_ports::InternalError(
+      return absl_ports::OutOfRangeError(
           "Got an embedding hit that refers to a vector out of range.");
     }
     return embedding_vectors_->array() + hit.location();
   }
 
-  const float* GetRawEmbeddingData() const {
+  libtextclassifier3::StatusOr<const float*> GetRawEmbeddingData() const {
+    if (is_empty()) {
+      return absl_ports::NotFoundError("EmbeddingIndex is empty");
+    }
     return embedding_vectors_->array();
   }
 
   int32_t GetTotalVectorSize() const {
+    if (is_empty()) {
+      return 0;
+    }
     return embedding_vectors_->num_elements();
   }
 
@@ -175,11 +192,32 @@ class EmbeddingIndex : public PersistentStorage {
     }
   }
 
+  bool is_empty() const { return info().is_empty; }
+
  private:
   explicit EmbeddingIndex(const Filesystem& filesystem,
                           std::string working_path)
       : PersistentStorage(filesystem, std::move(working_path),
                           kWorkingPathType) {}
+
+  // Creates the storage data if the index is not empty. This will initialize
+  // flash_index_storage_, embedding_posting_list_mapper_, embedding_vectors_.
+  //
+  // Returns:
+  //   - OK on success
+  //   - Any error from FlashIndexStorage, DynamicTrieKeyMapper, or
+  //     FileBackedVector.
+  libtextclassifier3::Status CreateStorageDataIfNonEmpty();
+
+  // Marks the index's header to indicate that the index is non-empty.
+  //
+  // If the index is already marked as non-empty, this is a no-op. Otherwise,
+  // CreateStorageDataIfNonEmpty will be called to create the storage data.
+  //
+  // Returns:
+  //   - OK on success
+  //   - Any error when calling CreateStorageDataIfNonEmpty.
+  libtextclassifier3::Status MarkIndexNonEmpty();
 
   libtextclassifier3::Status Initialize();
 
@@ -187,6 +225,7 @@ class EmbeddingIndex : public PersistentStorage {
   //
   // Returns:
   //   - OK on success
+  //   - FAILED_PRECONDITION_ERROR if the current index is empty.
   //   - INTERNAL_ERROR on I/O error. This could potentially leave the storages
   //     in an invalid state and the caller should handle it properly (e.g.
   //     discard and rebuild)
@@ -194,33 +233,23 @@ class EmbeddingIndex : public PersistentStorage {
       const std::vector<DocumentId>& document_id_old_to_new,
       EmbeddingIndex* new_index) const;
 
-  // Flushes contents of metadata file.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
+  libtextclassifier3::Status PersistMetadataToDisk() override;
 
-  // Flushes contents of all storages to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
+  libtextclassifier3::Status PersistStoragesToDisk() override;
 
-  // Computes and returns Info checksum.
-  //
-  // Returns:
-  //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
+  libtextclassifier3::Status WriteMetadata() override {
+    // EmbeddingIndex::Header is mmapped. Therefore, writes occur when the
+    // metadata is modified. So just return OK.
+    return libtextclassifier3::Status::OK;
+  }
 
-  // Computes and returns all storages checksum.
-  //
-  // Returns:
-  //   - Crc of all storages on success
-  //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override;
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override {
+    return info().GetChecksum();
+  }
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
@@ -254,6 +283,8 @@ class EmbeddingIndex : public PersistentStorage {
   std::unique_ptr<PostingListEmbeddingHitSerializer>
       posting_list_hit_serializer_ =
           std::make_unique<PostingListEmbeddingHitSerializer>();
+
+  // null if the index is empty.
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
 
   // The mapper from embedding keys to the corresponding posting list identifier
@@ -261,10 +292,14 @@ class EmbeddingIndex : public PersistentStorage {
   //
   // The key for an embedding hit is a one-to-one encoded string of the ordered
   // pair (dimension, model_signature) corresponding to the embedding.
+  //
+  // null if the index is empty.
   std::unique_ptr<KeyMapper<PostingListIdentifier>>
       embedding_posting_list_mapper_;
 
   // A single FileBackedVector that holds all embedding vectors.
+  //
+  // null if the index is empty.
   std::unique_ptr<FileBackedVector<float>> embedding_vectors_;
 };
 
