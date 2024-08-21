@@ -264,14 +264,6 @@ libtextclassifier3::Status BlobStore::Optimize(
     return libtextclassifier3::Status::OK;
   }
 
-  // Delete all dead blob files.
-  for (const std::string& file_name : dead_blob_handles) {
-    if (!filesystem_.DeleteFile(file_name.c_str())) {
-      return absl_ports::InternalError(
-          absl_ports::StrCat("Failed to delete blob file: ", file_name));
-    }
-  }
-
   // Create the temp blob store directory.
   std::string temp_blob_store_dir_path = base_dir_ + "_temp";
   if (!filesystem_.DeleteDirectoryRecursively(
@@ -301,6 +293,14 @@ libtextclassifier3::Status BlobStore::Optimize(
         dead_blob_handles.end()) {
       ICING_RETURN_IF_ERROR(
           new_blob_info_mapper->Put(itr->GetKey(), itr->GetValue()));
+    } else {
+      // Delete the file of dead blobs.
+      std::string file_name = absl_ports::StrCat(
+          base_dir_, "/", std::to_string(itr->GetValue().creation_time_ms));
+      if (!filesystem_.DeleteFile(file_name.c_str())) {
+        return absl_ports::InternalError(
+            absl_ports::StrCat("Failed to delete blob file: ", file_name));
+      }
     }
   }
   new_blob_info_mapper.reset();

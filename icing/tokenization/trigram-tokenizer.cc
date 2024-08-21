@@ -105,7 +105,7 @@ class TrigramTokenizerIterator : public Tokenizer::Iterator {
   // first trigram token.
   //
   // Returns: true if successfully resets.
-  bool ResetToTokenStartingAfter(int32_t utf32_offset) {
+  bool ResetToTokenStartingAfter(int32_t utf32_offset) override {
     // Initialize if necessary.
     if (utf8_char_itrs_.empty() && !Initialize()) {
       return false;
