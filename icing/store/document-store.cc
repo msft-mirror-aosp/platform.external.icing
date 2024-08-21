@@ -1689,6 +1689,9 @@ libtextclassifier3::Status DocumentStore::PersistToDisk(
     // only persist the document log.
     return libtextclassifier3::Status::OK;
   }
+  if (persist_type == PersistType::RECOVERY_PROOF) {
+    return UpdateChecksum().status();
+  }
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
