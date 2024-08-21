@@ -7632,6 +7632,128 @@ TEST_F(IcingSearchEngineSearchTest,
   EXPECT_THAT(results.results(), IsEmpty());
 }
 
+TEST_F(IcingSearchEngineSearchTest, SearchWithPropertyFiltersEmbedding) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding3")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  DocumentProto document0 =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding1",
+                             CreateVector("my_model", {0.1, 0.2, 0.3}))
+          .Build();
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding2",
+                             CreateVector("my_model", {-0.1, -0.2, -0.3}))
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("icing", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding3",
+                             CreateVector("my_model", {1.0, 2.0, 3.0}))
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("icing", "uri3")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding1",
+                             CreateVector("my_model", {0.1, 0.2, 0.3}))
+          .AddVectorProperty("embedding2",
+                             CreateVector("my_model", {-0.1, -0.2, -0.3}))
+          .AddVectorProperty("embedding3",
+                             CreateVector("my_model", {1.0, 2.0, 3.0}))
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+
+  // Add a property filter for embedding1 and embedding2.
+  TypePropertyMask* email_property_filters =
+      search_spec.add_type_property_filters();
+  email_property_filters->set_schema_type("Email");
+  email_property_filters->add_paths("embedding1");
+  email_property_filters->add_paths("embedding2");
+
+  // Only the documents that have embedding1 or embedding2 will be returned.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  SearchResultProto results =
+      icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(3));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
+  EXPECT_THAT(results.results(2).document(), EqualsProto(document0));
+
+  // Test that the property filters in SearchSpecProto can work together with
+  // the property filter syntax in the query. Since they both filter on
+  // embedding1, only the documents that have embedding1 will be returned.
+  search_spec.set_query("embedding1:semanticSearch(getEmbeddingParameter(0))");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // No documents will be returned since the property filters in SearchSpecProto
+  // and the property filters in the query are different.
+  search_spec.set_query("embedding3:semanticSearch(getEmbeddingParameter(0))");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing
