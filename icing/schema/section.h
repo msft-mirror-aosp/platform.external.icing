@@ -33,8 +33,6 @@ inline constexpr int kSectionIdBits = 6;
 inline constexpr SectionId kTotalNumSections = (1 << kSectionIdBits);
 inline constexpr SectionId kInvalidSectionId = kTotalNumSections;
 inline constexpr SectionId kMaxSectionId = kTotalNumSections - 1;
-// Prior versions of Icing only supported 16 indexed properties.
-inline constexpr SectionId kOldTotalNumSections = 16;
 inline constexpr SectionId kMinSectionId = 0;
 constexpr bool IsSectionIdValid(SectionId section_id) {
   return section_id >= kMinSectionId && section_id <= kMaxSectionId;
@@ -43,10 +41,6 @@ constexpr bool IsSectionIdValid(SectionId section_id) {
 using SectionIdMask = int64_t;
 inline constexpr SectionIdMask kSectionIdMaskAll = ~SectionIdMask{0};
 inline constexpr SectionIdMask kSectionIdMaskNone = SectionIdMask{0};
-
-static_assert(kSectionIdBits < 8 * sizeof(SectionId),
-              "Cannot exhaust all bits of SectionId since it is a signed "
-              "integer and the most significant bit should be preserved.");
 
 static_assert(
     kMaxSectionId < 8 * sizeof(SectionIdMask),
@@ -138,9 +132,6 @@ struct Section {
 
 // Groups of different type sections. Callers can access sections with types
 // they want and avoid going through non-desired ones.
-//
-// REQUIRES: lifecycle of the property must be longer than this object, since we
-//   use std::string_view for extracting its string_values.
 struct SectionGroup {
   std::vector<Section<std::string_view>> string_sections;
   std::vector<Section<int64_t>> integer_sections;

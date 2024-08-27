@@ -41,9 +41,9 @@ class PersistentHashMapKeyMapperTest : public testing::Test {
 };
 
 TEST_F(PersistentHashMapKeyMapperTest, InvalidBaseDir) {
-  EXPECT_THAT(PersistentHashMapKeyMapper<DocumentId>::Create(
-                  filesystem_, "/dev/null", /*pre_mapping_fbv=*/false),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  EXPECT_THAT(
+      PersistentHashMapKeyMapper<DocumentId>::Create(filesystem_, "/dev/null"),
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 }  // namespace

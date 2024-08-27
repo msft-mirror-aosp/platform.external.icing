@@ -24,7 +24,7 @@
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/hit-test-utils.h"
 #include "icing/testing/tmp-directory.h"
@@ -49,7 +49,7 @@ class PostingListHitAccessorTest : public ::testing::Test {
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
 
-    serializer_ = std::make_unique<PostingListHitSerializer>();
+    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
@@ -67,7 +67,7 @@ class PostingListHitAccessorTest : public ::testing::Test {
   Filesystem filesystem_;
   std::string test_dir_;
   std::string file_name_;
-  std::unique_ptr<PostingListHitSerializer> serializer_;
+  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
 };
 
@@ -93,7 +93,7 @@ TEST_F(PostingListHitAccessorTest, HitsAddAndRetrieveProperly) {
                              flash_index_storage_->GetPostingList(result.id));
   EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
-  EXPECT_THAT(pl_holder.next_block_index, Eq(kInvalidBlockIndex));
+  EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
 }
 
 TEST_F(PostingListHitAccessorTest, PreexistingPLKeepOnSameBlock) {
@@ -223,7 +223,7 @@ TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
               ElementsAreArray(hits1.rbegin(), first_block_hits_start));
 
   // Now retrieve all of the hits that were on the first block.
-  uint32_t first_block_id = pl_holder.next_block_index;
+  uint32_t first_block_id = pl_holder.block.next_block_index();
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
@@ -290,7 +290,7 @@ TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
               ElementsAreArray(hits1.rbegin(), first_block_hits_start));
 
   // Now retrieve all of the hits that were on the first block.
-  uint32_t first_block_id = pl_holder.next_block_index;
+  uint32_t first_block_id = pl_holder.block.next_block_index();
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,

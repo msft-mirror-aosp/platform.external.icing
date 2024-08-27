@@ -38,28 +38,16 @@ namespace lib {
 template <typename T, typename Formatter = absl_ports::DefaultFormatter>
 class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
  public:
-  static constexpr int32_t kDefaultMaxNumEntries =
-      PersistentHashMap::Entry::kMaxNumEntries;
-  static constexpr int32_t kDefaultAverageKVByteSize =
-      PersistentHashMap::Options::kDefaultAverageKVByteSize;
-  static constexpr int32_t kDefaultMaxLoadFactorPercent =
-      PersistentHashMap::Options::kDefaultMaxLoadFactorPercent;
-
   // Returns an initialized instance of PersistentHashMapKeyMapper that can
   // immediately handle read/write operations.
   // Returns any encountered IO errors.
   //
   // filesystem: Object to make system level calls
-  // working_path: Working directory used to save all the files required to
-  //               persist PersistentHashMapKeyMapper. If this working_path was
-  //               previously used to create a PersistentHashMapKeyMapper, then
-  //               this existing data would be loaded. Otherwise, an empty
-  //               PersistentHashMapKeyMapper would be created. See
-  //               PersistentStorage for more details about the concept of
-  //               working_path.
-  // pre_mapping_fbv: flag indicating whether memory map max possible file size
-  //                  for underlying FileBackedVector before growing the actual
-  //                  file size.
+  // base_dir : Base directory used to save all the files required to persist
+  //            PersistentHashMapKeyMapper. If this base_dir was previously used
+  //            to create a PersistentHashMapKeyMapper, then this existing data
+  //            would be loaded. Otherwise, an empty PersistentHashMapKeyMapper
+  //            would be created.
   // max_num_entries: max # of kvps. It will be used to compute 3 storages size.
   // average_kv_byte_size: average byte size of a single key + serialized value.
   //                       It will be used to compute kv_storage size.
@@ -72,23 +60,24 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
   //                          considered valid.
   static libtextclassifier3::StatusOr<
       std::unique_ptr<PersistentHashMapKeyMapper<T, Formatter>>>
-  Create(const Filesystem& filesystem, std::string working_path,
-         bool pre_mapping_fbv, int32_t max_num_entries = kDefaultMaxNumEntries,
-         int32_t average_kv_byte_size = kDefaultAverageKVByteSize,
-         int32_t max_load_factor_percent = kDefaultMaxLoadFactorPercent);
+  Create(const Filesystem& filesystem, std::string_view base_dir,
+         int32_t max_num_entries = PersistentHashMap::Entry::kMaxNumEntries,
+         int32_t average_kv_byte_size =
+             PersistentHashMap::Options::kDefaultAverageKVByteSize,
+         int32_t max_load_factor_percent =
+             PersistentHashMap::Options::kDefaultMaxLoadFactorPercent);
 
-  // Deletes working_path (and all the files under it recursively) associated
-  // with the PersistentHashMapKeyMapper.
+  // Deletes all the files associated with the PersistentHashMapKeyMapper.
   //
-  // working_path: Working directory used to save all the files required to
-  //               persist PersistentHashMapKeyMapper. Should be the same as
-  //               passed into Create().
+  // base_dir : Base directory used to save all the files required to persist
+  //            PersistentHashMapKeyMapper. Should be the same as passed into
+  //            Create().
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::Status Delete(const Filesystem& filesystem,
-                                           const std::string& working_path);
+                                           std::string_view base_dir);
 
   ~PersistentHashMapKeyMapper() override = default;
 
@@ -133,7 +122,7 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
   }
 
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() override {
-    return persistent_hash_map_->UpdateChecksums();
+    return persistent_hash_map_->ComputeChecksum();
   }
 
  private:
@@ -158,6 +147,8 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
     PersistentHashMap::Iterator itr_;
   };
 
+  static constexpr std::string_view kKeyMapperDir = "key_mapper_dir";
+
   // Use PersistentHashMapKeyMapper::Create() to instantiate.
   explicit PersistentHashMapKeyMapper(
       std::unique_ptr<PersistentHashMap> persistent_hash_map)
@@ -173,21 +164,26 @@ template <typename T, typename Formatter>
 /* static */ libtextclassifier3::StatusOr<
     std::unique_ptr<PersistentHashMapKeyMapper<T, Formatter>>>
 PersistentHashMapKeyMapper<T, Formatter>::Create(
-    const Filesystem& filesystem, std::string working_path,
-    bool pre_mapping_fbv, int32_t max_num_entries, int32_t average_kv_byte_size,
+    const Filesystem& filesystem, std::string_view base_dir,
+    int32_t max_num_entries, int32_t average_kv_byte_size,
     int32_t max_load_factor_percent) {
+  const std::string key_mapper_dir =
+      absl_ports::StrCat(base_dir, "/", kKeyMapperDir);
+  if (!filesystem.CreateDirectoryRecursively(key_mapper_dir.c_str())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to create PersistentHashMapKeyMapper directory: ",
+        key_mapper_dir));
+  }
+
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem, std::move(working_path),
+          filesystem, key_mapper_dir,
           PersistentHashMap::Options(
               /*value_type_size_in=*/sizeof(T),
               /*max_num_entries_in=*/max_num_entries,
               /*max_load_factor_percent_in=*/max_load_factor_percent,
-              /*average_kv_byte_size_in=*/average_kv_byte_size,
-              /*init_num_buckets_in=*/
-              PersistentHashMap::Options::kDefaultInitNumBuckets,
-              /*pre_mapping_fbv_in=*/pre_mapping_fbv)));
+              /*average_kv_byte_size_in=*/average_kv_byte_size)));
   return std::unique_ptr<PersistentHashMapKeyMapper<T, Formatter>>(
       new PersistentHashMapKeyMapper<T, Formatter>(
           std::move(persistent_hash_map)));
@@ -195,9 +191,16 @@ PersistentHashMapKeyMapper<T, Formatter>::Create(
 
 template <typename T, typename Formatter>
 /* static */ libtextclassifier3::Status
-PersistentHashMapKeyMapper<T, Formatter>::Delete(
-    const Filesystem& filesystem, const std::string& working_path) {
-  return PersistentHashMap::Discard(filesystem, working_path);
+PersistentHashMapKeyMapper<T, Formatter>::Delete(const Filesystem& filesystem,
+                                                 std::string_view base_dir) {
+  const std::string key_mapper_dir =
+      absl_ports::StrCat(base_dir, "/", kKeyMapperDir);
+  if (!filesystem.DeleteDirectoryRecursively(key_mapper_dir.c_str())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to delete PersistentHashMapKeyMapper directory: ",
+        key_mapper_dir));
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

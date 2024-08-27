@@ -23,14 +23,19 @@ struct PerformanceConfiguration {
   // Loads default configuration.
   PerformanceConfiguration();
 
-  PerformanceConfiguration(int max_query_length_in, int max_num_total_hits)
+  PerformanceConfiguration(int max_query_length_in, int num_to_score_in,
+                           int max_num_total_hits)
       : max_query_length(max_query_length_in),
+        num_to_score(num_to_score_in),
         max_num_total_hits(max_num_total_hits) {}
 
   // Search performance
 
   // Maximum length of query to execute in IndexProcessor.
   int max_query_length;
+
+  // Number of results to score in ScoringProcessor for every query.
+  int num_to_score;
 
   // Memory
 

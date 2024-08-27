@@ -17,6 +17,7 @@
 #include <string>
 #include <utility>
 
+#include <google/protobuf/message_lite.h>
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/jni/scoped-primitive-array-critical.h"
@@ -32,7 +33,6 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
-#include <google/protobuf/message_lite.h>
 
 namespace {
 
@@ -46,13 +46,12 @@ bool ParseProtoFromJniByteArray(JNIEnv* env, jbyteArray bytes,
   return protobuf->ParseFromArray(scoped_array.data(), scoped_array.size());
 }
 
-jbyteArray SerializeProtoToJniByteArray(JNIEnv* env,
-                                        const google::protobuf::MessageLite& protobuf) {
+jbyteArray SerializeProtoToJniByteArray(
+    JNIEnv* env, const google::protobuf::MessageLite& protobuf) {
   int size = protobuf.ByteSizeLong();
   jbyteArray ret = env->NewByteArray(size);
   if (ret == nullptr) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to allocated bytes for jni protobuf";
+    ICING_LOG(ERROR) << "Failed to allocated bytes for jni protobuf";
     return nullptr;
   }
 
@@ -76,7 +75,7 @@ extern "C" {
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
   JNIEnv* env;
   if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
-    ICING_LOG(icing::lib::ERROR) << "ERROR: GetEnv failed";
+    ICING_LOG(ERROR) << "ERROR: GetEnv failed";
     return JNI_ERR;
   }
 
@@ -89,7 +88,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeCreate(
   icing::lib::IcingSearchEngineOptions options;
   if (!ParseProtoFromJniByteArray(env, icing_search_engine_options_bytes,
                                   &options)) {
-    ICING_LOG(icing::lib::ERROR)
+    ICING_LOG(ERROR)
         << "Failed to parse IcingSearchEngineOptions in nativeCreate";
     return 0;
   }
@@ -132,8 +131,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeSetSchema(
 
   icing::lib::SchemaProto schema_proto;
   if (!ParseProtoFromJniByteArray(env, schema_bytes, &schema_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse SchemaProto in nativeSetSchema";
+    ICING_LOG(ERROR) << "Failed to parse SchemaProto in nativeSetSchema";
     return nullptr;
   }
 
@@ -175,8 +173,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativePut(
 
   icing::lib::DocumentProto document_proto;
   if (!ParseProtoFromJniByteArray(env, document_bytes, &document_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse DocumentProto in nativePut";
+    ICING_LOG(ERROR) << "Failed to parse DocumentProto in nativePut";
     return nullptr;
   }
 
@@ -195,8 +192,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeGet(
 
   icing::lib::GetResultSpecProto get_result_spec;
   if (!ParseProtoFromJniByteArray(env, result_spec_bytes, &get_result_spec)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse GetResultSpecProto in nativeGet";
+    ICING_LOG(ERROR) << "Failed to parse GetResultSpecProto in nativeGet";
     return nullptr;
   }
   icing::lib::ScopedUtfChars scoped_name_space_chars(env, name_space);
@@ -216,8 +212,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeReportUsage(
 
   icing::lib::UsageReport usage_report;
   if (!ParseProtoFromJniByteArray(env, usage_report_bytes, &usage_report)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse UsageReport in nativeReportUsage";
+    ICING_LOG(ERROR) << "Failed to parse UsageReport in nativeReportUsage";
     return nullptr;
   }
 
@@ -284,23 +279,20 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeSearch(
 
   icing::lib::SearchSpecProto search_spec_proto;
   if (!ParseProtoFromJniByteArray(env, search_spec_bytes, &search_spec_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse SearchSpecProto in nativeSearch";
+    ICING_LOG(ERROR) << "Failed to parse SearchSpecProto in nativeSearch";
     return nullptr;
   }
 
   icing::lib::ScoringSpecProto scoring_spec_proto;
   if (!ParseProtoFromJniByteArray(env, scoring_spec_bytes,
                                   &scoring_spec_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse ScoringSpecProto in nativeSearch";
+    ICING_LOG(ERROR) << "Failed to parse ScoringSpecProto in nativeSearch";
     return nullptr;
   }
 
   icing::lib::ResultSpecProto result_spec_proto;
   if (!ParseProtoFromJniByteArray(env, result_spec_bytes, &result_spec_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse ResultSpecProto in nativeSearch";
+    ICING_LOG(ERROR) << "Failed to parse ResultSpecProto in nativeSearch";
     return nullptr;
   }
 
@@ -371,8 +363,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeDeleteByQuery(
 
   icing::lib::SearchSpecProto search_spec_proto;
   if (!ParseProtoFromJniByteArray(env, search_spec_bytes, &search_spec_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse SearchSpecProto in nativeSearch";
+    ICING_LOG(ERROR) << "Failed to parse SearchSpecProto in nativeSearch";
     return nullptr;
   }
   icing::lib::DeleteByQueryResultProto delete_result_proto =
@@ -388,8 +379,8 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativePersistToDisk(
       GetIcingSearchEnginePointer(env, object);
 
   if (!icing::lib::PersistType::Code_IsValid(persist_type_code)) {
-    ICING_LOG(icing::lib::ERROR)
-        << persist_type_code << " is an invalid value for PersistType::Code";
+    ICING_LOG(ERROR) << persist_type_code
+                     << " is an invalid value for PersistType::Code";
     return nullptr;
   }
   icing::lib::PersistType::Code persist_type_code_enum =
@@ -456,8 +447,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeSearchSuggestions(
   icing::lib::SuggestionSpecProto suggestion_spec_proto;
   if (!ParseProtoFromJniByteArray(env, suggestion_spec_bytes,
                                   &suggestion_spec_proto)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse SuggestionSpecProto in nativeSearch";
+    ICING_LOG(ERROR) << "Failed to parse SuggestionSpecProto in nativeSearch";
     return nullptr;
   }
   icing::lib::SuggestionResponse suggestionResponse =
@@ -473,8 +463,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetDebugInfo(
       GetIcingSearchEnginePointer(env, object);
 
   if (!icing::lib::DebugInfoVerbosity::Code_IsValid(verbosity)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Invalid value for Debug Info verbosity: " << verbosity;
+    ICING_LOG(ERROR) << "Invalid value for Debug Info verbosity: " << verbosity;
     return nullptr;
   }
 
@@ -489,8 +478,7 @@ JNIEXPORT jboolean JNICALL
 Java_com_google_android_icing_IcingSearchEngineImpl_nativeShouldLog(
     JNIEnv* env, jclass clazz, jshort severity, jshort verbosity) {
   if (!icing::lib::LogSeverity::Code_IsValid(severity)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Invalid value for logging severity: " << severity;
+    ICING_LOG(ERROR) << "Invalid value for logging severity: " << severity;
     return false;
   }
   return icing::lib::ShouldLog(
@@ -501,8 +489,7 @@ JNIEXPORT jboolean JNICALL
 Java_com_google_android_icing_IcingSearchEngineImpl_nativeSetLoggingLevel(
     JNIEnv* env, jclass clazz, jshort severity, jshort verbosity) {
   if (!icing::lib::LogSeverity::Code_IsValid(severity)) {
-    ICING_LOG(icing::lib::ERROR)
-        << "Invalid value for logging severity: " << severity;
+    ICING_LOG(ERROR) << "Invalid value for logging severity: " << severity;
     return false;
   }
   return icing::lib::SetLoggingLevel(

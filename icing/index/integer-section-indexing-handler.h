@@ -15,13 +15,9 @@
 #ifndef ICING_INDEX_INTEGER_SECTION_INDEXING_HANDLER_H_
 #define ICING_INDEX_INTEGER_SECTION_INDEXING_HANDLER_H_
 
-#include <cstdint>
-#include <memory>
-
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/data-indexing-handler.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/index/section-indexing-handler.h"
 #include "icing/store/document-id.h"
 #include "icing/util/clock.h"
 #include "icing/util/tokenized-document.h"
@@ -29,40 +25,28 @@
 namespace icing {
 namespace lib {
 
-class IntegerSectionIndexingHandler : public DataIndexingHandler {
+class IntegerSectionIndexingHandler : public SectionIndexingHandler {
  public:
-  // Creates an IntegerSectionIndexingHandler instance which does not take
-  // ownership of any input components. All pointers must refer to valid objects
-  // that outlive the created IntegerSectionIndexingHandler instance.
-  //
-  // Returns:
-  //   - An IntegerSectionIndexingHandler instance on success
-  //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<IntegerSectionIndexingHandler>>
-  Create(const Clock* clock, NumericIndex<int64_t>* integer_index);
+  explicit IntegerSectionIndexingHandler(const Clock* clock,
+                                         NumericIndex<int64_t>* integer_index)
+      : SectionIndexingHandler(clock), integer_index_(*integer_index) {}
 
   ~IntegerSectionIndexingHandler() override = default;
 
+  // TODO(b/259744228): update this documentation after resolving
+  //                    last_added_document_id problem.
   // Handles the integer indexing process: add hits into the integer index for
   // all contents in tokenized_document.integer_sections.
   //
-  // Returns:
-  //   - OK on success.
-  //   - INVALID_ARGUMENT_ERROR if document_id is invalid OR document_id is less
-  //     than or equal to the document_id of a previously indexed document in
-  //     non recovery mode.
+  /// Returns:
+  //   - OK on success
   //   - Any NumericIndex<int64_t>::Editor errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
+      PutDocumentStatsProto* put_document_stats) override;
 
  private:
-  explicit IntegerSectionIndexingHandler(const Clock* clock,
-                                         NumericIndex<int64_t>* integer_index)
-      : DataIndexingHandler(clock), integer_index_(*integer_index) {}
-
-  NumericIndex<int64_t>& integer_index_;  // Does not own.
+  NumericIndex<int64_t>& integer_index_;
 };
 
 }  // namespace lib

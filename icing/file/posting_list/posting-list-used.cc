@@ -15,7 +15,6 @@
 #include "icing/file/posting_list/posting-list-used.h"
 
 #include <cstdint>
-#include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -28,8 +27,8 @@ namespace lib {
 
 libtextclassifier3::StatusOr<PostingListUsed>
 PostingListUsed::CreateFromPreexistingPostingListUsedRegion(
-    PostingListSerializer* serializer,
-    std::unique_ptr<uint8_t[]> posting_list_buffer, uint32_t size_in_bytes) {
+    PostingListUsedSerializer* serializer, void* posting_list_buffer,
+    uint32_t size_in_bytes) {
   ICING_RETURN_ERROR_IF_NULL(serializer);
   ICING_RETURN_ERROR_IF_NULL(posting_list_buffer);
 
@@ -39,17 +38,16 @@ PostingListUsed::CreateFromPreexistingPostingListUsedRegion(
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Requested posting list size %d is invalid!", size_in_bytes));
   }
-  return PostingListUsed(std::move(posting_list_buffer), size_in_bytes);
+  return PostingListUsed(posting_list_buffer, size_in_bytes);
 }
 
 libtextclassifier3::StatusOr<PostingListUsed>
-PostingListUsed::CreateFromUnitializedRegion(PostingListSerializer* serializer,
-                                             uint32_t size_in_bytes) {
-  ICING_ASSIGN_OR_RETURN(
-      PostingListUsed posting_list_used,
-      CreateFromPreexistingPostingListUsedRegion(
-          serializer, std::make_unique<uint8_t[]>(size_in_bytes),
-          size_in_bytes));
+PostingListUsed::CreateFromUnitializedRegion(
+    PostingListUsedSerializer* serializer, void* posting_list_buffer,
+    uint32_t size_in_bytes) {
+  ICING_ASSIGN_OR_RETURN(PostingListUsed posting_list_used,
+                         CreateFromPreexistingPostingListUsedRegion(
+                             serializer, posting_list_buffer, size_in_bytes));
   serializer->Clear(&posting_list_used);
   return posting_list_used;
 }

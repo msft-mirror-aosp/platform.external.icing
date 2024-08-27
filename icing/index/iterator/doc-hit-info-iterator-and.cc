@@ -111,19 +111,6 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
-DocHitInfoIteratorAnd::TrimRightMostNode() && {
-  ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_long,
-                         std::move(*long_).TrimRightMostNode());
-  if (trimmed_long.iterator_ == nullptr) {
-    trimmed_long.iterator_ = std::move(short_);
-  } else {
-    trimmed_long.iterator_ = std::make_unique<DocHitInfoIteratorAnd>(
-        std::move(short_), std::move(trimmed_long.iterator_));
-  }
-  return trimmed_long;
-}
-
 int32_t DocHitInfoIteratorAnd::GetNumBlocksInspected() const {
   return short_->GetNumBlocksInspected() + long_->GetNumBlocksInspected();
 }
@@ -206,27 +193,6 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
         iterators_.at(i)->hit_intersect_section_ids_mask();
   }
   return libtextclassifier3::Status::OK;
-}
-
-libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
-DocHitInfoIteratorAndNary::TrimRightMostNode() && {
-  ICING_ASSIGN_OR_RETURN(
-      TrimmedNode trimmed_right,
-      std::move(*iterators_.rbegin()->get()).TrimRightMostNode());
-  if (trimmed_right.iterator_ == nullptr) {
-    if (iterators_.size() > 2) {
-      iterators_.pop_back();
-      trimmed_right.iterator_ =
-          std::make_unique<DocHitInfoIteratorAndNary>(std::move(iterators_));
-    } else if (iterators_.size() == 2) {
-      trimmed_right.iterator_ = std::move(iterators_.at(0));
-    }
-  } else {
-    iterators_.at(iterators_.size() - 1) = std::move(trimmed_right.iterator_);
-    trimmed_right.iterator_ =
-        std::make_unique<DocHitInfoIteratorAndNary>(std::move(iterators_));
-  }
-  return trimmed_right;
 }
 
 int32_t DocHitInfoIteratorAndNary::GetNumBlocksInspected() const {

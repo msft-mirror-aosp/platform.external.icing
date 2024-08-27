@@ -87,9 +87,7 @@ class SectionWeightsTest : public testing::Test {
     SchemaProto schema =
         SchemaBuilder().AddType(sender_schema).AddType(email_schema).Build();
 
-    ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
   }
 
   void TearDown() override {

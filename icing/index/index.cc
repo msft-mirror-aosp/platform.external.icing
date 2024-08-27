@@ -163,12 +163,6 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
                                           std::move(main_index), filesystem));
 }
 
-/* static */ libtextclassifier3::StatusOr<int> Index::ReadFlashIndexMagic(
-    const Filesystem* filesystem, const std::string& base_dir) {
-  return MainIndex::ReadFlashIndexMagic(filesystem,
-                                        MakeMainIndexFilepath(base_dir));
-}
-
 libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
   if (lite_index_->last_added_document_id() != kInvalidDocumentId &&
       lite_index_->last_added_document_id() > document_id) {
@@ -188,8 +182,7 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-Index::GetIterator(const std::string& term, int term_start_index,
-                   int unnormalized_term_length, SectionIdMask section_id_mask,
+Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
                    TermMatchType::Code term_match_type,
                    bool need_hit_term_frequency) {
   std::unique_ptr<DocHitInfoIterator> lite_itr;
@@ -197,19 +190,17 @@ Index::GetIterator(const std::string& term, int term_start_index,
   switch (term_match_type) {
     case TermMatchType::EXACT_ONLY:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLiteExact>(
-          term_id_codec_.get(), lite_index_.get(), term, term_start_index,
-          unnormalized_term_length, section_id_mask, need_hit_term_frequency);
+          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
+          need_hit_term_frequency);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainExact>(
-          main_index_.get(), term, term_start_index, unnormalized_term_length,
-          section_id_mask, need_hit_term_frequency);
+          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
       break;
     case TermMatchType::PREFIX:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLitePrefix>(
-          term_id_codec_.get(), lite_index_.get(), term, term_start_index,
-          unnormalized_term_length, section_id_mask, need_hit_term_frequency);
+          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
+          need_hit_term_frequency);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-          main_index_.get(), term, term_start_index, unnormalized_term_length,
-          section_id_mask, need_hit_term_frequency);
+          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
       break;
     default:
       return absl_ports::InvalidArgumentError(

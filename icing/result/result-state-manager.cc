@@ -18,8 +18,9 @@
 #include <queue>
 #include <utility>
 
+#include "icing/proto/search.pb.h"
+#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
-#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -31,19 +32,21 @@ namespace icing {
 namespace lib {
 
 ResultStateManager::ResultStateManager(int max_total_hits,
-                                       const DocumentStore& document_store)
+                                       const DocumentStore& document_store,
+                                       const Clock* clock)
     : document_store_(document_store),
       max_total_hits_(max_total_hits),
       num_total_hits_(0),
-      random_generator_(GetSteadyTimeNanoseconds()) {}
+      random_generator_(GetSteadyTimeNanoseconds()),
+      clock_(*clock) {}
 
 libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
 ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ScoredDocumentHitsRanker> ranker,
-    std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
-    std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
+    SectionRestrictQueryTermsMap query_terms,
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec, const DocumentStore& document_store,
-    const ResultRetrieverV2& result_retriever, int64_t current_time_ms) {
+    const ResultRetrieverV2& result_retriever) {
   if (ranker == nullptr) {
     return absl_ports::InvalidArgumentError("Should not provide null ranker");
   }
@@ -51,13 +54,13 @@ ResultStateManager::CacheAndRetrieveFirstPage(
   // Create shared pointer of ResultState.
   // ResultState should be created by ResultStateManager only.
   std::shared_ptr<ResultStateV2> result_state = std::make_shared<ResultStateV2>(
-      std::move(ranker), std::move(parent_adjustment_info),
-      std::move(child_adjustment_info), result_spec, document_store);
+      std::move(ranker), std::move(query_terms), search_spec, scoring_spec,
+      result_spec, document_store);
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
   auto [page_result, has_more_results] =
-      result_retriever.RetrieveNextPage(*result_state, current_time_ms);
+      result_retriever.RetrieveNextPage(*result_state);
   if (!has_more_results) {
     // No more pages, won't store ResultState, returns directly
     return std::make_pair(kInvalidNextPageToken, std::move(page_result));
@@ -84,40 +87,37 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     absl_ports::unique_lock l(&mutex_);
 
     // Remove expired result states first.
-    InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
-                                          current_time_ms);
+    InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs);
     // Remove states to make room for this new state.
     RemoveStatesIfNeeded(num_hits_to_add);
     // Generate a new unique token and add it into result_state_map_.
-    next_page_token = Add(std::move(result_state), current_time_ms);
+    next_page_token = Add(std::move(result_state));
   }
 
   return std::make_pair(next_page_token, std::move(page_result));
 }
 
-uint64_t ResultStateManager::Add(std::shared_ptr<ResultStateV2> result_state,
-                                 int64_t current_time_ms) {
+uint64_t ResultStateManager::Add(std::shared_ptr<ResultStateV2> result_state) {
   uint64_t new_token = GetUniqueToken();
 
   result_state_map_.emplace(new_token, std::move(result_state));
   // Tracks the insertion order
-  token_queue_.push(std::make_pair(new_token, current_time_ms));
+  token_queue_.push(
+      std::make_pair(new_token, clock_.GetSystemTimeMilliseconds()));
 
   return new_token;
 }
 
 libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
 ResultStateManager::GetNextPage(uint64_t next_page_token,
-                                const ResultRetrieverV2& result_retriever,
-                                int64_t current_time_ms) {
+                                const ResultRetrieverV2& result_retriever) {
   std::shared_ptr<ResultStateV2> result_state = nullptr;
   {
     // ResultStateManager critical section
     absl_ports::unique_lock l(&mutex_);
 
     // Remove expired result states before fetching
-    InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
-                                          current_time_ms);
+    InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs);
 
     const auto& state_iterator = result_state_map_.find(next_page_token);
     if (state_iterator == result_state_map_.end()) {
@@ -129,7 +129,7 @@ ResultStateManager::GetNextPage(uint64_t next_page_token,
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
   auto [page_result, has_more_results] =
-      result_retriever.RetrieveNextPage(*result_state, current_time_ms);
+      result_retriever.RetrieveNextPage(*result_state);
 
   if (!has_more_results) {
     {
@@ -234,9 +234,10 @@ void ResultStateManager::InternalInvalidateResultState(uint64_t token) {
 }
 
 void ResultStateManager::InternalInvalidateExpiredResultStates(
-    int64_t result_state_ttl, int64_t current_time_ms) {
+    int64_t result_state_ttl) {
+  int64_t current_time = clock_.GetSystemTimeMilliseconds();
   while (!token_queue_.empty() &&
-         current_time_ms - token_queue_.front().second >= result_state_ttl) {
+         current_time - token_queue_.front().second >= result_state_ttl) {
     auto itr = result_state_map_.find(token_queue_.front().first);
     if (itr != result_state_map_.end()) {
       // We don't have to decrement num_total_hits_ here, since erasing the

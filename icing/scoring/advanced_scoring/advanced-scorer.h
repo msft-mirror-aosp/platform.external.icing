@@ -20,7 +20,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/join/join-children-fetcher.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/bm25f-calculator.h"
@@ -38,9 +37,7 @@ class AdvancedScorer : public Scorer {
   //   INVALID_ARGUMENT if fails to create an instance
   static libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> Create(
       const ScoringSpecProto& scoring_spec, double default_score,
-      const DocumentStore* document_store, const SchemaStore* schema_store,
-      int64_t current_time_ms,
-      const JoinChildrenFetcher* join_children_fetcher = nullptr);
+      const DocumentStore* document_store, const SchemaStore* schema_store);
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator* query_it) override {
@@ -63,25 +60,15 @@ class AdvancedScorer : public Scorer {
     bm25f_calculator_->PrepareToScore(query_term_iterators);
   }
 
-  bool is_constant() const { return score_expression_->is_constant_double(); }
-
  private:
   explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,
-                          std::unique_ptr<SectionWeights> section_weights,
                           std::unique_ptr<Bm25fCalculator> bm25f_calculator,
                           double default_score)
       : score_expression_(std::move(score_expression)),
-        section_weights_(std::move(section_weights)),
         bm25f_calculator_(std::move(bm25f_calculator)),
-        default_score_(default_score) {
-    if (is_constant()) {
-      ICING_LOG(WARNING)
-          << "The advanced scoring expression will evaluate to a constant.";
-    }
-  }
+        default_score_(default_score) {}
 
   std::unique_ptr<ScoreExpression> score_expression_;
-  std::unique_ptr<SectionWeights> section_weights_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   double default_score_;
 };

@@ -57,8 +57,7 @@ class DocumentLogCreator {
   //   CreateResult on success.
   //   INTERNAL on any I/O error.
   static libtextclassifier3::StatusOr<DocumentLogCreator::CreateResult> Create(
-      const Filesystem* filesystem, const std::string& base_dir,
-      int32_t compression_level);
+      const Filesystem* filesystem, const std::string& base_dir);
 
   // Returns the filename of the document log, without any directory prefixes.
   // Used mainly for testing purposes.
@@ -75,8 +74,7 @@ class DocumentLogCreator {
   //   INVALID_ARGUMENT if some invalid option was passed to the document log.
   //   INTERNAL on I/O error.
   static libtextclassifier3::Status MigrateFromV0ToV1(
-      const Filesystem* filesystem, const std::string& base_dir,
-      int32_t compression_level);
+      const Filesystem* filesystem, const std::string& base_dir);
 };
 
 }  // namespace lib

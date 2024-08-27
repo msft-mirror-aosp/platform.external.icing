@@ -131,29 +131,13 @@ class LogMessage {
 
 inline constexpr char kIcingLoggingTag[] = "AppSearchIcing";
 
-// Define consts to make it easier to refer to log severities in code.
-constexpr ::icing::lib::LogSeverity::Code VERBOSE =
-    ::icing::lib::LogSeverity::VERBOSE;
-
-constexpr ::icing::lib::LogSeverity::Code DBG = ::icing::lib::LogSeverity::DBG;
-
-constexpr ::icing::lib::LogSeverity::Code INFO =
-    ::icing::lib::LogSeverity::INFO;
-
-constexpr ::icing::lib::LogSeverity::Code WARNING =
-    ::icing::lib::LogSeverity::WARNING;
-
-constexpr ::icing::lib::LogSeverity::Code ERROR =
-    ::icing::lib::LogSeverity::ERROR;
-
-constexpr ::icing::lib::LogSeverity::Code FATAL =
-    ::icing::lib::LogSeverity::FATAL;
-
-#define ICING_VLOG(verbose_level) \
-  ::icing::lib::LogMessage(VERBOSE, verbose_level, __FILE__, __LINE__).stream()
-
-#define ICING_LOG(severity)                                               \
-  ::icing::lib::LogMessage(severity, /*verbosity=*/0, __FILE__, __LINE__) \
+#define ICING_VLOG(verbose_level)                                             \
+  ::icing::lib::LogMessage(::icing::lib::LogSeverity::VERBOSE, verbose_level, \
+                           __FILE__, __LINE__)                                \
+      .stream()
+#define ICING_LOG(severity)                                     \
+  ::icing::lib::LogMessage(::icing::lib::LogSeverity::severity, \
+                           /*verbosity=*/0, __FILE__, __LINE__) \
       .stream()
 
 }  // namespace lib

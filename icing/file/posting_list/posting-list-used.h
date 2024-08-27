@@ -16,7 +16,6 @@
 #define ICING_FILE_POSTING_LIST_POSTING_LIST_USED_H_
 
 #include <cstdint>
-#include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -42,9 +41,9 @@ class PostingListUsed;
 //   related methods to serialize/deserialize Hit data to/from posting lists.
 // - FlashIndexStorage, IndexBlock, PostingListUsed use the serializer created
 //   by MainIndex, but hold the reference/pointer in the interface format
-//   (PostingListSerializer) and only use common interface methods to manage
+//   (PostingListUsedSerializer) and only use common interface methods to manage
 //   posting list.
-class PostingListSerializer {
+class PostingListUsedSerializer {
  public:
   // Special data is either a DataType instance or data_start_offset.
   template <typename DataType>
@@ -68,7 +67,7 @@ class PostingListSerializer {
 
   static constexpr uint32_t kNumSpecialData = 2;
 
-  virtual ~PostingListSerializer() = default;
+  virtual ~PostingListUsedSerializer() = default;
 
   // Returns byte size of the data type.
   virtual uint32_t GetDataTypeBytes() const = 0;
@@ -107,65 +106,57 @@ class PostingListSerializer {
                                               PostingListUsed* src) const = 0;
 };
 
-// A posting list with in-memory data. The caller should sync it to disk via
-// FlashIndexStorage. Layout depends on the serializer.
+// A posting list with data in it. Layout depends on the serializer.
 class PostingListUsed {
  public:
-  // Creates a PostingListUsed that takes over the ownership of
-  // posting_list_buffer with size_in_bytes bytes. 'Preexisting' means that
-  // the data in posting_list_buffer was previously modified by another instance
-  // of PostingListUsed, and the caller should read the data from disk to
-  // posting_list_buffer.
+  // Creates a PostingListUsed that points to a buffer of size_in_bytes bytes.
+  // 'Preexisting' means that posting_list_buffer was previously modified by
+  // another instance of PostingListUsed.
+  //
+  // Caller owns the data buffer and must not free it while using a
+  // PostingListUsed.
   //
   // RETURNS:
   //   - A valid PostingListUsed if successful
   //   - INVALID_ARGUMENT if posting_list_utils::IsValidPostingListSize check
-  //     fails
+  //       fails
   //   - FAILED_PRECONDITION if serializer or posting_list_buffer is null
   static libtextclassifier3::StatusOr<PostingListUsed>
   CreateFromPreexistingPostingListUsedRegion(
-      PostingListSerializer* serializer,
-      std::unique_ptr<uint8_t[]> posting_list_buffer, uint32_t size_in_bytes);
+      PostingListUsedSerializer* serializer, void* posting_list_buffer,
+      uint32_t size_in_bytes);
 
-  // Creates a PostingListUsed that owns a buffer of size_in_bytes bytes and
-  // initializes the content of the buffer so that the returned PostingListUsed
-  // is empty.
+  // Creates a PostingListUsed that points to a buffer of size_in_bytes bytes
+  // and initializes the content of the buffer so that the returned
+  // PostingListUsed is empty.
+  //
+  // Caller owns the posting_list_buffer buffer and must not free it while using
+  // a PostingListUsed.
   //
   // RETURNS:
   //   - A valid PostingListUsed if successful
   //   - INVALID_ARGUMENT if posting_list_utils::IsValidPostingListSize check
-  //     fails
-  //   - FAILED_PRECONDITION if serializer is null
+  //       fails
+  //   - FAILED_PRECONDITION if serializer or posting_list_buffer is null
   static libtextclassifier3::StatusOr<PostingListUsed>
-  CreateFromUnitializedRegion(PostingListSerializer* serializer,
+  CreateFromUnitializedRegion(PostingListUsedSerializer* serializer,
+                              void* posting_list_buffer,
                               uint32_t size_in_bytes);
 
-  uint8_t* posting_list_buffer() {
-    is_dirty_ = true;
-    return posting_list_buffer_.get();
-  }
-
-  const uint8_t* posting_list_buffer() const {
-    return posting_list_buffer_.get();
-  }
+  uint8_t* posting_list_buffer() { return posting_list_buffer_; }
+  const uint8_t* posting_list_buffer() const { return posting_list_buffer_; }
 
   uint32_t size_in_bytes() const { return size_in_bytes_; }
 
-  bool is_dirty() const { return is_dirty_; }
-
  private:
-  explicit PostingListUsed(std::unique_ptr<uint8_t[]> posting_list_buffer,
-                           uint32_t size_in_bytes)
-      : posting_list_buffer_(std::move(posting_list_buffer)),
-        size_in_bytes_(size_in_bytes),
-        is_dirty_(false) {}
+  explicit PostingListUsed(void* posting_list_buffer, uint32_t size_in_bytes)
+      : posting_list_buffer_(static_cast<uint8_t*>(posting_list_buffer)),
+        size_in_bytes_(size_in_bytes) {}
 
   // A byte array of size size_in_bytes_ containing encoded data for this
   // posting list.
-  std::unique_ptr<uint8_t[]> posting_list_buffer_;
+  uint8_t* posting_list_buffer_;  // does not own!
   uint32_t size_in_bytes_;
-
-  bool is_dirty_;
 };
 
 }  // namespace lib

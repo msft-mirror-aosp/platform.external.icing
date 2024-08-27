@@ -78,7 +78,7 @@ class PostingListIdentifier {
                 /*val=*/block_index);
   }
 
-  uint32_t block_index() const {
+  int block_index() const {
     return BITFIELD_GET(val_, kEncodedPostingListIndexBits, kBlockIndexBits);
   }
 
@@ -109,8 +109,7 @@ class PostingListIdentifier {
 
  private:
   uint32_t val_;
-} __attribute__((packed));
-static_assert(sizeof(PostingListIdentifier) == 4, "");
+};
 
 }  //  namespace lib
 }  //  namespace icing

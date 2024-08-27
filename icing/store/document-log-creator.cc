@@ -66,8 +66,7 @@ std::string DocumentLogCreator::GetDocumentLogFilename() {
 
 libtextclassifier3::StatusOr<DocumentLogCreator::CreateResult>
 DocumentLogCreator::Create(const Filesystem* filesystem,
-                           const std::string& base_dir,
-                           int32_t compression_level) {
+                           const std::string& base_dir) {
   bool v0_exists =
       filesystem->FileExists(MakeDocumentLogFilenameV0(base_dir).c_str());
   bool v1_exists =
@@ -76,8 +75,7 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
   bool new_file = false;
   int preexisting_file_version = kCurrentVersion;
   if (v0_exists && !v1_exists) {
-    ICING_RETURN_IF_ERROR(
-        MigrateFromV0ToV1(filesystem, base_dir, compression_level));
+    ICING_RETURN_IF_ERROR(MigrateFromV0ToV1(filesystem, base_dir));
 
     // Need to regenerate derived files since documents may be written to a
     // different file offset in the log.
@@ -96,9 +94,7 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
       PortableFileBackedProtoLog<DocumentWrapper>::Create(
           filesystem, MakeDocumentLogFilenameV1(base_dir),
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
-              /*compress_in=*/true,
-              PortableFileBackedProtoLog<DocumentWrapper>::kMaxProtoSize,
-              compression_level)));
+              /*compress_in=*/true)));
 
   CreateResult create_result = {std::move(log_create_result),
                                 preexisting_file_version, new_file};
@@ -106,15 +102,15 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
 }
 
 libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
-    const Filesystem* filesystem, const std::string& base_dir,
-    int32_t compression_level) {
+    const Filesystem* filesystem, const std::string& base_dir) {
   ICING_VLOG(1) << "Migrating from v0 to v1 document log.";
 
   // Our v0 proto log was non-portable, create it so we can read protos out from
   // it.
   auto v0_create_result_or = FileBackedProtoLog<DocumentWrapper>::Create(
       filesystem, MakeDocumentLogFilenameV0(base_dir),
-      FileBackedProtoLog<DocumentWrapper>::Options(/*compress_in=*/true));
+      FileBackedProtoLog<DocumentWrapper>::Options(
+          /*compress_in=*/true));
   if (!v0_create_result_or.ok()) {
     return absl_ports::Annotate(
         v0_create_result_or.status(),
@@ -131,10 +127,7 @@ libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
       PortableFileBackedProtoLog<DocumentWrapper>::Create(
           filesystem, MakeDocumentLogFilenameV1(base_dir),
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
-              /*compress_in=*/true,
-              /*max_proto_size_in=*/
-              PortableFileBackedProtoLog<DocumentWrapper>::kMaxProtoSize,
-              /*compression_level_in=*/compression_level));
+              /*compress_in=*/true));
   if (!v1_create_result_or.ok()) {
     return absl_ports::Annotate(
         v1_create_result_or.status(),

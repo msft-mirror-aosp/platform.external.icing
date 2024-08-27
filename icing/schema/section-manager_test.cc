@@ -14,9 +14,7 @@
 
 #include "icing/schema/section-manager.h"
 
-#include <memory>
-#include <string>
-#include <string_view>
+#include <limits>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -24,8 +22,8 @@
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
-#include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
@@ -38,178 +36,61 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
-using ::testing::Pointee;
 using ::testing::SizeIs;
 
-// type and property names of Email
-static constexpr std::string_view kTypeEmail = "Email";
-// indexable
-static constexpr std::string_view kPropertyRecipientIds = "recipientIds";
-static constexpr std::string_view kPropertyRecipients = "recipients";
-static constexpr std::string_view kPropertySubject = "subject";
-static constexpr std::string_view kPropertyTimestamp = "timestamp";
-// non-indexable
-static constexpr std::string_view kPropertyAttachment = "attachment";
-static constexpr std::string_view kPropertyNonIndexableInteger =
-    "nonIndexableInteger";
-static constexpr std::string_view kPropertyText = "text";
-
+// type and property names of EmailMessage
+constexpr char kTypeEmail[] = "EmailMessage";
+constexpr char kPropertySubject[] = "subject";
+constexpr char kPropertyText[] = "text";
+constexpr char kPropertyAttachment[] = "attachment";
+constexpr char kPropertyRecipients[] = "recipients";
+constexpr char kPropertyRecipientIds[] = "recipientIds";
+constexpr char kPropertyTimestamp[] = "timestamp";
+constexpr char kPropertyNonIndexableInteger[] = "non_indexable_integer";
 // type and property names of Conversation
-static constexpr std::string_view kTypeConversation = "Conversation";
-// indexable
-static constexpr std::string_view kPropertyEmails = "emails";
-static constexpr std::string_view kPropertyName = "name";
-
-// type and property names of Group
-static constexpr std::string_view kTypeGroup = "Group";
-// indexable
-static constexpr std::string_view kPropertyConversation = "conversation";
-static constexpr std::string_view kPropertyGroupName = "groupName";
-// nested indexable
-static constexpr std::string_view kPropertyNestedConversationName = "name";
-static constexpr std::string_view kPropertyNestedConversationEmailRecipientIds =
-    "emails.recipientIds";
-static constexpr std::string_view kPropertyNestedConversationEmailRecipient =
-    "emails.recipients";
-static constexpr std::string_view kPropertyNestedConversationEmailSubject =
-    "emails.subject";
-// nested non-indexable
-static constexpr std::string_view kPropertyNestedConversationEmailAttachment =
-    "emails.attachment";
-// non-existent property path
-static constexpr std::string_view kPropertyNestedNonExistent =
-    "emails.nonExistentNestedProperty";
-static constexpr std::string_view kPropertyNestedNonExistent2 =
-    "emails.nonExistentNestedProperty2";
+constexpr char kTypeConversation[] = "Conversation";
+constexpr char kPropertyName[] = "name";
+constexpr char kPropertyEmails[] = "emails";
 
 constexpr int64_t kDefaultTimestamp = 1663274901;
 
-PropertyConfigProto CreateRecipientIdsPropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertyRecipientIds)
-      .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-      .SetCardinality(CARDINALITY_REPEATED)
-      .Build();
-}
-
-PropertyConfigProto CreateRecipientsPropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertyRecipients)
-      .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-      .SetCardinality(CARDINALITY_REPEATED)
-      .Build();
-}
-
-PropertyConfigProto CreateSubjectPropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertySubject)
-      .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-      .SetCardinality(CARDINALITY_REQUIRED)
-      .Build();
-}
-
-PropertyConfigProto CreateTimestampPropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertyTimestamp)
-      .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-      .SetCardinality(CARDINALITY_REQUIRED)
-      .Build();
-}
-
-PropertyConfigProto CreateNamePropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertyName)
-      .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-      .SetCardinality(CARDINALITY_OPTIONAL)
-      .Build();
-}
-
-PropertyConfigProto CreateAttachmentPropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertyAttachment)
-      .SetDataType(TYPE_BYTES)
-      .SetCardinality(CARDINALITY_OPTIONAL)
-      .Build();
-}
-
-PropertyConfigProto CreateGroupNamePropertyConfig() {
-  return PropertyConfigBuilder()
-      .SetName(kPropertyGroupName)
-      .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-      .SetCardinality(CARDINALITY_OPTIONAL)
-      .Build();
-}
-
-SchemaTypeConfigProto CreateEmailTypeConfig() {
-  return SchemaTypeConfigBuilder()
-      .SetType(kTypeEmail)
-      .AddProperty(CreateSubjectPropertyConfig())
-      .AddProperty(PropertyConfigBuilder()
-                       .SetName(kPropertyText)
-                       .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
-                       .SetCardinality(CARDINALITY_OPTIONAL))
-      .AddProperty(PropertyConfigBuilder()
-                       .SetName(kPropertyAttachment)
-                       .SetDataType(TYPE_BYTES)
-                       .SetCardinality(CARDINALITY_REQUIRED))
-      .AddProperty(CreateRecipientsPropertyConfig())
-      .AddProperty(CreateRecipientIdsPropertyConfig())
-      .AddProperty(CreateTimestampPropertyConfig())
-      .AddProperty(PropertyConfigBuilder()
-                       .SetName(kPropertyNonIndexableInteger)
-                       .SetDataType(TYPE_INT64)
-                       .SetCardinality(CARDINALITY_REQUIRED))
-      .Build();
-}
-
-SchemaTypeConfigProto CreateConversationTypeConfig() {
-  return SchemaTypeConfigBuilder()
-      .SetType(kTypeConversation)
-      .AddProperty(CreateNamePropertyConfig())
-      .AddProperty(PropertyConfigBuilder()
-                       .SetName(kPropertyEmails)
-                       .SetDataTypeDocument(kTypeEmail,
-                                            /*index_nested_properties=*/true)
-                       .SetCardinality(CARDINALITY_REPEATED))
-      .Build();
-}
-
-SchemaTypeConfigProto CreateGroupTypeConfig() {
-  return SchemaTypeConfigBuilder()
-      .SetType(kTypeGroup)
-      .AddProperty(CreateGroupNamePropertyConfig())
-      .AddProperty(
-          PropertyConfigBuilder()
-              .SetName(kPropertyConversation)
-              .SetDataTypeDocument(
-                  kTypeConversation,
-                  /*indexable_nested_properties_list=*/
-                  {std::string(kPropertyNestedConversationName),
-                   std::string(kPropertyNestedConversationEmailRecipientIds),
-                   std::string(kPropertyNestedConversationEmailSubject),
-                   std::string(kPropertyNestedConversationEmailRecipient),
-                   std::string(kPropertyNestedConversationEmailAttachment),
-                   std::string(kPropertyNestedNonExistent2),
-                   std::string(kPropertyNestedNonExistent),
-                   std::string(kPropertyNestedNonExistent)})
-              .SetCardinality(CARDINALITY_REPEATED))
-      .Build();
-}
-
 class SectionManagerTest : public ::testing::Test {
  protected:
-  void SetUp() override {
-    test_dir_ = GetTestTempDir() + "/icing";
-
+  SectionManagerTest() : test_dir_(GetTestTempDir() + "/icing") {
     auto email_type = CreateEmailTypeConfig();
     auto conversation_type = CreateConversationTypeConfig();
-    auto group_type = CreateGroupTypeConfig();
     type_config_map_.emplace(email_type.schema_type(), email_type);
     type_config_map_.emplace(conversation_type.schema_type(),
                              conversation_type);
-    type_config_map_.emplace(group_type.schema_type(), group_type);
 
+    email_document_ =
+        DocumentBuilder()
+            .SetKey("icing", "email/1")
+            .SetSchema(kTypeEmail)
+            .AddStringProperty(kPropertySubject, "the subject")
+            .AddStringProperty(kPropertyText, "the text")
+            .AddBytesProperty(kPropertyAttachment, "attachment bytes")
+            .AddStringProperty(kPropertyRecipients, "recipient1", "recipient2",
+                               "recipient3")
+            .AddInt64Property(kPropertyRecipientIds, 1, 2, 3)
+            .AddInt64Property(kPropertyTimestamp, kDefaultTimestamp)
+            .AddInt64Property(kPropertyNonIndexableInteger, 100)
+            .Build();
+
+    conversation_document_ =
+        DocumentBuilder()
+            .SetKey("icing", "conversation/1")
+            .SetSchema(kTypeConversation)
+            .AddDocumentProperty(kPropertyEmails,
+                                 DocumentProto(email_document_),
+                                 DocumentProto(email_document_))
+            .Build();
+  }
+
+  void SetUp() override {
     // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each
     // one 128KiB so the total DynamicTrieKeyMapper should get 384KiB
     int key_mapper_size = 3 * 128 * 1024;
@@ -218,83 +99,316 @@ class SectionManagerTest : public ::testing::Test {
                                    filesystem_, test_dir_, key_mapper_size));
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeEmail, 0));
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeConversation, 1));
-    ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeGroup, 2));
-
-    email_document_ =
-        DocumentBuilder()
-            .SetKey("icing", "email/1")
-            .SetSchema(std::string(kTypeEmail))
-            .AddStringProperty(std::string(kPropertySubject), "the subject")
-            .AddStringProperty(std::string(kPropertyText), "the text")
-            .AddBytesProperty(std::string(kPropertyAttachment),
-                              "attachment bytes")
-            .AddStringProperty(std::string(kPropertyRecipients), "recipient1",
-                               "recipient2", "recipient3")
-            .AddInt64Property(std::string(kPropertyRecipientIds), 1, 2, 3)
-            .AddInt64Property(std::string(kPropertyTimestamp),
-                              kDefaultTimestamp)
-            .AddInt64Property(std::string(kPropertyNonIndexableInteger), 100)
-            .Build();
-
-    conversation_document_ =
-        DocumentBuilder()
-            .SetKey("icing", "conversation/1")
-            .SetSchema(std::string(kTypeConversation))
-            .AddDocumentProperty(std::string(kPropertyEmails),
-                                 DocumentProto(email_document_),
-                                 DocumentProto(email_document_))
-            .Build();
-
-    group_document_ =
-        DocumentBuilder()
-            .SetKey("icing", "group/1")
-            .SetSchema(std::string(kTypeGroup))
-            .AddDocumentProperty(std::string(kPropertyConversation),
-                                 DocumentProto(conversation_document_))
-            .AddStringProperty(std::string(kPropertyGroupName), "group_name_1")
-            .Build();
   }
 
-  void TearDown() override {
-    schema_type_mapper_.reset();
-    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  static SchemaTypeConfigProto CreateEmailTypeConfig() {
+    SchemaTypeConfigProto type =
+        SchemaTypeConfigBuilder()
+            .SetType(kTypeEmail)
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName(kPropertySubject)
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName(kPropertyText)
+                    .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyAttachment)
+                             .SetDataType(TYPE_BYTES)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName(kPropertyRecipients)
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_REPEATED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyRecipientIds)
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_REPEATED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyTimestamp)
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyNonIndexableInteger)
+                             .SetDataType(TYPE_INT64)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .Build();
+    return type;
+  }
+
+  static SchemaTypeConfigProto CreateConversationTypeConfig() {
+    SchemaTypeConfigProto type;
+    type.set_schema_type(kTypeConversation);
+
+    auto name = type.add_properties();
+    name->set_property_name(kPropertyName);
+    name->set_data_type(TYPE_STRING);
+    name->set_cardinality(CARDINALITY_OPTIONAL);
+    name->mutable_string_indexing_config()->set_term_match_type(
+        TERM_MATCH_EXACT);
+
+    auto emails = type.add_properties();
+    emails->set_property_name(kPropertyEmails);
+    emails->set_data_type(TYPE_DOCUMENT);
+    emails->set_cardinality(CARDINALITY_REPEATED);
+    emails->set_schema_type(kTypeEmail);
+    emails->mutable_document_indexing_config()->set_index_nested_properties(
+        true);
+
+    return type;
   }
 
   Filesystem filesystem_;
-  std::string test_dir_;
+  const std::string test_dir_;
   SchemaUtil::TypeConfigMap type_config_map_;
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
   DocumentProto email_document_;
   DocumentProto conversation_document_;
-  DocumentProto group_document_;
 };
 
-TEST_F(SectionManagerTest, ExtractSections) {
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+TEST_F(SectionManagerTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(
+      SectionManager::Create(type_config_map_, /*schema_type_mapper=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
 
-  // Extracts all sections from 'Email' document
+TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
+  SchemaTypeConfigProto type_config;
+  type_config.set_schema_type("type");
+  // Adds more properties than allowed
+  int max_num_sections_allowed = kMaxSectionId - kMinSectionId + 1;
+  for (int i = 0; i < max_num_sections_allowed + 1; i++) {
+    auto property = type_config.add_properties();
+    property->set_property_name("property" + std::to_string(i));
+    property->set_data_type(TYPE_STRING);
+    property->set_cardinality(CARDINALITY_REQUIRED);
+    property->mutable_string_indexing_config()->set_term_match_type(
+        TERM_MATCH_EXACT);
+  }
+
+  SchemaUtil::TypeConfigMap type_config_map;
+  type_config_map.emplace("type", type_config);
+
+  EXPECT_THAT(
+      SectionManager::Create(type_config_map, schema_type_mapper_.get()),
+      StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE,
+               HasSubstr("Too many properties")));
+}
+
+TEST_F(SectionManagerTest, GetSectionContent) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(email_document_));
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Test simple section paths
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"subject"),
+              IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"text"),
+              IsOkAndHolds(ElementsAre("the text")));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<int64_t>(email_document_,
+                                                  /*section_path=*/"timestamp"),
+      IsOkAndHolds(ElementsAre(kDefaultTimestamp)));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentRepeatedValues) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Test repeated values
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          email_document_,
+          /*section_path=*/"recipients"),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  email_document_,
+                  /*section_path=*/"recipientIds"),
+              IsOkAndHolds(ElementsAre(1, 2, 3)));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentConcatenatedSectionPaths) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Test concatenated section paths: "property1.property2"
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_,
+                  /*section_path=*/"emails.subject"),
+              IsOkAndHolds(ElementsAre("the subject", "the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_,
+                  /*section_path=*/"emails.text"),
+              IsOkAndHolds(ElementsAre("the text", "the text")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_,
+                  /*section_path=*/"emails.timestamp"),
+              IsOkAndHolds(ElementsAre(kDefaultTimestamp, kDefaultTimestamp)));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          conversation_document_,
+          /*section_path=*/"emails.recipients"),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3",
+                               "recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_,
+                  /*section_path=*/"emails.recipientIds"),
+              IsOkAndHolds(ElementsAre(1, 2, 3, 1, 2, 3)));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentNonExistingPaths) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Test non-existing paths
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"name"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"invalid"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_,
+                  /*section_path=*/"emails.invalid"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentNonIndexableTypes) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Test other data types
+  // BYTES type can't be indexed, so content won't be returned
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"attachment"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentMismatchedType) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Use the wrong template type to get the indexable content. GetSectionContent
+  // should get empty content from the corresponding proto (repeated) field and
+  // return NOT_FOUND error.
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"recipientIds"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  email_document_,
+                  /*section_path=*/"recipients"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+// The following tests are similar to the ones above but use section ids
+// instead of section paths
+TEST_F(SectionManagerTest, GetSectionContentBySectionId) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // EmailMessage (section id -> section path):
+  SectionId recipient_ids_section_id = 0;
+  SectionId recipients_section_id = 1;
+  SectionId subject_section_id = 2;
+  SectionId timestamp_section_id = 3;
+  SectionId invalid_email_section_id = 4;
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  email_document_, recipient_ids_section_id),
+              IsOkAndHolds(ElementsAre(1, 2, 3)));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          email_document_, recipients_section_id),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_, subject_section_id),
+              IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(email_document_,
+                                                          timestamp_section_id),
+              IsOkAndHolds(ElementsAre(kDefaultTimestamp)));
+
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_, invalid_email_section_id),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Conversation (section id -> section path):
+  //   0 -> emails.recipientIds
+  //   1 -> emails.recipients
+  //   2 -> emails.subject
+  //   3 -> emails.timestamp
+  //   4 -> name
+  SectionId emails_recipient_ids_section_id = 0;
+  SectionId emails_recipients_section_id = 1;
+  SectionId emails_subject_section_id = 2;
+  SectionId emails_timestamp_section_id = 3;
+  SectionId name_section_id = 4;
+  SectionId invalid_conversation_section_id = 5;
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_, emails_recipient_ids_section_id),
+              IsOkAndHolds(ElementsAre(1, 2, 3, 1, 2, 3)));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          conversation_document_, emails_recipients_section_id),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3",
+                               "recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_, emails_subject_section_id),
+              IsOkAndHolds(ElementsAre("the subject", "the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_, emails_timestamp_section_id),
+              IsOkAndHolds(ElementsAre(kDefaultTimestamp, kDefaultTimestamp)));
+
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_, name_section_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_, invalid_conversation_section_id),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(SectionManagerTest, ExtractSections) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Extracts all sections from 'EmailMessage' document
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                             section_manager->ExtractSections(email_document_));
 
   // String sections
   EXPECT_THAT(section_group.string_sections, SizeIs(2));
 
   EXPECT_THAT(section_group.string_sections[0].metadata,
-              EqualsSectionMetadata(/*expected_id=*/1,
-                                    /*expected_property_path=*/"recipients",
-                                    CreateRecipientsPropertyConfig()));
+              Eq(SectionMetadata(
+                  /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"recipients")));
   EXPECT_THAT(section_group.string_sections[0].content,
               ElementsAre("recipient1", "recipient2", "recipient3"));
 
   EXPECT_THAT(section_group.string_sections[1].metadata,
-              EqualsSectionMetadata(/*expected_id=*/2,
-                                    /*expected_property_path=*/"subject",
-                                    CreateSubjectPropertyConfig()));
+              Eq(SectionMetadata(
+                  /*id_in=*/2, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"subject")));
   EXPECT_THAT(section_group.string_sections[1].content,
               ElementsAre("the subject"));
 
@@ -302,339 +416,65 @@ TEST_F(SectionManagerTest, ExtractSections) {
   EXPECT_THAT(section_group.integer_sections, SizeIs(2));
 
   EXPECT_THAT(section_group.integer_sections[0].metadata,
-              EqualsSectionMetadata(/*expected_id=*/0,
-                                    /*expected_property_path=*/"recipientIds",
-                                    CreateRecipientIdsPropertyConfig()));
+              Eq(SectionMetadata(/*id_in=*/0, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"recipientIds")));
   EXPECT_THAT(section_group.integer_sections[0].content, ElementsAre(1, 2, 3));
 
   EXPECT_THAT(section_group.integer_sections[1].metadata,
-              EqualsSectionMetadata(/*expected_id=*/3,
-                                    /*expected_property_path=*/"timestamp",
-                                    CreateTimestampPropertyConfig()));
+              Eq(SectionMetadata(/*id_in=*/3, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"timestamp")));
   EXPECT_THAT(section_group.integer_sections[1].content,
               ElementsAre(kDefaultTimestamp));
 }
 
 TEST_F(SectionManagerTest, ExtractSectionsNested) {
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Extracts all sections from 'Conversation' document
   ICING_ASSERT_OK_AND_ASSIGN(
       SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(
-          conversation_document_));
+      section_manager->ExtractSections(conversation_document_));
 
   // String sections
   EXPECT_THAT(section_group.string_sections, SizeIs(2));
 
-  EXPECT_THAT(
-      section_group.string_sections[0].metadata,
-      EqualsSectionMetadata(/*expected_id=*/1,
-                            /*expected_property_path=*/"emails.recipients",
-                            CreateRecipientsPropertyConfig()));
+  EXPECT_THAT(section_group.string_sections[0].metadata,
+              Eq(SectionMetadata(
+                  /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"emails.recipients")));
   EXPECT_THAT(section_group.string_sections[0].content,
               ElementsAre("recipient1", "recipient2", "recipient3",
                           "recipient1", "recipient2", "recipient3"));
 
   EXPECT_THAT(section_group.string_sections[1].metadata,
-              EqualsSectionMetadata(/*expected_id=*/2,
-                                    /*expected_property_path=*/"emails.subject",
-                                    CreateSubjectPropertyConfig()));
+              Eq(SectionMetadata(
+                  /*id_in=*/2, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"emails.subject")));
   EXPECT_THAT(section_group.string_sections[1].content,
               ElementsAre("the subject", "the subject"));
 
   // Integer sections
   EXPECT_THAT(section_group.integer_sections, SizeIs(2));
 
-  EXPECT_THAT(
-      section_group.integer_sections[0].metadata,
-      EqualsSectionMetadata(/*expected_id=*/0,
-                            /*expected_property_path=*/"emails.recipientIds",
-                            CreateRecipientIdsPropertyConfig()));
+  EXPECT_THAT(section_group.integer_sections[0].metadata,
+              Eq(SectionMetadata(/*id_in=*/0, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"emails.recipientIds")));
   EXPECT_THAT(section_group.integer_sections[0].content,
               ElementsAre(1, 2, 3, 1, 2, 3));
 
-  EXPECT_THAT(
-      section_group.integer_sections[1].metadata,
-      EqualsSectionMetadata(/*expected_id=*/3,
-                            /*expected_property_path=*/"emails.timestamp",
-                            CreateTimestampPropertyConfig()));
+  EXPECT_THAT(section_group.integer_sections[1].metadata,
+              Eq(SectionMetadata(/*id_in=*/3, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"emails.timestamp")));
   EXPECT_THAT(section_group.integer_sections[1].content,
               ElementsAre(kDefaultTimestamp, kDefaultTimestamp));
-}
-
-TEST_F(SectionManagerTest, ExtractSectionsIndexableNestedPropertiesList) {
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-
-  // Extracts all sections from 'Group' document
-  ICING_ASSERT_OK_AND_ASSIGN(
-      SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(group_document_));
-
-  // SectionId assignments:
-  //    0 -> conversation.emails.attachment (bytes, non-indexable)
-  //    1 -> conversation.emails.recipientIds (int64)
-  //    2 -> conversation.emails.recipients (string)
-  //    3 -> conversation.emails.subject (string)
-  //    4 -> conversation.name
-  //         (string, but no entry for this in conversation_document_)
-  //    5 -> groupName (string)
-  //    6 -> conversation.emails.nonExistentNestedProperty
-  //         (unknown, non-indexable)
-  //    7 -> conversation.emails.nonExistentNestedProperty2
-  //         (unknown, non-indexable)
-  //
-  // SectionId assignment order:
-  // - We assign section ids to known (existing) properties first in alphabet
-  //  order.
-  // - After handling all known properties, we assign section ids to all unknown
-  //   (non-existent) properties that are specified in the
-  //  indexable_nested_properties_list.
-  // - As a result, assignment of the entire section set is not done
-  //   alphabetically, but assignment is still deterministic and alphabetical
-  //   order is preserved inside the known properties and unknown properties
-  //   sets individually.
-  //
-  // 'conversation.emails.attachment',
-  // 'conversation.emails.nonExistentNestedProperty' and
-  // 'conversation.emails.nonExistentNestedProperty2' are assigned sectionIds
-  // even though they are non-indexable because they appear in 'Group' schema
-  // type's indexable_nested_props_list.
-  // However 'conversation.emails.attachment' does not exist in section_group
-  // (even though the property exists and has a sectionId assignment) as
-  // SectionManager::ExtractSections only extracts indexable string and integer
-  // section data from a document.
-
-  // String sections
-  EXPECT_THAT(section_group.string_sections, SizeIs(3));
-
-  EXPECT_THAT(section_group.string_sections[0].metadata,
-              EqualsSectionMetadata(
-                  /*expected_id=*/2,
-                  /*expected_property_path=*/"conversation.emails.recipients",
-                  CreateRecipientsPropertyConfig()));
-  EXPECT_THAT(section_group.string_sections[0].content,
-              ElementsAre("recipient1", "recipient2", "recipient3",
-                          "recipient1", "recipient2", "recipient3"));
-
-  EXPECT_THAT(section_group.string_sections[1].metadata,
-              EqualsSectionMetadata(
-                  /*expected_id=*/3,
-                  /*expected_property_path=*/"conversation.emails.subject",
-                  CreateSubjectPropertyConfig()));
-  EXPECT_THAT(section_group.string_sections[1].content,
-              ElementsAre("the subject", "the subject"));
-
-  EXPECT_THAT(section_group.string_sections[2].metadata,
-              EqualsSectionMetadata(
-                  /*expected_id=*/5,
-                  /*expected_property_path=*/"groupName",
-                  CreateGroupNamePropertyConfig()));
-  EXPECT_THAT(section_group.string_sections[2].content,
-              ElementsAre("group_name_1"));
-
-  // Integer sections
-  EXPECT_THAT(section_group.integer_sections, SizeIs(1));
-
-  EXPECT_THAT(section_group.integer_sections[0].metadata,
-              EqualsSectionMetadata(
-                  /*expected_id=*/1,
-                  /*expected_property_path=*/"conversation.emails.recipientIds",
-                  CreateRecipientIdsPropertyConfig()));
-  EXPECT_THAT(section_group.integer_sections[0].content,
-              ElementsAre(1, 2, 3, 1, 2, 3));
-}
-
-TEST_F(SectionManagerTest, GetSectionMetadata) {
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-
-  // Email (section id -> section property path):
-  //   0 -> recipientIds
-  //   1 -> recipients
-  //   2 -> subject
-  //   3 -> timestamp
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/0, /*section_id=*/0),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/0, /*expected_property_path=*/"recipientIds",
-                  CreateRecipientIdsPropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/0, /*section_id=*/1),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/1, /*expected_property_path=*/"recipients",
-                  CreateRecipientsPropertyConfig()))));
-
-  // Conversation (section id -> section property path):
-  //   0 -> emails.recipientIds
-  //   1 -> emails.recipients
-  //   2 -> emails.subject
-  //   3 -> emails.timestamp
-  //   4 -> name
-  EXPECT_THAT(
-      schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/1, /*section_id=*/0),
-      IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/0, /*expected_property_path=*/"emails.recipientIds",
-          CreateRecipientIdsPropertyConfig()))));
-  EXPECT_THAT(
-      schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/1, /*section_id=*/1),
-      IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/1, /*expected_property_path=*/"emails.recipients",
-          CreateRecipientsPropertyConfig()))));
-  EXPECT_THAT(
-      schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/1, /*section_id=*/2),
-      IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/2, /*expected_property_path=*/"emails.subject",
-          CreateSubjectPropertyConfig()))));
-  EXPECT_THAT(
-      schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/1, /*section_id=*/3),
-      IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/3, /*expected_property_path=*/"emails.timestamp",
-          CreateTimestampPropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/1, /*section_id=*/4),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/4, /*expected_property_path=*/"name",
-                  CreateNamePropertyConfig()))));
-
-  // Group (section id -> section property path):
-  //    0 -> conversation.emails.attachment (non-indexable)
-  //    1 -> conversation.emails.recipientIds
-  //    2 -> conversation.emails.recipients
-  //    3 -> conversation.emails.subject
-  //    4 -> conversation.name
-  //    5 -> groupName
-  //    6 -> conversation.emails.nonExistentNestedProperty (non-indexable)
-  //    7 -> conversation.emails.nonExistentNestedProperty2 (non-indexable)
-  //
-  // SectionId assignment order:
-  // - We assign section ids to known (existing) properties first in alphabet
-  //  order.
-  // - After handling all known properties, we assign section ids to all unknown
-  //   (non-existent) properties that are specified in the
-  //  indexable_nested_properties_list.
-  // - As a result, assignment of the entire section set is not done
-  //   alphabetically, but assignment is still deterministic and alphabetical
-  //   order is preserved inside the known properties and unknown properties
-  //   sets individually.
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/0),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/0,
-                  /*expected_property_path=*/"conversation.emails.attachment",
-                  CreateAttachmentPropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/1),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/1,
-                  /*expected_property_path=*/"conversation.emails.recipientIds",
-                  CreateRecipientIdsPropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/2),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/2,
-                  /*expected_property_path=*/"conversation.emails.recipients",
-                  CreateRecipientsPropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/3),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/3,
-                  /*expected_property_path=*/"conversation.emails.subject",
-                  CreateSubjectPropertyConfig()))));
-  EXPECT_THAT(
-      schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/2, /*section_id=*/4),
-      IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/4, /*expected_property_path=*/"conversation.name",
-          CreateNamePropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/5),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/5, /*expected_property_path=*/"groupName",
-                  CreateGroupNamePropertyConfig()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/6),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/6,
-                  /*expected_property_path=*/
-                  "conversation.emails.nonExistentNestedProperty",
-                  PropertyConfigBuilder()
-                      .SetName("nonExistentNestedProperty")
-                      .SetDataType(TYPE_UNKNOWN)
-                      .Build()))));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/7),
-              IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/7,
-                  /*expected_property_path=*/
-                  "conversation.emails.nonExistentNestedProperty2",
-                  PropertyConfigBuilder()
-                      .SetName("nonExistentNestedProperty2")
-                      .SetDataType(TYPE_UNKNOWN)
-                      .Build()))));
-  // Check that no more properties are indexed
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/2, /*section_id=*/8),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(SectionManagerTest, GetSectionMetadataInvalidSchemaTypeId) {
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-  ASSERT_THAT(type_config_map_, SizeIs(3));
-
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/-1, /*section_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/3, /*section_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(SectionManagerTest, GetSectionMetadataInvalidSectionId) {
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-
-  // Email (section id -> section property path):
-  //   0 -> recipientIds
-  //   1 -> recipients
-  //   2 -> subject
-  //   3 -> timestamp
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/0, /*section_id=*/-1),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/0, /*section_id=*/4),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Conversation (section id -> section property path):
-  //   0 -> emails.recipientIds
-  //   1 -> emails.recipients
-  //   2 -> emails.subject
-  //   3 -> emails.timestamp
-  //   4 -> name
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/1, /*section_id=*/-1),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/1, /*section_id=*/5),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(SectionManagerTest,
@@ -717,10 +557,9 @@ TEST_F(SectionManagerTest,
   ICING_ASSERT_OK(schema_type_mapper->Put(empty_type.schema_type(),
                                           /*schema_type_id=*/1));
 
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      auto section_manager,
+      SectionManager::Create(type_config_map, schema_type_mapper.get()));
 
   // Create an empty document to be nested
   DocumentProto empty_document = DocumentBuilder()
@@ -741,9 +580,8 @@ TEST_F(SectionManagerTest,
           .Build();
 
   // Extracts sections from 'Schema' document
-  ICING_ASSERT_OK_AND_ASSIGN(
-      SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(document));
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                             section_manager->ExtractSections(document));
   EXPECT_THAT(section_group.string_sections, IsEmpty());
   EXPECT_THAT(section_group.integer_sections, IsEmpty());
 }
@@ -818,10 +656,9 @@ TEST_F(SectionManagerTest,
   ICING_ASSERT_OK(schema_type_mapper->Put(empty_type.schema_type(),
                                           /*schema_type_id=*/1));
 
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      auto section_manager,
+      SectionManager::Create(type_config_map, schema_type_mapper.get()));
 
   // Create an empty document to be nested
   DocumentProto empty_document = DocumentBuilder()
@@ -842,9 +679,8 @@ TEST_F(SectionManagerTest,
           .Build();
 
   // Extracts sections from 'Schema' document
-  ICING_ASSERT_OK_AND_ASSIGN(
-      SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(document));
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                             section_manager->ExtractSections(document));
   EXPECT_THAT(section_group.string_sections, IsEmpty());
   EXPECT_THAT(section_group.integer_sections, IsEmpty());
 }
@@ -920,16 +756,14 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
   ICING_ASSERT_OK(schema_type_mapper->Put(document_type.schema_type(),
                                           document_type_schema_type_id));
 
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      auto section_manager,
+      SectionManager::Create(type_config_map, schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there should be the 1 string
   // property and 1 integer property inside the document.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(outer_document));
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                             section_manager->ExtractSections(outer_document));
   EXPECT_THAT(section_group.string_sections, SizeIs(1));
   EXPECT_THAT(section_group.integer_sections, SizeIs(1));
 }
@@ -1005,16 +839,14 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
   ICING_ASSERT_OK(schema_type_mapper->Put(document_type.schema_type(),
                                           document_type_schema_type_id));
 
-  // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      auto section_manager,
+      SectionManager::Create(type_config_map, schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there won't be any since we
   // didn't recurse into the document to see the inner string property
-  ICING_ASSERT_OK_AND_ASSIGN(
-      SectionGroup section_group,
-      schema_type_manager->section_manager().ExtractSections(outer_document));
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                             section_manager->ExtractSections(outer_document));
   EXPECT_THAT(section_group.string_sections, IsEmpty());
   EXPECT_THAT(section_group.integer_sections, IsEmpty());
 }

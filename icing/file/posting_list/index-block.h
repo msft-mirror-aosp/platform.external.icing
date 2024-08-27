@@ -19,10 +19,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
 #include "icing/file/posting_list/posting-list-common.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/legacy/index/icing-bit-util.h"
@@ -32,27 +31,15 @@ namespace lib {
 
 // This class is used to manage I/O to a single flash block and to manage the
 // division of that flash block into PostingLists. It provides an interface to
-// allocate, free and read posting lists. Note that IndexBlock is stateless:
-// - Any changes to block header will be synced to disk before the method
-//   returns.
-// - Any posting list allocation/freeing will be synced to disk before the
-//   method returns.
-// - When getting an allocated posting list, it PReads the contents from disk to
-//   a buffer and transfer the ownership to PostingListUsed. Any changes to
-//   PostingListUsed will not be visible to other instances until calling
-//   WritePostingListToDisk.
+// allocate, free and read posting lists.
 //
 // An IndexBlock contains a small header and an array of fixed-size posting list
 // buffers. Initially, all posting lists are chained in a singly-linked free
 // list.
 //
-// When we want to get a new PostingList from an IndexBlock, we just pull one
-// off the free list. When the user wants to return the PostingList to the free
-// pool, we prepend it to the free list.
-//
-// Read-write the same block is NOT thread safe. If we try to read-write the
-// same block at the same time (either by the same or different IndexBlock
-// instances), then it causes race condition and the behavior is undefined.
+// When we want to get a new PostingList from an IndexBlock, we just
+// pull one off the free list. When the user wants to return the
+// PostingList to the free pool, we prepend it to the free list.
 class IndexBlock {
  public:
   // What is the maximum posting list size in bytes that can be stored in this
@@ -63,57 +50,35 @@ class IndexBlock {
            data_type_bytes;
   }
 
-  // Creates an IndexBlock to reference the previously used region of the file
-  // descriptor starting at block_file_offset with size block_size.
-  //
-  // - serializer: for reading/writing posting list. Also some additional
-  //               information (e.g. data size) should be provided by the
-  //               serializer.
-  // - fd: a valid file descriptor opened for write by the caller.
-  // - block_file_offset: absolute offset of the file (fd).
-  // - block_size: byte size of this block.
-  //
-  // Unlike CreateFromUninitializedRegion, a pre-existing index block has
-  // already determined and written posting list bytes into block header, so it
-  // will be read from block header and the caller doesn't have to provide.
+  // Create an IndexBlock to reference the previously used region of the
+  // mmapped_file starting at offset with size block_size
   //
   // RETURNS:
-  //   - A valid IndexBlock instance on success
-  //   - INVALID_ARGUMENT_ERROR
-  //     - If block_size is too small for even just the BlockHeader
-  //     - If the posting list size stored in the region is not a valid posting
-  //       list size (e.g. exceeds max_posting_list_bytes(size))
-  //   - INTERNAL_ERROR on I/O error
+  //   - a valid IndexBlock on success
+  //   - INVALID_ARGUMENT if size is too small for even just the BlockHeader or
+  //     if the posting list size stored in the region is not a valid posting
+  //     list size or it exceeds max_posting_list_bytes(size).
+  //   - INTERNAL_ERROR if unable to mmap the region [offset, offset+block_size)
   static libtextclassifier3::StatusOr<IndexBlock>
-  CreateFromPreexistingIndexBlockRegion(const Filesystem* filesystem,
-                                        PostingListSerializer* serializer,
-                                        int fd, off_t block_file_offset,
-                                        uint32_t block_size);
+  CreateFromPreexistingIndexBlockRegion(const Filesystem& filesystem,
+                                        std::string_view file_path,
+                                        PostingListUsedSerializer* serializer,
+                                        off_t offset, uint32_t block_size);
 
-  // Creates an IndexBlock to reference an uninitialized region of the file
-  // descriptor starting at block_file_offset with size block_size. The
-  // IndexBlock will initialize the region to be an empty IndexBlock with
-  // posting lists of size posting_list_bytes.
-  //
-  // - serializer: for reading/writing posting list. Also some additional
-  //               information (e.g. data size) should be provided by the
-  //               serializer.
-  // - fd: a valid file descriptor opened for write by the caller.
-  // - block_file_offset: absolute offset of the file (fd).
-  // - block_size: byte size of this block.
-  // - posting_list_bytes: byte size of all posting lists in this block. This
-  //   information will be written into block header.
+  // Create an IndexBlock to reference an uninitialized region of the
+  // mmapped_file starting at offset with size block_size. The IndexBlock will
+  // initialize the region to be an empty IndexBlock with posting lists of size
+  // posting_list_bytes.
   //
   // RETURNS:
-  //   - A valid IndexBlock instance on success
-  //   - INVALID_ARGUMENT_ERROR
-  //     - If block_size is too small for even just the BlockHeader
-  //     - If the posting list size stored in the region is not a valid posting
-  //       list size (e.g. exceeds max_posting_list_bytes(size))
-  //   - INTERNAL_ERROR on I/O error
+  //   - a valid IndexBlock on success
+  //   - INVALID_ARGUMENT if size is too small for even just the BlockHeader or
+  //   if posting_list_bytes is not a valid posting list size or it exceeds
+  //   max_posting_list_bytes(size).
+  //   - INTERNAL_ERROR if unable to mmap the region [offset, offset+block_size)
   static libtextclassifier3::StatusOr<IndexBlock> CreateFromUninitializedRegion(
-      const Filesystem* filesystem, PostingListSerializer* serializer, int fd,
-      off_t block_file_offset, uint32_t block_size,
+      const Filesystem& filesystem, std::string_view file_path,
+      PostingListUsedSerializer* serializer, off_t offset, uint32_t block_size,
       uint32_t posting_list_bytes);
 
   IndexBlock(const IndexBlock&) = delete;
@@ -121,53 +86,30 @@ class IndexBlock {
   IndexBlock(IndexBlock&&) = default;
   IndexBlock& operator=(IndexBlock&&) = default;
 
-  ~IndexBlock() = default;
+  ~IndexBlock() {
+    if (mmapped_block_ != nullptr) {
+      mmapped_block_->PersistToDisk();
+    }
+  }
 
-  struct PostingListAndBlockInfo {
-    PostingListUsed posting_list_used;
-    PostingListIndex posting_list_index;
-
-    uint32_t next_block_index;
-
-    // Flag indicating if there are any free posting lists available after this
-    // allocation request.
-    bool has_free_posting_lists;
-
-    explicit PostingListAndBlockInfo(PostingListUsed&& posting_list_used_in,
-                                     PostingListIndex posting_list_index_in,
-                                     uint32_t next_block_index_in,
-                                     bool has_free_posting_lists_in)
-        : posting_list_used(std::move(posting_list_used_in)),
-          posting_list_index(posting_list_index_in),
-          next_block_index(next_block_index_in),
-          has_free_posting_lists(has_free_posting_lists_in) {}
-  };
-
-  // PReads existing posting list content at posting_list_index, instantiates a
-  // PostingListUsed, and returns it with some additional index block info.
+  // Instantiate a PostingListUsed at posting_list_index with the existing
+  // content in the IndexBlock.
   //
   // RETURNS:
-  //   - A valid PostingListAndBlockInfo on success
-  //   - INVALID_ARGUMENT_ERROR if posting_list_index < 0 or posting_list_index
-  //     >= max_num_posting_lists()
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::StatusOr<PostingListAndBlockInfo> GetAllocatedPostingList(
+  //   - a valid PostingListUsed on success
+  //   - INVALID_ARGUMENT if posting_list_index >= max_num_posting_lists()
+  libtextclassifier3::StatusOr<PostingListUsed> GetAllocatedPostingList(
       PostingListIndex posting_list_index);
 
-  // Allocates a PostingListUsed in the IndexBlock, initializes the content
-  // (by serializer), and returns the initialized PostingListUsed instance,
-  // PostingListIndex, and some additional index block info.
+  // Allocates a PostingListUsed in the IndexBlock, if possible.
   //
   // RETURNS:
-  //   - A valid PostingListAndBlockInfo instance on success
-  //   - RESOURCE_EXHAUSTED_ERROR if there is already no free posting list
-  //     available, i.e. !HasFreePostingLists()
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::StatusOr<PostingListAndBlockInfo> AllocatePostingList();
+  //   - a valid PostingListIndex that can be used to retrieve the allocated
+  //     PostingListUsed via a call to GetAllocatedPostingList
+  //   - RESOURCE_EXHAUSTED if !has_free_posting_lists()
+  libtextclassifier3::StatusOr<PostingListIndex> AllocatePostingList();
 
-  // Frees a posting list at posting_list_index, adds it into the free list
-  // chain and updates block header. Both changes on posting list free and
-  // header will be synced to disk.
+  // Free posting list at posting_list_index.
   //
   // It is considered an error to "double-free" a posting list. You should never
   // call FreePostingList(index) with the same index twice, unless that index
@@ -185,69 +127,62 @@ class IndexBlock {
   //   index = block.AllocatePostingList();
   //   DoSomethingElse(block.GetAllocatedPostingList(index));
   //   // A-Ok! We called AllocatePostingList() since the last FreePostingList()
-  //   // call.
-  //   block.FreePostingList(index);
+  //   call. block.FreePostingList(index);
   //
-  // RETURNS:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if posting_list_index < 0 or posting_list_index
-  //     >= max_num_posting_lists()
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status FreePostingList(
-      PostingListIndex posting_list_index);
+  // Has no effect if posting_list_index >= max_num_posting_lists().
+  void FreePostingList(PostingListIndex posting_list_index);
 
-  // Writes back an allocated posting list (PostingListUsed) at
-  // posting_list_index to disk.
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR
-  //     - If posting_list_index < 0 or posting_list_index >=
-  //       max_num_posting_lists()
-  //     - If posting_list_used.size_in_bytes() != posting_list_bytes_
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status WritePostingListToDisk(
-      const PostingListUsed& posting_list_used,
-      PostingListIndex posting_list_index);
+  // Blocks can be chained. The interpretation of the chaining is up
+  // to the caller.
+  uint32_t next_block_index() const { return header_->next_block_index; }
 
-  // PReads to get the index of next block from block header. Blocks can be
-  // chained, and the interpretation of the chaining is up to the caller.
-  //
-  // RETURNS:
-  //   - Next block index on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::StatusOr<uint32_t> GetNextBlockIndex() const;
-
-  // PWrites block header to set the index of next block.
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status SetNextBlockIndex(uint32_t next_block_index);
-
-  // PReads to get whether or not there are available posting lists in the free
-  // list.
-  //
-  // RETURNS:
-  //   - A bool value on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::StatusOr<bool> HasFreePostingLists() const;
-
-  // Retrieves the size (in bytes) of the posting lists in this IndexBlock.
-  uint32_t posting_list_bytes() const { return posting_list_bytes_; }
-
-  // Retrieves maximum number of posting lists in the block.
-  uint32_t max_num_posting_lists() const {
-    return total_posting_lists_bytes() / posting_list_bytes_;
+  void set_next_block_index(uint32_t next_block_index) {
+    header_->next_block_index = next_block_index;
   }
 
-  // Retrieves number of bits required to store the largest PostingListIndex in
-  // this block.
+  // Retrieves the size (in bytes) of the posting lists in this IndexBlock.
+  uint32_t get_posting_list_bytes() const {
+    return header_->posting_list_bytes;
+  }
+
+  // Maximum number of posting lists in the block.
+  uint32_t max_num_posting_lists() const {
+    return total_posting_lists_bytes() / get_posting_list_bytes();
+  }
+
+  // Number of bits required to store the largest PostingListIndex in this
+  // block.
   int posting_list_index_bits() const {
     return BitsToStore(max_num_posting_lists());
   }
 
+  // Returns whether or not there are available posting lists in the free list.
+  bool has_free_posting_lists() const {
+    return header_->free_list_posting_list_index != kInvalidPostingListIndex;
+  }
+
  private:
+  // Assumes that mmapped_file already has established a valid mapping to the
+  // requested block.
+  explicit IndexBlock(PostingListUsedSerializer* serializer,
+                      MemoryMappedFile&& mmapped_block);
+
+  // Resets IndexBlock to hold posting lists of posting_list_bytes size and adds
+  // all posting lists to the free list.
+  //
+  // RETURNS:
+  //   - OK, on success
+  //   - INVALID_ARGUMENT if posting_list_bytes is a valid posting list size.
+  libtextclassifier3::Status Reset(int posting_list_bytes);
+
+  char* get_posting_list_ptr(PostingListIndex posting_list_index);
+
+  // Bytes in the block available for posting lists (minus header,
+  // alignment, etc.).
+  uint32_t total_posting_lists_bytes() const {
+    return block_size_in_bytes_ - sizeof(BlockHeader);
+  }
+
   struct BlockHeader {
     // Index of the next block if this block is being chained or part of a free
     // list.
@@ -257,110 +192,21 @@ class IndexBlock {
     // of the free list.
     PostingListIndex free_list_posting_list_index;
 
-    // The size of each posting list in the IndexBlock. This value will be
-    // initialized when calling CreateFromUninitializedRegion once and remain
-    // unchanged.
+    // The size of each posting list in the IndexBlock.
     uint32_t posting_list_bytes;
   };
-
-  // Assumes that fd has been opened for write.
-  explicit IndexBlock(const Filesystem* filesystem,
-                      PostingListSerializer* serializer, int fd,
-                      off_t block_file_offset, uint32_t block_size_in_bytes,
-                      uint32_t posting_list_bytes)
-      : filesystem_(filesystem),
-        serializer_(serializer),
-        fd_(fd),
-        block_file_offset_(block_file_offset),
-        block_size_in_bytes_(block_size_in_bytes),
-        posting_list_bytes_(posting_list_bytes) {}
-
-  // Resets IndexBlock to hold posting lists of posting_list_bytes size and adds
-  // all posting lists to the free list.
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status Reset();
-
-  // Frees a posting list at posting_list_index, adds it into the free list
-  // chain and updates (sets) the given block header instance.
-  //
-  // - This function is served to avoid redundant block header PWrite when
-  //   freeing multiple posting lists.
-  // - The caller should provide a BlockHeader instance for updating the free
-  //   list chain, and finally sync it to disk.
-  //
-  // REQUIRES: 0 <= posting_list_index < max_posting_list_bytes()
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status FreePostingListImpl(
-      BlockHeader& header, PostingListIndex posting_list_index);
-
-  // PReads block header from the file.
-  //
-  // RETURNS:
-  //   - A BlockHeader instance on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::StatusOr<BlockHeader> ReadHeader() const;
-
-  // PReads posting list content at posting_list_index. Note that it can be a
-  // freed or allocated posting list.
-  //
-  // REQUIRES: 0 <= posting_list_index < max_posting_list_bytes()
-  //
-  // RETURNS:
-  //   - A data buffer with size = posting_list_bytes_ on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::StatusOr<std::unique_ptr<uint8_t[]>> ReadPostingList(
-      PostingListIndex posting_list_index) const;
-
-  // PWrites block header to the file.
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status WriteHeader(const BlockHeader& header);
-
-  // PWrites posting list content at posting_list_index. Note that it can be a
-  // freed or allocated posting list.
-  //
-  // REQUIRES: 0 <= posting_list_index < max_posting_list_bytes() and size of
-  //   posting_list_buffer is posting_list_bytes_.
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status WritePostingList(
-      PostingListIndex posting_list_index, const uint8_t* posting_list_buffer);
-
-  // Retrieves the absolute file (fd) offset of a posting list at
-  // posting_list_index.
-  //
-  // REQUIRES: 0 <= posting_list_index < max_posting_list_bytes()
-  off_t get_posting_list_file_offset(
-      PostingListIndex posting_list_index) const {
-    return block_file_offset_ + sizeof(BlockHeader) +
-           posting_list_bytes_ * posting_list_index;
-  }
-
-  // Retrieves the byte size in the block available for posting lists (excluding
-  // the size of block header).
-  uint32_t total_posting_lists_bytes() const {
-    return block_size_in_bytes_ - sizeof(BlockHeader);
-  }
-
-  const Filesystem* filesystem_;  // Does not own.
-
-  PostingListSerializer* serializer_;  // Does not own.
-
-  int fd_;  // Does not own.
-
-  off_t block_file_offset_;
+  // Pointer to the header of this block. The header is used to store info about
+  // this block and its posting lists.
+  BlockHeader* header_;
+  // Pointer to the beginning of the posting lists region - the area the block
+  // after the header.
+  char* posting_lists_start_ptr_;
   uint32_t block_size_in_bytes_;
-  uint32_t posting_list_bytes_;
+
+  PostingListUsedSerializer* serializer_;  // Does not own.
+
+  // MemoryMappedFile used to interact with the underlying flash block.
+  std::unique_ptr<MemoryMappedFile> mmapped_block_;
 };
 
 }  // namespace lib

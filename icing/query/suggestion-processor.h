@@ -17,10 +17,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/index.h"
-#include "icing/index/numeric/numeric-index.h"
 #include "icing/proto/search.pb.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 
@@ -40,10 +37,8 @@ class SuggestionProcessor {
   //   An SuggestionProcessor on success
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<SuggestionProcessor>>
-  Create(Index* index, const NumericIndex<int64_t>* numeric_index,
-         const LanguageSegmenter* language_segmenter,
-         const Normalizer* normalizer, const DocumentStore* document_store,
-         const SchemaStore* schema_store);
+  Create(Index* index, const LanguageSegmenter* language_segmenter,
+         const Normalizer* normalizer);
 
   // Query suggestions based on the given SuggestionSpecProto.
   //
@@ -52,24 +47,19 @@ class SuggestionProcessor {
   //     - One vector that represents the entire TermMetadata
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> QuerySuggestions(
-      const SuggestionSpecProto& suggestion_spec, int64_t current_time_ms);
+      const SuggestionSpecProto& suggestion_spec,
+      const SuggestionResultChecker* suggestion_result_checker);
 
  private:
   explicit SuggestionProcessor(Index* index,
-                               const NumericIndex<int64_t>* numeric_index,
                                const LanguageSegmenter* language_segmenter,
-                               const Normalizer* normalizer,
-                               const DocumentStore* document_store,
-                               const SchemaStore* schema_store);
+                               const Normalizer* normalizer);
 
   // Not const because we could modify/sort the TermMetaData buffer in the lite
   // index.
   Index& index_;
-  const NumericIndex<int64_t>& numeric_index_;
   const LanguageSegmenter& language_segmenter_;
   const Normalizer& normalizer_;
-  const DocumentStore& document_store_;
-  const SchemaStore& schema_store_;
 };
 
 }  // namespace lib

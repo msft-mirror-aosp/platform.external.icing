@@ -20,6 +20,7 @@
 #include "gtest/gtest.h"
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/term-id-codec.h"
+#include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/schema/section.h"
 #include "icing/store/suggestion-result-checker.h"
 #include "icing/testing/always-false-suggestion-result-checker-impl.h"
@@ -31,7 +32,7 @@ namespace lib {
 
 namespace {
 
-using ::testing::ElementsAre;
+using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
@@ -56,8 +57,6 @@ class LiteIndexTest : public testing::Test {
   }
 
   void TearDown() override {
-    term_id_codec_.reset();
-    lite_index_.reset();
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(index_dir_.c_str()));
   }
 
@@ -84,7 +83,7 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit1));
 
   std::vector<DocHitInfo> hits1;
-  lite_index_->FetchHits(
+  lite_index_->AppendHits(
       foo_term_id, kSectionIdMaskAll,
       /*only_from_prefix_sections=*/false,
       SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
@@ -96,7 +95,7 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
 
   std::vector<DocHitInfo> hits2;
   AlwaysFalseSuggestionResultCheckerImpl always_false_suggestion_result_checker;
-  lite_index_->FetchHits(
+  lite_index_->AppendHits(
       foo_term_id, kSectionIdMaskAll,
       /*only_from_prefix_sections=*/false,
       SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
@@ -113,50 +112,47 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
       lite_index_->InsertTerm(term, TermMatchType::PREFIX, kNamespace0));
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
-                /*is_in_prefix_section=*/false);
-  Hit doc0_hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false);
-  SectionIdMask doc0_section_id_mask = 0b11;
-  std::unordered_map<SectionId, Hit::TermFrequency>
-      expected_section_ids_tf_map0 = {{0, 3}, {1, 5}};
-  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc0_hit0));
-  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc0_hit1));
-
-  Hit doc1_hit1(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/7,
-                /*is_in_prefix_section=*/false);
-  Hit doc1_hit2(/*section_id=*/2, /*document_id=*/1, /*term_frequency=*/11,
-                /*is_in_prefix_section=*/false);
-  SectionIdMask doc1_section_id_mask = 0b110;
-  std::unordered_map<SectionId, Hit::TermFrequency>
-      expected_section_ids_tf_map1 = {{1, 7}, {2, 11}};
-  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc1_hit1));
-  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc1_hit2));
+  Hit doc_hit0(/*section_id=*/0, /*document_id=*/0, 3,
+               /*is_in_prefix_section=*/false);
+  Hit doc_hit1(/*section_id=*/1, /*document_id=*/0, 5,
+               /*is_in_prefix_section=*/false);
+  Hit::TermFrequencyArray doc0_term_frequencies{3, 5};
+  Hit doc_hit2(/*section_id=*/1, /*document_id=*/1, 7,
+               /*is_in_prefix_section=*/false);
+  Hit doc_hit3(/*section_id=*/2, /*document_id=*/1, 11,
+               /*is_in_prefix_section=*/false);
+  Hit::TermFrequencyArray doc1_term_frequencies{0, 7, 11};
+  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
+  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit1));
+  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit2));
+  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit3));
 
   std::unique_ptr<DocHitInfoIteratorTermLiteExact> iter =
       std::make_unique<DocHitInfoIteratorTermLiteExact>(
-          term_id_codec_.get(), lite_index_.get(), term, /*term_start_index=*/0,
-          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+          term_id_codec_.get(), lite_index_.get(), term, kSectionIdMaskAll,
           /*need_hit_term_frequency=*/true);
 
   ASSERT_THAT(iter->Advance(), IsOk());
   EXPECT_THAT(iter->doc_hit_info().document_id(), Eq(1));
-  EXPECT_THAT(iter->doc_hit_info().hit_section_ids_mask(),
-              Eq(doc1_section_id_mask));
-
+  EXPECT_THAT(iter->doc_hit_info().hit_section_ids_mask(), Eq(0b110));
   std::vector<TermMatchInfo> matched_terms_stats;
   iter->PopulateMatchedTermsStats(&matched_terms_stats);
-  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                       term, expected_section_ids_tf_map1)));
+  ASSERT_THAT(matched_terms_stats, SizeIs(1));
+  EXPECT_EQ(matched_terms_stats.at(0).term, term);
+  EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, 0b110);
+  EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
+              ElementsAreArray(doc1_term_frequencies));
 
   ASSERT_THAT(iter->Advance(), IsOk());
   EXPECT_THAT(iter->doc_hit_info().document_id(), Eq(0));
-  EXPECT_THAT(iter->doc_hit_info().hit_section_ids_mask(),
-              Eq(doc0_section_id_mask));
+  EXPECT_THAT(iter->doc_hit_info().hit_section_ids_mask(), Eq(0b11));
   matched_terms_stats.clear();
   iter->PopulateMatchedTermsStats(&matched_terms_stats);
-  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                       term, expected_section_ids_tf_map0)));
+  ASSERT_THAT(matched_terms_stats, SizeIs(1));
+  EXPECT_EQ(matched_terms_stats.at(0).term, term);
+  EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, 0b11);
+  EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
+              ElementsAreArray(doc0_term_frequencies));
 }
 
 }  // namespace

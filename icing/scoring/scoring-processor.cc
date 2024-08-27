@@ -43,9 +43,7 @@ constexpr double kDefaultScoreInAscendingOrder =
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
                          const DocumentStore* document_store,
-                         const SchemaStore* schema_store,
-                         int64_t current_time_ms,
-                         const JoinChildrenFetcher* join_children_fetcher) {
+                         const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -58,8 +56,7 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
                              is_descending_order
                                  ? kDefaultScoreInDescendingOrder
                                  : kDefaultScoreInAscendingOrder,
-                             document_store, schema_store, current_time_ms,
-                             join_children_fetcher));
+                             document_store, schema_store));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
