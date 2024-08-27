@@ -17,7 +17,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -608,7 +610,8 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
-  libtextclassifier3::Status InitializeBlobStore()
+  libtextclassifier3::Status InitializeBlobStore(
+      int32_t orphan_blob_time_to_live_ms)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer
@@ -733,7 +736,8 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on any IO errors or other errors that we can't recover
   //                  from
   libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
-  OptimizeDocumentStore(OptimizeStatsProto* optimize_stats)
+  OptimizeDocumentStore(std::unordered_set<std::string>&& mature_blob_handles,
+                        OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to restore missing document data in index_, integer_index_,
