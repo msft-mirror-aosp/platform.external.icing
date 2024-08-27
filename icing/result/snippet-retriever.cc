@@ -101,6 +101,8 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
       [[fallthrough]];
     case Token::Type::URL_SUFFIX_INNERMOST:
       [[fallthrough]];
+    case Token::Type::TRIGRAM:
+      [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.NormalizeTerm(token.text);
     case Token::Type::VERBATIM:
@@ -189,6 +191,8 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
     case Token::Type::URL_SUFFIX:
       [[fallthrough]];
     case Token::Type::URL_SUFFIX_INNERMOST:
+      [[fallthrough]];
+    case Token::Type::TRIGRAM:
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.FindNormalizedMatchEndPosition(token.text,

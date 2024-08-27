@@ -132,9 +132,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
   } else if (function_name ==
-                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName ||
-             function_name == GetEmbeddingParameterFunctionScoreExpression::
-                                  kOldFunctionName) {
+                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
     // getEmbeddingParameter function
     expression =
         GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));

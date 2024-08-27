@@ -23,6 +23,7 @@
 #include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/constants.h"
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
@@ -96,8 +97,7 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
       PortableFileBackedProtoLog<DocumentWrapper>::Create(
           filesystem, MakeDocumentLogFilenameV1(base_dir),
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
-              /*compress_in=*/true,
-              PortableFileBackedProtoLog<DocumentWrapper>::kMaxProtoSize,
+              /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level)));
 
   CreateResult create_result = {std::move(log_create_result),
@@ -133,7 +133,7 @@ libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
               /*compress_in=*/true,
               /*max_proto_size_in=*/
-              PortableFileBackedProtoLog<DocumentWrapper>::kMaxProtoSize,
+              constants::kMaxProtoSize,
               /*compression_level_in=*/compression_level));
   if (!v1_create_result_or.ok()) {
     return absl_ports::Annotate(

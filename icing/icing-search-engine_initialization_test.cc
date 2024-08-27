@@ -1080,7 +1080,8 @@ TEST_F(IcingSearchEngineInitializationTest,
 
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
-        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock));
+        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
+                          /*orphan_blob_time_to_live_ms=*/0));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -5483,7 +5484,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
 
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
-        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock));
+        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
+                          /*orphan_blob_time_to_live_ms=*/0));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(

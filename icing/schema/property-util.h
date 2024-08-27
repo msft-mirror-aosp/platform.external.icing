@@ -171,6 +171,11 @@ libtextclassifier3::StatusOr<std::vector<PropertyProto::VectorProto>>
 ExtractPropertyValues<PropertyProto::VectorProto>(
     const PropertyProto& property);
 
+template <>
+libtextclassifier3::StatusOr<std::vector<PropertyProto::BlobHandleProto>>
+ExtractPropertyValues<PropertyProto::BlobHandleProto>(
+    const PropertyProto& property);
+
 template <typename T>
 libtextclassifier3::StatusOr<std::vector<T>> ExtractPropertyValuesFromDocument(
     const DocumentProto& document, std::string_view property_path) {

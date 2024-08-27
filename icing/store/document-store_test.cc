@@ -20,6 +20,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -1094,10 +1096,11 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
       filesystem_.GetFileSize(original_document_log.c_str());
 
   // Optimizing into the same directory is not allowed
-  EXPECT_THAT(
-      doc_store->OptimizeInto(document_store_dir_, lang_segmenter_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-               HasSubstr("directory is the same")));
+  EXPECT_THAT(doc_store->OptimizeInto(
+                  document_store_dir_, lang_segmenter_.get(),
+                  /*expired_blob_handles=*/std::unordered_set<std::string>()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("directory is the same")));
 
   std::string optimized_dir = document_store_dir_ + "_optimize";
   std::string optimized_document_log =
@@ -1109,7 +1112,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result1,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result1.document_id_old_to_new, ElementsAre(0, 1, 2));
   EXPECT_THAT(optimize_result1.namespace_id_old_to_new, ElementsAre(0));
   EXPECT_THAT(optimize_result1.should_rebuild_index, IsFalse());
@@ -1126,7 +1131,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   // DocumentId 0 is removed.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result2,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result2.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, 0, 1));
   EXPECT_THAT(optimize_result2.namespace_id_old_to_new, ElementsAre(0));
@@ -1146,7 +1153,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   // DocumentId 0 is removed, and DocumentId 2 is expired.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result3,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result3.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId));
   EXPECT_THAT(optimize_result3.namespace_id_old_to_new, ElementsAre(0));
@@ -1165,7 +1174,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   // id will be invalid.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result4,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(
       optimize_result4.document_id_old_to_new,
       ElementsAre(kInvalidDocumentId, kInvalidDocumentId, kInvalidDocumentId));
@@ -1245,7 +1256,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result1,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result1.document_id_old_to_new,
               ElementsAre(0, 1, 2, 3, 4));
   EXPECT_THAT(optimize_result1.namespace_id_old_to_new, ElementsAre(0, 1, 2));
@@ -1270,7 +1283,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result2,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result2.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, 0, 1, 2, 3));
   EXPECT_THAT(optimize_result2.namespace_id_old_to_new, ElementsAre(0, 1, 2));
@@ -1295,7 +1310,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result3,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result3.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0, 1, 2));
   EXPECT_THAT(optimize_result3.namespace_id_old_to_new, ElementsAre(1, 0, 2));
@@ -1319,7 +1336,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result4,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result4.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0,
                           kInvalidDocumentId, 1));
@@ -1344,7 +1363,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result5,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result5.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0,
                           kInvalidDocumentId, kInvalidDocumentId));
@@ -1368,7 +1389,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result6,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(
       optimize_result6.document_id_old_to_new,
       ElementsAre(kInvalidDocumentId, kInvalidDocumentId, kInvalidDocumentId,
@@ -1395,7 +1418,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result.document_id_old_to_new, IsEmpty());
   EXPECT_THAT(optimize_result.namespace_id_old_to_new, IsEmpty());
   EXPECT_THAT(optimize_result.should_rebuild_index, IsFalse());
@@ -3258,8 +3283,9 @@ TEST_P(DocumentStoreTest, GetOptimizeInfo) {
   std::string optimized_dir = document_store_dir_ + "_optimize";
   EXPECT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   EXPECT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(
-      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  ICING_ASSERT_OK(document_store->OptimizeInto(
+      optimized_dir, lang_segmenter_.get(),
+      /*expired_blob_handles=*/std::unordered_set<std::string>()));
   document_store.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
       create_result, CreateDocumentStore(&filesystem_, optimized_dir,
@@ -3664,8 +3690,9 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   // Run optimize
   std::string optimized_dir = document_store_dir_ + "/optimize_test";
   filesystem_.CreateDirectoryRecursively(optimized_dir.c_str());
-  ICING_ASSERT_OK(
-      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  ICING_ASSERT_OK(document_store->OptimizeInto(
+      optimized_dir, lang_segmenter_.get(),
+      /*expired_blob_handles=*/std::unordered_set<std::string>()));
 
   // Get optimized document store
   ICING_ASSERT_OK_AND_ASSIGN(

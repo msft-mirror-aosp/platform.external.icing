@@ -249,8 +249,7 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
   return;
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
+jbyteArray nativeOpenWriteBlob(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -267,8 +266,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenReadBlob(
+jbyteArray nativeOpenReadBlob(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -285,8 +283,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenReadBlob(
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeCommitBlob(
+jbyteArray nativeCommitBlob(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -578,6 +575,15 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeInvalidateNextPageToken",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;J)V",
        reinterpret_cast<void*>(nativeInvalidateNextPageToken)},
+      {"nativeOpenWriteBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeOpenWriteBlob)},
+      {"nativeOpenReadBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeOpenReadBlob)},
+      {"nativeCommitBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeCommitBlob)},
       {"nativeSearch",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[B[B[BJ)[B",
        reinterpret_cast<void*>(nativeSearch)},

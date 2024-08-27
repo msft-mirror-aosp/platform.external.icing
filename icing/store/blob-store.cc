@@ -18,6 +18,7 @@
 #include <array>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -29,24 +30,31 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/destructible-directory.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/encode-util.h"
+#include "icing/util/logging.h"
 #include "icing/util/sha256.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
+static constexpr std::string_view kKeyMapperDir = "key_mapper";
 // - Key: sha 256 digest (32 bytes)
 // - Value: BlobInfo (24 bytes)
 // Allow max 1M of blob info entries.
 static constexpr int32_t kBlobInfoMapperMaxSize = 56 * 1024 * 1024;  // 56 MiB
 static constexpr int32_t kSha256LengthBytes = 32;
 static constexpr int32_t kReadBufferSize = 8192;
+
+std::string MakeKeyMapperDir(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kKeyMapperDir);
+}
 
 namespace {
 
@@ -61,19 +69,19 @@ libtextclassifier3::Status ValidateBlobHandle(
 
 }  // namespace
 
-// TODO(b/273591938): Remove orphan files in optimize().
-
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
-    const Filesystem* filesystem, std::string base_dir, const Clock* clock) {
+    const Filesystem* filesystem, std::string base_dir, const Clock* clock,
+    int64_t orphan_blob_time_to_live_ms) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
-                         DynamicTrieKeyMapper<BlobInfo>::Create(
-                             *filesystem, base_dir, kBlobInfoMapperMaxSize));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
+      DynamicTrieKeyMapper<BlobInfo>::Create(
+          *filesystem, MakeKeyMapperDir(base_dir), kBlobInfoMapperMaxSize));
 
   // Load existing file names (excluding the directory of key mapper).
   std::vector<std::string> file_names;
-  std::unordered_set<std::string> excludes = {"key_mapper_dir"};
+  std::unordered_set<std::string> excludes = {kKeyMapperDir.data()};
   if (!filesystem->ListDirectory(base_dir.c_str(), excludes,
                                  /*recursive=*/false, &file_names)) {
     return absl_ports::InternalError("Failed to list directory.");
@@ -81,8 +89,12 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
   std::unordered_set<std::string> known_file_names(
       std::make_move_iterator(file_names.begin()),
       std::make_move_iterator(file_names.end()));
+  if (orphan_blob_time_to_live_ms <= 0) {
+    orphan_blob_time_to_live_ms = std::numeric_limits<int64_t>::max();
+  }
   return BlobStore(filesystem, std::move(base_dir), clock,
-                   std::move(blob_info_mapper), std::move(known_file_names));
+                   orphan_blob_time_to_live_ms, std::move(blob_info_mapper),
+                   std::move(known_file_names));
 }
 
 libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
@@ -94,7 +106,7 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
   ICING_ASSIGN_OR_RETURN(BlobInfo blob_info,
                          GetOrCreateBlobInfo(blob_handle_str));
   if (blob_info.is_committed) {
-    return absl_ports::FailedPreconditionError(
+    return absl_ports::AlreadyExistsError(
         "Rewriting the committed blob is not allowed.");
   }
   std::string file_name = absl_ports::StrCat(
@@ -222,6 +234,88 @@ BlobStore::GetOrCreateBlobInfo(const std::string& blob_handle_str) {
   }
 
   return blob_info_or;
+}
+
+std::unordered_set<std::string>
+BlobStore::GetPotentiallyOptimizableBlobHandles() {
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
+  if (orphan_blob_time_to_live_ms_ > current_time_ms) {
+    // Nothing to optimize, return empty set.
+    return std::unordered_set<std::string>();
+  }
+  int64_t expired_threshold =
+      clock_.GetSystemTimeMilliseconds() - orphan_blob_time_to_live_ms_;
+  std::unique_ptr<typename KeyMapper<BlobInfo>::Iterator> itr =
+      blob_info_mapper_->GetIterator();
+
+  std::unordered_set<std::string> expired_blob_handles;
+  while (itr->Advance()) {
+    if (itr->GetValue().creation_time_ms < expired_threshold) {
+      expired_blob_handles.insert(std::string(itr->GetKey()));
+    }
+  }
+  return expired_blob_handles;
+}
+
+libtextclassifier3::Status BlobStore::Optimize(
+    const std::unordered_set<std::string>& dead_blob_handles) {
+  if (dead_blob_handles.empty()) {
+    // nothing to optimize, return early.
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Delete all dead blob files.
+  for (const std::string& file_name : dead_blob_handles) {
+    if (!filesystem_.DeleteFile(file_name.c_str())) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to delete blob file: ", file_name));
+    }
+  }
+
+  // Create the temp blob store directory.
+  std::string temp_blob_store_dir_path = base_dir_ + "_temp";
+  if (!filesystem_.DeleteDirectoryRecursively(
+          temp_blob_store_dir_path.c_str())) {
+    ICING_LOG(ERROR) << "Recursively deleting "
+                     << temp_blob_store_dir_path.c_str();
+    return absl_ports::InternalError(
+        "Unable to delete temp directory to prepare to build new blob store.");
+  }
+  DestructibleDirectory temp_blob_store_dir(&filesystem_,
+                                            temp_blob_store_dir_path);
+  if (!temp_blob_store_dir.is_valid()) {
+    return absl_ports::InternalError(
+        "Unable to create temp directory to build new blob store.");
+  }
+
+  // Destroy the old blob info mapper and replace it with the new one.
+  std::string new_key_mapper_dir = MakeKeyMapperDir(temp_blob_store_dir_path);
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<KeyMapper<BlobInfo>> new_blob_info_mapper,
+      DynamicTrieKeyMapper<BlobInfo>::Create(filesystem_, new_key_mapper_dir,
+                                             kBlobInfoMapperMaxSize));
+  std::unique_ptr<typename KeyMapper<BlobInfo>::Iterator> itr =
+      blob_info_mapper_->GetIterator();
+  while (itr->Advance()) {
+    if (dead_blob_handles.find(std::string(itr->GetKey())) ==
+        dead_blob_handles.end()) {
+      ICING_RETURN_IF_ERROR(
+          new_blob_info_mapper->Put(itr->GetKey(), itr->GetValue()));
+    }
+  }
+  new_blob_info_mapper.reset();
+  // Then we swap the new key mapper directory with the old one.
+  if (!filesystem_.SwapFiles(MakeKeyMapperDir(base_dir_).c_str(),
+                             new_key_mapper_dir.c_str())) {
+    return absl_ports::InternalError(
+        "Unable to apply new blob store due to failed swap!");
+  }
+  ICING_ASSIGN_OR_RETURN(
+      blob_info_mapper_,
+      DynamicTrieKeyMapper<BlobInfo>::Create(
+          filesystem_, MakeKeyMapperDir(base_dir_), kBlobInfoMapperMaxSize));
+
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

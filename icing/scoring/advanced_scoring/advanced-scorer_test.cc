@@ -1428,23 +1428,6 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
           /*join_children_fetcher=*/nullptr, &embedding_query_results));
   EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(0, kEps));
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0, kEps));
-
-  // TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding
-  // are migrated.
-  // Get semantic scores for default metric (DOT_PRODUCT) for the first query
-  // via the old deprecated getSearchSpecEmbedding function.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(
-          CreateAdvancedScoringSpec(
-              "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))"),
-          kDefaultScore, /*default_semantic_metric_type=*/
-          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
-          document_store_.get(), schema_store_.get(),
-          fake_clock_.GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &embedding_query_results));
-  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(0.5, kEps));
-  EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0.6, kEps));
 }
 
 TEST_F(AdvancedScorerTest, ListRelatedFunctions) {

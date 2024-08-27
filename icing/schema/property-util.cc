@@ -141,6 +141,15 @@ ExtractPropertyValues<PropertyProto::VectorProto>(
       property.vector_values().begin(), property.vector_values().end());
 }
 
+template <>
+libtextclassifier3::StatusOr<std::vector<PropertyProto::BlobHandleProto>>
+ExtractPropertyValues<PropertyProto::BlobHandleProto>(
+    const PropertyProto& property) {
+  return std::vector<PropertyProto::BlobHandleProto>(
+      property.blob_handle_values().begin(),
+      property.blob_handle_values().end());
+}
+
 }  // namespace property_util
 
 }  // namespace lib

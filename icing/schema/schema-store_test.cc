@@ -55,6 +55,7 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::Not;
+using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
@@ -132,13 +133,13 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 expected_checksum,
-                             schema_store->ComputeChecksum());
+                             schema_store->UpdateChecksum());
 
   // Move construct an instance of SchemaStore
   SchemaStore move_constructed_schema_store(std::move(*schema_store));
   EXPECT_THAT(move_constructed_schema_store.GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
-  EXPECT_THAT(move_constructed_schema_store.ComputeChecksum(),
+  EXPECT_THAT(move_constructed_schema_store.UpdateChecksum(),
               IsOkAndHolds(Eq(expected_checksum)));
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
@@ -166,7 +167,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
       schema1, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 expected_checksum,
-                             schema_store->ComputeChecksum());
+                             schema_store->UpdateChecksum());
 
   // Construct another instance of SchemaStore
   SchemaProto schema2 =
@@ -189,7 +190,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
   *move_assigned_schema_store = std::move(*schema_store);
   EXPECT_THAT(move_assigned_schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(schema1))));
-  EXPECT_THAT(move_assigned_schema_store->ComputeChecksum(),
+  EXPECT_THAT(move_assigned_schema_store->UpdateChecksum(),
               IsOkAndHolds(Eq(expected_checksum)));
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
@@ -398,7 +399,7 @@ TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   // The apis to persist and checksum data should succeed.
-  EXPECT_THAT(store->ComputeChecksum(), IsOkAndHolds(Crc32()));
+  EXPECT_THAT(store->UpdateChecksum(), IsOkAndHolds(Crc32()));
   EXPECT_THAT(store->PersistToDisk(), IsOk());
 }
 
@@ -1245,16 +1246,17 @@ TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   EXPECT_THAT(schema_store->GetSchemaTypeId(second_type), IsOkAndHolds(1));
 }
 
-TEST_F(SchemaStoreTest, ComputeChecksumDefaultOnEmptySchemaStore) {
+TEST_F(SchemaStoreTest, UpdateChecksumDefaultOnEmptySchemaStore) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
-  Crc32 default_checksum;
-  EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(default_checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(Crc32()));
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(Crc32()));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(Crc32()));
 }
 
-TEST_F(SchemaStoreTest, ComputeChecksumSameBetweenCalls) {
+TEST_F(SchemaStoreTest, UpdateChecksumSameBetweenCalls) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
@@ -1266,13 +1268,16 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameBetweenCalls) {
       foo_schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->GetChecksum());
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(checksum));
 
   // Calling it again doesn't change the checksum
-  EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(checksum));
 }
 
-TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
+TEST_F(SchemaStoreTest, UpdateChecksumSameAcrossInstances) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
@@ -1284,7 +1289,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
       foo_schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->GetChecksum());
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(checksum));
 
   // Destroy the previous instance and recreate SchemaStore
   schema_store.reset();
@@ -1292,10 +1299,12 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(checksum));
 }
 
-TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
+TEST_F(SchemaStoreTest, UpdateChecksumChangesOnModification) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
@@ -1307,7 +1316,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
       foo_schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->GetChecksum());
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(checksum));
 
   // Modifying the SchemaStore changes the checksum
   SchemaProto foo_bar_schema =
@@ -1320,7 +1331,11 @@ TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
       foo_bar_schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
-  EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 updated_checksum,
+                             schema_store->GetChecksum());
+  EXPECT_THAT(updated_checksum, Not(Eq(checksum)));
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(updated_checksum));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(updated_checksum));
 }
 
 TEST_F(SchemaStoreTest, PersistToDiskFineForEmptySchemaStore) {
@@ -1330,6 +1345,45 @@ TEST_F(SchemaStoreTest, PersistToDiskFineForEmptySchemaStore) {
 
   // Persisting is fine and shouldn't affect anything
   ICING_EXPECT_OK(schema_store->PersistToDisk());
+}
+
+TEST_F(SchemaStoreTest, UpdateChecksumAvoidsRecovery) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
+
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // UpdateChecksum should update the schema store checksum. Therefore, we
+  // should not need a recovery on reinitialization.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, schema_store->GetChecksum());
+  EXPECT_THAT(schema_store->UpdateChecksum(), IsOkAndHolds(crc));
+  EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(crc));
+
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(schema));
+
+  // And we get the same schema back on reinitialization
+  InitializeStatsProto initialize_stats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store_two,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          &initialize_stats));
+  EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store_two->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(schema));
+
+  // The checksum should be the same.
+  EXPECT_THAT(schema_store_two->GetChecksum(), IsOkAndHolds(crc));
+  EXPECT_THAT(schema_store_two->UpdateChecksum(), IsOkAndHolds(crc));
+  EXPECT_THAT(schema_store_two->GetChecksum(), IsOkAndHolds(crc));
 }
 
 TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
@@ -1363,9 +1417,12 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
   schema_store.reset();
 
   // And we get the same schema back on reinitialization
+  InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      schema_store, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                        &fake_clock_, &initialize_stats));
+  EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 }
@@ -3186,6 +3243,141 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionUndeterminedDiscardsOverlaySchema) {
 
     EXPECT_THAT(schema_store->GetSchema(),
                 IsOkAndHolds(Pointee(EqualsProto(base_schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, GetTypeWithBlobProperties) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blob")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nonBlob")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("typeA")
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nonBlob")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nonBlob")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // type_a contains blob property.
+  // type_b contains nested type_a, which contains blob property.
+  // type_c contains no blob property.
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->ConstructBlobPropertyMap(),
+                IsOkAndHolds(UnorderedElementsAre(
+                    Pair("A", UnorderedElementsAre("blob")),
+                    Pair("B", UnorderedElementsAre("typeA.blob")))));
+  }
+}
+
+TEST_F(SchemaStoreTest, GetTypeWithMultiLevelBlobProperties) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blob")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nonBlob")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("typeA")
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nonBlob")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("typeB")
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blob")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nonBlob")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  // type_a contains blob property.
+  // type_b contains nested type_a, which contains blob property.
+  // type_c contains blob property and nested type_b, which contains blob
+  // property.
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(
+        schema_store->ConstructBlobPropertyMap(),
+        IsOkAndHolds(UnorderedElementsAre(
+            Pair("A", UnorderedElementsAre("blob")),
+            Pair("B", UnorderedElementsAre("typeA.blob")),
+            Pair("C", UnorderedElementsAre("blob", "typeB.typeA.blob")))));
   }
 }
 

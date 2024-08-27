@@ -14,7 +14,10 @@
 
 #include "icing/util/character-iterator.h"
 
+#include <string_view>
+
 #include "icing/util/i18n-utils.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {
@@ -32,7 +35,7 @@ int GetUTF8StartPosition(std::string_view text, int current_byte_index) {
 
 }  // namespace
 
-UChar32 CharacterIterator::GetCurrentChar() {
+UChar32 CharacterIterator::GetCurrentChar() const {
   if (cached_current_char_ == i18n_utils::kInvalidUChar32) {
     // Our indices point to the right character, we just need to read that
     // character. No need to worry about an error. If GetUChar32At fails, then

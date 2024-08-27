@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -77,7 +78,8 @@ class BlobStore {
   //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::StatusOr<BlobStore> Create(
-      const Filesystem* filesystem, std::string base_dir, const Clock* clock);
+      const Filesystem* filesystem, std::string base_dir, const Clock* clock,
+      int64_t orphan_blob_time_to_live_ms);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
@@ -86,7 +88,7 @@ class BlobStore {
   // Returns:
   //   File descriptor (writable) on success
   //   INVALID_ARGUMENT on invalid blob handle
-  //   FAILED_PRECONDITION if the blob has already been committed
+  //   ALREADY_EXISTS if the blob has already been committed
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> OpenWrite(
       const PropertyProto::BlobHandleProto& blob_handle);
@@ -118,14 +120,35 @@ class BlobStore {
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
 
+  // Gets the potentially optimizable blob handles.
+  //
+  // A blob will be consider as a potentially optimizable blob if it created
+  // before the orphan_blob_time_to_live_ms. And the blob should be removed if
+  // it has no reference document links to it.
+  std::unordered_set<std::string> GetPotentiallyOptimizableBlobHandles();
+
+  // Optimize the blob store and remove dead blob files.
+  //
+  // A blob will be consider as a dead blob and removed if it meets BOTH of
+  // following conditions
+  //  1: has no reference document links to it
+  //  2: It's mature.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status Optimize(
+      const std::unordered_set<std::string>& dead_blob_handles);
+
  private:
   explicit BlobStore(const Filesystem* filesystem, std::string base_dir,
-                     const Clock* clock,
+                     const Clock* clock, int64_t orphan_blob_time_to_live_ms,
                      std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
                      std::unordered_set<std::string> known_file_names)
       : filesystem_(*filesystem),
         base_dir_(std::move(base_dir)),
         clock_(*clock),
+        orphan_blob_time_to_live_ms_(orphan_blob_time_to_live_ms),
         blob_info_mapper_(std::move(blob_info_mapper)),
         known_file_names_(std::move(known_file_names)) {}
 
@@ -135,6 +158,7 @@ class BlobStore {
   const Filesystem& filesystem_;
   std::string base_dir_;
   const Clock& clock_;
+  int64_t orphan_blob_time_to_live_ms_;
 
   std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper_;
   std::unordered_set<std::string> known_file_names_;

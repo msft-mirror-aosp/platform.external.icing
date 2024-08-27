@@ -268,14 +268,6 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert({get_embedding_parameter_function.name(),
                                 get_embedding_parameter_function});
 
-  // vector_index getSearchSpecEmbedding(long);
-  // DEPRECATED: This function has been deprecated in favor of
-  // getEmbeddingParameter. It just trivially calls that function.
-  // TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding
-  // are migrated.
-  registered_functions_.insert(
-      {"getSearchSpecEmbedding", std::move(get_embedding_parameter_function)});
-
   // DocHitInfoIterator semanticSearch(vector_index, double, double, string);
   auto semantic_search = [this](std::vector<PendingValue>&& args) {
     return this->SemanticSearchFunction(std::move(args));
