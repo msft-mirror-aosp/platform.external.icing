@@ -29,6 +29,8 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -36,43 +38,73 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
+// DummyNumericIndex: dummy class to help with testing and unblock e2e
+// integration for numeric search. It stores all numeric index data (keys and
+// hits) in memory without actual persistent storages. All PersistentStorage
+// features do not work as expected, i.e. they don't persist any data into disk
+// and therefore data are volatile.
 template <typename T>
 class DummyNumericIndex : public NumericIndex<T> {
  public:
+  static libtextclassifier3::StatusOr<std::unique_ptr<DummyNumericIndex<T>>>
+  Create(const Filesystem& filesystem, std::string working_path) {
+    auto dummy_numeric_index = std::unique_ptr<DummyNumericIndex<T>>(
+        new DummyNumericIndex<T>(filesystem, std::move(working_path)));
+    ICING_RETURN_IF_ERROR(dummy_numeric_index->InitializeNewStorage());
+    return dummy_numeric_index;
+  }
+
   ~DummyNumericIndex() override = default;
 
   std::unique_ptr<typename NumericIndex<T>::Editor> Edit(
-      std::string_view property_name, DocumentId document_id,
+      std::string_view property_path, DocumentId document_id,
       SectionId section_id) override {
-    return std::make_unique<Editor>(property_name, document_id, section_id,
+    return std::make_unique<Editor>(property_path, document_id, section_id,
                                     storage_);
   }
 
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
-      std::string_view property_name, T key_lower, T key_upper) const override;
+      std::string_view property_path, T key_lower, T key_upper,
+      const DocumentStore&, const SchemaStore&, int64_t) const override;
 
-  libtextclassifier3::Status Reset() override {
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) override;
+
+  libtextclassifier3::Status Clear() override {
     storage_.clear();
+    last_added_document_id_ = kInvalidDocumentId;
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::Status PersistToDisk() override {
-    return libtextclassifier3::Status::OK;
+  DocumentId last_added_document_id() const override {
+    return last_added_document_id_;
   }
+
+  void set_last_added_document_id(DocumentId document_id) override {
+    if (last_added_document_id_ == kInvalidDocumentId ||
+        document_id > last_added_document_id_) {
+      last_added_document_id_ = document_id;
+    }
+  }
+
+  int num_property_indices() const override { return storage_.size(); }
 
  private:
   class Editor : public NumericIndex<T>::Editor {
    public:
     explicit Editor(
-        std::string_view property_name, DocumentId document_id,
+        std::string_view property_path, DocumentId document_id,
         SectionId section_id,
         std::unordered_map<std::string, std::map<T, std::vector<BasicHit>>>&
             storage)
-        : NumericIndex<T>::Editor(property_name, document_id, section_id),
+        : NumericIndex<T>::Editor(property_path, document_id, section_id),
           storage_(storage) {}
 
     ~Editor() override = default;
@@ -82,12 +114,12 @@ class DummyNumericIndex : public NumericIndex<T> {
       return libtextclassifier3::Status::OK;
     }
 
-    libtextclassifier3::Status IndexAllBufferedKeys() override;
+    libtextclassifier3::Status IndexAllBufferedKeys() && override;
 
    private:
     std::unordered_set<T> seen_keys_;
     std::unordered_map<std::string, std::map<T, std::vector<BasicHit>>>&
-        storage_;
+        storage_;  // Does not own.
   };
 
   class Iterator : public NumericIndex<T>::Iterator {
@@ -147,20 +179,48 @@ class DummyNumericIndex : public NumericIndex<T> {
     DocHitInfo doc_hit_info_;
   };
 
+  explicit DummyNumericIndex(const Filesystem& filesystem,
+                             std::string&& working_path)
+      : NumericIndex<T>(filesystem, std::move(working_path),
+                        PersistentStorage::WorkingPathType::kDummy),
+        last_added_document_id_(kInvalidDocumentId) {}
+
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override {
+    return libtextclassifier3::Status::OK;
+  }
+
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override {
+    return libtextclassifier3::Status::OK;
+  }
+
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override {
+    return Crc32(0);
+  }
+
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override {
+    return Crc32(0);
+  }
+
+  PersistentStorage::Crcs& crcs() override { return dummy_crcs_; }
+  const PersistentStorage::Crcs& crcs() const override { return dummy_crcs_; }
+
   std::unordered_map<std::string, std::map<T, std::vector<BasicHit>>> storage_;
+  PersistentStorage::Crcs dummy_crcs_;
+  DocumentId last_added_document_id_;
 };
 
 template <typename T>
 libtextclassifier3::Status
-DummyNumericIndex<T>::Editor::IndexAllBufferedKeys() {
-  auto property_map_iter = storage_.find(this->property_name_);
+DummyNumericIndex<T>::Editor::IndexAllBufferedKeys() && {
+  auto property_map_iter = storage_.find(this->property_path_);
   if (property_map_iter == storage_.end()) {
     const auto& [inserted_iter, insert_result] =
-        storage_.insert({this->property_name_, {}});
+        storage_.insert({this->property_path_, {}});
     if (!insert_result) {
       return absl_ports::InternalError(
           absl_ports::StrCat("Failed to create a new map for property \"",
-                             this->property_name_, "\""));
+                             this->property_path_, "\""));
     }
     property_map_iter = inserted_iter;
   }
@@ -184,7 +244,7 @@ DummyNumericIndex<T>::Editor::IndexAllBufferedKeys() {
 template <typename T>
 libtextclassifier3::Status DummyNumericIndex<T>::Iterator::Advance() {
   if (pq_.empty()) {
-    return absl_ports::OutOfRangeError("End of iterator");
+    return absl_ports::ResourceExhaustedError("End of iterator");
   }
 
   DocumentId document_id = pq_.top().GetCurrentBasicHit().document_id();
@@ -207,17 +267,18 @@ libtextclassifier3::Status DummyNumericIndex<T>::Iterator::Advance() {
 
 template <typename T>
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-DummyNumericIndex<T>::GetIterator(std::string_view property_name, T key_lower,
-                                  T key_upper) const {
+DummyNumericIndex<T>::GetIterator(std::string_view property_path, T key_lower,
+                                  T key_upper, const DocumentStore&,
+                                  const SchemaStore&, int64_t) const {
   if (key_lower > key_upper) {
     return absl_ports::InvalidArgumentError(
         "key_lower should not be greater than key_upper");
   }
 
-  auto property_map_iter = storage_.find(std::string(property_name));
+  auto property_map_iter = storage_.find(std::string(property_path));
   if (property_map_iter == storage_.end()) {
-    return absl_ports::NotFoundError(
-        absl_ports::StrCat("Property \"", property_name, "\" not found"));
+    // Return an empty iterator.
+    return std::make_unique<DocHitInfoIteratorNumeric<T>>(nullptr);
   }
 
   std::vector<typename Iterator::BucketInfo> bucket_info_vec;
@@ -231,6 +292,38 @@ DummyNumericIndex<T>::GetIterator(std::string_view property_name, T key_lower,
   return std::make_unique<DocHitInfoIteratorNumeric<T>>(
       std::make_unique<Iterator>(key_lower, key_upper,
                                  std::move(bucket_info_vec)));
+}
+
+template <typename T>
+libtextclassifier3::Status DummyNumericIndex<T>::Optimize(
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) {
+  std::unordered_map<std::string, std::map<T, std::vector<BasicHit>>>
+      new_storage;
+
+  for (const auto& [property_path, old_property_map] : storage_) {
+    std::map<T, std::vector<BasicHit>> new_property_map;
+    for (const auto& [key, hits] : old_property_map) {
+      for (const BasicHit& hit : hits) {
+        DocumentId old_doc_id = hit.document_id();
+        if (old_doc_id >= document_id_old_to_new.size() ||
+            document_id_old_to_new[old_doc_id] == kInvalidDocumentId) {
+          continue;
+        }
+
+        new_property_map[key].push_back(
+            BasicHit(hit.section_id(), document_id_old_to_new[old_doc_id]));
+      }
+    }
+
+    if (!new_property_map.empty()) {
+      new_storage[property_path] = std::move(new_property_map);
+    }
+  }
+
+  storage_ = std::move(new_storage);
+  last_added_document_id_ = new_last_added_document_id;
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

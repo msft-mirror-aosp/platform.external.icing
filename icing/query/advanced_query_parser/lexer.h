@@ -29,11 +29,16 @@ class Lexer {
  public:
   enum class Language { QUERY, SCORING };
 
+  // The maximum number of tokens allowed, in order to prevent stack overflow
+  // issues in the parsers or visitors.
+  static constexpr uint32_t kMaxNumTokens = 2048;
+
   enum class TokenType {
     COMMA,       // ','
     DOT,         // '.'
     PLUS,        // '+'            Not allowed in QUERY language.
     MINUS,       // '-'
+    STAR,        // '*'            Not allowed in SCORING language.
     TIMES,       // '*'            Not allowed in QUERY language.
     DIV,         // '/'            Not allowed in QUERY language.
     LPAREN,      // '('
@@ -43,7 +48,9 @@ class Lexer {
     AND,         // 'AND' | '&&'   Not allowed in SCORING language.
     OR,          // 'OR' | '||'    Not allowed in SCORING language.
     NOT,         // 'NOT'          Not allowed in SCORING language.
-    STRING,      // String literal surrounded by quotation marks
+    STRING,      // String literal surrounded by quotation marks. The
+                 // original_text of a STRING token will not include quotation
+                 // marks.
     TEXT,        // A sequence of chars that are not any above-listed operator
     FUNCTION_NAME,  // A TEXT followed by LPAREN.
     // Whitespaces not inside a string literal will be skipped.
@@ -63,6 +70,10 @@ class Lexer {
     //
     // For other types, this field will be empty.
     std::string text;
+
+    // Lifecycle is dependent on the lifecycle of the string pointed to by
+    // query_.
+    std::string_view original_text;
 
     // The type of the token.
     TokenType type;
@@ -136,8 +147,9 @@ class Lexer {
   }
 
   // Try to match TEXT, FUNCTION_NAME, 'AND', 'OR' and 'NOT'.
-  // Should make sure that NonText() is false before calling into this method.
-  bool Text();
+  // REQUIRES: ConsumeNonText() must be called immediately before calling this
+  // function.
+  bool ConsumeText();
 
   std::string_view query_;
   std::string error_;
@@ -145,6 +157,10 @@ class Lexer {
   int32_t current_index_ = -1;
   char current_char_ = '\0';
   std::vector<LexerToken> tokens_;
+
+  // Stores whether the lexer is currently inspecting a TEXT segment while
+  // handling current_char_.
+  bool in_text_ = false;
 };
 
 }  // namespace lib
