@@ -40,9 +40,14 @@ bool IsSpecialCharacter(char c) {
 //   A valid index of the separator on success.
 //   std::string::npos if the escape format of content is incorrect.
 //   std::string::npos if the content contains 0 or more than 1 separators.
+//   std::string::npos if the content contains '\0'.
 size_t VerifyFormatAndGetSeparatorPosition(std::string_view content) {
   size_t separator_pos = std::string::npos;
   for (size_t i = 0; i < content.length(); ++i) {
+    if (content[i] == '\0') {
+      return std::string::npos;
+    }
+
     if (content[i] == QualifiedId::kEscapeChar) {
       // Advance to the next character.
       ++i;

@@ -33,18 +33,25 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
  public:
   explicit DocHitInfoIteratorTermMain(MainIndex* main_index,
                                       const std::string& term,
+                                      int term_start_index,
+                                      int unnormalized_term_length,
                                       SectionIdMask section_restrict_mask,
                                       bool need_hit_term_frequency)
       : term_(term),
+        term_start_index_(term_start_index),
+        unnormalized_term_length_(unnormalized_term_length),
+        posting_list_accessor_(nullptr),
         main_index_(main_index),
         cached_doc_hit_infos_idx_(-1),
         num_advance_calls_(0),
         num_blocks_inspected_(0),
-        next_posting_list_id_(PostingListIdentifier::kInvalid),
+        all_pages_consumed_(false),
         section_restrict_mask_(section_restrict_mask),
         need_hit_term_frequency_(need_hit_term_frequency) {}
 
   libtextclassifier3::Status Advance() override;
+
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
   int32_t GetNumBlocksInspected() const override {
     return num_blocks_inspected_;
@@ -90,6 +97,11 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
   virtual libtextclassifier3::Status RetrieveMoreHits() = 0;
 
   const std::string term_;
+
+  // The start index of the given term in the search query
+  int term_start_index_;
+  // The length of the given unnormalized term in the search query
+  int unnormalized_term_length_;
   // The accessor of the posting list chain for the requested term.
   std::unique_ptr<PostingListHitAccessor> posting_list_accessor_;
 
@@ -102,21 +114,35 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
   int cached_doc_hit_infos_idx_;
   int num_advance_calls_;
   int num_blocks_inspected_;
-  PostingListIdentifier next_posting_list_id_;
+  bool all_pages_consumed_;
   // Mask indicating which sections hits should be considered for.
   // Ex. 0000 0000 0000 0010 means that only hits from section 1 are desired.
   const SectionIdMask section_restrict_mask_;
   const bool need_hit_term_frequency_;
+
+ private:
+  // Remaining number of hits including the current hit.
+  // Returns -1 if cached_doc_hit_infos_idx_ is invalid.
+  int cached_doc_hit_info_count() const {
+    if (cached_doc_hit_infos_idx_ == -1 ||
+        cached_doc_hit_infos_idx_ >= cached_doc_hit_infos_.size()) {
+      return -1;
+    }
+    return cached_doc_hit_infos_.size() - cached_doc_hit_infos_idx_;
+  }
 };
 
 class DocHitInfoIteratorTermMainExact : public DocHitInfoIteratorTermMain {
  public:
   explicit DocHitInfoIteratorTermMainExact(MainIndex* main_index,
                                            const std::string& term,
+                                           int term_start_index,
+                                           int unnormalized_term_length,
                                            SectionIdMask section_restrict_mask,
                                            bool need_hit_term_frequency)
-      : DocHitInfoIteratorTermMain(main_index, term, section_restrict_mask,
-                                   need_hit_term_frequency) {}
+      : DocHitInfoIteratorTermMain(
+            main_index, term, term_start_index, unnormalized_term_length,
+            section_restrict_mask, need_hit_term_frequency) {}
 
   std::string ToString() const override;
 
@@ -128,10 +154,13 @@ class DocHitInfoIteratorTermMainPrefix : public DocHitInfoIteratorTermMain {
  public:
   explicit DocHitInfoIteratorTermMainPrefix(MainIndex* main_index,
                                             const std::string& term,
+                                            int term_start_index,
+                                            int unnormalized_term_length,
                                             SectionIdMask section_restrict_mask,
                                             bool need_hit_term_frequency)
-      : DocHitInfoIteratorTermMain(main_index, term, section_restrict_mask,
-                                   need_hit_term_frequency) {}
+      : DocHitInfoIteratorTermMain(
+            main_index, term, term_start_index, unnormalized_term_length,
+            section_restrict_mask, need_hit_term_frequency) {}
 
   std::string ToString() const override;
 

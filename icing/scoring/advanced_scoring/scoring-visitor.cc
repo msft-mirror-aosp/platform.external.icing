@@ -72,21 +72,21 @@ void ScoringVisitor::VisitMember(const MemberNode* node) {
         absl_ports::StrCat("Expect a numeric literal, but got ", value));
     return;
   }
-  stack.push_back(ConstantScoreExpression::Create(number));
+  stack_.push_back(ConstantScoreExpression::Create(number));
 }
 
 void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
                                          bool is_member_function) {
-  std::vector<std::unique_ptr<ScoreExpression>> children;
+  std::vector<std::unique_ptr<ScoreExpression>> args;
   if (is_member_function) {
-    children.push_back(ThisExpression::Create());
+    args.push_back(ThisExpression::Create());
   }
   for (const auto& arg : node->args()) {
     arg->Accept(this);
     if (has_pending_error()) {
       return;
     }
-    children.push_back(pop_stack());
+    args.push_back(pop_stack());
   }
   const std::string& function_name = node->function_name()->value();
   libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> expression =
@@ -98,25 +98,35 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     // Document-based function
     expression = DocumentFunctionScoreExpression::Create(
         DocumentFunctionScoreExpression::kFunctionNames.at(function_name),
-        std::move(children), &document_store_, default_score_);
+        std::move(args), &document_store_, default_score_, current_time_ms_);
   } else if (function_name ==
              RelevanceScoreFunctionScoreExpression::kFunctionName) {
     // relevanceScore function
     expression = RelevanceScoreFunctionScoreExpression::Create(
-        std::move(children), &bm25f_calculator_, default_score_);
+        std::move(args), &bm25f_calculator_, default_score_);
+  } else if (function_name ==
+             ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
+    // childrenRankingSignals function
+    expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
+        std::move(args), join_children_fetcher_);
+  } else if (function_name ==
+             PropertyWeightsFunctionScoreExpression::kFunctionName) {
+    // propertyWeights function
+    expression = PropertyWeightsFunctionScoreExpression::Create(
+        std::move(args), &document_store_, &section_weights_, current_time_ms_);
   } else if (MathFunctionScoreExpression::kFunctionNames.find(function_name) !=
              MathFunctionScoreExpression::kFunctionNames.end()) {
     // Math functions
     expression = MathFunctionScoreExpression::Create(
         MathFunctionScoreExpression::kFunctionNames.at(function_name),
-        std::move(children));
+        std::move(args));
   }
 
   if (!expression.ok()) {
     pending_error_ = expression.status();
     return;
   }
-  stack.push_back(std::move(expression).ValueOrDie());
+  stack_.push_back(std::move(expression).ValueOrDie());
 }
 
 void ScoringVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
@@ -140,7 +150,7 @@ void ScoringVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
     pending_error_ = expression.status();
     return;
   }
-  stack.push_back(std::move(expression).ValueOrDie());
+  stack_.push_back(std::move(expression).ValueOrDie());
 }
 
 void ScoringVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
@@ -174,7 +184,7 @@ void ScoringVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
     pending_error_ = expression.status();
     return;
   }
-  stack.push_back(std::move(expression).ValueOrDie());
+  stack_.push_back(std::move(expression).ValueOrDie());
 }
 
 }  // namespace lib
