@@ -27,8 +27,8 @@ namespace {
 using ::testing::ElementsAre;
 
 TEST(AbstractSyntaxTreeTest, Simple) {
-  // foo
-  std::unique_ptr<Node> root = std::make_unique<TextNode>("foo");
+  std::string_view query = "foo";
+  std::unique_ptr<Node> root = std::make_unique<TextNode>("foo", query);
   SimpleVisitor visitor;
   root->Accept(&visitor);
 
@@ -37,16 +37,16 @@ TEST(AbstractSyntaxTreeTest, Simple) {
 }
 
 TEST(AbstractSyntaxTreeTest, Composite) {
-  // (foo bar) OR baz
+  std::string_view query = "(foo bar) OR baz";
   std::vector<std::unique_ptr<Node>> and_args;
-  and_args.push_back(std::make_unique<TextNode>("foo"));
-  and_args.push_back(std::make_unique<TextNode>("bar"));
+  and_args.push_back(std::make_unique<TextNode>("foo", query.substr(1, 3)));
+  and_args.push_back(std::make_unique<TextNode>("bar", query.substr(5, 3)));
   auto and_node =
       std::make_unique<NaryOperatorNode>("AND", std::move(and_args));
 
   std::vector<std::unique_ptr<Node>> or_args;
   or_args.push_back(std::move(and_node));
-  or_args.push_back(std::make_unique<TextNode>("baz"));
+  or_args.push_back(std::make_unique<TextNode>("baz", query.substr(13, 3)));
   std::unique_ptr<Node> root =
       std::make_unique<NaryOperatorNode>("OR", std::move(or_args));
 
@@ -72,9 +72,9 @@ TEST(AbstractSyntaxTreeTest, Function) {
               ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
                           EqualsNodeInfo("", NodeType::kFunction)));
 
-  // foo("bar")
+  std::string_view query = "foo(\"bar\")";
   std::vector<std::unique_ptr<Node>> args;
-  args.push_back(std::make_unique<StringNode>("bar"));
+  args.push_back(std::make_unique<StringNode>("bar", query.substr(5, 3)));
   root = std::make_unique<FunctionNode>(
       std::make_unique<FunctionNameNode>("foo"), std::move(args));
   visitor = SimpleVisitor();
@@ -85,9 +85,9 @@ TEST(AbstractSyntaxTreeTest, Function) {
                           EqualsNodeInfo("bar", NodeType::kString),
                           EqualsNodeInfo("", NodeType::kFunction)));
 
-  // foo(bar("baz"))
+  query = "foo(bar(\"baz\"))";
   std::vector<std::unique_ptr<Node>> inner_args;
-  inner_args.push_back(std::make_unique<StringNode>("baz"));
+  inner_args.push_back(std::make_unique<StringNode>("baz", query.substr(9, 3)));
   args.clear();
   args.push_back(std::make_unique<FunctionNode>(
       std::make_unique<FunctionNameNode>("bar"), std::move(inner_args)));
@@ -105,14 +105,16 @@ TEST(AbstractSyntaxTreeTest, Function) {
 }
 
 TEST(AbstractSyntaxTreeTest, Restriction) {
-  // sender.name:(IMPORTANT OR URGENT)
+  std::string_view query = "sender.name:(IMPORTANT OR URGENT)";
   std::vector<std::unique_ptr<TextNode>> member_args;
-  member_args.push_back(std::make_unique<TextNode>("sender"));
-  member_args.push_back(std::make_unique<TextNode>("name"));
+  member_args.push_back(
+      std::make_unique<TextNode>("sender", query.substr(0, 6)));
+  member_args.push_back(std::make_unique<TextNode>("name", query.substr(7, 4)));
 
   std::vector<std::unique_ptr<Node>> or_args;
-  or_args.push_back(std::make_unique<TextNode>("IMPORTANT"));
-  or_args.push_back(std::make_unique<TextNode>("URGENT"));
+  or_args.push_back(
+      std::make_unique<TextNode>("IMPORTANT", query.substr(13, 9)));
+  or_args.push_back(std::make_unique<TextNode>("URGENT", query.substr(26, 6)));
 
   std::vector<std::unique_ptr<Node>> has_args;
   has_args.push_back(std::make_unique<MemberNode>(std::move(member_args),
