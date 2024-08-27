@@ -15,19 +15,20 @@
 #ifndef ICING_RESULT_RETRIEVER_V2_H_
 #define ICING_RESULT_RETRIEVER_V2_H_
 
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/result/snippet-retriever.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 
@@ -46,7 +47,8 @@ class GroupResultLimiterV2 {
       const std::unordered_map<int32_t, int>& entry_id_group_id_map,
       const DocumentStore& document_store,
       std::vector<int>& group_result_limits,
-      ResultSpecProto::ResultGroupingType result_group_type) const;
+      ResultSpecProto::ResultGroupingType result_group_type,
+      int64_t current_time_ms) const;
 };
 
 class ResultRetrieverV2 {
@@ -86,8 +88,8 @@ class ResultRetrieverV2 {
   //
   // Returns:
   //   std::pair<PageResult, bool>
-  std::pair<PageResult, bool> RetrieveNextPage(
-      ResultStateV2& result_state) const;
+  std::pair<PageResult, bool> RetrieveNextPage(ResultStateV2& result_state,
+                                               int64_t current_time_ms) const;
 
  private:
   explicit ResultRetrieverV2(
