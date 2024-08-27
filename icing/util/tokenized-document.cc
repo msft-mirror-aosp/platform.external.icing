@@ -20,6 +20,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -72,6 +73,9 @@ TokenizedDocument::Create(const SchemaStore* schema_store,
   ICING_ASSIGN_OR_RETURN(SectionGroup section_group,
                          schema_store->ExtractSections(document));
 
+  ICING_ASSIGN_OR_RETURN(JoinablePropertyGroup joinable_property_group,
+                         schema_store->ExtractJoinableProperties(document));
+
   // Tokenize string sections
   ICING_ASSIGN_OR_RETURN(
       std::vector<TokenizedSection> tokenized_string_sections,
@@ -80,7 +84,8 @@ TokenizedDocument::Create(const SchemaStore* schema_store,
 
   return TokenizedDocument(std::move(document),
                            std::move(tokenized_string_sections),
-                           std::move(section_group.integer_sections));
+                           std::move(section_group.integer_sections),
+                           std::move(joinable_property_group));
 }
 
 }  // namespace lib
