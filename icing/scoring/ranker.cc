@@ -15,10 +15,13 @@
 #include "icing/scoring/ranker.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/term-metadata.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/util/logging.h"
 
@@ -90,13 +93,13 @@ void HeapifyTermDown(std::vector<TermMetadata>& scored_terms,
 
   // If left child is smaller than current minimum.
   if (left < heap_size &&
-      scored_terms.at(left).hit_count < scored_terms.at(min).hit_count) {
+      scored_terms.at(left).score < scored_terms.at(min).score) {
     min = left;
   }
 
   // If right child is smaller than current minimum.
   if (right < heap_size &&
-      scored_terms.at(right).hit_count < scored_terms.at(min).hit_count) {
+      scored_terms.at(right).score < scored_terms.at(min).score) {
     min = right;
   }
 
@@ -118,8 +121,8 @@ void HeapifyTermUp(std::vector<TermMetadata>& scored_terms,
 
   // If the current child is smaller than the root, swap and continue heapifying
   // the upper level subtree
-  if (root >= 0 && scored_terms.at(target_subtree_child_index).hit_count <
-                       scored_terms.at(root).hit_count) {
+  if (root >= 0 && scored_terms.at(target_subtree_child_index).score <
+                       scored_terms.at(root).score) {
     std::swap(scored_terms.at(root),
               scored_terms.at(target_subtree_child_index));
     HeapifyTermUp(scored_terms, root);
@@ -166,7 +169,7 @@ void PushToTermHeap(TermMetadata term, int number_to_return,
     scored_terms_heap.push_back(std::move(term));
     // We insert at end, so we should heapify bottom up.
     HeapifyTermUp(scored_terms_heap, scored_terms_heap.size() - 1);
-  } else if (scored_terms_heap.at(0).hit_count < term.hit_count) {
+  } else if (scored_terms_heap.at(0).score < term.score) {
     scored_terms_heap.at(0) = std::move(term);
     // We insert at root, so we should heapify top down.
     HeapifyTermDown(scored_terms_heap, /*target_subtree_root_index=*/0);
@@ -183,7 +186,7 @@ libtextclassifier3::StatusOr<ScoredDocumentHit> PopNextTopResultFromHeap(
 
   // Steps to extract root from heap:
   // 1. copy out root
-  ScoredDocumentHit root = scored_document_hits_heap->at(0);
+  ScoredDocumentHit root = std::move(scored_document_hits_heap->at(0));
   const size_t last_node_index = scored_document_hits_heap->size() - 1;
   // 2. swap root and the last node
   std::swap(scored_document_hits_heap->at(0),

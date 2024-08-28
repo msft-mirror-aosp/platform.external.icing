@@ -42,7 +42,6 @@ using ::testing::IsTrue;
 using ::testing::Lt;
 using ::testing::Not;
 using ::testing::Pointee;
-using ::testing::Return;
 using ::testing::SizeIs;
 
 namespace icing {
@@ -199,7 +198,9 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
       FileBackedVector<char>::Create(
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
 
   std::string expected = "abcde";
   Insert(vector.get(), 0, expected);
@@ -209,7 +210,9 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   uint32_t good_crc_value = 1134899064U;
   const Crc32 good_crc(good_crc_value);
   // Explicit call to update the crc does update the value
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(good_crc));
+  EXPECT_THAT(vector->GetChecksum(), Eq(good_crc));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(good_crc));
+  EXPECT_THAT(vector->GetChecksum(), Eq(good_crc));
 
   // PersistToDisk does nothing bad.
   ICING_EXPECT_OK(vector->PersistToDisk());
@@ -255,7 +258,9 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   ICING_EXPECT_OK(vector->TruncateTo(0));
 
   // Crc is cleared after truncation and reset to 0.
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
   EXPECT_EQ(0u, vector->num_elements());
 }
 
@@ -267,7 +272,9 @@ TEST_F(FileBackedVectorTest, Get) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
 
   std::string expected = "abc";
   Insert(vector.get(), 0, expected);
@@ -284,6 +291,69 @@ TEST_F(FileBackedVectorTest, Get) {
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
+TEST_F(FileBackedVectorTest, SetWithoutGrowing) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<char>> vector,
+      FileBackedVector<char>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+
+  std::string original = "abcde";
+  Insert(vector.get(), /*idx=*/0, original);
+  ASSERT_THAT(vector->num_elements(), Eq(original.length()));
+  ASSERT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/5), Eq(original));
+
+  ICING_EXPECT_OK(vector->Set(/*idx=*/1, /*len=*/3, 'z'));
+  EXPECT_THAT(vector->num_elements(), Eq(5));
+  EXPECT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/5), Eq("azzze"));
+}
+
+TEST_F(FileBackedVectorTest, SetWithGrowing) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<char>> vector,
+      FileBackedVector<char>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+
+  std::string original = "abcde";
+  Insert(vector.get(), /*idx=*/0, original);
+  ASSERT_THAT(vector->num_elements(), Eq(original.length()));
+  ASSERT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/5), Eq(original));
+
+  ICING_EXPECT_OK(vector->Set(/*idx=*/3, /*len=*/4, 'z'));
+  EXPECT_THAT(vector->num_elements(), Eq(7));
+  EXPECT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/7), Eq("abczzzz"));
+}
+
+TEST_F(FileBackedVectorTest, SetInvalidArguments) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<char>> vector,
+      FileBackedVector<char>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  EXPECT_THAT(vector->Set(/*idx=*/0, /*len=*/-1, 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Set(/*idx=*/0, /*len=*/0, 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Set(/*idx=*/-1, /*len=*/2, 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Set(/*idx=*/100,
+                          /*len=*/std::numeric_limits<int32_t>::max(), 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
 TEST_F(FileBackedVectorTest, MutableView) {
   // Create a vector and add some data.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -292,7 +362,9 @@ TEST_F(FileBackedVectorTest, MutableView) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::string(1000, 'a'));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
 
   ICING_ASSERT_OK_AND_ASSIGN(FileBackedVector<char>::MutableView mutable_elt,
                              vector->GetMutable(3));
@@ -312,7 +384,9 @@ TEST_F(FileBackedVectorTest, MutableViewShouldSetDirty) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::string(1000, 'a'));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
 
   std::string_view reconstructed_view =
       std::string_view(vector->array(), vector->num_elements());
@@ -322,11 +396,11 @@ TEST_F(FileBackedVectorTest, MutableViewShouldSetDirty) {
 
   // Mutate the element via MutateView
   // If non-const Get() is called, MutateView should set the element index dirty
-  // so that ComputeChecksum() can pick up the change and compute the checksum
+  // so that UpdateChecksum() can pick up the change and compute the checksum
   // correctly. Validate by mapping another array on top.
   mutable_elt.Get() = 'b';
   ASSERT_THAT(vector->Get(3), IsOkAndHolds(Pointee(Eq('b'))));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->UpdateChecksum());
   Crc32 full_crc1;
   full_crc1.Append(reconstructed_view);
   EXPECT_THAT(crc1, Eq(full_crc1));
@@ -334,7 +408,7 @@ TEST_F(FileBackedVectorTest, MutableViewShouldSetDirty) {
   // Mutate and test again.
   mutable_elt.Get() = 'c';
   ASSERT_THAT(vector->Get(3), IsOkAndHolds(Pointee(Eq('c'))));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->UpdateChecksum());
   Crc32 full_crc2;
   full_crc2.Append(reconstructed_view);
   EXPECT_THAT(crc2, Eq(full_crc2));
@@ -348,7 +422,9 @@ TEST_F(FileBackedVectorTest, MutableArrayView) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
 
   constexpr int kArrayViewOffset = 5;
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -378,7 +454,9 @@ TEST_F(FileBackedVectorTest, MutableArrayViewSetArray) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
 
   constexpr int kArrayViewOffset = 3;
   constexpr int kArrayViewLen = 5;
@@ -405,7 +483,9 @@ TEST_F(FileBackedVectorTest, MutableArrayViewSetArrayWithZeroLength) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
 
   constexpr int kArrayViewOffset = 3;
   constexpr int kArrayViewLen = 5;
@@ -428,7 +508,9 @@ TEST_F(FileBackedVectorTest, MutableArrayViewIndexOperatorShouldSetDirty) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
 
   std::string_view reconstructed_view(
       reinterpret_cast<const char*>(vector->array()),
@@ -441,27 +523,27 @@ TEST_F(FileBackedVectorTest, MutableArrayViewIndexOperatorShouldSetDirty) {
 
   // Use operator[] to mutate elements
   // If non-const operator[] is called, MutateView should set the element index
-  // dirty so that ComputeChecksum() can pick up the change and compute the
+  // dirty so that UpdateChecksum() can pick up the change and compute the
   // checksum correctly. Validate by mapping another array on top.
   mutable_arr[0] = 2;
   ASSERT_THAT(vector->Get(kArrayViewOffset + 0), IsOkAndHolds(Pointee(Eq(2))));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->UpdateChecksum());
   EXPECT_THAT(crc1, Eq(Crc32(reconstructed_view)));
 
   mutable_arr[1] = 3;
   ASSERT_THAT(vector->Get(kArrayViewOffset + 1), IsOkAndHolds(Pointee(Eq(3))));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->UpdateChecksum());
   EXPECT_THAT(crc2, Eq(Crc32(reconstructed_view)));
 
   mutable_arr[2] = 4;
   ASSERT_THAT(vector->Get(kArrayViewOffset + 2), IsOkAndHolds(Pointee(Eq(4))));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc3, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc3, vector->UpdateChecksum());
   EXPECT_THAT(crc3, Eq(Crc32(reconstructed_view)));
 
   // Change the same position. It should set dirty again.
   mutable_arr[0] = 5;
   ASSERT_THAT(vector->Get(kArrayViewOffset + 0), IsOkAndHolds(Pointee(Eq(5))));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc4, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc4, vector->UpdateChecksum());
   EXPECT_THAT(crc4, Eq(Crc32(reconstructed_view)));
 }
 
@@ -473,7 +555,9 @@ TEST_F(FileBackedVectorTest, MutableArrayViewSetArrayShouldSetDirty) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
 
   std::string_view reconstructed_view(
       reinterpret_cast<const char*>(vector->array()),
@@ -489,7 +573,7 @@ TEST_F(FileBackedVectorTest, MutableArrayViewSetArrayShouldSetDirty) {
   mutable_arr.SetArray(/*idx=*/0, change.data(), change.size());
   ASSERT_THAT(Get(vector.get(), kArrayViewOffset, kArrayViewLen),
               ElementsAre(2, 3, 4, 1, 1));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, vector->UpdateChecksum());
   EXPECT_THAT(crc, Eq(Crc32(reconstructed_view)));
 }
 
@@ -662,7 +746,9 @@ TEST_F(FileBackedVectorTest, IncrementalCrc_NonOverlappingChanges) {
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
   Insert(vector.get(), 0, std::string(num_elements, 'a'));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
 
   // Non-overlapping changes to the array, with increasing intervals
   // between updating the checksum. Validate by mapping another array on top.
@@ -672,7 +758,7 @@ TEST_F(FileBackedVectorTest, IncrementalCrc_NonOverlappingChanges) {
 
     if (i >= next_update) {
       ICING_ASSERT_OK_AND_ASSIGN(Crc32 incremental_crc,
-                                 vector->ComputeChecksum());
+                                 vector->UpdateChecksum());
       ICING_LOG(INFO) << "Now crc @" << incremental_crc.Get();
 
       Crc32 full_crc;
@@ -701,7 +787,9 @@ TEST_F(FileBackedVectorTest, IncrementalCrc_OverlappingChanges) {
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
   Insert(vector.get(), 0, std::string(num_elements, 'a'));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2620640643U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2620640643U)));
 
   // Overlapping changes to the array, with increasing intervals
   // between updating the checksum. Validate by mapping another array on top.
@@ -711,7 +799,7 @@ TEST_F(FileBackedVectorTest, IncrementalCrc_OverlappingChanges) {
 
     if (i >= next_update) {
       ICING_ASSERT_OK_AND_ASSIGN(Crc32 incremental_crc,
-                                 vector->ComputeChecksum());
+                                 vector->UpdateChecksum());
       ICING_LOG(INFO) << "Now crc @" << incremental_crc.Get();
 
       Crc32 full_crc;
@@ -735,7 +823,9 @@ TEST_F(FileBackedVectorTest, SetIntMaxShouldReturnOutOfRangeError) {
       FileBackedVector<int32_t>::Create(
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
 
   // It is an edge case. Since Set() calls GrowIfNecessary(idx + 1), we have to
   // make sure that when idx is INT32_MAX, Set() should handle it correctly.
@@ -765,7 +855,10 @@ TEST_F(FileBackedVectorTest, Grow) {
       FileBackedVector<int32_t>::Create(
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+
   // max_num_elements is the allowed max # of elements, so the valid index
   // should be 0 to max_num_elements-1.
   EXPECT_THAT(vector->Set(max_num_elements, 1),
@@ -780,7 +873,9 @@ TEST_F(FileBackedVectorTest, Grow) {
 
   // Crc works?
   const Crc32 good_crc(650981917U);
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(good_crc));
+  EXPECT_THAT(vector->GetChecksum(), Eq(good_crc));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(good_crc));
+  EXPECT_THAT(vector->GetChecksum(), Eq(good_crc));
 
   // PersistToDisk does nothing bad, and ensures the content is still there
   // after we recreate the vector
@@ -861,11 +956,15 @@ TEST_F(FileBackedVectorTest, Delete) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
 
   std::string expected = "abcde";
   Insert(vector.get(), 0, expected);
-  ASSERT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(1134899064U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(1134899064U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(1134899064U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(1134899064U)));
   ASSERT_EQ(expected.length(), vector->num_elements());
 
   // Close out the old vector to ensure everything persists properly before we
@@ -889,13 +988,17 @@ TEST_F(FileBackedVectorTest, TruncateTo) {
       FileBackedVector<char>::Create(
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
 
   Insert(vector.get(), 0, "A");
   Insert(vector.get(), 1, "Z");
 
   EXPECT_EQ(2, vector->num_elements());
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(1658635950)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(1658635950)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(1658635950)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(1658635950)));
 
   // Modify 1 element, out of 2 total elements. 1/2 changes exceeds the partial
   // crc limit, so our next checksum call will recompute the entire vector's
@@ -905,12 +1008,16 @@ TEST_F(FileBackedVectorTest, TruncateTo) {
   // checksum will only include "J".
   ICING_EXPECT_OK(vector->TruncateTo(1));
   EXPECT_EQ(1, vector->num_elements());
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(31158534)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(31158534)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(31158534)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(31158534)));
 
   // Truncating clears the checksum and resets it to 0
   ICING_EXPECT_OK(vector->TruncateTo(0));
   EXPECT_EQ(0, vector->num_elements());
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(0)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(0)));
 
   // Can't truncate past end.
   EXPECT_THAT(vector->TruncateTo(100),
@@ -961,6 +1068,105 @@ TEST_F(FileBackedVectorTest, TruncateAndReReadFile) {
   }
 }
 
+TEST_F(FileBackedVectorTest, Sort) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  ICING_ASSERT_OK(vector->Set(0, 5));
+  ICING_ASSERT_OK(vector->Set(1, 4));
+  ICING_ASSERT_OK(vector->Set(2, 2));
+  ICING_ASSERT_OK(vector->Set(3, 3));
+  ICING_ASSERT_OK(vector->Set(4, 1));
+
+  // Sort vector range [1, 4) (excluding 4).
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/1, /*end_idx=*/4), IsOk());
+  // Verify sorted range should be sorted and others should remain unchanged.
+  EXPECT_THAT(vector->Get(0), IsOkAndHolds(Pointee(5)));
+  EXPECT_THAT(vector->Get(1), IsOkAndHolds(Pointee(2)));
+  EXPECT_THAT(vector->Get(2), IsOkAndHolds(Pointee(3)));
+  EXPECT_THAT(vector->Get(3), IsOkAndHolds(Pointee(4)));
+  EXPECT_THAT(vector->Get(4), IsOkAndHolds(Pointee(1)));
+
+  // Sort again by end_idx = num_elements().
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/0, /*end_idx=*/vector->num_elements()),
+              IsOk());
+  EXPECT_THAT(vector->Get(0), IsOkAndHolds(Pointee(1)));
+  EXPECT_THAT(vector->Get(1), IsOkAndHolds(Pointee(2)));
+  EXPECT_THAT(vector->Get(2), IsOkAndHolds(Pointee(3)));
+  EXPECT_THAT(vector->Get(3), IsOkAndHolds(Pointee(4)));
+  EXPECT_THAT(vector->Get(4), IsOkAndHolds(Pointee(5)));
+}
+
+TEST_F(FileBackedVectorTest, SortByInvalidIndexShouldReturnOutOfRangeError) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  ICING_ASSERT_OK(vector->Set(0, 5));
+  ICING_ASSERT_OK(vector->Set(1, 4));
+  ICING_ASSERT_OK(vector->Set(2, 2));
+  ICING_ASSERT_OK(vector->Set(3, 3));
+  ICING_ASSERT_OK(vector->Set(4, 1));
+
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/-1, /*end_idx=*/4),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/0, /*end_idx=*/-1),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/3, /*end_idx=*/3),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/3, /*end_idx=*/1),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/5, /*end_idx=*/5),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Sort(/*begin_idx=*/3, /*end_idx=*/6),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(FileBackedVectorTest, SortShouldSetDirtyCorrectly) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<int>> vector,
+        FileBackedVector<int>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    ICING_ASSERT_OK(vector->Set(0, 5));
+    ICING_ASSERT_OK(vector->Set(1, 4));
+    ICING_ASSERT_OK(vector->Set(2, 2));
+    ICING_ASSERT_OK(vector->Set(3, 3));
+    ICING_ASSERT_OK(vector->Set(4, 1));
+  }  // Destroying the vector should trigger a checksum of the 5 elements
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<int>> vector,
+        FileBackedVector<int>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    // Sort vector range [1, 4) (excluding 4).
+    EXPECT_THAT(vector->Sort(/*begin_idx=*/1, /*end_idx=*/4), IsOk());
+  }  // Destroying the vector should update the checksum
+
+  // Creating again should check that the checksum after sorting matches what
+  // was previously saved. This tests the correctness of SetDirty() for sorted
+  // elements.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  // Verify sorted range should be sorted and others should remain unchanged.
+  EXPECT_THAT(vector->Get(0), IsOkAndHolds(Pointee(5)));
+  EXPECT_THAT(vector->Get(1), IsOkAndHolds(Pointee(2)));
+  EXPECT_THAT(vector->Get(2), IsOkAndHolds(Pointee(3)));
+  EXPECT_THAT(vector->Get(3), IsOkAndHolds(Pointee(4)));
+  EXPECT_THAT(vector->Get(4), IsOkAndHolds(Pointee(1)));
+}
+
 TEST_F(FileBackedVectorTest, SetDirty) {
   // 1. Create a vector and add some data.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -973,7 +1179,7 @@ TEST_F(FileBackedVectorTest, SetDirty) {
   std::string_view reconstructed_view =
       std::string_view(vector->array(), vector->num_elements());
 
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->UpdateChecksum());
   Crc32 full_crc_before_overwrite;
   full_crc_before_overwrite.Append(reconstructed_view);
   EXPECT_THAT(crc1, Eq(full_crc_before_overwrite));
@@ -990,7 +1196,7 @@ TEST_F(FileBackedVectorTest, SetDirty) {
   ASSERT_THAT(full_crc_before_overwrite, Not(Eq(full_crc_after_overwrite)));
 
   // 3. Without calling SetDirty(), the checksum will be recomputed incorrectly.
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->UpdateChecksum());
   EXPECT_THAT(crc2, Not(Eq(full_crc_after_overwrite)));
 
   // 4. Call SetDirty()
@@ -999,7 +1205,7 @@ TEST_F(FileBackedVectorTest, SetDirty) {
 
   // 5. The checksum should be computed correctly after calling SetDirty() with
   // correct index.
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc3, vector->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc3, vector->UpdateChecksum());
   EXPECT_THAT(crc3, Eq(full_crc_after_overwrite));
 }
 
@@ -1171,58 +1377,35 @@ TEST_F(FileBackedVectorTest, InitNormalSucceeds) {
   }
 }
 
-TEST_F(FileBackedVectorTest, RemapFailureStillValidInstance) {
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<FileBackedVector<int>> vector,
-      FileBackedVector<int>::Create(
-          *mock_filesystem, file_path_,
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-
-  // 1. Write data to just before the first block resize. Running the test
-  // locally has determined that we'll first resize at 65531st entry.
-  constexpr int kResizingIndex = 16378;
-  for (int i = 0; i < kResizingIndex; ++i) {
-    ICING_ASSERT_OK(vector->Set(i, 7));
+TEST_F(FileBackedVectorTest, InitFromExistingFileShouldPreMapAtLeastFileSize) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+            FileBackedVector<char>::kMaxFileSize));
+    Insert(vector.get(), 10000, "A");
+    Insert(vector.get(), 10001, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
   }
 
-  // 2. The next Set call should cause a resize and a remap. Make that remap
-  // fail.
-  int num_calls = 0;
-  auto open_lambda = [this, &num_calls](const char* file_name) {
-    if (++num_calls == 2) {
-      return -1;
-    }
-    return this->filesystem().OpenForWrite(file_name);
-  };
-  ON_CALL(*mock_filesystem, OpenForWrite(_)).WillByDefault(open_lambda);
-  EXPECT_THAT(vector->Set(kResizingIndex, 7),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-
-  // 3. We should still be able to call set correctly for earlier regions.
-  ICING_EXPECT_OK(vector->Set(kResizingIndex / 2, 9));
-  EXPECT_THAT(vector->Get(kResizingIndex / 2), IsOkAndHolds(Pointee(Eq(9))));
-}
-
-TEST_F(FileBackedVectorTest, BadFileSizeDuringGrowReturnsError) {
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<FileBackedVector<int>> vector,
-      FileBackedVector<int>::Create(
-          *mock_filesystem, file_path_,
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-
-  // At first, the vector is empty and has no mapping established. The first Set
-  // call will cause a Grow.
-  // During Grow, we will attempt to check the underlying file size to see if
-  // growing is actually necessary. Return an error on the call to GetFileSize.
-  ON_CALL(*mock_filesystem, GetFileSize(A<const char*>()))
-      .WillByDefault(Return(Filesystem::kBadFileSize));
-
-  // We should fail gracefully and return an INTERNAL error to indicate that
-  // there was an issue retrieving the file size.
-  EXPECT_THAT(vector->Set(0, 7),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  {
+    // 2. Attempt to create the file with pre_mapping_mmap_size < file_size. It
+    //    should still pre-map file_size, so we can pass the checksum
+    //    verification when initializing and get the correct contents.
+    int64_t file_size = filesystem_.GetFileSize(file_path_.c_str());
+    int pre_mapping_mmap_size = 10;
+    ASSERT_THAT(pre_mapping_mmap_size, Lt(file_size));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+            FileBackedVector<char>::kMaxFileSize, pre_mapping_mmap_size));
+    EXPECT_THAT(Get(vector.get(), /*idx=*/10000, /*expected_len=*/2), Eq("AZ"));
+  }
 }
 
 }  // namespace

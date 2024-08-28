@@ -37,6 +37,27 @@ namespace lib {
 template <typename T, typename Formatter = absl_ports::DefaultFormatter>
 class KeyMapper {
  public:
+  class Iterator {
+   public:
+    virtual ~Iterator() = default;
+
+    // Advance to the next entry.
+    //
+    // Returns:
+    //   True on success, otherwise false.
+    virtual bool Advance() = 0;
+
+    // Get the key.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    virtual std::string_view GetKey() const = 0;
+
+    // Get the value.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    virtual T GetValue() const = 0;
+  };
+
   virtual ~KeyMapper() = default;
 
   // Inserts/Updates value for key.
@@ -62,8 +83,14 @@ class KeyMapper {
   // Deletes data related to the given key. Returns true on success.
   virtual bool Delete(std::string_view key) = 0;
 
-  // Returns a map of values to keys. Empty map if the mapper is empty.
-  virtual std::unordered_map<T, std::string> GetValuesToKeys() const = 0;
+  // Returns an iterator of the key mapper.
+  //
+  // Example usage:
+  //   auto itr = key_mapper->GetIterator();
+  //   while (itr->Advance()) {
+  //     std::cout << itr->GetKey() << " " << itr->GetValue() << std::endl;
+  //   }
+  virtual std::unique_ptr<Iterator> GetIterator() const = 0;
 
   // Count of unique keys stored in the KeyMapper.
   virtual int32_t num_keys() const = 0;
@@ -97,8 +124,11 @@ class KeyMapper {
   //   INTERNAL_ERROR on IO error
   virtual libtextclassifier3::StatusOr<int64_t> GetElementsSize() const = 0;
 
-  // Computes and returns the checksum of the header and contents.
-  virtual Crc32 ComputeChecksum() = 0;
+  // Computes the checksum of the key mapper and updates the header.
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateChecksum() = 0;
+
+  // Returns the checksum of the key mapper. Does NOT update the header.
+  virtual libtextclassifier3::StatusOr<Crc32> GetChecksum() const = 0;
 
  private:
   static_assert(std::is_trivially_copyable<T>::value,

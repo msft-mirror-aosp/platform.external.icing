@@ -64,9 +64,9 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/constants.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -79,6 +79,7 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
@@ -106,12 +107,23 @@ class PortableFileBackedProtoLog {
     // compressed size larger than max_proto_size are also not accepted.
     const int32_t max_proto_size;
 
+    // Level of compression if enabled, NO_COMPRESSION = 0, BEST_SPEED = 1,
+    // BEST_COMPRESSION = 9
+    const int32_t compression_level;
+
     // Must specify values for options.
     Options() = delete;
-    explicit Options(bool compress_in,
-                     const int32_t max_proto_size_in = kMaxProtoSize)
-        : compress(compress_in), max_proto_size(max_proto_size_in) {}
+    explicit Options(
+        bool compress_in,
+        const int32_t max_proto_size_in = constants::kMaxProtoSize,
+        const int32_t compression_level_in = kDeflateCompressionLevel)
+        : compress(compress_in),
+          max_proto_size(max_proto_size_in),
+          compression_level(compression_level_in) {}
   };
+
+  // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
+  static constexpr int kDeflateCompressionLevel = 3;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the
@@ -378,7 +390,8 @@ class PortableFileBackedProtoLog {
   // }
   class Iterator {
    public:
-    Iterator(const Filesystem& filesystem, int fd, int64_t initial_offset);
+    Iterator(const Filesystem& filesystem, int fd, int64_t initial_offset,
+             int64_t file_size);
 
     // Advances to the position of next proto whether it has been erased or not.
     //
@@ -469,18 +482,28 @@ class PortableFileBackedProtoLog {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates the checksum of the log contents. Excludes the header content.
+  // Calculates the checksum of the log contents (excluding the header) and
+  // updates the header.
   //
   // Returns:
   //   Crc of the log content
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the checksum of the log contents (excluding the
+  // header). Does NOT update the header.
+  //
+  // Returns:
+  //   Crc of the log content
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
  private:
   // Object can only be instantiated via the ::Create factory.
   PortableFileBackedProtoLog(const Filesystem* filesystem,
                              const std::string& file_path,
-                             std::unique_ptr<Header> header);
+                             std::unique_ptr<Header> header, int64_t file_size,
+                             int32_t compression_level);
 
   // Initializes a new proto log.
   //
@@ -511,9 +534,9 @@ class PortableFileBackedProtoLog {
   //   Crc of the content between `start`, inclusive, and `end`, exclusive.
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT_ERROR if start and end aren't within the file size
-  static libtextclassifier3::StatusOr<Crc32> ComputeChecksum(
+  static libtextclassifier3::StatusOr<Crc32> GetPartialChecksum(
       const Filesystem* filesystem, const std::string& file_path,
-      Crc32 initial_crc, int64_t start, int64_t end);
+      Crc32 initial_crc, int64_t start, int64_t end, int64_t file_size);
 
   // Reads out the metadata of a proto located at file_offset from the fd.
   // Metadata will be returned in host byte order endianness.
@@ -556,18 +579,6 @@ class PortableFileBackedProtoLog {
   // protos we support.
   static constexpr uint8_t kProtoMagic = 0x5C;
 
-  // Our internal max for protos.
-  //
-  // WARNING: Changing this to a larger number may invalidate our assumption
-  // that that proto size can safely be stored in the last 3 bytes of the proto
-  // header.
-  static constexpr int kMaxProtoSize = (1 << 24) - 1;  // 16MiB
-  static_assert(kMaxProtoSize <= 0x00FFFFFF,
-                "kMaxProtoSize doesn't fit in 3 bytes");
-
-  // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
-  static constexpr int kDeflateCompressionLevel = 3;
-
   // Chunks of the file to mmap at a time, so we don't mmap the entire file.
   // Only used on 32-bit devices
   static constexpr int kMmapChunkSize = 4 * 1024 * 1024;  // 4MiB
@@ -576,15 +587,20 @@ class PortableFileBackedProtoLog {
   const Filesystem* const filesystem_;
   const std::string file_path_;
   std::unique_ptr<Header> header_;
+  int64_t file_size_;
+  const int32_t compression_level_;
 };
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
-    std::unique_ptr<Header> header)
+    std::unique_ptr<Header> header, int64_t file_size,
+    int32_t compression_level)
     : filesystem_(filesystem),
       file_path_(file_path),
-      header_(std::move(header)) {
+      header_(std::move(header)),
+      file_size_(file_size),
+      compression_level_(compression_level) {
   fd_.reset(filesystem_->OpenForAppend(file_path.c_str()));
 }
 
@@ -611,10 +627,16 @@ PortableFileBackedProtoLog<ProtoT>::Create(const Filesystem* filesystem,
 
   // Since we store the proto_size in 3 bytes, we can only support protos of up
   // to 16MiB.
-  if (options.max_proto_size > kMaxProtoSize) {
+  if (options.max_proto_size > constants::kMaxProtoSize) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "options.max_proto_size must be under 16MiB, was %d",
         options.max_proto_size));
+  }
+
+  if (options.compression_level < 0 || options.compression_level > 9) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "options.compression_level must be between 0 and 9 inclusive, was %d",
+        options.compression_level));
   }
 
   if (!filesystem->FileExists(file_path.c_str())) {
@@ -659,8 +681,9 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
-          new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header))),
+          new PortableFileBackedProtoLog<ProtoT>(
+              filesystem, file_path, std::move(header),
+              /*file_size=*/kHeaderReservedBytes, options.compression_level)),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
@@ -734,6 +757,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
           "Failed to truncate '%s' to size %lld", file_path.data(),
           static_cast<long long>(header->GetRewindOffset())));
     }
+    file_size = header->GetRewindOffset();
     data_loss = DataLoss::PARTIAL;
   }
 
@@ -752,10 +776,10 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   // we need to throw everything out.
   if (header->GetDirtyFlag()) {
     // Recompute the log's checksum to detect which scenario we're in.
-    ICING_ASSIGN_OR_RETURN(
-        Crc32 calculated_log_checksum,
-        ComputeChecksum(filesystem, file_path, Crc32(),
-                        /*start=*/kHeaderReservedBytes, /*end=*/file_size));
+    ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
+                           GetPartialChecksum(filesystem, file_path, Crc32(),
+                                              /*start=*/kHeaderReservedBytes,
+                                              /*end=*/file_size, file_size));
 
     if (header->GetLogChecksum() != calculated_log_checksum.Get()) {
       // Still doesn't match, we're in Scenario 2. Throw out all our data now
@@ -788,7 +812,8 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header))),
+                                                 std::move(header), file_size,
+                                                 options.compression_level)),
       data_loss, recalculated_checksum};
 
   return create_result;
@@ -796,11 +821,13 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
 
 template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
-PortableFileBackedProtoLog<ProtoT>::ComputeChecksum(
+PortableFileBackedProtoLog<ProtoT>::GetPartialChecksum(
     const Filesystem* filesystem, const std::string& file_path,
-    Crc32 initial_crc, int64_t start, int64_t end) {
-  auto mmapped_file = MemoryMappedFile(*filesystem, file_path,
-                                       MemoryMappedFile::Strategy::READ_ONLY);
+    Crc32 initial_crc, int64_t start, int64_t end, int64_t file_size) {
+  ICING_ASSIGN_OR_RETURN(
+      MemoryMappedFile mmapped_file,
+      MemoryMappedFile::Create(*filesystem, file_path,
+                               MemoryMappedFile::Strategy::READ_ONLY));
   Crc32 new_crc(initial_crc.Get());
 
   if (start < 0) {
@@ -818,7 +845,6 @@ PortableFileBackedProtoLog<ProtoT>::ComputeChecksum(
         static_cast<long long>(end)));
   }
 
-  int64_t file_size = filesystem->GetFileSize(file_path.c_str());
   if (end > file_size) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Ending checksum offset of file '%s' must be within "
@@ -891,7 +917,7 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   if (header_->GetCompressFlag()) {
     protobuf_ports::GzipOutputStream::Options options;
     options.format = protobuf_ports::GzipOutputStream::ZLIB;
-    options.compression_level = kDeflateCompressionLevel;
+    options.compression_level = compression_level_;
 
     protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 
@@ -933,32 +959,30 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
         absl_ports::StrCat("Failed to write proto to: ", file_path_));
   }
 
+  // Update file size. The file should have grown by sizeof(Metadata) + size of
+  // the serialized proto.
+  file_size_ += sizeof(host_order_metadata) + final_size;
   return current_position;
 }
 
 template <typename ProtoT>
 libtextclassifier3::StatusOr<ProtoT>
 PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
-  int64_t file_size = filesystem_->GetFileSize(fd_.get());
-  // Read out the metadata
-  if (file_size == Filesystem::kBadFileSize) {
-    return absl_ports::OutOfRangeError("Unable to correctly read size.");
-  }
   ICING_ASSIGN_OR_RETURN(
       int32_t metadata,
-      ReadProtoMetadata(filesystem_, fd_.get(), file_offset, file_size));
+      ReadProtoMetadata(filesystem_, fd_.get(), file_offset, file_size_));
 
   // Copy out however many bytes it says the proto is
   int stored_size = GetProtoSize(metadata);
   file_offset += sizeof(metadata);
 
   // Read the compressed proto out.
-  if (file_offset + stored_size > file_size) {
+  if (file_offset + stored_size > file_size_) {
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Trying to read from a location, %lld, "
                                       "out of range of the file size, %lld",
                                       static_cast<long long>(file_offset),
-                                      static_cast<long long>(file_size - 1)));
+                                      static_cast<long long>(file_size_ - 1)));
   }
   auto buf = std::make_unique<char[]>(stored_size);
   if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
@@ -969,8 +993,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
     return absl_ports::NotFoundError("The proto data has been erased.");
   }
 
-  google::protobuf::io::ArrayInputStream proto_stream(buf.get(),
-                                                          stored_size);
+  google::protobuf::io::ArrayInputStream proto_stream(buf.get(), stored_size);
 
   // Deserialize proto
   ProtoT proto;
@@ -987,23 +1010,18 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
 template <typename ProtoT>
 libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     int64_t file_offset) {
-  int64_t file_size = filesystem_->GetFileSize(fd_.get());
-  if (file_size == Filesystem::kBadFileSize) {
-    return absl_ports::OutOfRangeError("Unable to correctly read size.");
-  }
-
   ICING_ASSIGN_OR_RETURN(
       int32_t metadata,
-      ReadProtoMetadata(filesystem_, fd_.get(), file_offset, file_size));
+      ReadProtoMetadata(filesystem_, fd_.get(), file_offset, file_size_));
   // Copy out however many bytes it says the proto is
   int stored_size = GetProtoSize(metadata);
   file_offset += sizeof(metadata);
-  if (file_offset + stored_size > file_size) {
+  if (file_offset + stored_size > file_size_) {
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Trying to read from a location, %lld, "
                                       "out of range of the file size, %lld",
                                       static_cast<long long>(file_offset),
-                                      static_cast<long long>(file_size - 1)));
+                                      static_cast<long long>(file_size_ - 1)));
   }
   auto buf = std::make_unique<char[]>(stored_size);
 
@@ -1074,27 +1092,18 @@ PortableFileBackedProtoLog<ProtoT>::GetDiskUsage() const {
 template <typename ProtoT>
 libtextclassifier3::StatusOr<int64_t>
 PortableFileBackedProtoLog<ProtoT>::GetElementsFileSize() const {
-  int64_t total_file_size = filesystem_->GetFileSize(file_path_.c_str());
-  if (total_file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get file size of elments in the proto log");
-  }
-  return total_file_size - kHeaderReservedBytes;
+  return file_size_ - kHeaderReservedBytes;
 }
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::Iterator::Iterator(
-    const Filesystem& filesystem, int fd, int64_t initial_offset)
+    const Filesystem& filesystem, int fd, int64_t initial_offset,
+    int64_t file_size)
     : filesystem_(&filesystem),
       initial_offset_(initial_offset),
       current_offset_(kInvalidOffset),
-      fd_(fd) {
-  file_size_ = filesystem_->GetFileSize(fd_);
-  if (file_size_ == Filesystem::kBadFileSize) {
-    // Fails all Advance() calls
-    file_size_ = 0;
-  }
-}
+      file_size_(file_size),
+      fd_(fd) {}
 
 template <typename ProtoT>
 libtextclassifier3::Status
@@ -1129,7 +1138,7 @@ template <typename ProtoT>
 typename PortableFileBackedProtoLog<ProtoT>::Iterator
 PortableFileBackedProtoLog<ProtoT>::GetIterator() {
   return Iterator(*filesystem_, fd_.get(),
-                  /*initial_offset=*/kHeaderReservedBytes);
+                  /*initial_offset=*/kHeaderReservedBytes, file_size_);
 }
 
 template <typename ProtoT>
@@ -1191,23 +1200,15 @@ PortableFileBackedProtoLog<ProtoT>::WriteProtoMetadata(
 
 template <typename ProtoT>
 libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
-  int64_t file_size = filesystem_->GetFileSize(file_path_.c_str());
-  if (file_size == header_->GetRewindOffset()) {
+  if (file_size_ == header_->GetRewindOffset()) {
     // No new protos appended, don't need to update the checksum.
     return libtextclassifier3::Status::OK;
   }
 
-  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
-
-  header_->SetLogChecksum(crc.Get());
-  header_->SetRewindOffset(file_size);
-  header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
-
-  if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
-                           sizeof(Header)) ||
-      !filesystem_->DataSync(fd_.get())) {
+  ICING_RETURN_IF_ERROR(UpdateChecksum());
+  if (!filesystem_->DataSync(fd_.get())) {
     return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to update header to: ", file_path_));
+        absl_ports::StrCat("Failed to sync data to disk: ", file_path_));
   }
 
   return libtextclassifier3::Status::OK;
@@ -1215,27 +1216,41 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
 
 template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
-PortableFileBackedProtoLog<ProtoT>::ComputeChecksum() {
-  int64_t file_size = filesystem_->GetFileSize(file_path_.c_str());
-  int64_t new_content_size = file_size - header_->GetRewindOffset();
-  Crc32 crc;
+PortableFileBackedProtoLog<ProtoT>::UpdateChecksum() {
+  if (file_size_ == header_->GetRewindOffset()) {
+    return Crc32(header_->GetLogChecksum());
+  }
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, GetChecksum());
+  header_->SetLogChecksum(crc.Get());
+  header_->SetRewindOffset(file_size_);
+  header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
+
+  if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
+                           sizeof(Header))) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Failed to update header to: ", file_path_));
+  }
+  return crc;
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<Crc32>
+PortableFileBackedProtoLog<ProtoT>::GetChecksum() const {
+  int64_t new_content_size = file_size_ - header_->GetRewindOffset();
   if (new_content_size == 0) {
     // No new protos appended, return cached checksum
     return Crc32(header_->GetLogChecksum());
   } else if (new_content_size < 0) {
     // File shrunk, recalculate the entire checksum.
-    ICING_ASSIGN_OR_RETURN(
-        crc,
-        ComputeChecksum(filesystem_, file_path_, Crc32(),
-                        /*start=*/kHeaderReservedBytes, /*end=*/file_size));
+    return GetPartialChecksum(filesystem_, file_path_, Crc32(),
+                              /*start=*/kHeaderReservedBytes,
+                              /*end=*/file_size_, file_size_);
   } else {
     // Append new changes to the existing checksum.
-    ICING_ASSIGN_OR_RETURN(
-        crc, ComputeChecksum(
-                 filesystem_, file_path_, Crc32(header_->GetLogChecksum()),
-                 /*start=*/header_->GetRewindOffset(), /*end=*/file_size));
+    return GetPartialChecksum(
+        filesystem_, file_path_, Crc32(header_->GetLogChecksum()),
+        /*start=*/header_->GetRewindOffset(), /*end=*/file_size_, file_size_);
   }
-  return crc;
 }
 
 }  // namespace lib

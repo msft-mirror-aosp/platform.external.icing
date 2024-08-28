@@ -33,6 +33,7 @@ struct Token {
     RFC822_NAME,                     // "User", "Johnsson"
     RFC822_COMMENT,                  // "A", "comment", "here"
     RFC822_LOCAL_ADDRESS,            // "user.name"
+    RFC822_HOST_ADDRESS,             // "domain.name.com"
     RFC822_ADDRESS,                  // "user.name@domain.name.com"
     RFC822_ADDRESS_COMPONENT_LOCAL,  // "user", "name",
     RFC822_ADDRESS_COMPONENT_HOST,   // "domain", "name", "com"
@@ -44,6 +45,22 @@ struct Token {
     QUERY_PROPERTY,   // Indicates property restrict on next token
     QUERY_LEFT_PARENTHESES,   // Left parentheses
     QUERY_RIGHT_PARENTHESES,  // Right parentheses
+
+    // Types used in URL tokenization
+    URL_SCHEME,  // "http", "https", "ftp", "content"
+    URL_USERNAME,
+    URL_PASSWORD,
+    URL_HOST_COMMON_PART,  // Hosts are split into two types, common and
+                           // significant. Common are e.g: www, ww2, .com, etc.
+    URL_HOST_SIGNIFICANT_PART,
+    URL_PORT,
+    URL_PATH_PART,  // Tokenized path, e.g. /abc-d/e.fg-> [abc-d], [e.fg]
+    URL_QUERY,      // After ?, before #, e.g. "param1=value-1&param2=value-2
+    URL_REF,        // Anything after #. Could be anything
+    URL_SUFFIX,
+    URL_SUFFIX_INNERMOST,
+
+    TRIGRAM,  // Trigram token of the text
 
     // Indicates errors
     INVALID,

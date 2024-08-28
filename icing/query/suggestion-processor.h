@@ -15,11 +15,20 @@
 #ifndef ICING_QUERY_SUGGESTION_PROCESSOR_H_
 #define ICING_QUERY_SUGGESTION_PROCESSOR_H_
 
+#include <cstdint>
+#include <memory>
+#include <vector>
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
+#include "icing/index/numeric/numeric-index.h"
 #include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -37,8 +46,11 @@ class SuggestionProcessor {
   //   An SuggestionProcessor on success
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<SuggestionProcessor>>
-  Create(Index* index, const LanguageSegmenter* language_segmenter,
-         const Normalizer* normalizer);
+  Create(Index* index, const NumericIndex<int64_t>* numeric_index,
+         const EmbeddingIndex* embedding_index,
+         const LanguageSegmenter* language_segmenter,
+         const Normalizer* normalizer, const DocumentStore* document_store,
+         const SchemaStore* schema_store, const Clock* clock);
 
   // Query suggestions based on the given SuggestionSpecProto.
   //
@@ -47,19 +59,28 @@ class SuggestionProcessor {
   //     - One vector that represents the entire TermMetadata
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> QuerySuggestions(
-      const SuggestionSpecProto& suggestion_spec,
-      const NamespaceChecker* namespace_checker);
+      const SuggestionSpecProto& suggestion_spec, int64_t current_time_ms);
 
  private:
   explicit SuggestionProcessor(Index* index,
+                               const NumericIndex<int64_t>* numeric_index,
+                               const EmbeddingIndex* embedding_index,
                                const LanguageSegmenter* language_segmenter,
-                               const Normalizer* normalizer);
+                               const Normalizer* normalizer,
+                               const DocumentStore* document_store,
+                               const SchemaStore* schema_store,
+                               const Clock* clock);
 
   // Not const because we could modify/sort the TermMetaData buffer in the lite
   // index.
-  Index& index_;
-  const LanguageSegmenter& language_segmenter_;
-  const Normalizer& normalizer_;
+  Index& index_;                                 // Does not own.
+  const NumericIndex<int64_t>& numeric_index_;   // Does not own.
+  const EmbeddingIndex& embedding_index_;        // Does not own.
+  const LanguageSegmenter& language_segmenter_;  // Does not own.
+  const Normalizer& normalizer_;                 // Does not own.
+  const DocumentStore& document_store_;          // Does not own.
+  const SchemaStore& schema_store_;              // Does not own.
+  const Clock& clock_;                           // Does not own.
 };
 
 }  // namespace lib

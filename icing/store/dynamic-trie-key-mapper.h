@@ -32,6 +32,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/store/key-mapper.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -59,12 +60,15 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
   Create(const Filesystem& filesystem, std::string_view base_dir,
          int maximum_size_bytes);
 
-  // Deletes all the files associated with the DynamicTrieKeyMapper. Returns
-  // success or any encountered IO errors
+  // Deletes all the files associated with the DynamicTrieKeyMapper.
   //
   // base_dir : Base directory used to save all the files required to persist
   //            DynamicTrieKeyMapper. Should be the same as passed into
   //            Create().
+  //
+  // Returns
+  //   OK on success
+  //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::Status Delete(const Filesystem& filesystem,
                                            std::string_view base_dir);
 
@@ -79,7 +83,8 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
 
   bool Delete(std::string_view key) override;
 
-  std::unordered_map<T, std::string> GetValuesToKeys() const override;
+  std::unique_ptr<typename KeyMapper<T, Formatter>::Iterator> GetIterator()
+      const override;
 
   int32_t num_keys() const override { return trie_.size(); }
 
@@ -89,9 +94,42 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
 
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const override;
 
-  Crc32 ComputeChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const override;
 
  private:
+  class Iterator : public KeyMapper<T, Formatter>::Iterator {
+   public:
+    explicit Iterator(const IcingDynamicTrie& trie)
+        : itr_(trie, /*prefix=*/""), start_(true) {}
+
+    ~Iterator() override = default;
+
+    bool Advance() override {
+      if (start_) {
+        start_ = false;
+        return itr_.IsValid();
+      }
+      return itr_.Advance();
+    }
+
+    std::string_view GetKey() const override { return itr_.GetKey(); }
+
+    T GetValue() const override {
+      T value;
+      memcpy(&value, itr_.GetValue(), sizeof(T));
+      return value;
+    }
+
+   private:
+    IcingDynamicTrie::Iterator itr_;
+
+    // TODO(b/241784804): remove this flag after changing IcingDynamicTrie to
+    //                    follow the common iterator pattern in our codebase.
+    bool start_;
+  };
+
   static constexpr char kDynamicTrieKeyMapperDir[] = "key_mapper_dir";
   static constexpr char kDynamicTrieKeyMapperPrefix[] = "key_mapper";
 
@@ -190,13 +228,15 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Initialize(
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
     std::string_view key, T next_value) {
-  std::string string_key(key);
   uint32_t value_index;
-  if (!trie_.Insert(string_key.c_str(), &next_value, &value_index,
-                    /*replace=*/false)) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Unable to insert key ", Formatter()(string_key),
-                           " into DynamicTrieKeyMapper ", file_prefix_, "."));
+  libtextclassifier3::Status status =
+      trie_.Insert(key, &next_value, &value_index,
+                   /*replace=*/false);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Unable to insert key " << key
+                   << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
+                   << status.error_message();
+    return status;
   }
   // This memory address could be unaligned since we're just grabbing the value
   // from somewhere in the trie's suffix array. The suffix array is filled with
@@ -214,11 +254,12 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
 template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
     std::string_view key, T value) {
-  std::string string_key(key);
-  if (!trie_.Insert(string_key.c_str(), &value)) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Unable to insert key ", Formatter()(string_key),
-                           " into DynamicTrieKeyMapper ", file_prefix_, "."));
+  libtextclassifier3::Status status = trie_.Insert(key, &value);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Unable to insert key " << key
+                   << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
+                   << status.error_message();
+    return status;
   }
   return libtextclassifier3::Status::OK;
 }
@@ -226,11 +267,10 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::Get(
     std::string_view key) const {
-  std::string string_key(key);
   T value;
-  if (!trie_.Find(string_key.c_str(), &value)) {
+  if (!trie_.Find(key, &value)) {
     return absl_ports::NotFoundError(
-        absl_ports::StrCat("Key not found ", Formatter()(string_key),
+        absl_ports::StrCat("Key not found ", Formatter()(key),
                            " in DynamicTrieKeyMapper ", file_prefix_, "."));
   }
   return value;
@@ -242,19 +282,9 @@ bool DynamicTrieKeyMapper<T, Formatter>::Delete(std::string_view key) {
 }
 
 template <typename T, typename Formatter>
-std::unordered_map<T, std::string>
-DynamicTrieKeyMapper<T, Formatter>::GetValuesToKeys() const {
-  std::unordered_map<T, std::string> values_to_keys;
-  for (IcingDynamicTrie::Iterator itr(trie_, /*prefix=*/""); itr.IsValid();
-       itr.Advance()) {
-    if (itr.IsValid()) {
-      T value;
-      memcpy(&value, itr.GetValue(), sizeof(T));
-      values_to_keys.insert({value, itr.GetKey()});
-    }
-  }
-
-  return values_to_keys;
+std::unique_ptr<typename KeyMapper<T, Formatter>::Iterator>
+DynamicTrieKeyMapper<T, Formatter>::GetIterator() const {
+  return std::make_unique<DynamicTrieKeyMapper<T, Formatter>::Iterator>(trie_);
 }
 
 template <typename T, typename Formatter>
@@ -289,8 +319,15 @@ DynamicTrieKeyMapper<T, Formatter>::GetElementsSize() const {
 }
 
 template <typename T, typename Formatter>
-Crc32 DynamicTrieKeyMapper<T, Formatter>::ComputeChecksum() {
-  return Crc32(trie_.UpdateCrc());
+libtextclassifier3::StatusOr<Crc32>
+DynamicTrieKeyMapper<T, Formatter>::UpdateChecksum() {
+  return trie_.UpdateCrc();
+}
+
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<Crc32>
+DynamicTrieKeyMapper<T, Formatter>::GetChecksum() const {
+  return trie_.GetCrc();
 }
 
 }  // namespace lib
