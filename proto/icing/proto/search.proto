@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 9
+// Next tag: 11
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -85,7 +85,8 @@ message SearchSpecProto {
   // enable testing.
   // TODO(b/208654892) Remove this field once EXPERIMENTAL_ICING_ADVANCED_QUERY
   // is fully supported.
-  optional SearchType.Code search_type = 6 [default = ICING_RAW_QUERY];
+  optional SearchType.Code search_type = 6
+      [default = EXPERIMENTAL_ICING_ADVANCED_QUERY];
 
   // OPTIONAL: If this field is present, join documents based on a nested
   // SearchSpec.
@@ -93,11 +94,29 @@ message SearchSpecProto {
 
   // Features enabled in this search spec.
   repeated string enabled_features = 8;
+
+  // OPTIONAL: Whether to use the read-only implementation of
+  // IcingSearchEngine::Search.
+  // The read-only version enables multiple queries to be performed concurrently
+  // as it only acquires the read lock at IcingSearchEngine's level.
+  // Finer-grained locks are implemented around code paths that write changes to
+  // Icing during Search.
+  optional bool use_read_only_search = 9 [default = true];
+
+  // TODO(b/294266822): Handle multiple property filter lists for same schema
+  // type.
+  // How to specify a subset of properties to be searched. If no type property
+  // filter has been specified for a schema type (no TypePropertyMask for the
+  // given schema type), then *all* properties of that schema type will be
+  // searched. If an empty property filter is specified for a given schema type
+  // (TypePropertyMask for the given schema type has empty paths field), no
+  // properties of that schema type will be searched.
+  repeated TypePropertyMask type_property_filters = 10;
 }
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 8
+// Next tag: 10
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -198,6 +217,22 @@ message ResultSpecProto {
     NAMESPACE_AND_SCHEMA_TYPE = 3;
   }
   optional ResultGroupingType result_group_type = 7;
+
+  // The max # of child documents will be attached and returned in the result
+  // for each parent. It is only used for join API.
+  optional int32 max_joined_children_per_parent_to_return = 8;
+
+  // The max # of results being scored and ranked.
+  // Running time of ScoringProcessor and Ranker is O(num_to_score) according to
+  // results of //icing/scoring:score-and-rank_benchmark. Note that
+  // the process includes scoring, building a heap, and popping results from the
+  // heap.
+  //
+  // 30000 results can be scored and ranked within 3 ms on a Pixel 3 XL
+  // according to results of
+  // //icing/scoring:score-and-rank_benchmark, so set it as the
+  // default value.
+  optional int32 num_to_score = 9 [default = 30000];
 }
 
 // The representation of a single match within a DocumentProto property.
@@ -498,20 +533,26 @@ message JoinSpecProto {
   optional string child_property_expression = 3;
 
   // The max number of child documents to join to a parent document.
-  optional int32 max_joined_child_count = 4;
+  // DEPRECATED: use ResultSpecProto.max_joined_children_per_parent_to_return to
+  // control the number of children that are returned. There is no supported
+  // control for the number of children being scored at this time.
+  optional int32 max_joined_child_count = 4 [deprecated = true];
 
   // The strategy by which to score the aggregation of child documents. For
   // example, you might want to know which entity document has the most actions
   // taken on it. If JOIN_AGGREGATE_SCORE is used in the base SearchSpecProto,
   // the COUNT value will rank entity documents based on the number of child
   // documents.
-  enum AggregationScore {
-    UNDEFINED = 0;
-    COUNT = 1;
-    MIN = 2;
-    AVG = 3;
-    MAX = 4;
-    SUM = 5;
+  message AggregationScoringStrategy {
+    enum Code {
+      NONE = 0;  // No aggregation strategy for child documents and use parent
+                 // document score.
+      COUNT = 1;
+      MIN = 2;
+      AVG = 3;
+      MAX = 4;
+      SUM = 5;
+    }
   }
-  optional AggregationScore aggregation_score_strategy = 5 [default = COUNT];
+  optional AggregationScoringStrategy.Code aggregation_scoring_strategy = 5;
 }

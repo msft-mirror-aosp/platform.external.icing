@@ -14,52 +14,31 @@
 
 #include "icing/index/index-processor.h"
 
-#include <cstdint>
 #include <memory>
-#include <string>
-#include <string_view>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/index/index.h"
-#include "icing/index/integer-section-indexing-handler.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/index/string-section-indexing-handler.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
-#include "icing/transform/normalizer.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>>
-IndexProcessor::Create(const Normalizer* normalizer, Index* index,
-                       NumericIndex<int64_t>* integer_index,
-                       const Clock* clock) {
-  ICING_RETURN_ERROR_IF_NULL(normalizer);
-  ICING_RETURN_ERROR_IF_NULL(index);
-  ICING_RETURN_ERROR_IF_NULL(integer_index);
-  ICING_RETURN_ERROR_IF_NULL(clock);
-
-  std::vector<std::unique_ptr<SectionIndexingHandler>> handlers;
-  handlers.push_back(
-      std::make_unique<StringSectionIndexingHandler>(clock, normalizer, index));
-  handlers.push_back(
-      std::make_unique<IntegerSectionIndexingHandler>(clock, integer_index));
-
-  return std::unique_ptr<IndexProcessor>(
-      new IndexProcessor(std::move(handlers), clock));
-}
-
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
     PutDocumentStatsProto* put_document_stats) {
-  // TODO(b/259744228): set overall index latency.
-  for (auto& section_indexing_handler : section_indexing_handlers_) {
-    ICING_RETURN_IF_ERROR(section_indexing_handler->Handle(
-        tokenized_document, document_id, put_document_stats));
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
+
+  for (auto& data_indexing_handler : data_indexing_handlers_) {
+    ICING_RETURN_IF_ERROR(data_indexing_handler->Handle(
+        tokenized_document, document_id, recovery_mode_, put_document_stats));
+  }
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_index_latency_ms(
+        index_timer->GetElapsedMilliseconds());
   }
 
   return libtextclassifier3::Status::OK;
