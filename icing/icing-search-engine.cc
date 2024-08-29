@@ -1202,8 +1202,14 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         std::move(index_incompatible_type));
   }
 
+  // Join index is incompatible and needs rebuild if:
+  // - Any schema type is join incompatible.
+  // - OR existing schema type id assignment has changed, since join index
+  //   stores schema type id (+ joinable property path) as a key to group join
+  //   data.
   bool join_incompatible =
-      !set_schema_result.schema_types_join_incompatible_by_name.empty();
+      !set_schema_result.schema_types_join_incompatible_by_name.empty() ||
+      !set_schema_result.old_schema_type_ids_changed.empty();
   for (const std::string& join_incompatible_type :
        set_schema_result.schema_types_join_incompatible_by_name) {
     result_proto.add_join_incompatible_changed_schema_types(
@@ -1349,14 +1355,15 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   TokenizedDocument tokenized_document(
       std::move(tokenized_document_or).ValueOrDie());
 
-  auto document_id_or = document_store_->Put(
+  auto put_result_or = document_store_->Put(
       tokenized_document.document(), tokenized_document.num_string_tokens(),
       put_document_stats);
-  if (!document_id_or.ok()) {
-    TransformStatus(document_id_or.status(), result_status);
+  if (!put_result_or.ok()) {
+    TransformStatus(put_result_or.status(), result_status);
     return result_proto;
   }
-  DocumentId document_id = document_id_or.ValueOrDie();
+  DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
+  result_proto.set_was_replacement(put_result_or.ValueOrDie().was_replacement);
 
   auto data_indexing_handlers_or = CreateDataIndexingHandlers();
   if (!data_indexing_handlers_or.ok()) {
