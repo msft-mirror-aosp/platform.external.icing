@@ -44,6 +44,7 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -114,6 +115,8 @@ std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_document_store_namespace_id_fingerprint(true);
+  icing_options.set_use_new_qualified_id_join_index(true);
   return icing_options;
 }
 
@@ -3129,6 +3132,26 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, IcingShouldReturnErrorForExtraSections) {
+  // Create a schema with more sections than allowed.
+  SchemaTypeConfigBuilder schema_type_config_builder =
+      SchemaTypeConfigBuilder().SetType("type");
+  for (int i = 0; i <= kMaxSectionId + 1; ++i) {
+    schema_type_config_builder.AddProperty(
+        PropertyConfigBuilder()
+            .SetName("prop" + std::to_string(i))
+            .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+            .SetCardinality(CARDINALITY_OPTIONAL));
+  }
+  SchemaProto schema =
+      SchemaBuilder().AddType(schema_type_config_builder).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status().message(),
+              HasSubstr("Too many properties to be indexed"));
 }
 
 }  // namespace
