@@ -39,9 +39,9 @@ class DocHitInfoIteratorNone : public DocHitInfoIterator {
     return node;
   }
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
+  void MapChildren(const ChildrenMapper& mapper) override {}
 
-  int32_t GetNumLeafAdvanceCalls() const override { return 0; }
+  CallStats GetCallStats() const override { return CallStats(); }
 
   std::string ToString() const override { return "(NONE)"; }
 };

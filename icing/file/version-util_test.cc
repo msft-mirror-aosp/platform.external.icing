@@ -458,12 +458,22 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesCompatible) {
               IsFalse());
 }
 
-TEST(VersionUtilTest, ShouldRebuildDerivedFilesUpgrade) {
+TEST(VersionUtilTest, Upgrade) {
   // Unlike other state changes, upgrade depends on the actual "encoded path".
 
   // kVersionOne -> kVersionTwo
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
                                         /*curr_version=*/kVersionTwo),
+              IsFalse());
+
+  // kVersionTwo -> kVersionThree
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionTwo, kVersionTwo),
+                                        /*curr_version=*/kVersionThree),
+              IsFalse());
+
+  // kVersionOne -> kVersionThree.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
+                                        /*curr_version=*/kVersionThree),
               IsFalse());
 }
 
