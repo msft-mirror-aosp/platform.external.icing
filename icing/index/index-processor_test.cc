@@ -144,6 +144,7 @@ using ::testing::IsEmpty;
 using ::testing::IsTrue;
 using ::testing::SizeIs;
 using ::testing::Test;
+using ::testing::UnorderedElementsAreArray;
 
 #ifdef ENABLE_URL_TOKENIZER
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
@@ -288,8 +289,8 @@ class IndexProcessorTest : public Test {
         DocumentStore::Create(
             &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -434,10 +435,10 @@ TEST_F(IndexProcessorTest, OneDoc) {
                           TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kExactSectionId, 1}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
+                        kDocumentId0, expected_map)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator(
@@ -490,33 +491,34 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
                           TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap1{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map_1{
       {kPrefixedSectionId, 2}};
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap2{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map_2{
       {kExactSectionId, 1}};
   EXPECT_THAT(
-      hits, ElementsAre(
-                EqualsDocHitInfoWithTermFrequency(kDocumentId1, expectedMap1),
-                EqualsDocHitInfoWithTermFrequency(kDocumentId0, expectedMap2)));
+      hits,
+      ElementsAre(
+          EqualsDocHitInfoWithTermFrequency(kDocumentId1, expected_map_1),
+          EqualsDocHitInfoWithTermFrequency(kDocumentId0, expected_map_2)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator(
                "world", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
                1U << kPrefixedSectionId, TermMatchType::EXACT_ONLY));
   hits = GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId1, expectedMap)));
+                        kDocumentId1, expected_map)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("coffee", /*term_start_index=*/0,
                                /*unnormalized_term_length=*/0,
                                kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   hits = GetHitsWithTermFrequency(std::move(itr));
-  expectedMap = {{kExactSectionId, Hit::kMaxTermFrequency}};
+  expected_map = {{kExactSectionId, Hit::kMaxTermFrequency}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId1, expectedMap)));
+                        kDocumentId1, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, DocWithNestedProperty) {
@@ -688,6 +690,53 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
+}
+
+TEST_F(IndexProcessorTest,
+       PrefixedQueryReturnsCombinedTermFrequenciesForBothIndices) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(
+              std::string(kPrefixedProperty),
+              "rocket the raccoon retreated from the rodent resistance")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(8));
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // Query the lite index. "r" should have 5 matches.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> lite_itr,
+      index_->GetIterator("r", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::PREFIX));
+  std::vector<DocHitInfoTermFrequencyPair> lite_hits =
+      GetHitsWithTermFrequency(std::move(lite_itr));
+
+  // Merge the indices so that we're querying the main index, and check that
+  // results are the same.
+  ASSERT_THAT(index_->Merge(), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> main_itr,
+      index_->GetIterator("r", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::PREFIX));
+  std::vector<DocHitInfoTermFrequencyPair> main_hits =
+      GetHitsWithTermFrequency(std::move(main_itr));
+  EXPECT_THAT(main_hits, UnorderedElementsAreArray(lite_hits));
+
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kPrefixedSectionId, 5}};
+  EXPECT_THAT(lite_hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                             kDocumentId0, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, NonPrefixedContentPrefixQuery) {
@@ -1105,11 +1154,11 @@ TEST_F(IndexProcessorTest, ExactVerbatimProperty) {
                           TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kVerbatimExactSectionId, 1}};
 
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
+                        kDocumentId0, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
@@ -1139,11 +1188,11 @@ TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
                           TermMatchType::PREFIX));
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kVerbatimPrefixedSectionId, 1}};
 
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
+                        kDocumentId0, expected_map)));
 }
 
 TEST_F(IndexProcessorTest, VerbatimPropertyDoesntMatchSubToken) {
@@ -1257,13 +1306,6 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
 }
 
 // Some prefixes of generated RFC822 tokens.
-#ifdef ENABLE_RFC822_PROPERTY_PREFIX_TEST
-// ENABLE_RFC822_PROPERTY_PREFIX_TEST won't be defined, so this test will not be
-// compiled.
-// TODO(b/250648165): Remove #ifdef to enable this test after fixing the
-//                    indeterministic behavior of prefix query term frequency in
-//                    lite index.
-//
 TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/1")
@@ -1281,9 +1323,9 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
               IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
+  // "alexsav@" only matches "alexsav@google.com"
   std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
       {kRfc822SectionId, 1}};
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("alexsav@", /*term_start_index=*/0,
@@ -1294,6 +1336,8 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 
+  // "goog" matches tokens "google" and "google.com"
+  expected_map = {{kRfc822SectionId, 2}};
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("goog", /*term_start_index=*/0,
                                /*unnormalized_term_length=*/0,
@@ -1302,6 +1346,8 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 
+  // "ale" matches tokens "alexsav" (twice) and "alexsav@google.com"
+  expected_map = {{kRfc822SectionId, 3}};
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("ale", /*term_start_index=*/0,
                                /*unnormalized_term_length=*/0,
@@ -1310,7 +1356,6 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 }
-#endif  // ENABLE_RFC822_PROPERTY_PREFIX_TEST
 
 TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
   DocumentProto document = DocumentBuilder()
@@ -1469,7 +1514,7 @@ TEST_F(IndexProcessorTest, PrefixUrlProperty) {
   std::vector<DocHitInfoTermFrequencyPair> hits =
       GetHitsWithTermFrequency(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
-      {kUrlPrefixedSectionId, 1}};
+      {kUrlPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 
@@ -1479,7 +1524,7 @@ TEST_F(IndexProcessorTest, PrefixUrlProperty) {
                                /*unnormalized_term_length=*/0,
                                kSectionIdMaskAll, TermMatchType::PREFIX));
   hits = GetHitsWithTermFrequency(std::move(itr));
-  expected_map = {{kUrlPrefixedSectionId, 1}};
+  expected_map = {{kUrlPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 

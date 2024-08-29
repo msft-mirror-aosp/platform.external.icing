@@ -413,6 +413,7 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
       new_persistent_hash_map->options_.max_load_factor_percent;
   info_ref.num_deleted_entries = 0;
   info_ref.num_deleted_key_value_bytes = 0;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_persistent_hash_map->InitializeNewStorage());
@@ -479,6 +480,7 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
           filesystem, std::move(working_path), std::move(options),
           std::move(metadata_mmapped_file), std::move(bucket_storage),
           std::move(entry_storage), std::move(kv_storage)));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(persistent_hash_map->InitializeExistingStorage());
 
@@ -532,9 +534,8 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
   return persistent_hash_map;
 }
 
-libtextclassifier3::Status PersistentHashMap::PersistStoragesToDisk(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status PersistentHashMap::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -545,11 +546,10 @@ libtextclassifier3::Status PersistentHashMap::PersistStoragesToDisk(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status PersistentHashMap::PersistMetadataToDisk(
-    bool force) {
+libtextclassifier3::Status PersistentHashMap::PersistMetadataToDisk() {
   // We can skip persisting metadata to disk only if both info and storage are
   // clean.
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -561,28 +561,39 @@ libtextclassifier3::Status PersistentHashMap::PersistMetadataToDisk(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeInfoChecksum(
-    bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
-}
-
-libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeStoragesChecksum(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::StatusOr<Crc32>
+PersistentHashMap::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
   // Compute crcs
   ICING_ASSIGN_OR_RETURN(Crc32 bucket_storage_crc,
-                         bucket_storage_->ComputeChecksum());
+                         bucket_storage_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 entry_storage_crc,
-                         entry_storage_->ComputeChecksum());
-  ICING_ASSIGN_OR_RETURN(Crc32 kv_storage_crc, kv_storage_->ComputeChecksum());
+                         entry_storage_->UpdateChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 kv_storage_crc, kv_storage_->UpdateChecksum());
+  return Crc32(bucket_storage_crc.Get() ^ entry_storage_crc.Get() ^
+               kv_storage_crc.Get());
+}
 
+libtextclassifier3::StatusOr<Crc32> PersistentHashMap::GetInfoChecksum() const {
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32> PersistentHashMap::GetStoragesChecksum()
+    const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  // Compute crcs
+  Crc32 bucket_storage_crc = bucket_storage_->GetChecksum();
+  Crc32 entry_storage_crc = entry_storage_->GetChecksum();
+  Crc32 kv_storage_crc = kv_storage_->GetChecksum();
   return Crc32(bucket_storage_crc.Get() ^ entry_storage_crc.Get() ^
                kv_storage_crc.Get());
 }

@@ -21,6 +21,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Not;
@@ -50,6 +51,40 @@ TEST_F(FileBackedProtoTest, SimpleReadWriteTest) {
   // Multiple reads work.
   EXPECT_THAT(file_proto.Read(), IsOkAndHolds(Pointee(EqualsProto(document))));
   EXPECT_THAT(file_proto.Read(), IsOkAndHolds(Pointee(EqualsProto(document))));
+}
+
+TEST_F(FileBackedProtoTest, GetChecksum) {
+  DocumentProto document =
+      DocumentBuilder().SetKey("namespace", "google.com").Build();
+
+  FileBackedProto<DocumentProto> file_proto(filesystem_, filename_);
+  EXPECT_THAT(file_proto.GetChecksum(), IsOkAndHolds(Crc32(0)));
+
+  ICING_ASSERT_OK(file_proto.Write(std::make_unique<DocumentProto>(document)));
+  EXPECT_THAT(file_proto.GetChecksum(), IsOkAndHolds(Crc32(385085217)));
+}
+
+TEST_F(FileBackedProtoTest, GetChecksumAcrossInstances) {
+  DocumentProto document =
+      DocumentBuilder().SetKey("namespace", "google.com").Build();
+
+  {
+    FileBackedProto<DocumentProto> file_proto(filesystem_, filename_);
+    EXPECT_THAT(file_proto.GetChecksum(), IsOkAndHolds(Crc32(0)));
+  }
+
+  {
+    FileBackedProto<DocumentProto> file_proto(filesystem_, filename_);
+    EXPECT_THAT(file_proto.GetChecksum(), IsOkAndHolds(Crc32(0)));
+    ICING_ASSERT_OK(
+        file_proto.Write(std::make_unique<DocumentProto>(document)));
+    EXPECT_THAT(file_proto.GetChecksum(), IsOkAndHolds(Crc32(385085217)));
+  }
+
+  {
+    FileBackedProto<DocumentProto> file_proto(filesystem_, filename_);
+    EXPECT_THAT(file_proto.GetChecksum(), IsOkAndHolds(Crc32(385085217)));
+  }
 }
 
 TEST_F(FileBackedProtoTest, DataPersistsAcrossMultipleInstancesTest) {

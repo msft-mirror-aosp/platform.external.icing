@@ -38,7 +38,7 @@ public class IcingSearchEngineImpl implements Closeable {
 
   static {
     // NOTE: This can fail with an UnsatisfiedLinkError
-    System.loadLibrary("icing");
+    IcingLibraryLoader.loadLibrary();
   }
 
   /**
@@ -69,13 +69,6 @@ public class IcingSearchEngineImpl implements Closeable {
     }
     nativePointer = 0;
     closed = true;
-  }
-
-  @SuppressWarnings({"deprecation", "removal"}) // b/316643605
-  @Override
-  protected void finalize() throws Throwable {
-    close();
-    super.finalize();
   }
 
   @Nullable
@@ -161,6 +154,24 @@ public class IcingSearchEngineImpl implements Closeable {
   public void invalidateNextPageToken(long nextPageToken) {
     throwIfClosed();
     nativeInvalidateNextPageToken(this, nextPageToken);
+  }
+
+  @NonNull
+  public byte[] openWriteBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeOpenWriteBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] openReadBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeOpenReadBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] commitBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeCommitBlob(this, blobHandleBytes);
   }
 
   @Nullable
@@ -295,6 +306,15 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
+
+  private static native byte[] nativeOpenWriteBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeOpenReadBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeCommitBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);
