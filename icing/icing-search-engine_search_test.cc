@@ -71,6 +71,7 @@ using ::testing::DoubleNear;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Gt;
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Lt;
 using ::testing::Ne;
@@ -7343,8 +7344,7 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // - document 1: sum({-0.9}) + sum({}) = -0.9
   search_spec.set_query("semanticSearch(getEmbeddingParameter(0), -1)");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getEmbeddingParameter(0))) + "
-      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
   SearchResultProto results = icing.Search(search_spec, scoring_spec,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7453,6 +7453,75 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   EXPECT_THAT(results.results(0).score(), DoubleNear(0, kEps));
   EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
   EXPECT_THAT(results.results(1).score(), DoubleNear(-2.1, kEps));
+}
+
+TEST_F(IcingSearchEngineSearchTest, CannotScoreUnqueriedEmbedding) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty(
+              "embedding", CreateVector("my_model", {0.1, 0.2, 0.3, 0.4, 0.5}))
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, -1, -1, 1, -1});
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {-1, -1, 1});
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+
+  // Query with DOT_PRODUCT but score with COSINE.
+  search_spec.set_query(
+      "semanticSearch(getEmbeddingParameter(0), -1, 1, \"DOT_PRODUCT\")");
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0), \"COSINE\"))");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(results.status().message(),
+              HasSubstr("embedding query index 0 with metric type COSINE has "
+                        "not been queried"));
+
+  // Query with embedding index 0 but score with embedding index 1.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0), -1, 1)");
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(results.status().message(),
+              HasSubstr("embedding query index 1 with metric type DOT_PRODUCT "
+                        "has not been queried"));
 }
 
 TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
