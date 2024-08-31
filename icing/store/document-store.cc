@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -45,6 +46,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -53,6 +55,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
+#include "icing/store/key-mapper.h"
 #include "icing/store/namespace-fingerprint-identifier.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
@@ -235,6 +238,38 @@ CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
     return DynamicTrieKeyMapper<DocumentId,
                                 fingerprint_util::FingerprintStringFormatter>::
         Create(filesystem, base_dir, kUriDynamicTrieKeyMapperMaxSize);
+  }
+}
+
+// Find the existing blob handles in the given document and remove them from the
+// dead_blob_handles set. Those are the blob handles that are still in use.
+//
+// The type_blob_map is a map from schema type to a set of blob property names.
+void RemoveAliveBlobHandles(
+    const DocumentProto& document,
+    const std::unordered_map<std::string, std::vector<std::string>>&
+        type_blob_property_map,
+    std::unordered_set<std::string>& dead_blob_handles) {
+  if (dead_blob_handles.empty() ||
+      type_blob_property_map.find(document.schema()) ==
+          type_blob_property_map.end()) {
+    // This document does not have any blob properties.
+    return;
+  }
+  const std::vector<std::string>& blob_property_paths =
+      type_blob_property_map.at(document.schema());
+
+  for (const std::string& blob_property_path : blob_property_paths) {
+    auto content_or = property_util::ExtractPropertyValuesFromDocument<
+        PropertyProto::BlobHandleProto>(document, blob_property_path);
+    if (content_or.ok()) {
+      for (const PropertyProto::BlobHandleProto& blob_handle :
+           content_or.ValueOrDie()) {
+        dead_blob_handles.erase(
+            encode_util::EncodeStringToCString(blob_handle.digest()) +
+            blob_handle.label());
+      }
+    }
   }
 }
 
@@ -1209,9 +1244,9 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     DocumentId document_id, bool clear_internal_fields) const {
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
-  auto document_filter_data_optional_ =
+  auto document_filter_data_optional =
       GetAliveDocumentFilterData(document_id, current_time_ms);
-  if (!document_filter_data_optional_) {
+  if (!document_filter_data_optional) {
     // The document doesn't exist. Let's check if the document id is invalid, we
     // will return InvalidArgumentError. Otherwise we should return NOT_FOUND
     // error.
@@ -1379,9 +1414,9 @@ libtextclassifier3::Status DocumentStore::Delete(
 
 libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
                                                  int64_t current_time_ms) {
-  auto document_filter_data_optional_ =
+  auto document_filter_data_optional =
       GetAliveDocumentFilterData(document_id, current_time_ms);
-  if (!document_filter_data_optional_) {
+  if (!document_filter_data_optional) {
     // The document doesn't exist. We should return InvalidArgumentError if the
     // document id is invalid. Otherwise we should return NOT_FOUND error.
     if (!IsDocumentIdValid(document_id)) {
@@ -1929,9 +1964,10 @@ libtextclassifier3::Status DocumentStore::Optimize() {
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
-DocumentStore::OptimizeInto(const std::string& new_directory,
-                            const LanguageSegmenter* lang_segmenter,
-                            OptimizeStatsProto* stats) const {
+DocumentStore::OptimizeInto(
+    const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
+    std::unordered_set<std::string>&& potentially_optimizable_blob_handles,
+    OptimizeStatsProto* stats) const {
   // Validates directory
   if (new_directory == base_dir_) {
     return absl_ports::InvalidArgumentError(
@@ -1953,9 +1989,21 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
   int num_deleted_documents = 0;
   int num_expired_documents = 0;
   UsageStore::UsageScores default_usage;
-
   OptimizeResult result;
   result.document_id_old_to_new.resize(document_cnt, kInvalidDocumentId);
+  result.dead_blob_handles = std::move(potentially_optimizable_blob_handles);
+
+  // Get the blob property map from the schema store.
+  auto type_blob_property_map_or = schema_store_->ConstructBlobPropertyMap();
+  if (num_documents() == 0) {
+    // If we fail to retrieve this map when there *are* documents in
+    // doc store, then something is seriously wrong. Return error.
+    return result;
+  }
+  std::unordered_map<std::string, std::vector<std::string>>
+      type_blob_property_map =
+          std::move(type_blob_property_map_or).ValueOrDie();
+
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < document_cnt; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
@@ -1977,6 +2025,10 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
 
     // Guaranteed to have a document now.
     DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
+    // Remove blobs that still have reference are removed from the
+    // expired_blob_handles. So that all remaining are dead blob.
+    RemoveAliveBlobHandles(document_to_keep, type_blob_property_map,
+                           result.dead_blob_handles);
 
     libtextclassifier3::StatusOr<DocumentId> new_document_id_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
@@ -2011,15 +2063,14 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
                            usage_store_->GetUsageScores(document_id));
     if (!(usage_scores == default_usage)) {
-      // If the usage scores for this document are the default (no usage), then
-      // don't bother setting it. No need to possibly allocate storage if
+      // If the usage scores for this document are the default (no usage),
+      // then don't bother setting it. No need to possibly allocate storage if
       // there's nothing interesting to store.
       DocumentId new_document_id = new_document_id_or.ValueOrDie();
       ICING_RETURN_IF_ERROR(
           new_doc_store->SetUsageScores(new_document_id, usage_scores));
     }
   }
-
   // Construct namespace_id_old_to_new
   int namespace_cnt = namespace_mapper_->num_keys();
   std::unordered_map<NamespaceId, std::string> old_namespaces =
