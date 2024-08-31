@@ -66,6 +66,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/constants.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -113,21 +114,13 @@ class PortableFileBackedProtoLog {
     // Must specify values for options.
     Options() = delete;
     explicit Options(
-        bool compress_in, const int32_t max_proto_size_in = kMaxProtoSize,
+        bool compress_in,
+        const int32_t max_proto_size_in = constants::kMaxProtoSize,
         const int32_t compression_level_in = kDeflateCompressionLevel)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
           compression_level(compression_level_in) {}
   };
-
-  // Our internal max for protos.
-  //
-  // WARNING: Changing this to a larger number may invalidate our assumption
-  // that that proto size can safely be stored in the last 3 bytes of the proto
-  // header.
-  static constexpr int kMaxProtoSize = (1 << 24) - 1;  // 16MiB
-  static_assert(kMaxProtoSize <= 0x00FFFFFF,
-                "kMaxProtoSize doesn't fit in 3 bytes");
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
   static constexpr int kDeflateCompressionLevel = 3;
@@ -634,7 +627,7 @@ PortableFileBackedProtoLog<ProtoT>::Create(const Filesystem* filesystem,
 
   // Since we store the proto_size in 3 bytes, we can only support protos of up
   // to 16MiB.
-  if (options.max_proto_size > kMaxProtoSize) {
+  if (options.max_proto_size > constants::kMaxProtoSize) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "options.max_proto_size must be under 16MiB, was %d",
         options.max_proto_size));
