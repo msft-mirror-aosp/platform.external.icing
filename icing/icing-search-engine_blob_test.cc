@@ -30,6 +30,7 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
@@ -37,6 +38,8 @@
 
 namespace icing {
 namespace lib {
+
+static constexpr int64_t kBlobInfoTTLMs = 7 * 24 * 60 * 60 * 1000;  // 1 Week
 
 namespace {
 
@@ -79,6 +82,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_enable_blob_store(true);
+  icing_options.set_orphan_blob_time_to_live_ms(kBlobInfoTTLMs);
   return icing_options;
 }
 
@@ -392,6 +396,594 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskLite) {
     std::string actual_data = std::string(buf.get(), buf.get() + size);
     EXPECT_EQ(expected_data, actual_data);
   }
+}
+
+TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // set a schema to icing to avoid wipe out all directories.
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_label("label");
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  std::string digestString = std::string(digest.begin(), digest.end());
+  blob_handle.set_digest(std::move(digestString));
+
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto.file_descriptor());
+    ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  }
+
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  // persist blob to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Blob remain before optimize
+  BlobProto readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  ScopedFd read_fd(readBlobProto.file_descriptor());
+
+  uint64_t size = filesystem()->GetFileSize(*read_fd);
+  std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+  filesystem()->Read(read_fd.get(), buf.get(), size);
+  close(read_fd.get());
+
+  std::string expected_data = std::string(data.begin(), data.end());
+  std::string actual_data = std::string(buf.get(), buf.get() + size);
+  EXPECT_EQ(expected_data, actual_data);
+
+  // Optimize remove the expired orphan blob.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // set a schema to icing to avoid wipe out all directories.
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+
+  // write two blobs but not commit
+  PropertyProto::BlobHandleProto blob_handle1;
+  blob_handle1.set_label("label1");
+  std::vector<unsigned char> data1 = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest1 = CalculateDigest(data1);
+  std::string digestString1 = std::string(digest1.begin(), digest1.end());
+  blob_handle1.set_digest(std::move(digestString1));
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle1);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data1.data(), data1.size()));
+  }
+
+  PropertyProto::BlobHandleProto blob_handle2;
+  blob_handle2.set_label("label2");
+  std::vector<unsigned char> data2 = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest2 = CalculateDigest(data2);
+  std::string digestString2 = std::string(digest2.begin(), digest2.end());
+  blob_handle2.set_digest(std::move(digestString2));
+  writeBlobProto = icing.OpenWriteBlob(blob_handle2);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data2.data(), data2.size()));
+  }
+  // persist blob to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Blob is able to commit before optimize
+  EXPECT_THAT(icing2.CommitBlob(blob_handle1).status(), ProtoIsOk());
+  // Optimize remove the expired orphan blob. so it's not able to commit.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.CommitBlob(blob_handle2).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineBlobTest, ReferenceCount) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_label("label");
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  std::string digestString = std::string(digest.begin(), digest.end());
+  blob_handle.set_digest(std::move(digestString));
+
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+
+  ScopedFd write_fd(writeBlobProto.file_descriptor());
+  ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  close(write_fd.get());
+
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  // Set schema and put a document that contains the blob handle
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc1", blob_handle)).status(),
+      ProtoIsOk());
+
+  // persist to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Optimize won't remove the blob since there is reference document.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  BlobProto readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd read_fd(readBlobProto.file_descriptor());
+    uint64_t size = filesystem()->GetFileSize(*read_fd);
+    std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+    ASSERT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+
+    std::string expected_data = std::string(data.begin(), data.end());
+    std::string actual_data = std::string(buf.get(), buf.get() + size);
+    EXPECT_EQ(expected_data, actual_data);
+  }
+
+  // remove the reference document, now the blob is an orphan.
+  ASSERT_THAT(icing2.Delete("namespace", "doc1").status(), ProtoIsOk());
+  // The blob remain before optimize.
+  readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd read_fd2(readBlobProto.file_descriptor());
+
+    uint64_t size = filesystem()->GetFileSize(*read_fd2);
+    std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+    ASSERT_TRUE(filesystem()->Read(read_fd2.get(), buf.get(), size));
+
+    std::string expected_data = std::string(data.begin(), data.end());
+    std::string actual_data = std::string(buf.get(), buf.get() + size);
+    EXPECT_EQ(expected_data, actual_data);
+  }
+
+  // Optimize remove the expired orphan blob.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineBlobTest, ReferenceCountNestedDocument) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_label("label");
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  std::string digestString = std::string(digest.begin(), digest.end());
+  blob_handle.set_digest(std::move(digestString));
+
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+
+  ScopedFd write_fd(writeBlobProto.file_descriptor());
+  ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  close(write_fd.get());
+
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  // Set an multi-level schema and put a document that contains the blob handle
+  // in the nested document property.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blob")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nestedDoc")
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  ASSERT_THAT(
+      icing.SetSchema(SchemaBuilder().AddType(type_a).AddType(type_b).Build())
+          .status(),
+      ProtoIsOk());
+  DocumentProto document_a = DocumentBuilder()
+                                 .SetKey("namespace", "doc_a")
+                                 .SetSchema("A")
+                                 .AddBlobHandleProperty("blob", blob_handle)
+                                 .Build();
+  DocumentProto document_b = DocumentBuilder()
+                                 .SetKey("namespace", "doc_b")
+                                 .SetSchema("B")
+                                 .AddDocumentProperty("nestedDoc", document_a)
+                                 .Build();
+  ASSERT_THAT(icing.Put(document_b).status(), ProtoIsOk());
+
+  // persist to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Optimize won't remove the blob since there is reference document.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  BlobProto readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd read_fd(readBlobProto.file_descriptor());
+    uint64_t size = filesystem()->GetFileSize(*read_fd);
+    std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+    ASSERT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+
+    std::string expected_data = std::string(data.begin(), data.end());
+    std::string actual_data = std::string(buf.get(), buf.get() + size);
+    EXPECT_EQ(expected_data, actual_data);
+  }
+
+  // remove the reference document, now the blob is an orphan.
+  ASSERT_THAT(icing2.Delete("namespace", "doc_b").status(), ProtoIsOk());
+  // The blob remain before optimize.
+  readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd read_fd2(readBlobProto.file_descriptor());
+
+    uint64_t size = filesystem()->GetFileSize(*read_fd2);
+    std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+    ASSERT_TRUE(filesystem()->Read(read_fd2.get(), buf.get(), size));
+
+    std::string expected_data = std::string(data.begin(), data.end());
+    std::string actual_data = std::string(buf.get(), buf.get() + size);
+    EXPECT_EQ(expected_data, actual_data);
+  }
+
+  // Optimize remove the expired orphan blob.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleReferenceDocument) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_label("label");
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  std::string digestString = std::string(digest.begin(), digest.end());
+  blob_handle.set_digest(std::move(digestString));
+
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto.file_descriptor());
+    ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  }
+
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  // Set schema and put 3 documents that contains the blob handle
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc1", blob_handle)).status(),
+      ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc2", blob_handle)).status(),
+      ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc3", blob_handle)).status(),
+      ProtoIsOk());
+
+  // persist to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Optimize won't remove the blob since there are reference documents.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  BlobProto readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd read_fd(readBlobProto.file_descriptor());
+
+    uint64_t size = filesystem()->GetFileSize(*read_fd);
+    std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+    filesystem()->Read(read_fd.get(), buf.get(), size);
+    close(read_fd.get());
+
+    std::string expected_data = std::string(data.begin(), data.end());
+    std::string actual_data = std::string(buf.get(), buf.get() + size);
+    EXPECT_EQ(expected_data, actual_data);
+  }
+
+  // remove two reference documents.
+  ASSERT_THAT(icing2.Delete("namespace", "doc1").status(), ProtoIsOk());
+  ASSERT_THAT(icing2.Delete("namespace", "doc2").status(), ProtoIsOk());
+  // The blob remain after optimize.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd read_fd2(readBlobProto.file_descriptor());
+
+    uint64_t size = filesystem()->GetFileSize(*read_fd2);
+    std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+    filesystem()->Read(read_fd2.get(), buf.get(), size);
+    close(read_fd2.get());
+
+    std::string expected_data = std::string(data.begin(), data.end());
+    std::string actual_data = std::string(buf.get(), buf.get() + size);
+    EXPECT_EQ(expected_data, actual_data);
+  }
+
+  // remove the last reference document, now the blob become orphan.
+  ASSERT_THAT(icing2.Delete("namespace", "doc3").status(), ProtoIsOk());
+  // Optimize remove the expired orphan blob.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle1;
+  blob_handle1.set_label("label1");
+  std::vector<unsigned char> data1 = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest1 = CalculateDigest(data1);
+  std::string digestString1 = std::string(digest1.begin(), digest1.end());
+  blob_handle1.set_digest(std::move(digestString1));
+
+  BlobProto writeBlobProto1 = icing.OpenWriteBlob(blob_handle1);
+  ASSERT_THAT(writeBlobProto1.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto1.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data1.data(), data1.size()));
+  }
+
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle1);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle2;
+  blob_handle2.set_label("label2");
+  std::vector<unsigned char> data2 = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest2 = CalculateDigest(data2);
+  std::string digestString2 = std::string(digest2.begin(), digest2.end());
+  blob_handle2.set_digest(std::move(digestString2));
+
+  BlobProto writeBlobProto2 = icing.OpenWriteBlob(blob_handle2);
+  ASSERT_THAT(writeBlobProto2.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto2.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data2.data(), data2.size()));
+  }
+
+  BlobProto commitBlobProto2 = icing.CommitBlob(blob_handle2);
+  ASSERT_THAT(commitBlobProto2.status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle3;
+  blob_handle3.set_label("label3");
+  std::vector<unsigned char> data3 = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest3 = CalculateDigest(data3);
+  std::string digestString3 = std::string(digest3.begin(), digest3.end());
+  blob_handle3.set_digest(std::move(digestString3));
+
+  BlobProto writeBlobProto3 = icing.OpenWriteBlob(blob_handle3);
+  ASSERT_THAT(writeBlobProto3.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto3.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data3.data(), data3.size()));
+  }
+
+  BlobProto commitBlobProto3 = icing.CommitBlob(blob_handle3);
+  ASSERT_THAT(commitBlobProto3.status(), ProtoIsOk());
+
+  // Set schema and put 3 documents that contains the blob handle
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc1", blob_handle1)).status(),
+      ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc2", blob_handle2)).status(),
+      ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc3", blob_handle3)).status(),
+      ProtoIsOk());
+
+  // persist to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Optimize won't remove the blob since there are reference documents.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  ASSERT_THAT(icing2.OpenReadBlob(blob_handle1).status(), ProtoIsOk());
+  ASSERT_THAT(icing2.OpenReadBlob(blob_handle2).status(), ProtoIsOk());
+  ASSERT_THAT(icing2.OpenReadBlob(blob_handle3).status(), ProtoIsOk());
+
+  // Remove first two reference documents.
+  ASSERT_THAT(icing2.Delete("namespace", "doc1").status(), ProtoIsOk());
+  ASSERT_THAT(icing2.Delete("namespace", "doc2").status(), ProtoIsOk());
+
+  // First two orphan blobs are removed after optimize .
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle1).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle2).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+  ASSERT_THAT(icing2.OpenReadBlob(blob_handle3).status(), ProtoIsOk());
+
+  // remove the last reference document, now the all blobs become orphan.
+  ASSERT_THAT(icing2.Delete("namespace", "doc3").status(), ProtoIsOk());
+  // Optimize remove the expired orphan blob.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.OpenReadBlob(blob_handle3).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  IcingSearchEngineOptions icing_options;
+  icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_enable_blob_store(true);
+  // set orphan blob ttl to 0, which means no ttl
+  icing_options.set_orphan_blob_time_to_live_ms(0);
+  TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // set a schema to icing to avoid wipe out all directories.
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_label("label");
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  std::string digestString = std::string(digest.begin(), digest.end());
+  blob_handle.set_digest(std::move(digestString));
+
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto.file_descriptor());
+    ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  }
+
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  // persist blob to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // create second icing in a year later 365L * 24 * 60 * 60 * 1000;
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1471228928);
+  TestIcingSearchEngine icing2(icing_options, std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // Blob remain after optimize
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  BlobProto readBlobProto = icing2.OpenReadBlob(blob_handle);
+  ASSERT_THAT(readBlobProto.status(), ProtoIsOk());
+  ScopedFd read_fd(readBlobProto.file_descriptor());
+
+  uint64_t size = filesystem()->GetFileSize(*read_fd);
+  std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+  filesystem()->Read(read_fd.get(), buf.get(), size);
+  close(read_fd.get());
+
+  std::string expected_data = std::string(data.begin(), data.end());
+  std::string actual_data = std::string(buf.get(), buf.get() + size);
+  EXPECT_EQ(expected_data, actual_data);
 }
 
 }  // namespace
