@@ -35,6 +35,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -425,12 +426,12 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
   int64_t current_time_ms_;
 };
 
-class GetSearchSpecEmbeddingFunctionScoreExpression : public ScoreExpression {
+class GetEmbeddingParameterFunctionScoreExpression : public ScoreExpression {
  public:
-  static constexpr std::string_view kFunctionName = "getSearchSpecEmbedding";
+  static constexpr std::string_view kFunctionName = "getEmbeddingParameter";
 
   // RETURNS:
-  //   - A GetSearchSpecEmbeddingFunctionScoreExpression instance on success if
+  //   - A GetEmbeddingParameterFunctionScoreExpression instance on success if
   //     not simplifiable.
   //   - A ConstantScoreExpression instance on success if simplifiable.
   //   - FAILED_PRECONDITION on any null pointer in children.
@@ -447,7 +448,7 @@ class GetSearchSpecEmbeddingFunctionScoreExpression : public ScoreExpression {
   }
 
  private:
-  explicit GetSearchSpecEmbeddingFunctionScoreExpression(
+  explicit GetEmbeddingParameterFunctionScoreExpression(
       std::unique_ptr<ScoreExpression> arg)
       : arg_(std::move(arg)) {}
   std::unique_ptr<ScoreExpression> arg_;

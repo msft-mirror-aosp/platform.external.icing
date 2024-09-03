@@ -7317,7 +7317,6 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
       SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
   search_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
-  search_spec.add_enabled_features(std::string(kEmbeddingSearchFeature));
 
   // Add an embedding query with semantic scores:
   // - document 0: -0.5 (embedding1), 0.3 (embedding2)
@@ -7342,10 +7341,10 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // The scoring expression for each doc will be evaluated as:
   // - document 0: sum({-0.5, 0.3}) + sum({}) = -0.2
   // - document 1: sum({-0.9}) + sum({}) = -0.9
-  search_spec.set_query("semanticSearch(getSearchSpecEmbedding(0), -1)");
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0), -1)");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0))) + "
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0))) + "
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
   SearchResultProto results = icing.Search(search_spec, scoring_spec,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7366,9 +7365,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // - document 0: sum({-0.5}) = -0.5
   // - document 1: sum({-0.9}) = -0.9
   search_spec.set_query(
-      "embedding1:semanticSearch(getSearchSpecEmbedding(0), -1)");
+      "embedding1:semanticSearch(getEmbeddingParameter(0), -1)");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
   results = icing.Search(search_spec, scoring_spec,
                          ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7384,9 +7383,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // - document 0: -0.5 (embedding2)
   // The scoring expression for each doc will be evaluated as:
   // - document 0: sum({-0.5}) = -0.5
-  search_spec.set_query("semanticSearch(getSearchSpecEmbedding(1), -1.5)");
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(1), -1.5)");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
   results = icing.Search(search_spec, scoring_spec,
                          ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7400,9 +7399,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // - document 1: -2.1 (embedding2)
   // The scoring expression for each doc will be evaluated as:
   // - document 1: sum({-2.1}) = -2.1
-  search_spec.set_query("semanticSearch(getSearchSpecEmbedding(1), -10, -1)");
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(1), -10, -1)");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
   results = icing.Search(search_spec, scoring_spec,
                          ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7419,11 +7418,11 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // - document 0: sum({-0.5, 0.3}) + sum({-0.5}) = -0.7
   // - document 1: sum({-0.9}) + sum({-2.1}) = -3
   search_spec.set_query(
-      "semanticSearch(getSearchSpecEmbedding(0)) OR "
-      "semanticSearch(getSearchSpecEmbedding(1))");
+      "semanticSearch(getEmbeddingParameter(0)) OR "
+      "semanticSearch(getEmbeddingParameter(1))");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0))) + "
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0))) + "
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
   results = icing.Search(search_spec, scoring_spec,
                          ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7442,9 +7441,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   // - document 0: sum({}) = 0
   // - document 1: sum({-2.1}) = -2.1
   search_spec.set_query(
-      "foo OR semanticSearch(getSearchSpecEmbedding(1), -10, -1)");
+      "foo OR semanticSearch(getEmbeddingParameter(1), -10, -1)");
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
   results = icing.Search(search_spec, scoring_spec,
                          ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7500,7 +7499,7 @@ TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec.set_query(
-      "foo OR semanticSearch(getSearchSpecEmbedding(0), 0, 1)");
+      "foo OR semanticSearch(getEmbeddingParameter(0), 0, 1)");
   // Add an embedding query with semantic scores:
   // - document 0: 0.9 (embedding)
   // - document 1: 0.5 (embedding)
@@ -7510,25 +7509,24 @@ TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
       SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
   search_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
-  search_spec.add_enabled_features(std::string(kEmbeddingSearchFeature));
 
   // Create a scoring spec that:
-  // - Uses sum(this.matchedSemanticScores(getSearchSpecEmbedding(0))) for
+  // - Uses sum(this.matchedSemanticScores(getEmbeddingParameter(0))) for
   //   ranking.
   // - Configures the following additional scores:
   //   - this.relevanceScore()
   //   - this.relevanceScore() +
-  //     sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))
+  //     sum(this.matchedSemanticScores(getEmbeddingParameter(1)))
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
   scoring_spec.set_advanced_scoring_expression(
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
   scoring_spec.add_additional_advanced_scoring_expressions(
       "this.relevanceScore()");
   scoring_spec.add_additional_advanced_scoring_expressions(
       "this.relevanceScore() + "
-      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))");
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
   SearchResultProto results = icing.Search(search_spec, scoring_spec,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
@@ -7621,13 +7619,12 @@ TEST_F(IcingSearchEngineSearchTest,
       SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
   search_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
-  search_spec.add_enabled_features(std::string(kEmbeddingSearchFeature));
 
   // Create an embedding query with a range that should not match any embedding
   // hits.
   *search_spec.add_embedding_query_vectors() =
       CreateVector("my_model", {1, 1, 1});
-  search_spec.set_query("semanticSearch(getSearchSpecEmbedding(0), 100)");
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0), 100)");
 
   SearchResultProto results = icing.Search(search_spec, GetDefaultScoringSpec(),
                                            ResultSpecProto::default_instance());
