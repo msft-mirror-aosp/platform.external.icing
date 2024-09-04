@@ -63,45 +63,37 @@ TEST(AbstractSyntaxTreeTest, Composite) {
 
 TEST(AbstractSyntaxTreeTest, Function) {
   // foo()
-  std::unique_ptr<Node> root =
-      std::make_unique<FunctionNode>(std::make_unique<FunctionNameNode>("foo"));
+  std::unique_ptr<Node> root = std::make_unique<FunctionNode>("foo");
   SimpleVisitor visitor;
   root->Accept(&visitor);
 
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunction)));
 
   std::string_view query = "foo(\"bar\")";
   std::vector<std::unique_ptr<Node>> args;
   args.push_back(std::make_unique<StringNode>("bar", query.substr(5, 3)));
-  root = std::make_unique<FunctionNode>(
-      std::make_unique<FunctionNameNode>("foo"), std::move(args));
+  root = std::make_unique<FunctionNode>("foo", std::move(args));
   visitor = SimpleVisitor();
   root->Accept(&visitor);
 
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kString),
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 
   query = "foo(bar(\"baz\"))";
   std::vector<std::unique_ptr<Node>> inner_args;
   inner_args.push_back(std::make_unique<StringNode>("baz", query.substr(9, 3)));
   args.clear();
-  args.push_back(std::make_unique<FunctionNode>(
-      std::make_unique<FunctionNameNode>("bar"), std::move(inner_args)));
-  root = std::make_unique<FunctionNode>(
-      std::make_unique<FunctionNameNode>("foo"), std::move(args));
+  args.push_back(std::make_unique<FunctionNode>("bar", std::move(inner_args)));
+  root = std::make_unique<FunctionNode>("foo", std::move(args));
   visitor = SimpleVisitor();
   root->Accept(&visitor);
 
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kFunctionName),
-                          EqualsNodeInfo("baz", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("baz", NodeType::kString),
+                          EqualsNodeInfo("bar", NodeType::kFunction),
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(AbstractSyntaxTreeTest, Restriction) {

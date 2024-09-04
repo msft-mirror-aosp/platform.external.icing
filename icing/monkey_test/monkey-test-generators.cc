@@ -51,29 +51,46 @@ PropertyConfigProto::Cardinality::Code GetRandomCardinality(
   return kCardinalities[dist(*random)];
 }
 
-TermMatchType::Code GetRandomTermMatchType(MonkeyTestRandomEngine* random) {
-  std::uniform_int_distribution<> dist(0, kTermMatchTypes.size() - 1);
+TermMatchType::Code GetRandomIndexableTermMatchType(
+    MonkeyTestRandomEngine* random) {
+  std::uniform_int_distribution<> dist(1, kTermMatchTypes.size() - 1);
   return kTermMatchTypes[dist(*random)];
+}
+
+bool GetRandomBoolean(MonkeyTestRandomEngine* random) {
+  std::uniform_int_distribution<> dist(0, 1);
+  return dist(*random) == 1;
 }
 
 // TODO: Update this function when supporting document_indexing_config.
 bool IsIndexableProperty(const PropertyConfigProto& property) {
   return property.string_indexing_config().term_match_type() !=
-         TermMatchType::UNKNOWN;
+             TermMatchType::UNKNOWN ||
+         property.embedding_indexing_config().embedding_indexing_type() !=
+             EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
 }
 
-void SetStringIndexingConfig(PropertyConfigProto& property,
-                             TermMatchType::Code term_match_type) {
-  if (term_match_type != TermMatchType::UNKNOWN) {
+void SetStringIndexingConfig(MonkeyTestRandomEngine* random,
+                             PropertyConfigProto& property, bool indexable) {
+  property.clear_string_indexing_config();
+  if (indexable) {
     StringIndexingConfig* string_indexing_config =
         property.mutable_string_indexing_config();
-    string_indexing_config->set_term_match_type(term_match_type);
+    string_indexing_config->set_term_match_type(
+        GetRandomIndexableTermMatchType(random));
     // TODO: Try to add different TokenizerTypes. VERBATIM, RFC822, and URL are
     // the remaining candidates to consider.
     string_indexing_config->set_tokenizer_type(
         StringIndexingConfig::TokenizerType::PLAIN);
-  } else {
-    property.clear_string_indexing_config();
+  }
+}
+
+void SetEmbeddingIndexingConfig(MonkeyTestRandomEngine* random,
+                                PropertyConfigProto& property, bool indexable) {
+  property.clear_embedding_indexing_config();
+  if (indexable) {
+    property.mutable_embedding_indexing_config()->set_embedding_indexing_type(
+        EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH);
   }
 }
 
@@ -127,17 +144,22 @@ MonkeySchemaGenerator::UpdateSchemaResult MonkeySchemaGenerator::UpdateSchema(
 
 PropertyConfigProto MonkeySchemaGenerator::GenerateProperty(
     const SchemaTypeConfigProto& type_config,
-    PropertyConfigProto::Cardinality::Code cardinality,
-    TermMatchType::Code term_match_type) {
+    PropertyConfigProto::Cardinality::Code cardinality, bool indexable) {
   PropertyConfigProto prop;
   prop.set_property_name(
       "MonkeyTestProp" +
       std::to_string(num_properties_generated_[type_config.schema_type()]++));
-  // TODO: Perhaps in future iterations we will want to generate more than just
-  // string properties.
-  prop.set_data_type(PropertyConfigProto::DataType::STRING);
+  // TODO: Perhaps in future iterations we will want to generate more types of
+  // properties.
+  // Currently, we are generating either a string or a vector property.
+  if (GetRandomBoolean(random_)) {
+    prop.set_data_type(PropertyConfigProto::DataType::STRING);
+    SetStringIndexingConfig(random_, prop, indexable);
+  } else {
+    prop.set_data_type(PropertyConfigProto::DataType::VECTOR);
+    SetEmbeddingIndexingConfig(random_, prop, indexable);
+  }
   prop.set_cardinality(cardinality);
-  SetStringIndexingConfig(prop, term_match_type);
   return prop;
 }
 
@@ -166,13 +188,23 @@ void MonkeySchemaGenerator::UpdateProperty(
     property.set_cardinality(new_cardinality);
   }
 
+  bool old_indexable = IsIndexableProperty(property);
+  bool new_indexable = GetRandomBoolean(random_);
+  bool index_incompatible = old_indexable != new_indexable;
   if (property.data_type() == PropertyConfigProto::DataType::STRING) {
-    TermMatchType::Code new_term_match_type = GetRandomTermMatchType(random_);
-    if (new_term_match_type !=
-        property.string_indexing_config().term_match_type()) {
-      SetStringIndexingConfig(property, new_term_match_type);
-      result.schema_types_index_incompatible.insert(type_config.schema_type());
+    TermMatchType::Code old_term_match_type =
+        property.string_indexing_config().term_match_type();
+    SetStringIndexingConfig(random_, property, new_indexable);
+    TermMatchType::Code new_term_match_type =
+        property.string_indexing_config().term_match_type();
+    if (old_term_match_type != new_term_match_type) {
+      index_incompatible = true;
     }
+  } else if (property.data_type() == PropertyConfigProto::DataType::VECTOR) {
+    SetEmbeddingIndexingConfig(random_, property, new_indexable);
+  }
+  if (index_incompatible) {
+    result.schema_types_index_incompatible.insert(type_config.schema_type());
   }
 }
 
@@ -187,15 +219,15 @@ SchemaTypeConfigProto MonkeySchemaGenerator::GenerateType() {
 
   int num_indexed_properties = 0;
   for (int i = 0; i < total_num_properties; ++i) {
-    TermMatchType::Code term_match_type = TermMatchType::UNKNOWN;
+    bool indexable = false;
     if (num_indexed_properties < kTotalNumSections) {
-      term_match_type = GetRandomTermMatchType(random_);
+      indexable = GetRandomBoolean(random_);
     }
-    if (term_match_type != TermMatchType::UNKNOWN) {
+    if (indexable) {
       num_indexed_properties += 1;
     }
-    (*type_config.add_properties()) = GenerateProperty(
-        type_config, GetRandomCardinality(random_), term_match_type);
+    (*type_config.add_properties()) =
+        GenerateProperty(type_config, GetRandomCardinality(random_), indexable);
   }
   return type_config;
 }
@@ -248,9 +280,10 @@ void MonkeySchemaGenerator::UpdateType(SchemaTypeConfigProto& type_config,
     if (new_cardinality == PropertyConfigProto::Cardinality::REQUIRED) {
       result.schema_types_incompatible.insert(type_config.schema_type());
     }
-    PropertyConfigProto new_property = GenerateProperty(
-        type_config, new_cardinality, GetRandomTermMatchType(random_));
-    if (IsIndexableProperty(new_property)) {
+    bool indexable = GetRandomBoolean(random_);
+    PropertyConfigProto new_property =
+        GenerateProperty(type_config, new_cardinality, indexable);
+    if (indexable) {
       result.schema_types_index_incompatible.insert(type_config.schema_type());
     }
     (*type_config.add_properties()) = std::move(new_property);
@@ -296,21 +329,69 @@ std::string MonkeyDocumentGenerator::GetUri() const {
 }
 
 int MonkeyDocumentGenerator::GetNumTokens() const {
-  std::uniform_int_distribution<> dist(
-      0, config_->possible_num_tokens_.size() - 1);
-  int n = config_->possible_num_tokens_[dist(*random_)];
+  std::uniform_int_distribution<> dist(0,
+                                       config_->possible_num_tokens.size() - 1);
+  int n = config_->possible_num_tokens[dist(*random_)];
   // Add some noise
   std::uniform_real_distribution<> real_dist(0.5, 1);
   float p = real_dist(*random_);
   return n * p;
 }
 
-std::vector<std::string> MonkeyDocumentGenerator::GetPropertyContent() const {
-  std::vector<std::string> content;
+std::vector<std::string> MonkeyDocumentGenerator::GetStringPropertyContent()
+    const {
   int num_tokens = GetNumTokens();
+  std::vector<std::string> content;
+  content.reserve(num_tokens);
   while (num_tokens) {
     content.push_back(std::string(GetToken()));
     --num_tokens;
+  }
+  return content;
+}
+
+int MonkeyDocumentGenerator::GetNumVectors(
+    PropertyConfigProto::Cardinality::Code cardinality) const {
+  if (cardinality == PropertyConfigProto::Cardinality::REQUIRED) {
+    return 1;
+  } else if (cardinality == PropertyConfigProto::Cardinality::OPTIONAL) {
+    std::uniform_int_distribution<> dist(0, 1);
+    return dist(*random_);
+  }
+
+  // For repeated properties:
+  std::uniform_int_distribution<> dist(
+      0, config_->possible_num_vectors.size() - 1);
+  int n = config_->possible_num_vectors[dist(*random_)];
+  // Add some noise
+  std::uniform_real_distribution<> real_dist(0.5, 1);
+  float p = real_dist(*random_);
+  return n * p;
+}
+
+PropertyProto::VectorProto MonkeyDocumentGenerator::GetRandomVector() const {
+  std::uniform_int_distribution<> dimension_dist(
+      0, config_->possible_vector_dimensions.size() - 1);
+  std::uniform_real_distribution<float> value_dist(-1.0, 1.0);
+
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("model");
+  int dimension = config_->possible_vector_dimensions[dimension_dist(*random_)];
+  for (int i = 0; i < dimension; ++i) {
+    vector.add_values(value_dist(*random_));
+  }
+  return vector;
+}
+
+std::vector<PropertyProto::VectorProto>
+MonkeyDocumentGenerator::GetVectorPropertyContent(
+    PropertyConfigProto::Cardinality::Code cardinality) const {
+  int num_vectors = GetNumVectors(cardinality);
+  std::vector<PropertyProto::VectorProto> content;
+  content.reserve(num_vectors);
+  while (num_vectors) {
+    content.push_back(GetRandomVector());
+    --num_vectors;
   }
   return content;
 }
@@ -326,16 +407,29 @@ MonkeyTokenizedDocument MonkeyDocumentGenerator::GenerateDocument() {
           .SetUri(GetUri())
           .SetCreationTimestampMs(clock_.GetSystemTimeMilliseconds());
   for (const PropertyConfigProto& prop : type_config.properties()) {
-    std::vector<std::string> prop_content = GetPropertyContent();
-    doc_builder.AddStringProperty(prop.property_name(),
-                                  absl_ports::StrJoin(prop_content, " "));
-    // No matter whether the property is indexable currently, we have to create
-    // a section for it since a non-indexable property can become indexable
-    // after a schema type change. The in-memory icing will automatically skip
-    // sections that are non-indexable at the time of search requests.
-    MonkeyTokenizedSection section = {prop.property_name(),
-                                      std::move(prop_content)};
-    document.tokenized_sections.push_back(std::move(section));
+    if (prop.data_type() == PropertyConfigProto::DataType::STRING) {
+      std::vector<std::string> prop_content = GetStringPropertyContent();
+      doc_builder.AddStringProperty(prop.property_name(),
+                                    absl_ports::StrJoin(prop_content, " "));
+      // No matter whether the property is indexable currently, we have to
+      // create a section for it since a non-indexable property can become
+      // indexable after a schema type change. The in-memory icing will
+      // automatically skip sections that are non-indexable at the time of
+      // search requests.
+      MonkeyTokenizedSection section = {prop.property_name(),
+                                        std::move(prop_content)};
+      document.tokenized_sections.push_back(std::move(section));
+    } else {
+      std::vector<PropertyProto::VectorProto> prop_content =
+          GetVectorPropertyContent(prop.cardinality());
+      doc_builder.AddVectorProperty(prop.property_name(), prop_content);
+
+      // Similar to the string property, no matter whether the property is
+      // indexable currently, we have to create a section for it.
+      MonkeyTokenizedSection section = {
+          prop.property_name(), /*token_sequence=*/{}, std::move(prop_content)};
+      document.tokenized_sections.push_back(std::move(section));
+    }
   }
   document.document = doc_builder.Build();
   ++num_docs_generated_;

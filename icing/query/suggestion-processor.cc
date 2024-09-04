@@ -259,6 +259,20 @@ SuggestionProcessor::QuerySuggestions(
   search_spec.set_query(suggestion_spec.prefix());
   search_spec.set_term_match_type(
       suggestion_spec.scoring_spec().scoring_match_type());
+  for (const PropertyProto::VectorProto& vector :
+       suggestion_spec.embedding_query_vectors()) {
+    *search_spec.add_embedding_query_vectors() = vector;
+  }
+  search_spec.set_embedding_query_metric_type(
+      suggestion_spec.embedding_query_metric_type());
+  for (const std::string& query_parameter_string :
+       suggestion_spec.query_parameter_strings()) {
+    search_spec.add_query_parameter_strings(query_parameter_string);
+  }
+  for (const std::string& enabled_feature :
+       suggestion_spec.enabled_features()) {
+    search_spec.add_enabled_features(enabled_feature);
+  }
   ICING_ASSIGN_OR_RETURN(
       QueryResults query_results,
       query_processor->ParseSearch(search_spec,

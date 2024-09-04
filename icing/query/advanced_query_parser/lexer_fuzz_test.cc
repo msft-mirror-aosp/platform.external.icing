@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <utility>
 
 #include "icing/query/advanced_query_parser/lexer.h"
 
@@ -26,10 +27,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>(text, Lexer::Language::QUERY);
-  lexer->ExtractTokens();
+  std::move(*lexer).ExtractTokens();
 
   lexer = std::make_unique<Lexer>(text, Lexer::Language::SCORING);
-  lexer->ExtractTokens();
+  std::move(*lexer).ExtractTokens();
   return 0;
 }
 
