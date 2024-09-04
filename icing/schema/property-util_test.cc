@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -107,6 +108,29 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeVector) {
       property_util::ExtractPropertyValues<PropertyProto::VectorProto>(
           property),
       IsOkAndHolds(ElementsAre(EqualsProto(vector1), EqualsProto(vector2))));
+}
+
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeBlobHandle) {
+  PropertyProto::BlobHandleProto blob_handle1;
+  blob_handle1.set_label("label1");
+  std::vector<unsigned char> bytes1(32);
+  std::string digestString1 = std::string(bytes1.begin(), bytes1.end());
+  blob_handle1.set_digest(digestString1);
+  PropertyProto::BlobHandleProto blob_handle2;
+  blob_handle2.set_label("label2");
+  std::vector<unsigned char> bytes2(32);
+  std::string digestString2 = std::string(bytes2.begin(), bytes2.end());
+  blob_handle2.set_digest(digestString2);
+
+  PropertyProto property;
+  *property.mutable_blob_handle_values()->Add() = blob_handle1;
+  *property.mutable_blob_handle_values()->Add() = blob_handle2;
+
+  EXPECT_THAT(
+      property_util::ExtractPropertyValues<PropertyProto::BlobHandleProto>(
+          property),
+      IsOkAndHolds(
+          ElementsAre(EqualsProto(blob_handle1), EqualsProto(blob_handle2))));
 }
 
 TEST(PropertyUtilTest, ExtractPropertyValuesMismatchedType) {

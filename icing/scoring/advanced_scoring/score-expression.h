@@ -429,10 +429,9 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
 class GetEmbeddingParameterFunctionScoreExpression : public ScoreExpression {
  public:
   static constexpr std::string_view kFunctionName = "getEmbeddingParameter";
-  static constexpr std::string_view kOldFunctionName = "getSearchSpecEmbedding";
 
   // RETURNS:
-  //   - A GetSearchSpecEmbeddingFunctionScoreExpression instance on success if
+  //   - A GetEmbeddingParameterFunctionScoreExpression instance on success if
   //     not simplifiable.
   //   - A ConstantScoreExpression instance on success if simplifiable.
   //   - FAILED_PRECONDITION on any null pointer in children.
