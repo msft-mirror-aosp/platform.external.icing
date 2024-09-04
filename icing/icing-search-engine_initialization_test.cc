@@ -72,6 +72,7 @@
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/blob-store.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
@@ -220,6 +221,8 @@ std::string GetQualifiedIdJoinIndexDir() {
 }
 
 std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
+
+std::string GetBlobDir() { return GetTestBaseDir() + "/blob_dir"; }
 
 std::string GetHeaderFilename() {
   return GetTestBaseDir() + "/icing_search_engine_header";
@@ -1074,6 +1077,11 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        BlobStore blob_store,
+        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
+                          /*orphan_blob_time_to_live_ms=*/0));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -5473,6 +5481,11 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        BlobStore blob_store,
+        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
+                          /*orphan_blob_time_to_live_ms=*/0));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(

@@ -17,7 +17,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -36,6 +38,7 @@
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
+#include "icing/proto/blob.pb.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -52,6 +55,7 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/blob-store.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -346,6 +350,39 @@ class IcingSearchEngine {
   void InvalidateNextPageToken(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Gets or creates a file for write only purpose for the given blob handle.
+  // To mark the blob is completed written, commitBlob must be called. Once
+  // commitBlob is called, the blob is sealed and rewrite is not allowed.
+  //
+  // Returns:
+  //   File descriptor on success
+  //   InvalidArgumentError on invalid blob handle
+  //   PermissionDeniedError on blob is committed
+  //   INTERNAL_ERROR on IO error
+  BlobProto OpenWriteBlob(PropertyProto::BlobHandleProto blob_handle);
+
+  // Gets or creates a file for read only purpose for the given blob handle.
+  // The blob must be committed by calling commitBlob otherwise it is not
+  // accessible.
+  //
+  // Returns:
+  //   File descriptor on success
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError on blob is not found or is not committed
+  BlobProto OpenReadBlob(PropertyProto::BlobHandleProto blob_handle);
+
+  // Commits the given blob, the blob is open to write via openWrite.
+  // Before the blob is committed, it is not visible to any reader via openRead.
+  // After the blob is committed, it is not allowed to rewrite or update the
+  // content.
+  //
+  // Returns:
+  //   True on the blob is successfuly committed.
+  //   False on the blob is already committed.
+  //   InvalidArgumentError on invalid blob handle or digest is mismatch with
+  //     file content NotFoundError on blob is not found.
+  BlobProto CommitBlob(PropertyProto::BlobHandleProto blob_handle);
+
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
   // would be able to fully recover all data written up to this point.
@@ -451,14 +488,6 @@ class IcingSearchEngine {
   // components in Icing search engine.
   const PerformanceConfiguration performance_configuration_;
 
-  // Used to manage pagination state of query results. Even though
-  // ResultStateManager has its own reader-writer lock, mutex_ must still be
-  // acquired first in order to adhere to the global lock ordering:
-  //   1. mutex_
-  //   2. result_state_manager_.lock_
-  std::unique_ptr<ResultStateManager> result_state_manager_
-      ICING_GUARDED_BY(mutex_);
-
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
 
@@ -466,7 +495,22 @@ class IcingSearchEngine {
   std::unique_ptr<SchemaStore> schema_store_ ICING_GUARDED_BY(mutex_);
 
   // Used to store all valid documents
+  //
+  // Dependencies: schema_store_
   std::unique_ptr<DocumentStore> document_store_ ICING_GUARDED_BY(mutex_);
+
+  // Used to manage pagination state of query results. Even though
+  // ResultStateManager has its own reader-writer lock, mutex_ must still be
+  // acquired first in order to adhere to the global lock ordering:
+  //   1. mutex_
+  //   2. result_state_manager_.lock_
+  //
+  // Dependencies: document_store_
+  std::unique_ptr<ResultStateManager> result_state_manager_
+      ICING_GUARDED_BY(mutex_);
+
+  // Used to store all valid blob data
+  std::unique_ptr<BlobStore> blob_store_ ICING_GUARDED_BY(mutex_);
 
   std::unique_ptr<const LanguageSegmenter> language_segmenter_
       ICING_GUARDED_BY(mutex_);
@@ -559,6 +603,15 @@ class IcingSearchEngine {
   libtextclassifier3::StatusOr<bool> InitializeDocumentStore(
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Do any initialization necessary to create a BlobStore instance.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
+  libtextclassifier3::Status InitializeBlobStore(
+      int32_t orphan_blob_time_to_live_ms)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer
@@ -683,7 +736,8 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on any IO errors or other errors that we can't recover
   //                  from
   libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
-  OptimizeDocumentStore(OptimizeStatsProto* optimize_stats)
+  OptimizeDocumentStore(std::unordered_set<std::string>&& mature_blob_handles,
+                        OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to restore missing document data in index_, integer_index_,

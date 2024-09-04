@@ -60,6 +60,8 @@ struct Token {
     URL_SUFFIX,
     URL_SUFFIX_INNERMOST,
 
+    TRIGRAM,  // Trigram token of the text
+
     // Indicates errors
     INVALID,
   };
