@@ -190,9 +190,9 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
+                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
+                              /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
                                   DocumentWrapper>::kDeflateCompressionLevel,
                               /*initialize_stats=*/nullptr));
@@ -236,9 +236,13 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
   }
 
   std::vector<float> GetRawEmbeddingData() {
-    return std::vector<float>(embedding_index_->GetRawEmbeddingData(),
-                              embedding_index_->GetRawEmbeddingData() +
-                                  embedding_index_->GetTotalVectorSize());
+    auto data_or = embedding_index_->GetRawEmbeddingData();
+    if (!data_or.ok()) {
+      return std::vector<float>();
+    }
+    return std::vector<float>(
+        data_or.ValueOrDie(),
+        data_or.ValueOrDie() + embedding_index_->GetTotalVectorSize());
   }
 
   Filesystem filesystem_;
@@ -420,6 +424,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // Check that the embedding index should be empty
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
 
   // Recovery mode should get the same result.
@@ -432,6 +437,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // Check that the embedding index should be empty
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
 }
 
@@ -477,6 +483,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // Check that the embedding index should be empty
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
 
   // Handling document with document_id < last_added_document_id should cause a
@@ -493,6 +500,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // Check that the embedding index should be empty
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
 }
 

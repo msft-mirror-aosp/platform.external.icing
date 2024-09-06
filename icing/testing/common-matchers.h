@@ -199,9 +199,19 @@ class ScoredDocumentHitEqualComparator {
  public:
   bool operator()(const ScoredDocumentHit& lhs,
                   const ScoredDocumentHit& rhs) const {
+    bool additional_scores_match = true;
+    if (lhs.additional_scores() != nullptr &&
+        rhs.additional_scores() != nullptr) {
+      additional_scores_match =
+          *lhs.additional_scores() == *rhs.additional_scores();
+    } else {
+      additional_scores_match =
+          lhs.additional_scores() == rhs.additional_scores();
+    }
     return lhs.document_id() == rhs.document_id() &&
            lhs.hit_section_id_mask() == rhs.hit_section_id_mask() &&
-           std::fabs(lhs.score() - rhs.score()) < 1e-6;
+           std::fabs(lhs.score() - rhs.score()) < 1e-6 &&
+           additional_scores_match;
   }
 };
 

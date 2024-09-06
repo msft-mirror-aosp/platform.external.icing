@@ -236,8 +236,7 @@ libtextclassifier3::Status ValidateSuggestionSpec(
 }
 
 bool IsV2QualifiedIdJoinIndexEnabled(const IcingSearchEngineOptions& options) {
-  return options.use_new_qualified_id_join_index() &&
-         options.document_store_namespace_id_fingerprint();
+  return true;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
@@ -415,25 +414,46 @@ bool ShouldRebuildIndex(const OptimizeStatsProto& optimize_stats,
                                       optimize_rebuild_index_threshold;
 }
 
+libtextclassifier3::StatusOr<bool> ScoringExpressionHasRelevanceScoreFunction(
+    std::string_view scoring_expression) {
+  // TODO(b/261474063) The Lexer will be called again when creating the
+  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
+  // to be called only once.
+  Lexer lexer(scoring_expression, Lexer::Language::SCORING);
+  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
+                         lexer.ExtractTokens());
+  for (const Lexer::LexerToken& token : lexer_tokens) {
+    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
+        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Useful method to get RankingStrategy if advanced scoring is enabled. When the
 // "RelevanceScore" function is used in the advanced scoring expression,
 // RankingStrategy will be treated as RELEVANCE_SCORE in order to prepare the
 // necessary information needed for calculating relevance score.
 libtextclassifier3::StatusOr<ScoringSpecProto::RankingStrategy::Code>
 GetRankingStrategyFromScoringSpec(const ScoringSpecProto& scoring_spec) {
-  if (scoring_spec.advanced_scoring_expression().empty()) {
+  if (scoring_spec.advanced_scoring_expression().empty() &&
+      scoring_spec.additional_advanced_scoring_expressions().empty()) {
     return scoring_spec.rank_by();
   }
-  // TODO(b/261474063) The Lexer will be called again when creating the
-  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
-  // to be called only once.
-  Lexer lexer(scoring_spec.advanced_scoring_expression(),
-              Lexer::Language::SCORING);
-  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
-  for (const Lexer::LexerToken& token : lexer_tokens) {
-    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
-        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+
+  ICING_ASSIGN_OR_RETURN(bool has_relevance_score_function,
+                         ScoringExpressionHasRelevanceScoreFunction(
+                             scoring_spec.advanced_scoring_expression()));
+  if (has_relevance_score_function) {
+    return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+  }
+  for (std::string_view additional_scoring_expression :
+       scoring_spec.additional_advanced_scoring_expressions()) {
+    ICING_ASSIGN_OR_RETURN(has_relevance_score_function,
+                           ScoringExpressionHasRelevanceScoreFunction(
+                               additional_scoring_expression));
+    if (has_relevance_score_function) {
       return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
     }
   }
@@ -715,7 +735,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // directory now.
     // Discard index directory and instantiate a new one.
     Index::Options index_options(index_dir, options_.index_merge_size(),
-                                 options_.lite_index_sort_at_indexing(),
+                                 /*lite_index_sort_at_indexing=*/true,
                                  options_.lite_index_sort_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -887,8 +907,8 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
       DocumentStore::Create(
           filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
           force_recovery_and_revalidate_documents,
-          options_.document_store_namespace_id_fingerprint(),
-          options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+          /*document_store_namespace_id_fingerprint=*/true,
+          /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
 
@@ -907,7 +927,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
         absl_ports::StrCat("Could not create directory: ", index_dir));
   }
   Index::Options index_options(index_dir, options_.index_merge_size(),
-                               options_.lite_index_sort_at_indexing(),
+                               /*lite_index_sort_at_indexing=*/true,
                                options_.lite_index_sort_size());
 
   // Term index
@@ -2498,8 +2518,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     auto create_result_or = DocumentStore::Create(
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-        options_.document_store_namespace_id_fingerprint(),
-        options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+        /*document_store_namespace_id_fingerprint=*/true,
+        /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
         options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
@@ -2526,8 +2546,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   auto create_result_or = DocumentStore::Create(
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-      options_.document_store_namespace_id_fingerprint(),
-      options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+      /*document_store_namespace_id_fingerprint=*/true,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
