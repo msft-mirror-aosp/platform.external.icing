@@ -15,10 +15,11 @@
 #ifndef ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
 #define ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
 
-#include <memory>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/lite/lite-index.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
 
