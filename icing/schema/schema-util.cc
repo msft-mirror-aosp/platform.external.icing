@@ -838,6 +838,7 @@ libtextclassifier3::Status SchemaUtil::ValidateDocumentIndexingConfig(
     case PropertyConfigProto::DataType::DOUBLE:
     case PropertyConfigProto::DataType::BOOLEAN:
     case PropertyConfigProto::DataType::BYTES:
+    case PropertyConfigProto::DataType::BLOB_HANDLE:
       return false;
   }
 }

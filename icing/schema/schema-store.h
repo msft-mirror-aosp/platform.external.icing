@@ -68,64 +68,104 @@ class SchemaStore {
    public:
     static constexpr int32_t kMagic = 0x72650d0a;
 
-    explicit Header()
-        : magic_(kMagic),
-          checksum_(0),
-          overlay_created_(false),
-          min_overlay_version_compatibility_(
-              std::numeric_limits<int32_t>::max()) {
-      memset(overlay_created_padding_, 0, kOverlayCreatedPaddingSize);
-      memset(padding_, 0, kPaddingSize);
+    explicit Header(const Filesystem* filesystem, std::string path)
+        : path_(std::move(path)), filesystem_(filesystem) {}
+
+    Header(Header&& other)
+        : serialized_header_(std::move(other.serialized_header_)),
+          path_(std::move(other.path_)),
+          header_fd_(std::move(other.header_fd_)),
+          filesystem_(other.filesystem_),
+          dirty_(other.dirty_) {}
+
+    Header& operator=(Header&& other) {
+      serialized_header_ = std::move(other.serialized_header_);
+      path_ = std::move(other.path_);
+      header_fd_ = std::move(other.header_fd_);
+      filesystem_ = other.filesystem_;
+      dirty_ = other.dirty_;
+      return *this;
     }
+
+    struct SerializedHeader {
+      explicit SerializedHeader()
+          : magic(kMagic),
+            checksum(0),
+            overlay_created(false),
+            min_overlay_version_compatibility(
+                std::numeric_limits<int32_t>::max()) {
+        memset(overlay_created_padding, 0, kOverlayCreatedPaddingSize);
+        memset(padding, 0, kPaddingSize);
+      }
+      // Holds the magic as a quick sanity check against file corruption.
+      int32_t magic;
+
+      // Checksum of the SchemaStore's sub-component's checksums.
+      uint32_t checksum;
+
+      bool overlay_created;
+      // Three bytes of padding due to the fact that
+      // min_overlay_version_compatibility_ has an alignof() == 4 and the offset
+      // of overlay_created_padding_ == 9.
+      static constexpr int kOverlayCreatedPaddingSize = 3;
+      uint8_t overlay_created_padding[kOverlayCreatedPaddingSize];
+
+      int32_t min_overlay_version_compatibility;
+
+      static constexpr int kPaddingSize = 1008;
+      // Padding exists just to reserve space for additional values.
+      uint8_t padding[kPaddingSize];
+    };
+    static_assert(sizeof(SerializedHeader) == 1024);
 
     // RETURNS:
     //   - On success, a valid Header instance
     //   - NOT_FOUND if header file doesn't exist
     //   - INTERNAL if unable to read header
     static libtextclassifier3::StatusOr<Header> Read(
-        const Filesystem* filesystem, const std::string& path);
+        const Filesystem* filesystem, std::string path);
 
-    libtextclassifier3::Status Write(const Filesystem* filesystem,
-                                     const std::string& path);
+    libtextclassifier3::Status Write();
 
-    int32_t magic() const { return magic_; }
+    libtextclassifier3::Status PersistToDisk();
 
-    uint32_t checksum() const { return checksum_; }
-    void set_checksum(uint32_t checksum) { checksum_ = checksum; }
+    int32_t magic() const { return serialized_header_.magic; }
 
-    bool overlay_created() const { return overlay_created_; }
+    uint32_t checksum() const { return serialized_header_.checksum; }
+    void set_checksum(uint32_t checksum) {
+      dirty_ = true;
+      serialized_header_.checksum = checksum;
+    }
+
+    bool overlay_created() const { return serialized_header_.overlay_created; }
 
     int32_t min_overlay_version_compatibility() const {
-      return min_overlay_version_compatibility_;
+      return serialized_header_.min_overlay_version_compatibility;
     }
 
     void SetOverlayInfo(bool overlay_created,
                         int32_t min_overlay_version_compatibility) {
-      overlay_created_ = overlay_created;
-      min_overlay_version_compatibility_ = min_overlay_version_compatibility;
+      dirty_ = true;
+      serialized_header_.overlay_created = overlay_created;
+      serialized_header_.min_overlay_version_compatibility =
+          min_overlay_version_compatibility;
     }
 
    private:
-    // Holds the magic as a quick sanity check against file corruption.
-    int32_t magic_;
+    explicit Header(SerializedHeader serialized_header, std::string path,
+                    ScopedFd header_fd, const Filesystem* filesystem)
+        : serialized_header_(std::move(serialized_header)),
+          path_(std::move(path)),
+          header_fd_(std::move(header_fd)),
+          filesystem_(filesystem),
+          dirty_(false) {}
 
-    // Checksum of the SchemaStore's sub-component's checksums.
-    uint32_t checksum_;
-
-    bool overlay_created_;
-    // Three bytes of padding due to the fact that
-    // min_overlay_version_compatibility_ has an alignof() == 4 and the offset
-    // of overlay_created_padding_ == 9.
-    static constexpr int kOverlayCreatedPaddingSize = 3;
-    uint8_t overlay_created_padding_[kOverlayCreatedPaddingSize];
-
-    int32_t min_overlay_version_compatibility_;
-
-    static constexpr int kPaddingSize = 1008;
-    // Padding exists just to reserve space for additional values.
-    uint8_t padding_[kPaddingSize];
+    SerializedHeader serialized_header_;
+    std::string path_;
+    ScopedFd header_fd_;
+    const Filesystem* filesystem_;  // Not owned.
+    bool dirty_;
   };
-  static_assert(sizeof(Header) == 1024);
 
   // Holds information on what may have been affected by the new schema. This is
   // generally data that other classes may depend on from the SchemaStore,
@@ -276,6 +316,16 @@ class SchemaStore {
   libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
   GetSchemaTypeConfig(std::string_view schema_type) const;
 
+  // Get a map contains all schema_type name to its blob property paths.
+  //
+  // Returns:
+  //   A map contains all schema_type name to its blob property paths on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   INTERNAL on any I/O errors
+  libtextclassifier3::StatusOr<
+      std::unordered_map<std::string, std::vector<std::string>>>
+  ConstructBlobPropertyMap() const;
+
   // Returns the schema type of the passed in SchemaTypeId
   //
   // Returns:
@@ -373,13 +423,21 @@ class SchemaStore {
   //   INTERNAL on I/O errors.
   libtextclassifier3::Status PersistToDisk();
 
-  // Computes the combined checksum of the schema store - includes the ground
-  // truth and all derived files.
+  // Recomputes the combined checksum of components of the schema store and
+  // updates the header.
   //
   // Returns:
-  //   Combined checksum on success
-  //   INTERNAL_ERROR on compute error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
+  //   - the checksum on success
+  //   - INTERNAL on I/O errors.
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Recomputes the combined checksum of components of the schema store. Does
+  // NOT update the header.
+  //
+  // Returns:
+  //   - the checksum on success
+  //   - INTERNAL on I/O errors.
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
   // Returns:
   //   - On success, the section metadata list for the specified schema type

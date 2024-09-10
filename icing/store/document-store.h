@@ -19,11 +19,11 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
@@ -472,6 +472,9 @@ class DocumentStore {
     // should rebuild index instead of adopting the id changes via the 2 vectors
     // above. It will be set to true if finding any id inconsistency.
     bool should_rebuild_index = false;
+
+    // A set of blob handles that are dead and need to be removed.
+    std::unordered_set<std::string> dead_blob_handles;
   };
   // Copy data from current base directory into a new directory. Any outdated or
   // deleted data won't be copied. During the process, document/namespace ids
@@ -492,6 +495,7 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<OptimizeResult> OptimizeInto(
       const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
+      std::unordered_set<std::string>&& expired_blob_handles,
       OptimizeStatsProto* stats = nullptr) const;
 
   // Calculates status for a potential Optimize call. Includes how many docs
@@ -503,13 +507,20 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<OptimizeInfo> GetOptimizeInfo() const;
 
-  // Computes the combined checksum of the document store - includes the ground
-  // truth and all derived files.
+  // Update, replace and persist the header file. Creates the header file if it
+  // doesn't exist.
   //
   // Returns:
-  //   Combined checksum on success
-  //   INTERNAL_ERROR on compute error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the checksum of the document store.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
   // Get debug information for the document store.
   // verbosity <= 0, simplest debug information
@@ -698,14 +709,6 @@ class DocumentStore {
   // Checks if the header exists already. This does not create the header file
   // if it doesn't exist.
   bool HeaderExists();
-
-  // Update, replace and persist the header file. Creates the header file if it
-  // doesn't exist.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL on I/O error
-  libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
 
   libtextclassifier3::StatusOr<DocumentId> InternalPut(
       DocumentProto&& document,
