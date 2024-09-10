@@ -159,8 +159,8 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
         DocumentStore::Create(
             &filesystem_, store_dir_, &clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -203,6 +203,22 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
                            lexer.ExtractTokens());
     Parser parser = Parser::Create(std::move(lexer_tokens));
     return parser.ConsumeQuery();
+  }
+
+  libtextclassifier3::StatusOr<QueryResults> ProcessQuery(
+      const std::string& query) {
+    ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> root_node,
+                           ParseQueryHelper(query));
+    QueryVisitor query_visitor(
+        index_.get(), numeric_index_.get(), embedding_index_.get(),
+        document_store_.get(), schema_store_.get(), normalizer_.get(),
+        tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
+        DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+        EMBEDDING_METRIC_UNKNOWN,
+        /*needs_term_frequency_info_=*/true,
+        clock_.GetSystemTimeMilliseconds());
+    root_node->Accept(&query_visitor);
+    return std::move(query_visitor).ConsumeResults();
   }
 
   std::string EscapeString(std::string_view str) {
@@ -278,18 +294,7 @@ TEST_P(QueryVisitorTest, SimpleLessThan) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price < 2");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -323,18 +328,8 @@ TEST_P(QueryVisitorTest, SimpleLessThanEq) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price <= 1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -368,18 +363,8 @@ TEST_P(QueryVisitorTest, SimpleEqual) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price == 2");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -413,18 +398,8 @@ TEST_P(QueryVisitorTest, SimpleGreaterThanEq) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price >= 1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -458,18 +433,8 @@ TEST_P(QueryVisitorTest, SimpleGreaterThan) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price > 1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -504,18 +469,8 @@ TEST_P(QueryVisitorTest, IntMinLessThanEqual) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price <= " + std::to_string(int_min));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -550,18 +505,8 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanEqual) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price >= " + std::to_string(int_max));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -597,18 +542,8 @@ TEST_P(QueryVisitorTest, NestedPropertyLessThan) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("subscription.price < 2");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -627,33 +562,13 @@ TEST_P(QueryVisitorTest, NestedPropertyLessThan) {
 
 TEST_P(QueryVisitorTest, IntParsingError) {
   std::string query = CreateQuery("subscription.price < fruit");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_P(QueryVisitorTest, NotEqualsUnsupported) {
   std::string query = CreateQuery("subscription.price != 3");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
 }
 
@@ -755,18 +670,7 @@ TEST_P(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("time < 25");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -810,17 +714,7 @@ TEST_P(QueryVisitorTest, IntMinLessThanInvalid) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price <" + std::to_string(int_min));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -842,34 +736,14 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanInvalid) {
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
 
   std::string query = CreateQuery("price >" + std::to_string(int_max));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_P(QueryVisitorTest, NumericComparisonPropertyStringIsInvalid) {
   // "price" is a STRING token, which cannot be a property name.
   std::string query = CreateQuery(R"("price" > 7)");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -925,18 +799,7 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
   // doc0 has both a text and number entry for `-2`, neither of which should
   // match.
   std::string query = CreateQuery("price == -1 -2");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kNumericSearchFeature,
@@ -1118,49 +981,19 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
 
 TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyReturnsInvalid) {
   std::string query = "price* < 2";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_P(QueryVisitorTest, PrefixOperatorAfterNumericValueReturnsInvalid) {
   std::string query = "price < 2*";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyRestrictReturnsInvalid) {
   std::string query = "subject*:foo";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1254,18 +1087,7 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("\"foo:bar(baz)\"");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1358,18 +1180,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingQuote) {
   // From the comment above, verbatim_term = `foobar"` and verbatim_query =
   // `foobar\"`
   std::string query = CreateQuery(R"(("foobar\""))");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1412,18 +1223,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingEscape) {
 
   // Issue a query for the verbatim token `foobar\`.
   std::string query = CreateQuery(R"(("foobar\\"))");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1468,18 +1268,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
 
   // Issue a query for the verbatim token `foobary`.
   std::string query = CreateQuery(R"(("foobar\y"))");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1498,17 +1287,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
 
   // Issue a query for the verbatim token `foobar\y`.
   query = CreateQuery(R"(("foobar\\y"))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1554,18 +1333,7 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
 
   // Issue a query for the verbatim token `foobar` + '\n'.
   std::string query = CreateQuery("\"foobar\n\"");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1583,17 +1351,8 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
 
   // Now, issue a query for the verbatim token `foobar\n`.
   query = CreateQuery(R"(("foobar\\n"))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
+
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1633,18 +1392,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingComplex) {
 
   // Issue a query for the verbatim token `foo\"bar\nbaz"`.
   std::string query = CreateQuery(R"(("foo\\\"bar\\nbaz\""))");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kVerbatimSearchFeature,
@@ -1694,18 +1442,7 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("-foo");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
   EXPECT_THAT(query_results.query_term_iterators, IsEmpty());
   if (GetParam() == QueryType::kSearch) {
@@ -1750,18 +1487,7 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("NOT foo");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.query_terms, IsEmpty());
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -1807,18 +1533,7 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
 
   // Double negative could be rewritten as `(foo AND NOT bar) baz`
   std::string query = CreateQuery("NOT (-foo OR bar) baz");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
@@ -1878,18 +1593,7 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
   // Doc 2 : (((-FALSE OR TRUE) TRUE) OR FALSE) NOT FALSE
   //         ((TRUE OR TRUE) TRUE) TRUE -> ((TRUE) TRUE) TRUE -> TRUE
   std::string query = CreateQuery("NOT (-(NOT (foo -bar) baz) -bat) NOT bass");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
@@ -1919,18 +1623,7 @@ TEST_P(QueryVisitorTest, ImplicitAndTerms) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo bar");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -1964,18 +1657,7 @@ TEST_P(QueryVisitorTest, ExplicitAndTerms) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo AND bar");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -2009,18 +1691,7 @@ TEST_P(QueryVisitorTest, OrTerms) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo OR bar");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -2056,18 +1727,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
 
   // Should be interpreted like `foo (bar OR baz)`
   std::string query = CreateQuery("foo bar OR baz");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -2084,17 +1744,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
 
   // Should be interpreted like `(bar OR baz) foo`
   query = CreateQuery("bar OR baz foo");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -2110,17 +1760,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
               ElementsAre(kDocumentId2, kDocumentId1));
 
   query = CreateQuery("(bar OR baz) foo");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_three(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_three);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_three).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -2173,18 +1813,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
 
   // Should be interpreted like `foo ((NOT bar) OR baz)`
   std::string query = CreateQuery("foo NOT bar OR baz");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
@@ -2196,17 +1825,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
               ElementsAre(kDocumentId2, kDocumentId0));
 
   query = CreateQuery("foo NOT (bar OR baz)");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
@@ -2262,18 +1881,7 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo", /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("foo"));
@@ -2340,18 +1948,7 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = R"(search("foo", createList("prop1", "prop2")))";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1", "prop2"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("foo"));
@@ -2385,17 +1982,7 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
 
   // "prop1" is a STRING token, which cannot be a property name.
   std::string query = CreateQuery(R"(("prop1":foo))");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2443,18 +2030,7 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo", /*property_restrict=*/"PROP1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("PROP1"));
   EXPECT_THAT(query_results.query_terms["PROP1"], UnorderedElementsAre("foo"));
@@ -2516,18 +2092,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
 
   std::string query =
       CreateQuery("(foo OR bar)", /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -2585,18 +2150,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("(prop1:foo)", /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -2609,17 +2163,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
 
   query = CreateQuery("(prop1:(prop1:(prop1:(prop1:foo))))",
                       /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -2676,18 +2220,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("(prop2:foo)", /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
@@ -2700,17 +2233,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
   //                             createList("prop1"))`
   query = CreateQuery("(prop2:(prop1:(prop2:(prop1:foo))))",
                       /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
@@ -2767,18 +2290,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
   // - kSearch: `-search("foo OR bar", createList("prop1"))`
   std::string query = absl_ports::StrCat(
       "-", CreateQuery("(foo OR bar)", /*property_restrict=*/"prop1"));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
@@ -2791,17 +2303,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
   // - kSearch: `NOT search("foo OR bar", createList("prop1"))`
   query = absl_ports::StrCat(
       "NOT ", CreateQuery("(foo OR bar)", /*property_restrict=*/"prop1"));
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
@@ -2872,18 +2374,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   // will be matched.
   std::string query =
       CreateQuery("(-foo OR bar)", /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
 
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -2902,17 +2393,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   // The query is equivalent to `-prop1:foo OR prop1:bar`, thus doc0 and doc2
   // will be matched.
   query = CreateQuery("(NOT foo OR bar)", /*property_restrict=*/"prop1");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -2985,18 +2466,7 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
   }
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -3107,18 +2577,7 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   // - kSearch: `val0 search("val1", createList("prop1")) val2`
   std::string query = absl_ports::StrCat(
       "val0 ", CreateQuery("val1", /*property_restrict=*/"prop1"), " val2");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   if (GetParam() == QueryType::kSearch) {
     EXPECT_THAT(query_results.features_in_use,
                 UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -3226,18 +2685,7 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   std::string query = absl_ports::StrCat(
       "prop0:val0 OR prop1:(",
       CreateQuery("val1", /*property_restrict=*/"prop2"), ") OR prop2:val2");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3252,49 +2700,19 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
 
 TEST_F(QueryVisitorTest, UnsupportedFunctionReturnsInvalidArgument) {
   std::string query = "unsupportedFunction()";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest, SearchFunctionTooFewArgumentsReturnsInvalidArgument) {
   std::string query = "search()";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest, SearchFunctionTooManyArgumentsReturnsInvalidArgument) {
   std::string query = R"(search("foo", createList("subject"), "bar"))";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -3302,31 +2720,12 @@ TEST_F(QueryVisitorTest,
        SearchFunctionWrongFirstArgumentTypeReturnsInvalidArgument) {
   // First argument type=TEXT, expected STRING.
   std::string query = "search(7)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // First argument type=string list, expected STRING.
   query = R"(search(createList("subject")))";
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(std::move(query_visitor_two).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -3334,48 +2733,19 @@ TEST_F(QueryVisitorTest,
        SearchFunctionWrongSecondArgumentTypeReturnsInvalidArgument) {
   // Second argument type=STRING, expected string list.
   std::string query = R"(search("foo", "bar"))";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Second argument type=TEXT, expected string list.
   query = R"(search("foo", 7))";
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(std::move(query_visitor_two).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest,
        SearchFunctionCreateListZeroPropertiesReturnsInvalidArgument) {
   std::string query = R"(search("foo", createList()))";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -3423,26 +2793,12 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   ICING_ASSERT_OK(editor.BufferTerm("bar"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  // *If* nested function calls were allowed, then this would simplify as:
-  // `search("search(\"foo\") bar")` -> `search("foo bar")` -> `foo bar`
-  // But nested function calls are disallowed. So this is rejected.
   std::string level_one_query = R"(search("foo", createList("prop1")) bar)";
   std::string level_two_query =
       absl_ports::StrCat(R"(search(")", EscapeString(level_one_query),
                          R"(", createList("prop1")))");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(level_two_query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_two_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
-
+                             ProcessQuery(level_two_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3457,17 +2813,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   std::string level_three_query =
       absl_ports::StrCat(R"(search(")", EscapeString(level_two_query),
                          R"(", createList("prop1")))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(level_three_query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_three_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_three_query));
 
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
@@ -3483,18 +2829,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   std::string level_four_query =
       absl_ports::StrCat(R"(search(")", EscapeString(level_three_query),
                          R"(", createList("prop1")))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(level_four_query));
-  QueryVisitor query_visitor_three(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_four_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_three);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_three).ConsumeResults());
-
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_four_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3606,19 +2941,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   // But nested function calls are disallowed. So this is rejected.
   std::string level_one_query =
       R"(search("foo", createList("prop2", "prop5", "prop1", "prop3", "prop0", "prop6", "prop4", "prop7")))";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(level_one_query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_one_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
-
+                             ProcessQuery(level_one_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3641,18 +2965,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   std::string level_two_query = absl_ports::StrCat(
       R"(search(")", EscapeString(level_one_query),
       R"(", createList("prop6", "prop0", "prop4", "prop2")))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(level_two_query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_two_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
-
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_two_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3669,18 +2982,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   std::string level_three_query =
       absl_ports::StrCat(R"(search(")", EscapeString(level_two_query),
                          R"(", createList("prop0", "prop6")))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(level_three_query));
-  QueryVisitor query_visitor_three(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_three_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_three);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_three).ConsumeResults());
-
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_three_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3792,19 +3094,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
   // But nested function calls are disallowed. So this is rejected.
   std::string level_one_query =
       R"(search("foo", createList("prop0", "prop6")))";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(level_one_query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_one_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
-
+                             ProcessQuery(level_one_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3819,18 +3110,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
   std::string level_two_query = absl_ports::StrCat(
       R"(search(")", EscapeString(level_one_query),
       R"(", createList("prop6", "prop0", "prop4", "prop2")))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(level_two_query));
-  QueryVisitor query_visitor_two(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_two_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_two);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_two).ConsumeResults());
-
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_two_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3846,18 +3126,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       absl_ports::StrCat(R"(search(")", EscapeString(level_two_query),
                          R"(", createList("prop2", "prop5", "prop1", "prop3",)",
                          R"( "prop0", "prop6", "prop4", "prop7")))");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(level_three_query));
-  QueryVisitor query_visitor_three(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), level_three_query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor_three);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor_three).ConsumeResults());
-
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_three_query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
@@ -3870,20 +3139,231 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
               ElementsAre(docid6, docid0));
 }
 
+TEST_P(QueryVisitorTest, TokenizeFunctionHandlesPunctuation) {
+  PropertyConfigProto prop =
+      PropertyConfigBuilder()
+          .SetName("prop0")
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("type").AddProperty(prop))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Section ids are assigned alphabetically.
+  SectionId prop0_id = 0;
+
+  NamespaceId ns_id = 0;
+  DocumentProto doc =
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  Index::Editor editor =
+      index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId docid1,
+      document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
+  editor = index_->Edit(docid1, prop0_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId docid2,
+      document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
+  editor = index_->Edit(docid2, prop0_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+
+  std::string query = R"(tokenize("foo."))";
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("foo"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid2, docid0));
+
+  query = R"(tokenize("bar, foo"))";
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid0));
+
+  query = R"(tokenize("\"bar, \"foo\""))";
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid0));
+
+  query = R"(tokenize("bar foo( "))";
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid0));
+
+  query = R"(tokenize("bar ) foo"))";
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid0));
+}
+
+TEST_P(QueryVisitorTest, TokenizeFunctionPropertyRestricts) {
+  PropertyConfigProto prop =
+      PropertyConfigBuilder()
+          .SetName("prop0")
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("type")
+                  .AddProperty(prop)
+                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
+                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Section ids are assigned alphabetically.
+  SectionId prop0_id = 0;
+  SectionId prop1_id = 1;
+  SectionId prop2_id = 2;
+
+  NamespaceId ns_id = 0;
+  DocumentProto doc =
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  Index::Editor editor =
+      index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId docid1,
+      document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
+  editor = index_->Edit(docid1, prop0_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId docid2,
+      document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
+  editor = index_->Edit(docid2, prop0_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+
+  std::string query = R"(prop0:tokenize("bar, foo"))";
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms),
+              UnorderedElementsAre("prop0"));
+  EXPECT_THAT(query_results.query_terms["prop0"],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid0));
+
+  std::string level_one_query = R"(tokenize("bar, foo"))";
+  std::string level_two_query =
+      absl_ports::StrCat(R"(search(")", EscapeString(level_one_query),
+                         R"(", createList("prop0", "prop1")))");
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(level_two_query));
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kListFilterQueryLanguageFeature, kTokenizeFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms),
+              UnorderedElementsAre("prop0", "prop1"));
+  EXPECT_THAT(query_results.query_terms["prop0"],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(query_results.query_terms["prop1"],
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo", "bar"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(docid1, docid0));
+}
+
+TEST_P(QueryVisitorTest, TokenizeFunctionNoArgsReturnsInvalidArgument) {
+  std::string query = R"(tokenize())";
+  EXPECT_THAT(ProcessQuery(query),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, TokenizeFunctionTooManyArgsReturnsInvalidArgument) {
+  std::string query = R"(tokenize("foo", createList("subject"), "bar"))";
+  EXPECT_THAT(ProcessQuery(query),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  query = R"(tokenize("foo", createList("subject"), "bar", 8))";
+  EXPECT_THAT(ProcessQuery(query),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest,
+       TokenizeFunctionFirstArgNotStringReturnsInvalidArgument) {
+  std::string query = R"(tokenize(7))";
+  EXPECT_THAT(ProcessQuery(query),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  query = R"(tokenize(createList("foo")))";
+  EXPECT_THAT(ProcessQuery(query),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
 TEST_F(QueryVisitorTest,
        PropertyDefinedFunctionWithNoArgumentReturnsInvalidArgument) {
   std::string query = "propertyDefined()";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -3891,17 +3371,7 @@ TEST_F(
     QueryVisitorTest,
     PropertyDefinedFunctionWithMoreThanOneTextArgumentReturnsInvalidArgument) {
   std::string query = "propertyDefined(\"foo\", \"bar\")";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -3909,34 +3379,14 @@ TEST_F(QueryVisitorTest,
        PropertyDefinedFunctionWithTextArgumentReturnsInvalidArgument) {
   // The argument type is TEXT, not STRING here.
   std::string query = "propertyDefined(foo)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest,
        PropertyDefinedFunctionWithNonTextArgumentReturnsInvalidArgument) {
   std::string query = "propertyDefined(1 < 2)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -3982,21 +3432,9 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo propertyDefined(\"url\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
-
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               UnorderedElementsAre(kDocumentId0));
 }
@@ -4037,21 +3475,9 @@ TEST_P(QueryVisitorTest,
 
   // Attempt to query a non-existent property.
   std::string query = CreateQuery("propertyDefined(\"nonexistentproperty\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
-
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
 }
 
@@ -4090,21 +3516,9 @@ TEST_P(QueryVisitorTest,
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo AND NOT propertyDefined(\"url\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kListFilterQueryLanguageFeature));
-
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               UnorderedElementsAre(kDocumentId1));
 }
@@ -4112,34 +3526,14 @@ TEST_P(QueryVisitorTest,
 TEST_F(QueryVisitorTest,
        HasPropertyFunctionWithNoArgumentReturnsInvalidArgument) {
   std::string query = "hasProperty()";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest,
        HasPropertyFunctionWithMoreThanOneStringArgumentReturnsInvalidArgument) {
   std::string query = "hasProperty(\"foo\", \"bar\")";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -4147,34 +3541,14 @@ TEST_F(QueryVisitorTest,
        HasPropertyFunctionWithTextArgumentReturnsInvalidArgument) {
   // The argument type is TEXT, not STRING here.
   std::string query = "hasProperty(foo)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest,
        HasPropertyFunctionWithNonStringArgumentReturnsInvalidArgument) {
   std::string query = "hasProperty(1 < 2)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+  EXPECT_THAT(ProcessQuery(query),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -4225,18 +3599,7 @@ TEST_P(QueryVisitorTest, HasPropertyFunctionReturnsMatchingDocuments) {
 
   // Test that `foo hasProperty("price")` matches document 0 only.
   std::string query = CreateQuery("foo hasProperty(\"price\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor1(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor1);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor1).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kHasPropertyFunctionFeature,
                                    kListFilterQueryLanguageFeature));
@@ -4246,17 +3609,7 @@ TEST_P(QueryVisitorTest, HasPropertyFunctionReturnsMatchingDocuments) {
   // Test that `bar OR NOT hasProperty("price")` matches document 1 and
   // document 2.
   query = CreateQuery("bar OR NOT hasProperty(\"price\")");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor2(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor2);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor2).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kHasPropertyFunctionFeature,
                                    kListFilterQueryLanguageFeature));
@@ -4302,18 +3655,7 @@ TEST_P(QueryVisitorTest,
 
   // Attempt to query a non-existent property.
   std::string query = CreateQuery("hasProperty(\"nonexistentproperty\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), embedding_index_.get(),
-      document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), query, /*embedding_query_vectors=*/nullptr,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      EMBEDDING_METRIC_UNKNOWN,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results, ProcessQuery(query));
   EXPECT_THAT(query_results.features_in_use,
               UnorderedElementsAre(kHasPropertyFunctionFeature,
                                    kListFilterQueryLanguageFeature));
@@ -4471,6 +3813,56 @@ TEST_F(QueryVisitorTest,
   root_node->Accept(&query_visitor2);
   EXPECT_THAT(std::move(query_visitor2).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(QueryVisitorTest,
+       SemanticSearchFunctionWithInvalidRangeReturnsInvalidArgument) {
+  // Create two embedding queries.
+  google::protobuf::RepeatedPtrField<PropertyProto::VectorProto> embedding_query_vectors;
+  *embedding_query_vectors.Add() = CreateVector("my_model1", {0.1, 0.2, 0.3});
+  *embedding_query_vectors.Add() = CreateVector("my_model2", {-1, 2, -3, 4});
+
+  // The expression is invalid, since low > high.
+  std::string query = "semanticSearch(getSearchSpecEmbedding(0), 10, -10)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), embedding_index_.get(),
+      document_store_.get(), schema_store_.get(), normalizer_.get(),
+      tokenizer_.get(), query, &embedding_query_vectors,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      EMBEDDING_METRIC_COSINE,
+      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Floating point values are also checked.
+  query = "semanticSearch(getSearchSpecEmbedding(0), 10.2, 10.1)";
+  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
+  QueryVisitor query_visitor2(
+      index_.get(), numeric_index_.get(), embedding_index_.get(),
+      document_store_.get(), schema_store_.get(), normalizer_.get(),
+      tokenizer_.get(), query, &embedding_query_vectors,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      EMBEDDING_METRIC_COSINE,
+      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor2);
+  EXPECT_THAT(std::move(query_visitor2).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // low == high is allowed.
+  query = "semanticSearch(getSearchSpecEmbedding(0), 10.1, 10.1)";
+  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
+  QueryVisitor query_visitor3(
+      index_.get(), numeric_index_.get(), embedding_index_.get(),
+      document_store_.get(), schema_store_.get(), normalizer_.get(),
+      tokenizer_.get(), query, &embedding_query_vectors,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      EMBEDDING_METRIC_COSINE,
+      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor3);
+  EXPECT_THAT(std::move(query_visitor3).ConsumeResults(), IsOk());
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
