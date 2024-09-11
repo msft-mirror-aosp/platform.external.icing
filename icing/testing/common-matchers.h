@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -584,6 +585,18 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   }
   return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
                             actual_copy, result_listener);
+}
+
+MATCHER_P(EqualsHit, expected_hit, "") {
+  const Hit& actual = arg;
+  return actual.value() == expected_hit.value() &&
+         actual.flags() == expected_hit.flags() &&
+         actual.term_frequency() == expected_hit.term_frequency();
+}
+
+MATCHER(EqualsHit, "") {
+  return ExplainMatchResult(EqualsHit(std::get<1>(arg)), std::get<0>(arg),
+                            result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status

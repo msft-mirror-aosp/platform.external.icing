@@ -130,8 +130,9 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithIndexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -150,8 +151,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithUnindexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -183,8 +185,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest, NoMatchWithUndefinedProperty) {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        CorrectlySetsSectionIdMasksAndPopulatesTermMatchInfo) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   // Arbitrary section ids for the documents in the DocHitInfoIterators.
   // Created to test correct section_id_mask behavior.
@@ -245,10 +248,12 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        FindPropertyDefinedByMultipleTypes) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_));
+  DocumentId document_id2 = put_result2.new_document_id;
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
 

@@ -308,13 +308,13 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       use_persistent_hash_map_(use_persistent_hash_map),
       compression_level_(compression_level) {}
 
-libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
+libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
     PutDocumentStatsProto* put_document_stats) {
   return Put(DocumentProto(document), num_tokens, put_document_stats);
 }
 
-libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
+libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
     DocumentProto&& document, int32_t num_tokens,
     PutDocumentStatsProto* put_document_stats) {
   document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
@@ -1091,8 +1091,9 @@ bool DocumentStore::HeaderExists() {
   return file_size != 0 && file_size != Filesystem::kBadFileSize;
 }
 
-libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
-    DocumentProto&& document, PutDocumentStatsProto* put_document_stats) {
+libtextclassifier3::StatusOr<DocumentStore::PutResult>
+DocumentStore::InternalPut(DocumentProto&& document,
+                           PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
@@ -1143,6 +1144,8 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
         "Exceeded maximum number of documents. Try calling Optimize to reclaim "
         "some space.");
   }
+  PutResult put_result;
+  put_result.new_document_id = new_document_id;
 
   // Update namespace maps
   ICING_ASSIGN_OR_RETURN(
@@ -1180,6 +1183,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
                                           expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
+    put_result.was_replacement = true;
     // The old document exists, copy over the usage scores and delete the old
     // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
@@ -1203,7 +1207,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
         put_timer->GetElapsedMilliseconds());
   }
 
-  return new_document_id;
+  return put_result;
 }
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
@@ -1689,6 +1693,9 @@ libtextclassifier3::Status DocumentStore::PersistToDisk(
     // only persist the document log.
     return libtextclassifier3::Status::OK;
   }
+  if (persist_type == PersistType::RECOVERY_PROOF) {
+    return UpdateChecksum().status();
+  }
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
@@ -2030,7 +2037,7 @@ DocumentStore::OptimizeInto(
     RemoveAliveBlobHandles(document_to_keep, type_blob_property_map,
                            result.dead_blob_handles);
 
-    libtextclassifier3::StatusOr<DocumentId> new_document_id_or;
+    libtextclassifier3::StatusOr<PutResult> put_result_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
       auto tokenized_document_or = TokenizedDocument::Create(
           schema_store_, lang_segmenter, document_to_keep);
@@ -2042,22 +2049,21 @@ DocumentStore::OptimizeInto(
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      new_document_id_or = new_doc_store->Put(
+      put_result_or = new_doc_store->Put(
           std::move(document_to_keep), tokenized_document.num_string_tokens());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      new_document_id_or =
-          new_doc_store->InternalPut(std::move(document_to_keep));
+      put_result_or = new_doc_store->InternalPut(std::move(document_to_keep));
     }
-    if (!new_document_id_or.ok()) {
-      ICING_LOG(ERROR) << new_document_id_or.status().error_message()
+    if (!put_result_or.ok()) {
+      ICING_LOG(ERROR) << put_result_or.status().error_message()
                        << "Failed to write into new document store";
-      return new_document_id_or.status();
+      return put_result_or.status();
     }
 
-    result.document_id_old_to_new[document_id] =
-        new_document_id_or.ValueOrDie();
+    DocumentId new_document_id = put_result_or.ValueOrDie().new_document_id;
+    result.document_id_old_to_new[document_id] = new_document_id;
 
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
@@ -2066,7 +2072,6 @@ DocumentStore::OptimizeInto(
       // If the usage scores for this document are the default (no usage),
       // then don't bother setting it. No need to possibly allocate storage if
       // there's nothing interesting to store.
-      DocumentId new_document_id = new_document_id_or.ValueOrDie();
       ICING_RETURN_IF_ERROR(
           new_doc_store->SetUsageScores(new_document_id, usage_scores));
     }

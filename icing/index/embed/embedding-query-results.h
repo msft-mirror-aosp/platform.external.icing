@@ -38,13 +38,12 @@ struct EmbeddingQueryResults {
                               EmbeddingQueryScoreMap>>
       result_scores;
 
-  // Returns the matched scores for the given query_vector_index, metric_type,
-  // and doc_id. Returns nullptr if (query_vector_index, metric_type) does not
-  // exist in the result_scores map.
-  const std::vector<double>* GetMatchedScoresForDocument(
+  // Get the score map for the given query_vector_index and metric_type. Returns
+  // nullptr if (query_vector_index, metric_type) does not exist in the
+  // result_scores map.
+  const EmbeddingQueryScoreMap* GetScoreMap(
       int query_vector_index,
-      SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
-      DocumentId doc_id) const {
+      SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) const {
     // Check if a mapping exists for the query_vector_index
     auto outer_it = result_scores.find(query_vector_index);
     if (outer_it == result_scores.end()) {
@@ -55,11 +54,24 @@ struct EmbeddingQueryResults {
     if (inner_it == outer_it->second.end()) {
       return nullptr;
     }
-    const EmbeddingQueryScoreMap& score_map = inner_it->second;
+    return &inner_it->second;
+  }
 
+  // Returns the matched scores for the given query_vector_index, metric_type,
+  // and doc_id. Returns nullptr if (query_vector_index, metric_type, doc_id)
+  // does not exist in the result_scores map.
+  const std::vector<double>* GetMatchedScoresForDocument(
+      int query_vector_index,
+      SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
+      DocumentId doc_id) const {
+    const EmbeddingQueryScoreMap* score_map =
+        GetScoreMap(query_vector_index, metric_type);
+    if (score_map == nullptr) {
+      return nullptr;
+    }
     // Check if the doc_id exists in the score_map
-    auto scores_it = score_map.find(doc_id);
-    if (scores_it == score_map.end()) {
+    auto scores_it = score_map->find(doc_id);
+    if (scores_it == score_map->end()) {
       return nullptr;
     }
     return &scores_it->second;

@@ -14,11 +14,9 @@
 
 #include "icing/index/main/posting-list-hit-serializer.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <iterator>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -32,30 +30,20 @@
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/hit-test-utils.h"
+#include "icing/util/math-util.h"
 
 using testing::ElementsAre;
-using testing::ElementsAreArray;
 using testing::Eq;
 using testing::Gt;
 using testing::IsEmpty;
 using testing::IsFalse;
 using testing::IsTrue;
 using testing::Le;
-using testing::Lt;
 
 namespace icing {
 namespace lib {
 
 namespace {
-
-struct HitElt {
-  HitElt() = default;
-  explicit HitElt(const Hit &hit_in) : hit(hit_in) {}
-
-  static Hit get_hit(const HitElt &hit_elt) { return hit_elt.hit; }
-
-  Hit hit;
-};
 
 TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   PostingListHitSerializer serializer;
@@ -78,7 +66,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   int expected_size =
       sizeof(Hit::Value) + sizeof(Hit::Flags) + sizeof(Hit::TermFrequency);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
-  EXPECT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(ElementsAre(hit0)));
+  EXPECT_THAT(serializer.GetHits(&pl_used),
+              IsOkAndHolds(ElementsAre(EqualsHit(hit0))));
 
   Hit hit1(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
@@ -95,7 +84,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   expected_size += delta_len;
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit1), EqualsHit(hit0))));
 
   Hit hit2(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/56,
            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
@@ -113,7 +102,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   expected_size += delta_len + sizeof(Hit::Flags) + sizeof(Hit::TermFrequency);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   Hit hit3(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
@@ -132,7 +122,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   expected_size += delta_len;
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                       EqualsHit(hit1), EqualsHit(hit0))));
 }
 
 TEST(PostingListHitSerializerTest,
@@ -168,7 +159,8 @@ TEST(PostingListHitSerializerTest,
                       sizeof(Hit::TermFrequency) + 2 + 3;
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   // Add one more hit to transition NOT_FULL -> ALMOST_FULL
   Hit hit3 =
@@ -189,7 +181,8 @@ TEST(PostingListHitSerializerTest,
   expected_size = pl_size - sizeof(Hit);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                       EqualsHit(hit1), EqualsHit(hit0))));
 
   // Add one more hit to transition ALMOST_FULL -> ALMOST_FULL
   Hit hit4 = CreateHit(hit3, /*desired_byte_length=*/2);
@@ -201,7 +194,9 @@ TEST(PostingListHitSerializerTest,
   // hits and the posting list will remain in ALMOST_FULL.
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit4, hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   // Add one more hit to transition ALMOST_FULL -> FULL
   Hit hit5 = CreateHit(hit4, /*desired_byte_length=*/2);
@@ -212,7 +207,9 @@ TEST(PostingListHitSerializerTest,
   // making the posting list FULL.
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(pl_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit5, hit4, hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit5), EqualsHit(hit4),
+                                       EqualsHit(hit3), EqualsHit(hit2),
+                                       EqualsHit(hit1), EqualsHit(hit0))));
 
   // The posting list is FULL. Adding another hit should fail.
   Hit hit6 = CreateHit(hit5, /*desired_byte_length=*/1);
@@ -247,7 +244,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
   int expected_size = sizeof(Hit::Value) + 3 + 3;
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   // Add one more hit to transition NOT_FULL -> ALMOST_FULL
   Hit hit3 = CreateHit(hit2, /*desired_byte_length=*/3);
@@ -264,7 +262,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
   expected_size = pl_size - sizeof(Hit);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                       EqualsHit(hit1), EqualsHit(hit0))));
 
   // Add one more hit to transition ALMOST_FULL -> ALMOST_FULL
   Hit hit4 = CreateHit(hit3, /*desired_byte_length=*/2);
@@ -276,7 +275,9 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
   // hits and the posting list will remain in ALMOST_FULL.
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit4, hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   // Add one more hit to transition ALMOST_FULL -> FULL
   Hit hit5 = CreateHit(hit4, /*desired_byte_length=*/2);
@@ -287,7 +288,9 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
   // making the posting list FULL.
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(pl_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit5, hit4, hit3, hit2, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit5), EqualsHit(hit4),
+                                       EqualsHit(hit3), EqualsHit(hit2),
+                                       EqualsHit(hit1), EqualsHit(hit0))));
 
   // The posting list is FULL. Adding another hit should fail.
   Hit hit6 = CreateHit(hit5, /*desired_byte_length=*/1);
@@ -342,7 +345,8 @@ TEST(PostingListHitSerializerTest, PrependHitsWithSameValue) {
 
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit2, hit3, hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit2), EqualsHit(hit3),
+                                       EqualsHit(hit1), EqualsHit(hit0))));
 }
 
 TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
@@ -365,7 +369,8 @@ TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
   // Size = sizeof(uncompressed hit0)
   int expected_size = sizeof(Hit);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Le(expected_size));
-  EXPECT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(ElementsAre(hit0)));
+  EXPECT_THAT(serializer.GetHits(&pl_used),
+              IsOkAndHolds(ElementsAre(EqualsHit(hit0))));
 
   // Add the smallest hit possible - no term_frequency, non-prefix hit and a
   // delta of 0b10. PL should shift to FULL state.
@@ -377,7 +382,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
   expected_size += sizeof(Hit);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Le(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit1, hit0)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit1), EqualsHit(hit0))));
 
   // Try to add the smallest hit possible. Should fail
   Hit hit2(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/0,
@@ -387,292 +392,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Le(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAre(hit1, hit0)));
-}
-
-TEST(PostingListHitSerializerTest,
-     PostingListPrependHitArrayMinSizePostingList) {
-  PostingListHitSerializer serializer;
-
-  // Min Size = 12
-  int pl_size = serializer.GetMinPostingListSize();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-
-  std::vector<HitElt> hits_in;
-  hits_in.emplace_back(Hit(/*section_id=*/1, /*document_id=*/0,
-                           Hit::kDefaultTermFrequency,
-                           /*is_in_prefix_section=*/false,
-                           /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  std::reverse(hits_in.begin(), hits_in.end());
-
-  // Add five hits. The PL is in the empty state and an empty min size PL can
-  // only fit two hits. So PrependHitArray should fail.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_can_prepend,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), /*keep_prepended=*/false)));
-  EXPECT_THAT(num_can_prepend, Eq(2));
-
-  int can_fit_hits = num_can_prepend;
-  // The PL has room for 2 hits. We should be able to add them without any
-  // problem, transitioning the PL from EMPTY -> ALMOST_FULL -> FULL
-  const HitElt *hits_in_ptr = hits_in.data() + (hits_in.size() - 2);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_can_prepend,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, hits_in_ptr, can_fit_hits, /*keep_prepended=*/false)));
-  EXPECT_THAT(num_can_prepend, Eq(can_fit_hits));
-  EXPECT_THAT(pl_size, Eq(serializer.GetBytesUsed(&pl_used)));
-  std::deque<Hit> hits_pushed;
-  std::transform(hits_in.rbegin(),
-                 hits_in.rend() - hits_in.size() + can_fit_hits,
-                 std::front_inserter(hits_pushed), HitElt::get_hit);
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
-}
-
-TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
-  PostingListHitSerializer serializer;
-
-  // Size = 36
-  int pl_size = 3 * serializer.GetMinPostingListSize();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-
-  std::vector<HitElt> hits_in;
-  hits_in.emplace_back(Hit(/*section_id=*/1, /*document_id=*/0,
-                           Hit::kDefaultTermFrequency,
-                           /*is_in_prefix_section=*/false,
-                           /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  std::reverse(hits_in.begin(), hits_in.end());
-  // The last hit is uncompressed and the four before it should only take one
-  // byte. Total use = 8 bytes.
-  // ----------------------
-  // 35     delta(Hit #0)
-  // 34     delta(Hit #1)
-  // 33     delta(Hit #2)
-  // 32     delta(Hit #3)
-  // 31-28  Hit #4
-  // 27-12  <unused>
-  // 11-6   kSpecialHit
-  // 5-0    Offset=28
-  // ----------------------
-  int byte_size = sizeof(Hit::Value) + hits_in.size() - 1;
-
-  // Add five hits. The PL is in the empty state and should be able to fit all
-  // five hits without issue, transitioning the PL from EMPTY -> NOT_FULL.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), /*keep_prepended=*/false)));
-  EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
-  EXPECT_THAT(byte_size, Eq(serializer.GetBytesUsed(&pl_used)));
-  std::deque<Hit> hits_pushed;
-  std::transform(hits_in.rbegin(), hits_in.rend(),
-                 std::front_inserter(hits_pushed), HitElt::get_hit);
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
-
-  Hit first_hit = CreateHit(hits_in.begin()->hit, /*desired_byte_length=*/1);
-  hits_in.clear();
-  hits_in.emplace_back(first_hit);
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/2));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/2));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/3));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/2));
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/3));
-  std::reverse(hits_in.begin(), hits_in.end());
-  // Size increased by the deltas of these hits (1+2+1+2+3+2+3) = 14 bytes
-  // ----------------------
-  // 35     delta(Hit #0)
-  // 34     delta(Hit #1)
-  // 33     delta(Hit #2)
-  // 32     delta(Hit #3)
-  // 31     delta(Hit #4)
-  // 30-29  delta(Hit #5)
-  // 28     delta(Hit #6)
-  // 27-26  delta(Hit #7)
-  // 25-23  delta(Hit #8)
-  // 22-21  delta(Hit #9)
-  // 20-18  delta(Hit #10)
-  // 17-14  Hit #11
-  // 13-12  <unused>
-  // 11-6   kSpecialHit
-  // 5-0    Offset=14
-  // ----------------------
-  byte_size += 14;
-
-  // Add these 7 hits. The PL is currently in the NOT_FULL state and should
-  // remain in the NOT_FULL state.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), /*keep_prepended=*/false)));
-  EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
-  EXPECT_THAT(byte_size, Eq(serializer.GetBytesUsed(&pl_used)));
-  // All hits from hits_in were added.
-  std::transform(hits_in.rbegin(), hits_in.rend(),
-                 std::front_inserter(hits_pushed), HitElt::get_hit);
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
-
-  first_hit = CreateHit(hits_in.begin()->hit, /*desired_byte_length=*/3);
-  hits_in.clear();
-  hits_in.emplace_back(first_hit);
-  // ----------------------
-  // 35     delta(Hit #0)
-  // 34     delta(Hit #1)
-  // 33     delta(Hit #2)
-  // 32     delta(Hit #3)
-  // 31     delta(Hit #4)
-  // 30-29  delta(Hit #5)
-  // 28     delta(Hit #6)
-  // 27-26  delta(Hit #7)
-  // 25-23  delta(Hit #8)
-  // 22-21  delta(Hit #9)
-  // 20-18  delta(Hit #10)
-  // 17-15  delta(Hit #11)
-  // 14-12  <unused>
-  // 11-6   Hit #12
-  // 5-0    kSpecialHit
-  // ----------------------
-  byte_size = 30;  // 36 - 6
-
-  // Add this 1 hit. The PL is currently in the NOT_FULL state and should
-  // transition to the ALMOST_FULL state - even though there is still some
-  // unused space. This is because the unused space (3 bytes) is less than
-  // the size of a uncompressed Hit.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), /*keep_prepended=*/false)));
-  EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
-  EXPECT_THAT(byte_size, Eq(serializer.GetBytesUsed(&pl_used)));
-  // All hits from hits_in were added.
-  std::transform(hits_in.rbegin(), hits_in.rend(),
-                 std::front_inserter(hits_pushed), HitElt::get_hit);
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
-
-  first_hit = CreateHit(hits_in.begin()->hit, /*desired_byte_length=*/1);
-  hits_in.clear();
-  hits_in.emplace_back(first_hit);
-  hits_in.emplace_back(
-      CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/3));
-  std::reverse(hits_in.begin(), hits_in.end());
-  // ----------------------
-  // 35     delta(Hit #0)
-  // 34     delta(Hit #1)
-  // 33     delta(Hit #2)
-  // 32     delta(Hit #3)
-  // 31     delta(Hit #4)
-  // 30-29  delta(Hit #5)
-  // 28     delta(Hit #6)
-  // 27-26  delta(Hit #7)
-  // 25-23  delta(Hit #8)
-  // 22-21  delta(Hit #9)
-  // 20-18  delta(Hit #10)
-  // 17-15  delta(Hit #11)
-  // 14     delta(Hit #12)
-  // 13-12  <unused>
-  // 11-6   Hit #13
-  // 5-0    Hit #14
-  // ----------------------
-
-  // Add these 2 hits.
-  // - The PL is currently in the ALMOST_FULL state. Adding the first hit should
-  //   keep the PL in ALMOST_FULL because the delta between
-  //   Hit #13 and Hit #14 (1 byte) can fit in the unused area (3 bytes).
-  // - Adding the second hit should transition to the FULL state because the
-  //   delta between Hit #14 and Hit #15 (3 bytes) is larger than the remaining
-  //   unused area (2 byte).
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), /*keep_prepended=*/false)));
-  EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
-  EXPECT_THAT(pl_size, Eq(serializer.GetBytesUsed(&pl_used)));
-  // All hits from hits_in were added.
-  std::transform(hits_in.rbegin(), hits_in.rend(),
-                 std::front_inserter(hits_pushed), HitElt::get_hit);
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
-}
-
-TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
-  PostingListHitSerializer serializer;
-
-  static constexpr int kNumHits = 128;
-  static constexpr int kDeltaSize = 1;
-  static constexpr size_t kHitsSize =
-      ((kNumHits - 2) * kDeltaSize + (2 * sizeof(Hit))) / sizeof(Hit) *
-      sizeof(Hit);
-
-  // Create an array with one too many hits
-  std::vector<Hit> hits_in_too_many =
-      CreateHits(kNumHits + 1, /*desired_byte_length=*/1);
-  std::vector<HitElt> hit_elts_in_too_many;
-  for (const Hit &hit : hits_in_too_many) {
-    hit_elts_in_too_many.emplace_back(hit);
-  }
-  // Reverse so that hits are inserted in descending order
-  std::reverse(hit_elts_in_too_many.begin(), hit_elts_in_too_many.end());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, serializer.GetMinPostingListSize()));
-  // PrependHitArray should fail because hit_elts_in_too_many is far too large
-  // for the minimum size pl.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hit_elts_in_too_many[0], hit_elts_in_too_many.size(),
-          /*keep_prepended=*/false)));
-  ASSERT_THAT(num_could_fit, Eq(2));
-  ASSERT_THAT(num_could_fit, Lt(hit_elts_in_too_many.size()));
-  ASSERT_THAT(serializer.GetBytesUsed(&pl_used), Eq(0));
-  ASSERT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(IsEmpty()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(&serializer, kHitsSize));
-  // PrependHitArray should fail because hit_elts_in_too_many is one hit too
-  // large for this pl.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hit_elts_in_too_many[0], hit_elts_in_too_many.size(),
-          /*keep_prepended=*/false)));
-  ASSERT_THAT(num_could_fit, Eq(hit_elts_in_too_many.size() - 1));
-  ASSERT_THAT(serializer.GetBytesUsed(&pl_used), Eq(0));
-  ASSERT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(IsEmpty()));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit1), EqualsHit(hit0))));
 }
 
 TEST(PostingListHitSerializerTest,
@@ -771,11 +491,23 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForNotFullPL) {
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
   // Create and add some hits to make pl_used NOT_FULL
-  std::vector<Hit> hits_in =
-      CreateHits(/*num_hits=*/7, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits_in) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/1);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/1);
+  Hit hit5 = CreateHit(/*last_hit=*/hit4, /*desired_byte_length=*/1);
+  Hit hit6 = CreateHit(/*last_hit=*/hit5, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit4));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit5));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit6));
+
   // ----------------------
   // 23     delta(Hit #0)
   // 22     delta(Hit #1)
@@ -792,9 +524,11 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForNotFullPL) {
 
   // Check that all hits have been inserted
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
-  std::deque<Hit> hits_pushed(hits_in.rbegin(), hits_in.rend());
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
+  EXPECT_THAT(
+      serializer.GetHits(&pl_used),
+      IsOkAndHolds(ElementsAre(
+          EqualsHit(hit6), EqualsHit(hit5), EqualsHit(hit4), EqualsHit(hit3),
+          EqualsHit(hit2), EqualsHit(hit1), EqualsHit(hit0))));
 
   // Get the min size to fit for the hits in pl_used. Moving the hits in pl_used
   // into a posting list with this min size should make it ALMOST_FULL, which we
@@ -813,30 +547,36 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForNotFullPL) {
   uint32_t min_size_to_fit = serializer.GetMinPostingListSizeToFit(&pl_used);
   EXPECT_THAT(min_size_to_fit, Eq(expected_min_size));
 
+  // min_size_to_fit is the smallest PL size that can fit all the hits, but
+  // PostingListUsed and serializer require that the PL size is a multiple of
+  // sizeof(Hit). So we need to round up.
+  uint32_t min_size_to_fit_rounded_up =
+      math_util::RoundUpTo(min_size_to_fit, static_cast<uint32_t>(sizeof(Hit)));
+
+  expected_min_size += sizeof(Hit);
+
   // Also check that this min size to fit posting list actually does fit all the
   // hits and can only hit one more hit in the ALMOST_FULL state.
   ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed min_size_to_fit_pl,
                              PostingListUsed::CreateFromUnitializedRegion(
-                                 &serializer, min_size_to_fit));
-  for (const Hit &hit : hits_in) {
-    ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit));
-  }
-
-  // Adding another hit to the min-size-to-fit posting list should succeed
-  Hit hit = CreateHit(hits_in.back(), /*desired_byte_length=*/1);
-  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit));
-  // Adding any other hits should fail with RESOURCE_EXHAUSTED error.
-  EXPECT_THAT(serializer.PrependHit(&min_size_to_fit_pl,
-                                    CreateHit(hit, /*desired_byte_length=*/1)),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+                                 &serializer, min_size_to_fit_rounded_up));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit4));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit5));
+  ICING_ASSERT_OK(serializer.PrependHit(&min_size_to_fit_pl, hit6));
 
   // Check that all hits have been inserted and the min-fit posting list is now
-  // FULL.
+  // ALMOST_FULL.
   EXPECT_THAT(serializer.GetBytesUsed(&min_size_to_fit_pl),
-              Eq(min_size_to_fit));
-  hits_pushed.emplace_front(hit);
-  EXPECT_THAT(serializer.GetHits(&min_size_to_fit_pl),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
+              Eq(min_size_to_fit_rounded_up - sizeof(Hit)));
+  EXPECT_THAT(
+      serializer.GetHits(&min_size_to_fit_pl),
+      IsOkAndHolds(ElementsAre(
+          EqualsHit(hit6), EqualsHit(hit5), EqualsHit(hit4), EqualsHit(hit3),
+          EqualsHit(hit2), EqualsHit(hit1), EqualsHit(hit0))));
 }
 
 TEST(PostingListHitSerializerTest, GetMinPostingListToFitForTwoHits) {
@@ -849,14 +589,12 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForTwoHits) {
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
 
   // Create and add 2 hits
-  Hit first_hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-                /*is_stemmed_hit=*/false);
-  std::vector<Hit> hits_in =
-      CreateHits(first_hit, /*num_hits=*/2, /*desired_byte_length=*/4);
-  for (const Hit &hit : hits_in) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/4);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit1));
   // ----------------------
   // 35     term-frequency(Hit #0)
   // 34     flags(Hit #0)
@@ -871,9 +609,8 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForTwoHits) {
   int bytes_used = 12;
 
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
-  std::deque<Hit> hits_pushed(hits_in.rbegin(), hits_in.rend());
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit1), EqualsHit(hit0))));
 
   // GetMinPostingListSizeToFit should return min posting list size.
   EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used),
@@ -890,11 +627,15 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForThreeSmallHits) {
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
   // Create and add 3 small hits that fit in the size range where we should be
   // checking for whether the PL has only 2 hits
-  std::vector<Hit> hits_in =
-      CreateHits(/*num_hits=*/3, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits_in) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit2));
+
   // ----------------------
   // 23     delta(Hit #0)
   // 22     delta(Hit #1)
@@ -906,9 +647,9 @@ TEST(PostingListHitSerializerTest, GetMinPostingListToFitForThreeSmallHits) {
   int bytes_used = 6;
 
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
-  std::deque<Hit> hits_pushed(hits_in.rbegin(), hits_in.rend());
   EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   // Get the min size to fit for the hits in pl_used. Moving the hits in pl_used
   // into a posting list with this min size should make it ALMOST_FULL, which we
@@ -938,11 +679,23 @@ TEST(PostingListHitSerializerTest,
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
   // Create and add some hits to make pl_used ALMOST_FULL
-  std::vector<Hit> hits_in =
-      CreateHits(/*num_hits=*/7, /*desired_byte_length=*/2);
-  for (const Hit &hit : hits_in) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/2);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/2);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/2);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/2);
+  Hit hit5 = CreateHit(/*last_hit=*/hit4, /*desired_byte_length=*/2);
+  Hit hit6 = CreateHit(/*last_hit=*/hit5, /*desired_byte_length=*/2);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit4));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit5));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit6));
+
   // ----------------------
   // 23-22     delta(Hit #0)
   // 21-20     delta(Hit #1)
@@ -956,25 +709,27 @@ TEST(PostingListHitSerializerTest,
   int bytes_used = 18;
 
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
-  std::deque<Hit> hits_pushed(hits_in.rbegin(), hits_in.rend());
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
+  EXPECT_THAT(
+      serializer.GetHits(&pl_used),
+      IsOkAndHolds(ElementsAre(
+          EqualsHit(hit6), EqualsHit(hit5), EqualsHit(hit4), EqualsHit(hit3),
+          EqualsHit(hit2), EqualsHit(hit1), EqualsHit(hit0))));
 
   // GetMinPostingListSizeToFit should return the same size as pl_used.
-  uint32_t min_size_to_fit = serializer.GetMinPostingListSizeToFit(&pl_used);
-  EXPECT_THAT(min_size_to_fit, Eq(pl_size));
+  EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used), Eq(pl_size));
 
   // Add another hit to make the posting list FULL
-  Hit hit = CreateHit(hits_in.back(), /*desired_byte_length=*/1);
-  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit));
+  Hit hit7 = CreateHit(/*last_hit=*/hit6, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit7));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(pl_size));
-  hits_pushed.emplace_front(hit);
-  EXPECT_THAT(serializer.GetHits(&pl_used),
-              IsOkAndHolds(ElementsAreArray(hits_pushed)));
+  EXPECT_THAT(
+      serializer.GetHits(&pl_used),
+      IsOkAndHolds(ElementsAre(
+          EqualsHit(hit7), EqualsHit(hit6), EqualsHit(hit5), EqualsHit(hit4),
+          EqualsHit(hit3), EqualsHit(hit2), EqualsHit(hit1), EqualsHit(hit0))));
 
   // GetMinPostingListSizeToFit should still be the same size as pl_used.
-  min_size_to_fit = serializer.GetMinPostingListSizeToFit(&pl_used);
-  EXPECT_THAT(min_size_to_fit, Eq(pl_size));
+  EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used), Eq(pl_size));
 }
 
 TEST(PostingListHitSerializerTest, MoveFrom) {
@@ -984,24 +739,49 @@ TEST(PostingListHitSerializerTest, MoveFrom) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits1 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits1) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/1);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit4));
+  EXPECT_THAT(serializer.GetHits(&pl_used1),
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits2 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/2);
-  for (const Hit &hit : hits2) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, hit));
-  }
+  Hit another_hit0(/*section_id=*/1, /*document_id=*/100,
+                   Hit::kDefaultTermFrequency,
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
+  Hit another_hit1 =
+      CreateHit(/*last_hit=*/another_hit0, /*desired_byte_length=*/2);
+  Hit another_hit2 =
+      CreateHit(/*last_hit=*/another_hit1, /*desired_byte_length=*/2);
+  Hit another_hit3 =
+      CreateHit(/*last_hit=*/another_hit2, /*desired_byte_length=*/2);
+  Hit another_hit4 =
+      CreateHit(/*last_hit=*/another_hit3, /*desired_byte_length=*/2);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit4));
 
   ICING_ASSERT_OK(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1));
   EXPECT_THAT(serializer.GetHits(&pl_used2),
-              IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
   EXPECT_THAT(serializer.GetHits(&pl_used1), IsOkAndHolds(IsEmpty()));
 }
 
@@ -1012,15 +792,25 @@ TEST(PostingListHitSerializerTest, MoveFromNullArgumentReturnsInvalidArgument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits = CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/1);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit4));
 
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used1, /*src=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(serializer.GetHits(&pl_used1),
-              IsOkAndHolds(ElementsAreArray(hits.rbegin(), hits.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 }
 
 TEST(PostingListHitSerializerTest,
@@ -1031,31 +821,54 @@ TEST(PostingListHitSerializerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits1 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits1) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/1);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits2 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/2);
-  for (const Hit &hit : hits2) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, hit));
-  }
+  Hit another_hit0(/*section_id=*/1, /*document_id=*/100,
+                   Hit::kDefaultTermFrequency,
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
+  Hit another_hit1 =
+      CreateHit(/*last_hit=*/another_hit0, /*desired_byte_length=*/2);
+  Hit another_hit2 =
+      CreateHit(/*last_hit=*/another_hit1, /*desired_byte_length=*/2);
+  Hit another_hit3 =
+      CreateHit(/*last_hit=*/another_hit2, /*desired_byte_length=*/2);
+  Hit another_hit4 =
+      CreateHit(/*last_hit=*/another_hit3, /*desired_byte_length=*/2);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit4));
 
   // Write invalid hits to the beginning of pl_used1 to make it invalid.
   Hit invalid_hit(Hit::kInvalidValue);
-  Hit *first_hit = reinterpret_cast<Hit *>(pl_used1.posting_list_buffer());
-  *first_hit = invalid_hit;
-  ++first_hit;
-  *first_hit = invalid_hit;
+  memcpy(pl_used1.posting_list_buffer(), &invalid_hit, sizeof(invalid_hit));
+  memcpy(pl_used1.posting_list_buffer() + sizeof(invalid_hit), &invalid_hit,
+         sizeof(invalid_hit));
+
+  // MoveFrom should return error, and pl_used2 should be unchanged.
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(serializer.GetHits(&pl_used2),
-              IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+  EXPECT_THAT(
+      serializer.GetHits(&pl_used2),
+      IsOkAndHolds(ElementsAre(EqualsHit(another_hit4), EqualsHit(another_hit3),
+                               EqualsHit(another_hit2), EqualsHit(another_hit1),
+                               EqualsHit(another_hit0))));
 }
 
 TEST(PostingListHitSerializerTest,
@@ -1066,31 +879,53 @@ TEST(PostingListHitSerializerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits1 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits1) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/1);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits2 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/2);
-  for (const Hit &hit : hits2) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, hit));
-  }
+  Hit another_hit0(/*section_id=*/1, /*document_id=*/100,
+                   Hit::kDefaultTermFrequency,
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
+  Hit another_hit1 =
+      CreateHit(/*last_hit=*/another_hit0, /*desired_byte_length=*/2);
+  Hit another_hit2 =
+      CreateHit(/*last_hit=*/another_hit1, /*desired_byte_length=*/2);
+  Hit another_hit3 =
+      CreateHit(/*last_hit=*/another_hit2, /*desired_byte_length=*/2);
+  Hit another_hit4 =
+      CreateHit(/*last_hit=*/another_hit3, /*desired_byte_length=*/2);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit4));
 
   // Write invalid hits to the beginning of pl_used2 to make it invalid.
   Hit invalid_hit(Hit::kInvalidValue);
-  Hit *first_hit = reinterpret_cast<Hit *>(pl_used2.posting_list_buffer());
-  *first_hit = invalid_hit;
-  ++first_hit;
-  *first_hit = invalid_hit;
+  memcpy(pl_used2.posting_list_buffer(), &invalid_hit, sizeof(invalid_hit));
+  memcpy(pl_used2.posting_list_buffer() + sizeof(invalid_hit), &invalid_hit,
+         sizeof(invalid_hit));
+
+  // MoveFrom should return error, and pl_used1 should be unchanged.
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(serializer.GetHits(&pl_used1),
-              IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
 }
 
 TEST(PostingListHitSerializerTest, MoveToPostingListTooSmall) {
@@ -1100,28 +935,37 @@ TEST(PostingListHitSerializerTest, MoveToPostingListTooSmall) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
-  std::vector<Hit> hits1 =
-      CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
-  for (const Hit &hit : hits1) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
-  }
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1 = CreateHit(/*last_hit=*/hit0, /*desired_byte_length=*/1);
+  Hit hit2 = CreateHit(/*last_hit=*/hit1, /*desired_byte_length=*/1);
+  Hit hit3 = CreateHit(/*last_hit=*/hit2, /*desired_byte_length=*/1);
+  Hit hit4 = CreateHit(/*last_hit=*/hit3, /*desired_byte_length=*/1);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit0));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit1));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit2));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit3));
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(
           &serializer, serializer.GetMinPostingListSize()));
-  std::vector<Hit> hits2 =
-      CreateHits(/*num_hits=*/1, /*desired_byte_length=*/2);
-  for (const Hit &hit : hits2) {
-    ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, hit));
-  }
+  Hit another_hit(/*section_id=*/1, /*document_id=*/100,
+                  Hit::kDefaultTermFrequency,
+                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                  /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used2, another_hit));
 
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(serializer.GetHits(&pl_used1),
-              IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
   EXPECT_THAT(serializer.GetHits(&pl_used2),
-              IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(another_hit))));
 }
 
 TEST(PostingListHitSerializerTest, PopHitsWithTermFrequenciesAndFlags) {
@@ -1165,7 +1009,8 @@ TEST(PostingListHitSerializerTest, PopHitsWithTermFrequenciesAndFlags) {
 
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Hit> hits_out,
                              serializer.GetHits(&pl_used));
-  EXPECT_THAT(hits_out, ElementsAre(hit3, hit2, hit1, hit0));
+  EXPECT_THAT(hits_out, ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                    EqualsHit(hit1), EqualsHit(hit0)));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
 
   // Now, pop the last hit. The posting list should contain the first three
@@ -1184,7 +1029,8 @@ TEST(PostingListHitSerializerTest, PopHitsWithTermFrequenciesAndFlags) {
   // ----------------------
   ICING_ASSERT_OK(serializer.PopFrontHits(&pl_used, 1));
   ICING_ASSERT_OK_AND_ASSIGN(hits_out, serializer.GetHits(&pl_used));
-  EXPECT_THAT(hits_out, ElementsAre(hit2, hit1, hit0));
+  EXPECT_THAT(hits_out,
+              ElementsAre(EqualsHit(hit2), EqualsHit(hit1), EqualsHit(hit0)));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
 }
 

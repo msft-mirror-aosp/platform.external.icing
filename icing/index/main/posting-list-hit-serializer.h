@@ -114,17 +114,6 @@ class PostingListHitSerializer : public PostingListSerializer {
   libtextclassifier3::Status PrependHit(PostingListUsed* posting_list_used,
                                         const Hit& hit) const;
 
-  // Prepend hits to the posting list. Hits should be sorted in descending order
-  // (as defined by the less than operator for Hit)
-  //
-  // Returns the number of hits that could be prepended to the posting list. If
-  // keep_prepended is true, whatever could be prepended is kept, otherwise the
-  // posting list is left in its original state.
-  template <class T, Hit (*GetHit)(const T&)>
-  libtextclassifier3::StatusOr<uint32_t> PrependHitArray(
-      PostingListUsed* posting_list_used, const T* array, uint32_t num_hits,
-      bool keep_prepended) const;
-
   // Retrieves the hits stored in the posting list.
   //
   // RETURNS:
@@ -363,33 +352,6 @@ class PostingListHitSerializer : public PostingListSerializer {
       const PostingListUsed* posting_list_used, Hit* hit,
       uint32_t* offset) const;
 };
-
-// Inlined functions. Implementation details below. Avert eyes!
-template <class T, Hit (*GetHit)(const T&)>
-libtextclassifier3::StatusOr<uint32_t>
-PostingListHitSerializer::PrependHitArray(PostingListUsed* posting_list_used,
-                                          const T* array, uint32_t num_hits,
-                                          bool keep_prepended) const {
-  if (!IsPostingListValid(posting_list_used)) {
-    return 0;
-  }
-
-  // Prepend hits working backwards from array[num_hits - 1].
-  uint32_t i;
-  for (i = 0; i < num_hits; ++i) {
-    if (!PrependHit(posting_list_used, GetHit(array[num_hits - i - 1])).ok()) {
-      break;
-    }
-  }
-  if (i != num_hits && !keep_prepended) {
-    // Didn't fit. Undo everything and check that we have the same offset as
-    // before. PopFrontHits guarantees that it will remove all 'i' hits so long
-    // as there are at least 'i' hits in the posting list, which we know there
-    // are.
-    ICING_RETURN_IF_ERROR(PopFrontHits(posting_list_used, /*num_hits=*/i));
-  }
-  return i;
-}
 
 }  // namespace lib
 }  // namespace icing

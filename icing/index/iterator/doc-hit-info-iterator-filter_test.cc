@@ -130,12 +130,16 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, EmptyOriginalIterator) {
 }
 
 TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(test_document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(test_document3_));
+  DocumentId document_id3 = put_result3.new_document_id;
+
   // Deletes test document 2
   ICING_ASSERT_OK(document_store_->Delete(
       test_document2_.namespace_(), test_document2_.uri(),
@@ -156,12 +160,15 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
 }
 
 TEST_F(DocHitInfoIteratorDeletedFilterTest, NonExistingDocumentsAreFiltered) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(test_document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(test_document3_));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   // Document ids 7, 8, 9 are not existing
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
@@ -305,9 +312,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, EmptyOriginalIterator) {
 
 TEST_F(DocHitInfoIteratorNamespaceFilterTest,
        NonexistentNamespacesReturnsEmpty) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_namespace1_));
-
+  DocumentId document_id1 = put_result1.new_document_id;
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
 
   std::unique_ptr<DocHitInfoIterator> original_iterator =
@@ -325,8 +332,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
 }
 
 TEST_F(DocHitInfoIteratorNamespaceFilterTest, NoNamespacesReturnsAll) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_namespace1_));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
 
@@ -345,12 +353,15 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, NoNamespacesReturnsAll) {
 
 TEST_F(DocHitInfoIteratorNamespaceFilterTest,
        FilterOutExistingDocumentFromDifferentNamespace) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_namespace1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_namespace1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(document1_namespace2_));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
                                            DocHitInfo(document_id2),
@@ -372,14 +383,18 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
 }
 
 TEST_F(DocHitInfoIteratorNamespaceFilterTest, FilterForMultipleNamespacesOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_namespace1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_namespace1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(document1_namespace2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
                              document_store_->Put(document1_namespace3_));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {
       DocHitInfo(document_id1), DocHitInfo(document_id2),
@@ -492,9 +507,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, EmptyOriginalIterator) {
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
        NonexistentSchemaTypeReturnsEmpty) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_schema1_));
-
+  DocumentId document_id1 = put_result1.new_document_id;
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
 
   std::unique_ptr<DocHitInfoIterator> original_iterator =
@@ -512,8 +527,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
 }
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, NoSchemaTypesReturnsAll) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_schema1_));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
 
@@ -532,10 +548,12 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, NoSchemaTypesReturnsAll) {
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
        FilterOutExistingDocumentFromDifferentSchemaTypes) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_schema1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_schema2_));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
                                            DocHitInfo(document_id2)};
@@ -555,13 +573,15 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
 }
 
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, FilterForMultipleSchemaTypesOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_schema1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_schema2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(document3_schema3_));
-
+  DocumentId document_id3 = put_result3.new_document_id;
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
                                            DocHitInfo(document_id2),
                                            DocHitInfo(document_id3)};
@@ -585,25 +605,29 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, FilterForMultipleSchemaTypesOk) {
 TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
        FilterIsExactForSchemaTypePolymorphism) {
   // Add some irrelevant documents.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_schema1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_schema2_));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // Create a person document and an artist document, where the artist should be
   // able to be interpreted as a person by polymorphism.
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id,
+      DocumentStore::PutResult person_put_result,
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "person")
                                .SetSchema("person")
                                .Build()));
+  DocumentId person_document_id = person_put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId artist_document_id,
+      DocumentStore::PutResult artist_put_result,
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "artist")
                                .SetSchema("artist")
                                .Build()));
+  DocumentId artist_document_id = artist_put_result.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {
       DocHitInfo(document_id1), DocHitInfo(document_id2),
@@ -639,26 +663,30 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
        FilterIsExactForSchemaTypeMultipleParentPolymorphism) {
   // Create an email and a message document.
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id,
+      DocumentStore::PutResult email_put_result,
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "email")
                                .SetSchema("email")
                                .Build()));
+  DocumentId email_document_id = email_put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId message_document_id,
+      DocumentStore::PutResult message_put_result,
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "message")
                                .SetSchema("message")
                                .Build()));
+  DocumentId message_document_id = message_put_result.new_document_id;
 
   // Create a emailMessage document, which the should be able to be interpreted
   // as both an email and a message by polymorphism.
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_message_document_id,
+      DocumentStore::PutResult email_message_put_result,
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "emailMessage")
                                .SetSchema("emailMessage")
                                .Build()));
+  DocumentId email_message_document_id =
+      email_message_put_result.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {
       DocHitInfo(email_document_id), DocHitInfo(message_document_id),
@@ -762,8 +790,9 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
                                .SetCreationTimestampMs(0)
                                .SetTtlMs(0)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(document));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
@@ -794,8 +823,9 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
                                .SetCreationTimestampMs(1)
                                .SetTtlMs(100)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(document));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
@@ -826,8 +856,9 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
                                .SetCreationTimestampMs(50)
                                .SetTtlMs(100)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(document));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
@@ -859,8 +890,9 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
                                .SetCreationTimestampMs(50)
                                .SetTtlMs(100)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(document));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
@@ -965,20 +997,25 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store->Put(document1_namespace1_schema1_));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store->Put(document2_namespace1_schema1_));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store->Put(document3_namespace2_schema1_));
+  DocumentId document_id3 = put_result3.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id4,
+      DocumentStore::PutResult put_result4,
       document_store->Put(document4_namespace1_schema2_));
+  DocumentId document_id4 = put_result4.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id5,
+      DocumentStore::PutResult put_result5,
       document_store->Put(document5_namespace1_schema1_));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   // Deletes document2, causing it to be filtered out
   ICING_ASSERT_OK(
@@ -1011,14 +1048,17 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
 
 TEST_F(DocHitInfoIteratorFilterTest, SectionIdMasksArePopulatedCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(document1_namespace1_schema1_));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(document2_namespace1_schema1_));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(document3_namespace2_schema1_));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   SectionIdMask section_id_mask1 = 0b01001001;  // hits in sections 0, 3, 6
   SectionIdMask section_id_mask2 = 0b10010010;  // hits in sections 1, 4, 7
@@ -1065,14 +1105,17 @@ TEST_F(DocHitInfoIteratorFilterTest, GetCallStats) {
 
 TEST_F(DocHitInfoIteratorFilterTest, TrimFilterIterator) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(document1_namespace1_schema1_));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(document2_namespace1_schema1_));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(document3_namespace2_schema1_));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   // Build an interator tree like:
   //                Filter

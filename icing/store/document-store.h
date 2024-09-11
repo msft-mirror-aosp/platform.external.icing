@@ -180,17 +180,23 @@ class DocumentStore {
   // If put_document_stats is present, the fields related to DocumentStore will
   // be populated.
   //
-  // Returns:
-  //   A newly generated document id on success
-  //   RESOURCE_EXHAUSED if exceeds maximum number of allowed documents
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   NOT_FOUND if the schema_type or a property config of the document doesn't
-  //     exist in schema
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentId> Put(
+  //  Returns:
+  //   - On success, a PutResult with the DocumentId of the newly added document
+  //     and a bool indicating whether this is a new document or a replacement
+  //     of an existing document.
+  //   - RESOURCE_EXHAUSTED if exceeds maximum number of allowed documents
+  //   - FAILED_PRECONDITION if schema hasn't been set yet
+  //   - NOT_FOUND if the schema_type or a property config of the document
+  //     doesn't exist in schema
+  //   - INTERNAL_ERROR on IO error
+  struct PutResult {
+    DocumentId new_document_id = kInvalidDocumentId;
+    bool was_replacement = false;
+  };
+  libtextclassifier3::StatusOr<PutResult> Put(
       const DocumentProto& document, int32_t num_tokens = 0,
       PutDocumentStatsProto* put_document_stats = nullptr);
-  libtextclassifier3::StatusOr<DocumentId> Put(
+  libtextclassifier3::StatusOr<PutResult> Put(
       DocumentProto&& document, int32_t num_tokens = 0,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
@@ -710,7 +716,7 @@ class DocumentStore {
   // if it doesn't exist.
   bool HeaderExists();
 
-  libtextclassifier3::StatusOr<DocumentId> InternalPut(
+  libtextclassifier3::StatusOr<PutResult> InternalPut(
       DocumentProto&& document,
       PutDocumentStatsProto* put_document_stats = nullptr);
 

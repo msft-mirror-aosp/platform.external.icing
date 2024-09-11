@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Google LLC
+// Copyright (C) 2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -43,6 +44,8 @@ static constexpr int64_t kBlobInfoTTLMs = 7 * 24 * 60 * 60 * 1000;  // 1 Week
 
 namespace {
 
+using ::testing::Eq;
+
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
  public:
@@ -57,6 +60,9 @@ class TestIcingSearchEngine : public IcingSearchEngine {
 };
 
 std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
+std::string GetTestBaseBlobStoreDir() {
+  return GetTestTempDir() + "/icing/blob_dir";
+}
 
 // This test is meant to cover all tests relating to IcingSearchEngine::Delete*.
 class IcingSearchEngineBlobTest : public testing::Test {
@@ -410,6 +416,13 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   // set a schema to icing to avoid wipe out all directories.
   ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
 
+  std::vector<std::string> file_names;
+  std::unordered_set<std::string> excludes;
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  int32_t file_count = file_names.size();
+
   PropertyProto::BlobHandleProto blob_handle;
   blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
@@ -423,6 +436,12 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
     ScopedFd write_fd(writeBlobProto.file_descriptor());
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
+
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  ASSERT_THAT(file_names.size(), file_count + 1);
 
   BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
@@ -458,6 +477,11 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
   EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  ASSERT_THAT(file_names.size(), file_count);
 }
 
 TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {
@@ -821,6 +845,13 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
+  std::vector<std::string> file_names;
+  std::unordered_set<std::string> excludes;
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  int32_t file_count = file_names.size();
+
   PropertyProto::BlobHandleProto blob_handle1;
   blob_handle1.set_label("label1");
   std::vector<unsigned char> data1 = GenerateRandomBytes(24);
@@ -875,6 +906,12 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   BlobProto commitBlobProto3 = icing.CommitBlob(blob_handle3);
   ASSERT_THAT(commitBlobProto3.status(), ProtoIsOk());
 
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  ASSERT_THAT(file_names.size(), file_count + 3);
+
   // Set schema and put 3 documents that contains the blob handle
   ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
   ASSERT_THAT(
@@ -917,6 +954,11 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   EXPECT_THAT(icing2.OpenReadBlob(blob_handle2).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
   ASSERT_THAT(icing2.OpenReadBlob(blob_handle3).status(), ProtoIsOk());
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  ASSERT_THAT(file_names.size(), file_count + 1);
 
   // remove the last reference document, now the all blobs become orphan.
   ASSERT_THAT(icing2.Delete("namespace", "doc3").status(), ProtoIsOk());
@@ -924,6 +966,11 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
   EXPECT_THAT(icing2.OpenReadBlob(blob_handle3).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
+                                          excludes, /*recursive=*/false,
+                                          &file_names));
+  ASSERT_THAT(file_names.size(), file_count);
 }
 
 TEST_F(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
