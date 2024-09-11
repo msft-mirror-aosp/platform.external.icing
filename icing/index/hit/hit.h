@@ -215,12 +215,18 @@ class Hit {
     }
     return flags() < h2.flags();
   }
-  bool operator==(const Hit& h2) const {
-    return value() == h2.value() && flags() == h2.flags();
-  }
 
   struct EqualsDocumentIdAndSectionId {
-    bool operator()(const Hit& hit1, const Hit& hit2) const;
+    bool operator()(const Hit& hit1, const Hit& hit2) const {
+      return (hit1.value() >> kNumFlagsInValueField) ==
+             (hit2.value() >> kNumFlagsInValueField);
+    }
+  };
+
+  struct EqualsValueAndFlags {
+    bool operator()(const Hit& hit1, const Hit& hit2) const {
+      return hit1.value() == hit2.value() && hit1.flags() == hit2.flags();
+    }
   };
 
  private:
