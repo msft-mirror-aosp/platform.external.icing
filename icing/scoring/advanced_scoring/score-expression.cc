@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -94,8 +95,10 @@ OperatorScoreExpression::Create(
   if (children_all_constant_double) {
     // Because all of the children are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
@@ -277,8 +280,10 @@ MathFunctionScoreExpression::Create(
   if (args_all_constant_double) {
     // Because all of the arguments are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
@@ -671,8 +676,10 @@ SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
-GetSearchSpecEmbeddingFunctionScoreExpression::Create(
+GetEmbeddingParameterFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " must have 1 argument."));
@@ -683,22 +690,30 @@ GetSearchSpecEmbeddingFunctionScoreExpression::Create(
   }
   bool is_constant = args[0]->is_constant();
   std::unique_ptr<ScoreExpression> expression =
-      std::unique_ptr<GetSearchSpecEmbeddingFunctionScoreExpression>(
-          new GetSearchSpecEmbeddingFunctionScoreExpression(
-              std::move(args[0])));
+      std::unique_ptr<GetEmbeddingParameterFunctionScoreExpression>(
+          new GetEmbeddingParameterFunctionScoreExpression(std::move(args[0])));
   if (is_constant) {
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr),
-        expression->type());
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value, expression->type());
   }
   return expression;
 }
 
 libtextclassifier3::StatusOr<double>
-GetSearchSpecEmbeddingFunctionScoreExpression::EvaluateDouble(
+GetEmbeddingParameterFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
                          arg_->EvaluateDouble(hit_info, query_it));
+  if (raw_query_index < 0) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query must be a non-negative integer.");
+  }
+  if (raw_query_index > std::numeric_limits<uint32_t>::max()) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query exceeds the maximum value of uint32.");
+  }
   uint32_t query_index = (uint32_t)raw_query_index;
   if (query_index != raw_query_index) {
     return absl_ports::InvalidArgumentError(
@@ -724,7 +739,8 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " got invalid number of arguments."));
   }
-  if (args[1]->type() != ScoreExpressionType::kVectorIndex) {
+  ScoreExpression* embedding_index_arg = args[1].get();
+  if (embedding_index_arg->type() != ScoreExpressionType::kVectorIndex) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         kFunctionName, " got invalid argument type for embedding vector."));
   }
@@ -744,6 +760,20 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
     ICING_ASSIGN_OR_RETURN(
         metric_type,
         embedding_util::GetEmbeddingQueryMetricTypeFromName(metric));
+  }
+  if (embedding_index_arg->is_constant()) {
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t embedding_index,
+        embedding_index_arg->EvaluateDouble(DocHitInfo(),
+                                            /*query_it=*/nullptr));
+    if (embedding_query_results->GetScoreMap(embedding_index, metric_type) ==
+        nullptr) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The embedding query index ", std::to_string(embedding_index),
+          " with metric type ",
+          SearchSpecProto::EmbeddingQueryMetricType::Code_Name(metric_type),
+          " has not been queried."));
+    }
   }
   return std::unique_ptr<MatchedSemanticScoresFunctionScoreExpression>(
       new MatchedSemanticScoresFunctionScoreExpression(

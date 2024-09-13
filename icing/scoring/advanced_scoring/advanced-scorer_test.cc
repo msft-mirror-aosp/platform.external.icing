@@ -231,8 +231,9 @@ TEST_F(AdvancedScorerTest, InvalidAdvancedScoringSpec) {
 
 TEST_F(AdvancedScorerTest, SimpleExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri")));
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
@@ -250,8 +251,9 @@ TEST_F(AdvancedScorerTest, SimpleExpression) {
 
 TEST_F(AdvancedScorerTest, BasicPureArithmeticExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri")));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -317,8 +319,9 @@ TEST_F(AdvancedScorerTest, BasicPureArithmeticExpression) {
 
 TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri")));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -454,10 +457,11 @@ TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
 
 TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument(
           "namespace", "uri", /*score=*/123,
           /*creation_timestamp_ms=*/kDefaultCreationTimestampMs)));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -495,8 +499,9 @@ TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
 
 TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri")));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -550,8 +555,9 @@ TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
 
 TEST_F(AdvancedScorerTest, DocumentUsageFunctionOutOfRange) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri")));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   const double default_score = 123;
@@ -599,8 +605,9 @@ TEST_F(AdvancedScorerTest, RelevanceScoreFunctionScoreExpression) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("this.relevanceScore()"),
@@ -620,16 +627,19 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
   const double default_score = 123;
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id_1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateDocument("namespace", "uri1")));
+  DocumentId document_id_1 = put_result1.new_document_id;
   DocHitInfo docHitInfo1 = DocHitInfo(document_id_1);
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id_2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateDocument("namespace", "uri2")));
+  DocumentId document_id_2 = put_result2.new_document_id;
   DocHitInfo docHitInfo2 = DocHitInfo(document_id_2);
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id_3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateDocument("namespace", "uri3")));
+  DocumentId document_id_3 = put_result3.new_document_id;
   DocHitInfo docHitInfo3 = DocHitInfo(document_id_3);
 
   // Create a JoinChildrenFetcher that matches:
@@ -724,12 +734,15 @@ TEST_F(AdvancedScorerTest, PropertyWeightsFunctionScoreExpression) {
   DocumentProto test_document_3 =
       DocumentBuilder().SetKey("namespace", "uri3").SetSchema("person").Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id_1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(test_document_1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id_2,
+  DocumentId document_id_1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(test_document_2));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id_3,
+  DocumentId document_id_2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(test_document_3));
+  DocumentId document_id_3 = put_result3.new_document_id;
 
   ScoringSpecProto spec_proto = CreateAdvancedScoringSpec("");
 
@@ -817,10 +830,12 @@ TEST_F(AdvancedScorerTest,
   DocumentProto test_document_2 =
       DocumentBuilder().SetKey("namespace", "uri2").SetSchema("person").Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id_1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(test_document_1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id_2,
+  DocumentId document_id_1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(test_document_2));
+  DocumentId document_id_2 = put_result2.new_document_id;
 
   ScoringSpecProto spec_proto = CreateAdvancedScoringSpec("");
 
@@ -918,9 +933,10 @@ TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
 TEST_F(AdvancedScorerTest, ComplexExpression) {
   const int64_t creation_timestamp_ms = 123;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri", /*score=*/123,
                                           creation_timestamp_ms)));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -982,48 +998,94 @@ TEST_F(AdvancedScorerTest, EmptyExpression) {
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
+TEST_F(AdvancedScorerTest, ConstantEvaluationErrorShouldReturnAnError) {
+  libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("log(0)"), /*default_score=*/0,
+          kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("Got a non-finite value"));
+
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("1 / 0"), /*default_score=*/0,
+      kDefaultSemanticMetricType, document_store_.get(), schema_store_.get(),
+      fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("Got a non-finite value"));
+
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("sqrt(-1)"), /*default_score=*/0,
+      kDefaultSemanticMetricType, document_store_.get(), schema_store_.get(),
+      fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("Got a non-finite value"));
+
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("pow(-1, 0.5)"), /*default_score=*/0,
+      kDefaultSemanticMetricType, document_store_.get(), schema_store_.get(),
+      fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("Got a non-finite value"));
+}
+
 TEST_F(AdvancedScorerTest, EvaluationErrorShouldReturnDefaultScore) {
   const double default_score = 123;
 
+  // Put a document with score 0, so that "this.documentScore()" will return a
+  // non-constant 0.
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
-      document_store_->Put(CreateDocument("namespace", "uri")));
+      DocumentStore::PutResult put_result,
+      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/0)));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(
-          CreateAdvancedScoringSpec("log(0)"), default_score,
+          CreateAdvancedScoringSpec("log(this.documentScore())"), default_score,
           kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
           /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("1 / 0"),
-                                     default_score, kDefaultSemanticMetricType,
-                                     document_store_.get(), schema_store_.get(),
-                                     fake_clock_.GetSystemTimeMilliseconds(),
-                                     /*join_children_fetcher=*/nullptr,
-                                     &empty_embedding_query_results_));
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("1 / this.documentScore()"), default_score,
+          kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("sqrt(-1)"),
-                                     default_score, kDefaultSemanticMetricType,
-                                     document_store_.get(), schema_store_.get(),
-                                     fake_clock_.GetSystemTimeMilliseconds(),
-                                     /*join_children_fetcher=*/nullptr,
-                                     &empty_embedding_query_results_));
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("sqrt(this.documentScore() - 1)"),
+          default_score, kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("pow(-1, 0.5)"),
-                                     default_score, kDefaultSemanticMetricType,
-                                     document_store_.get(), schema_store_.get(),
-                                     fake_clock_.GetSystemTimeMilliseconds(),
-                                     /*join_children_fetcher=*/nullptr,
-                                     &empty_embedding_query_results_));
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("pow(this.documentScore() - 1, 0.5)"),
+          default_score, kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 }
 
@@ -1207,14 +1269,21 @@ TEST_F(AdvancedScorerTest, DocumentFunctionTypeError) {
 
 TEST_F(AdvancedScorerTest,
        MatchedSemanticScoresFunctionScoreExpressionTypeError) {
+  EmbeddingQueryResults embedding_query_results;
+  embedding_query_results
+      .result_scores[/*query_vector_index=*/0]
+                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                    [/*document_id=*/0]
+      .push_back(/*semantic_score=*/0.1);
+
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              "sum(matchedSemanticScores(getSearchSpecEmbedding(0)))"),
+              "sum(matchedSemanticScores(getEmbeddingParameter(0)))"),
           kDefaultSemanticMetricType, kDefaultSemanticMetricType,
           document_store_.get(), schema_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+          /*join_children_fetcher=*/nullptr, &embedding_query_results);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
@@ -1225,7 +1294,7 @@ TEST_F(AdvancedScorerTest,
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
@@ -1233,11 +1302,11 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec(
-          "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0), 0))"),
+          "sum(this.matchedSemanticScores(getEmbeddingParameter(0), 0))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
@@ -1245,11 +1314,11 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                "getSearchSpecEmbedding(0), \"COSINE\", 0))"),
+                                "getEmbeddingParameter(0), \"COSINE\", 0))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
@@ -1257,11 +1326,11 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                "getSearchSpecEmbedding(0), \"COSIGN\"))"),
+                                "getEmbeddingParameter(0), \"COSIGN\"))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
@@ -1269,27 +1338,122 @@ TEST_F(AdvancedScorerTest,
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec(
-          "sum(this.matchedSemanticScores(getSearchSpecEmbedding(\"0\")))"),
+          "sum(this.matchedSemanticScores(getEmbeddingParameter(\"0\")))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
-              HasSubstr("getSearchSpecEmbedding got invalid argument type"));
+              HasSubstr("getEmbeddingParameter got invalid argument type"));
 
   scorer_or = AdvancedScorer::Create(
       CreateAdvancedScoringSpec(
-          "sum(this.matchedSemanticScores(getSearchSpecEmbedding()))"),
+          "sum(this.matchedSemanticScores(getEmbeddingParameter()))"),
       kDefaultSemanticMetricType, kDefaultSemanticMetricType,
       document_store_.get(), schema_store_.get(),
       fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("getEmbeddingParameter must have 1 argument"));
+}
+
+TEST_F(AdvancedScorerTest,
+       MatchedSemanticScoresFunctionScoreExpressionNotQueried) {
+  EmbeddingQueryResults embedding_query_results;
+  embedding_query_results
+      .result_scores[/*query_vector_index=*/0]
+                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                    [/*document_id=*/0]
+      .push_back(/*semantic_score=*/0.1);
+  embedding_query_results
+      .result_scores[/*query_vector_index=*/1]
+                    [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
+                    [/*document_id=*/1]
+      .push_back(/*semantic_score=*/0.2);
+
+  libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
+      AdvancedScorer::Create(CreateAdvancedScoringSpec(
+                                 "sum(this.matchedSemanticScores("
+                                 "getEmbeddingParameter(0), \"DOT_PRODUCT\"))"),
+                             /*default_score=*/0, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &embedding_query_results);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("embedding query index 0 with metric type DOT_PRODUCT "
+                        "has not been queried"));
+
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
+                                "getEmbeddingParameter(1), \"COSINE\"))"),
+      /*default_score=*/0, kDefaultSemanticMetricType, document_store_.get(),
+      schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("embedding query index 1 with metric type COSINE "
+                        "has not been queried"));
+
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
+                                "getEmbeddingParameter(2)))"),
+      /*default_score=*/0, kDefaultSemanticMetricType, document_store_.get(),
+      schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &embedding_query_results);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("embedding query index 2 with metric type DOT_PRODUCT "
+                        "has not been queried"));
+}
+
+TEST_F(AdvancedScorerTest,
+       GetEmbeddingParameterFunctionScoreExpressionInvalidIndex) {
+  // Embedding query index must be non-negative.
+  libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
+                                    "getEmbeddingParameter(-1)))"),
+          /*default_score=*/0, kDefaultSemanticMetricType,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("must be a non-negative integer"));
+
+  // Embedding query index is too large.
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
+                                "getEmbeddingParameter(pow(2, 50))))"),
+      /*default_score=*/0, kDefaultSemanticMetricType, document_store_.get(),
+      schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
       /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
   EXPECT_THAT(scorer_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(scorer_or.status().error_message(),
-              HasSubstr("getSearchSpecEmbedding must have 1 argument"));
+              HasSubstr("exceeds the maximum value of uint32"));
+
+  // Embedding query index should be an integer.
+  scorer_or = AdvancedScorer::Create(
+      CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
+                                "getEmbeddingParameter(0.5)))"),
+      /*default_score=*/0, kDefaultSemanticMetricType, document_store_.get(),
+      schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("must be an integer"));
 }
 
 void AddEntryToEmbeddingQueryScoreMap(
@@ -1357,7 +1521,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)))"),
+              "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1372,7 +1536,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(0), \"COSINE\"))"),
+                                    "getEmbeddingParameter(0), \"COSINE\"))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1385,11 +1549,11 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(
                   CreateAdvancedScoringSpec(
-                      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)"
+                      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)"
                       ", \"COSINE\")) + "
-                      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)"
+                      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)"
                       ", \"DOT_PRODUCT\")) + "
-                      "sum(this.matchedSemanticScores(getSearchSpecEmbedding(0)"
+                      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)"
                       ", \"EUCLIDEAN\"))"),
                   kDefaultScore, /*default_semantic_metric_type=*/
                   SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
@@ -1406,7 +1570,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              "sum(this.matchedSemanticScores(getSearchSpecEmbedding(1)))"),
+              "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
@@ -1416,30 +1580,32 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0.2, kEps));
 
   // The second query does not contain cosine scores.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
+  libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sum(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(1), \"COSINE\"))"),
+                                    "getEmbeddingParameter(1), \"COSINE\"))"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store_.get(), schema_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &embedding_query_results));
-  EXPECT_THAT(scorer->GetScore(doc_hit_info_0), DoubleNear(0, kEps));
-  EXPECT_THAT(scorer->GetScore(doc_hit_info_1), DoubleNear(0, kEps));
+          /*join_children_fetcher=*/nullptr, &embedding_query_results);
+  EXPECT_THAT(scorer_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_or.status().error_message(),
+              HasSubstr("embedding query index 1 with metric type COSINE "
+                        "has not been queried"));
 }
 
 TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
   DocumentId document_id_0 = 0;
   DocHitInfo doc_hit_info_0(document_id_0);
-  EmbeddingQueryResults embedding_query_results;
 
-  // Construct a score map so that:
-  // - this.matchedSemanticScores(getSearchSpecEmbedding(0)) returns
+  // Construct an EmbeddingQueryResults so that:
+  // - this.matchedSemanticScores(getEmbeddingParameter(0)) returns
   //   {4, 5, 2, 1, 3}.
-  // - this.matchedSemanticScores(getSearchSpecEmbedding(1)) returns an empty
+  // - this.matchedSemanticScores(getEmbeddingParameter(1)) returns an empty
   //   list.
+  EmbeddingQueryResults embedding_query_results;
   EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
       &embedding_query_results
            .result_scores[0][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
@@ -1453,13 +1619,16 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
                                    /*semantic_score=*/1, document_id_0);
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/3, document_id_0);
+  score_map =
+      &embedding_query_results
+           .result_scores[1][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
 
   // maxOrDefault({4, 5, 2, 1, 3}, 100) = 5
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("maxOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(0)), 100)"),
+                                    "getEmbeddingParameter(0)), 100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1472,7 +1641,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("minOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(0)), -100)"),
+                                    "getEmbeddingParameter(0)), -100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1485,7 +1654,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("maxOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(1)), 100)"),
+                                    "getEmbeddingParameter(1)), 100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1498,7 +1667,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("minOrDefault(this.matchedSemanticScores("
-                                    "getSearchSpecEmbedding(1)), -100)"),
+                                    "getEmbeddingParameter(1)), -100)"),
           kDefaultScore, /*default_semantic_metric_type=*/
           SearchSpecProto::EmbeddingQueryMetricType::COSINE,
           document_store_.get(), schema_store_.get(),
@@ -1511,7 +1680,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
       scorer, AdvancedScorer::Create(
                   CreateAdvancedScoringSpec(
                       "sum(filterByRange(this.matchedSemanticScores("
-                      "getSearchSpecEmbedding(0)), 2, 4))"),
+                      "getEmbeddingParameter(0)), 2, 4))"),
                   kDefaultScore, /*default_semantic_metric_type=*/
                   SearchSpecProto::EmbeddingQueryMetricType::COSINE,
                   document_store_.get(), schema_store_.get(),
@@ -1523,9 +1692,10 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
 TEST_F(AdvancedScorerTest, AdditionalScores) {
   const int64_t creation_timestamp_ms = 123;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(CreateDocument("namespace", "uri", /*score=*/123,
                                           creation_timestamp_ms)));
+  DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ScoringSpecProto scoring_spec =
