@@ -116,7 +116,7 @@ message PropertyProto {
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 3
+// Next tag: 4
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -136,6 +136,9 @@ message PutResultProto {
   // be accurate only when the status above is OK. See logging.proto for
   // details.
   optional PutDocumentStatsProto put_document_stats = 2;
+
+  // Whether or not the document was a replacement of an existing document.
+  optional bool was_replacement = 3;
 }
 
 // Result of a call to IcingSearchEngine.Get

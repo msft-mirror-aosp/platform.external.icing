@@ -5501,7 +5501,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                               /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, document_store->Put(message));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                               document_store->Put(message));
+    DocumentId doc_id = put_result.new_document_id;
 
     // Index doc_id with incorrect data
     Index::Options options(GetIndexDir(), /*index_merge_size=*/1024 * 1024,

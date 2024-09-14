@@ -134,7 +134,7 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
   ChildrenMapper mapper;
   mapper = [&data, &mapper](std::unique_ptr<DocHitInfoIterator> iterator)
       -> std::unique_ptr<DocHitInfoIterator> {
-    if (iterator->full_section_restriction_applied()) {
+    if (iterator->HandleSectionRestriction(data)) {
       return iterator;
     } else if (iterator->is_leaf()) {
       return std::make_unique<DocHitInfoIteratorSectionRestrict>(

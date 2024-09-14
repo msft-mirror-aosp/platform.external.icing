@@ -124,8 +124,7 @@ class ThisExpression : public ScoreExpression {
 class ConstantScoreExpression : public ScoreExpression {
  public:
   static std::unique_ptr<ConstantScoreExpression> Create(
-      libtextclassifier3::StatusOr<double> c,
-      ScoreExpressionType type = ScoreExpressionType::kDouble) {
+      double c, ScoreExpressionType type = ScoreExpressionType::kDouble) {
     return std::unique_ptr<ConstantScoreExpression>(
         new ConstantScoreExpression(c, type));
   }
@@ -140,11 +139,10 @@ class ConstantScoreExpression : public ScoreExpression {
   bool is_constant() const override { return true; }
 
  private:
-  explicit ConstantScoreExpression(libtextclassifier3::StatusOr<double> c,
-                                   ScoreExpressionType type)
+  explicit ConstantScoreExpression(double c, ScoreExpressionType type)
       : c_(c), type_(type) {}
 
-  libtextclassifier3::StatusOr<double> c_;
+  double c_;
   ScoreExpressionType type_;
 };
 

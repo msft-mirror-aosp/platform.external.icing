@@ -669,6 +669,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor->GetNextHitsBatch());
   }
 
+  Hit::EqualsValueAndFlags hit_equals_value_and_flags_comparator;
   Hit last_added_hit(Hit::kInvalidValue);
   // The hits in backfill_hits are in the reverse order of how they were added.
   // Iterate in reverse to add them to this new posting list in the correct
@@ -685,7 +686,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
                            hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
                            /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
-    if (backfill_hit == last_added_hit) {
+    if (hit_equals_value_and_flags_comparator(backfill_hit, last_added_hit)) {
       // Skip duplicate values due to overriding of the is_prefix flag.
       continue;
     }

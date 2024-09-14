@@ -243,7 +243,7 @@ message JoinableConfig {
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 11
+// Next tag: 12
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -351,6 +351,27 @@ message PropertyConfigProto {
   // OPTIONAL: Describes how vector properties should be indexed. Vector
   // properties that do not set the indexing config will not be indexed.
   optional EmbeddingIndexingConfig embedding_indexing_config = 10;
+
+  // OPTIONAL: Describes how a property can be used to for scoring.
+  //
+  // The ScorableType should only be enabled for the following data types:
+  // - INT64
+  // - DOUBLE
+  // - BOOLEAN
+  message ScorableType {
+    enum Code {
+      // This value should not be used on purpose.
+      // It will be treated as DISABLED in icing.
+      UNKNOWN = 0;
+
+      // Property is disabled for scoring.
+      DISABLED = 1;
+
+      // Property is enabled for scoring.
+      ENABLED = 2;
+    }
+  }
+  optional ScorableType.Code scorable_type = 11;
 }
 
 // List of all supported types constitutes the schema used by Icing.

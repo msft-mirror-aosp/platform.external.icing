@@ -1118,6 +1118,73 @@ TEST_F(IcingSearchEngineTest, PersistToDiskLiteSavesGroundTruth) {
                                   expected_search_result_proto));
 }
 
+TEST_F(IcingSearchEngineTest, PersistToDiskRecoveryProofAvoidsRecovery) {
+  DocumentProto document = CreateMessageDocument("namespace", "uri");
+
+  IcingSearchEngine icing1(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing1.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing1.Put(document).status(), ProtoIsOk());
+  EXPECT_THAT(
+      icing1.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document));
+  EXPECT_THAT(icing1.PersistToDisk(PersistType::RECOVERY_PROOF).status(),
+              ProtoIsOk());
+
+  // Recreating the index should not trigger a recovery.
+  IcingSearchEngine icing2(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto init_result = icing2.Initialize();
+  EXPECT_THAT(init_result.status(), ProtoIsOk());
+  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      init_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+
+  // Schema is still intact.
+  GetSchemaResultProto expected_get_schema_result_proto;
+  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_schema_result_proto.mutable_schema() = CreateMessageSchema();
+
+  EXPECT_THAT(icing2.GetSchema(),
+              EqualsProto(expected_get_schema_result_proto));
+
+  // The document should be found because we called
+  // PersistToDisk(RECOVERY_PROOF)!
+  EXPECT_THAT(
+      icing2.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document));
+
+  // The index should still be intact.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");  // Content in the Message document.
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  SearchResultProto actual_results =
+      icing2.Search(search_spec, GetDefaultScoringSpec(),
+                    ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
 TEST_F(IcingSearchEngineTest, ResetOk) {
   SchemaProto message_schema = CreateMessageSchema();
   SchemaProto empty_schema = SchemaProto(message_schema);
