@@ -200,16 +200,18 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_And) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId1,
+  DocumentId documentId0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId1 = put_result1.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -247,16 +249,18 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId1,
+  DocumentId documentId0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId1 = put_result1.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -298,16 +302,18 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId1,
+  DocumentId documentId0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId1 = put_result1.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "fo"),
@@ -351,21 +357,24 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_OrNary) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId1,
+  DocumentId documentId0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "2")
                                                       .SetSchema("email")
                                                       .Build()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId2,
+  DocumentId documentId1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "3")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId2 = put_result2.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "fo"),
@@ -417,16 +426,18 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId1,
+  DocumentId documentId0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId1 = put_result1.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -479,11 +490,12 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -515,11 +527,12 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -552,11 +565,12 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
               IsOk());
@@ -605,11 +619,12 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
               IsOk());
@@ -652,11 +667,12 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -715,11 +731,12 @@ TEST_F(SuggestionProcessorTest, SemanticSearchPrefixTest) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "foo"),
@@ -764,11 +781,12 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId documentId0,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace1", "1")
                                                       .SetSchema("email")
                                                       .Build()));
+  DocumentId documentId0 = put_result0.new_document_id;
 
   ASSERT_THAT(AddTokenToIndex(documentId0, kSectionId2,
                               TermMatchType::EXACT_ONLY, "original"),

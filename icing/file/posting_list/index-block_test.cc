@@ -16,7 +16,6 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -33,7 +32,7 @@ namespace lib {
 
 namespace {
 
-using ::testing::ElementsAreArray;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
@@ -117,23 +116,21 @@ TEST_F(IndexBlockTest, SizeAccessorsWorkCorrectly) {
 TEST_F(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
   constexpr int kPostingListBytes = 2004;
 
-  std::vector<Hit> test_hits{
-      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-  };
+  Hit hit0(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit2(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit3(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit4(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   PostingListIndex allocated_index;
   {
     // Create an IndexBlock from this newly allocated file block.
@@ -144,13 +141,21 @@ TEST_F(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
     // Add hits to the first posting list.
     ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info,
                                block.AllocatePostingList());
-    for (const Hit& hit : test_hits) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&alloc_info.posting_list_used, hit));
-    }
-    EXPECT_THAT(
-        serializer_->GetHits(&alloc_info.posting_list_used),
-        IsOkAndHolds(ElementsAreArray(test_hits.rbegin(), test_hits.rend())));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info.posting_list_used, hit0));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info.posting_list_used, hit1));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info.posting_list_used, hit2));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info.posting_list_used, hit3));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info.posting_list_used, hit4));
+
+    EXPECT_THAT(serializer_->GetHits(&alloc_info.posting_list_used),
+                IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                         EqualsHit(hit2), EqualsHit(hit1),
+                                         EqualsHit(hit0))));
 
     ICING_ASSERT_OK(block.WritePostingListToDisk(
         alloc_info.posting_list_used, alloc_info.posting_list_index));
@@ -165,9 +170,10 @@ TEST_F(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock::PostingListAndBlockInfo pl_block_info,
         block.GetAllocatedPostingList(allocated_index));
-    EXPECT_THAT(
-        serializer_->GetHits(&pl_block_info.posting_list_used),
-        IsOkAndHolds(ElementsAreArray(test_hits.rbegin(), test_hits.rend())));
+    EXPECT_THAT(serializer_->GetHits(&pl_block_info.posting_list_used),
+                IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                         EqualsHit(hit2), EqualsHit(hit1),
+                                         EqualsHit(hit0))));
     EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsTrue()));
   }
 }
@@ -175,40 +181,40 @@ TEST_F(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
 TEST_F(IndexBlockTest, IndexBlockMultiplePostingLists) {
   constexpr int kPostingListBytes = 2004;
 
-  std::vector<Hit> hits_in_posting_list1{
-      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-  };
-  std::vector<Hit> hits_in_posting_list2{
-      Hit(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-  };
+  // Add hit0~hit4 to the first posting list.
+  Hit hit0(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit2(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit3(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit4(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+
+  // Add hit5~hit9 to the second posting list.
+  Hit hit5(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit6(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit7(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit8(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit9(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+
   PostingListIndex allocated_index_1;
   PostingListIndex allocated_index_2;
   {
@@ -221,24 +227,40 @@ TEST_F(IndexBlockTest, IndexBlockMultiplePostingLists) {
     // Add hits to the first posting list.
     ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_1,
                                block.AllocatePostingList());
-    for (const Hit& hit : hits_in_posting_list1) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&alloc_info_1.posting_list_used, hit));
-    }
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit0));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit1));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit2));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit3));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit4));
+
     EXPECT_THAT(serializer_->GetHits(&alloc_info_1.posting_list_used),
-                IsOkAndHolds(ElementsAreArray(hits_in_posting_list1.rbegin(),
-                                              hits_in_posting_list1.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                         EqualsHit(hit2), EqualsHit(hit1),
+                                         EqualsHit(hit0))));
 
     // Add hits to the second posting list.
     ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_2,
                                block.AllocatePostingList());
-    for (const Hit& hit : hits_in_posting_list2) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&alloc_info_2.posting_list_used, hit));
-    }
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit5));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit6));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit7));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit8));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit9));
+
     EXPECT_THAT(serializer_->GetHits(&alloc_info_2.posting_list_used),
-                IsOkAndHolds(ElementsAreArray(hits_in_posting_list2.rbegin(),
-                                              hits_in_posting_list2.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit9), EqualsHit(hit8),
+                                         EqualsHit(hit7), EqualsHit(hit6),
+                                         EqualsHit(hit5))));
 
     EXPECT_THAT(block.AllocatePostingList(),
                 StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -262,14 +284,18 @@ TEST_F(IndexBlockTest, IndexBlockMultiplePostingLists) {
         IndexBlock::PostingListAndBlockInfo pl_block_info_1,
         block.GetAllocatedPostingList(allocated_index_1));
     EXPECT_THAT(serializer_->GetHits(&pl_block_info_1.posting_list_used),
-                IsOkAndHolds(ElementsAreArray(hits_in_posting_list1.rbegin(),
-                                              hits_in_posting_list1.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                         EqualsHit(hit2), EqualsHit(hit1),
+                                         EqualsHit(hit0))));
+
     ICING_ASSERT_OK_AND_ASSIGN(
         IndexBlock::PostingListAndBlockInfo pl_block_info_2,
         block.GetAllocatedPostingList(allocated_index_2));
     EXPECT_THAT(serializer_->GetHits(&pl_block_info_2.posting_list_used),
-                IsOkAndHolds(ElementsAreArray(hits_in_posting_list2.rbegin(),
-                                              hits_in_posting_list2.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit9), EqualsHit(hit8),
+                                         EqualsHit(hit7), EqualsHit(hit6),
+                                         EqualsHit(hit5))));
+
     EXPECT_THAT(block.AllocatePostingList(),
                 StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
     EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsFalse()));
@@ -285,61 +311,75 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
                                  &filesystem_, serializer_.get(), sfd_->get(),
                                  /*offset=*/0, kBlockSize, kPostingListBytes));
 
-  // Add hits to the first posting list.
-  std::vector<Hit> hits_in_posting_list1{
-      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-  };
+  // Add hit0~hit4 to the first posting list.
+  Hit hit0(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit2(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit3(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit4(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_1,
                              block.AllocatePostingList());
-  for (const Hit& hit : hits_in_posting_list1) {
-    ICING_ASSERT_OK(
-        serializer_->PrependHit(&alloc_info_1.posting_list_used, hit));
-  }
-  EXPECT_THAT(serializer_->GetHits(&alloc_info_1.posting_list_used),
-              IsOkAndHolds(ElementsAreArray(hits_in_posting_list1.rbegin(),
-                                            hits_in_posting_list1.rend())));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_1.posting_list_used, hit0));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_1.posting_list_used, hit1));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_1.posting_list_used, hit2));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_1.posting_list_used, hit3));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_1.posting_list_used, hit4));
 
-  // Add hits to the second posting list.
-  std::vector<Hit> hits_in_posting_list2{
-      Hit(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-  };
+  EXPECT_THAT(serializer_->GetHits(&alloc_info_1.posting_list_used),
+              IsOkAndHolds(ElementsAre(EqualsHit(hit4), EqualsHit(hit3),
+                                       EqualsHit(hit2), EqualsHit(hit1),
+                                       EqualsHit(hit0))));
+
+  // Add hit5~hit9 to the second posting list.
+  Hit hit5(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit6(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit7(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit8(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit9(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_2,
                              block.AllocatePostingList());
-  for (const Hit& hit : hits_in_posting_list2) {
-    ICING_ASSERT_OK(
-        serializer_->PrependHit(&alloc_info_2.posting_list_used, hit));
-  }
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_2.posting_list_used, hit5));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_2.posting_list_used, hit6));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_2.posting_list_used, hit7));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_2.posting_list_used, hit8));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_2.posting_list_used, hit9));
+
   EXPECT_THAT(serializer_->GetHits(&alloc_info_2.posting_list_used),
-              IsOkAndHolds(ElementsAreArray(hits_in_posting_list2.rbegin(),
-                                            hits_in_posting_list2.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit9), EqualsHit(hit8),
+                                       EqualsHit(hit7), EqualsHit(hit6),
+                                       EqualsHit(hit5))));
 
   EXPECT_THAT(block.AllocatePostingList(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -350,28 +390,30 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
   ICING_ASSERT_OK(block.FreePostingList(alloc_info_1.posting_list_index));
   EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsTrue()));
 
-  std::vector<Hit> hits_in_posting_list3{
-      Hit(/*section_id=*/12, /*document_id=*/0, /*term_frequency=*/88,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/17, /*document_id=*/1, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-      Hit(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/2,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
-          /*is_stemmed_hit=*/false),
-  };
+  Hit hit10(/*section_id=*/12, /*document_id=*/0, /*term_frequency=*/88,
+            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+            /*is_stemmed_hit=*/false);
+  Hit hit11(/*section_id=*/17, /*document_id=*/1, Hit::kDefaultTermFrequency,
+            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+            /*is_stemmed_hit=*/false);
+  Hit hit12(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/2,
+            /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+            /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK_AND_ASSIGN(IndexBlock::PostingListAndBlockInfo alloc_info_3,
                              block.AllocatePostingList());
   EXPECT_THAT(alloc_info_3.posting_list_index,
               Eq(alloc_info_3.posting_list_index));
-  for (const Hit& hit : hits_in_posting_list3) {
-    ICING_ASSERT_OK(
-        serializer_->PrependHit(&alloc_info_3.posting_list_used, hit));
-  }
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_3.posting_list_used, hit10));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_3.posting_list_used, hit11));
+  ICING_ASSERT_OK(
+      serializer_->PrependHit(&alloc_info_3.posting_list_used, hit12));
+
   EXPECT_THAT(serializer_->GetHits(&alloc_info_3.posting_list_used),
-              IsOkAndHolds(ElementsAreArray(hits_in_posting_list3.rbegin(),
-                                            hits_in_posting_list3.rend())));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit12), EqualsHit(hit11),
+                                       EqualsHit(hit10))));
+
   EXPECT_THAT(block.AllocatePostingList(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsFalse()));
