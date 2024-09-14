@@ -85,7 +85,7 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
   };
 
   struct Info {
-    static constexpr int32_t kMagic = 0x12d1c074;
+    static constexpr int32_t kMagic = 0x32e374a7;
 
     int32_t magic;
     int32_t num_data;
