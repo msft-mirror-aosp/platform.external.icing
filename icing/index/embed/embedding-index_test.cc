@@ -90,15 +90,32 @@ class EmbeddingIndexTest : public Test {
   }
 
   std::vector<float> GetRawEmbeddingData() {
-    return std::vector<float>(embedding_index_->GetRawEmbeddingData(),
-                              embedding_index_->GetRawEmbeddingData() +
-                                  embedding_index_->GetTotalVectorSize());
+    auto data_or = embedding_index_->GetRawEmbeddingData();
+    if (!data_or.ok()) {
+      return std::vector<float>();
+    }
+    return std::vector<float>(
+        data_or.ValueOrDie(),
+        data_or.ValueOrDie() + embedding_index_->GetTotalVectorSize());
+  }
+
+  libtextclassifier3::StatusOr<bool> IndexContainsMetadataOnly() {
+    std::vector<std::string> sub_dirs;
+    if (!filesystem_.ListDirectory(embedding_index_dir_.c_str(), /*exclude=*/{},
+                                   /*recursive=*/true, &sub_dirs)) {
+      return absl_ports::InternalError("Failed to list directory");
+    }
+    return sub_dirs.size() == 1 && sub_dirs[0] == "metadata";
   }
 
   Filesystem filesystem_;
   std::string embedding_index_dir_;
   std::unique_ptr<EmbeddingIndex> embedding_index_;
 };
+
+TEST_F(EmbeddingIndexTest, EmptyIndexContainsMetadataOnly) {
+  EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
+}
 
 TEST_F(EmbeddingIndexTest, AddSingleEmbedding) {
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
@@ -254,9 +271,52 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
     EXPECT_THAT(GetRawEmbeddingData(),
                 ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
     EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
+    EXPECT_FALSE(embedding_index_->is_empty());
+    EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(false));
 
     // Check that clear works as expected.
     ICING_ASSERT_OK(embedding_index_->Clear());
+    EXPECT_TRUE(embedding_index_->is_empty());
+    EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
+    EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+    EXPECT_EQ(embedding_index_->last_added_document_id(), kInvalidDocumentId);
+  }
+}
+
+TEST_F(EmbeddingIndexTest, DiscardIndex) {
+  // Loop the same logic twice to make sure that Discard works as expected, and
+  // the index is still valid after discarding.
+  for (int i = 0; i < 2; i++) {
+    PropertyProto::VectorProto vector1 = CreateVector("model", {0.1, 0.2, 0.3});
+    PropertyProto::VectorProto vector2 =
+        CreateVector("model", {-0.1, -0.2, -0.3});
+    ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+        BasicHit(/*section_id=*/1, /*document_id=*/0), vector1));
+    ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+        BasicHit(/*section_id=*/2, /*document_id=*/1), vector2));
+    ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+    embedding_index_->set_last_added_document_id(1);
+
+    EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+                IsOkAndHolds(ElementsAre(
+                    EmbeddingHit(BasicHit(/*section_id=*/2, /*document_id=*/1),
+                                 /*location=*/3),
+                    EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
+                                 /*location=*/0))));
+    EXPECT_THAT(GetRawEmbeddingData(),
+                ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
+    EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
+    EXPECT_FALSE(embedding_index_->is_empty());
+    EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(false));
+
+    // Check that Discard works as expected.
+    embedding_index_.reset();
+    EmbeddingIndex::Discard(filesystem_, embedding_index_dir_);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        embedding_index_,
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+    EXPECT_TRUE(embedding_index_->is_empty());
+    EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
     EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
     EXPECT_EQ(embedding_index_->last_added_document_id(), kInvalidDocumentId);
   }
@@ -264,6 +324,8 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
 
 TEST_F(EmbeddingIndexTest, EmptyCommitIsOk) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
 }
 
@@ -329,6 +391,8 @@ TEST_F(EmbeddingIndexTest, EmptyOptimizeIsOk) {
   ICING_ASSERT_OK(embedding_index_->Optimize(
       /*document_id_old_to_new=*/{},
       /*new_last_added_document_id=*/kInvalidDocumentId));
+  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
 }
 
@@ -377,6 +441,8 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
       /*new_last_added_document_id=*/0));
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
@@ -439,6 +505,8 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
       /*new_last_added_document_id=*/0));
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
@@ -574,6 +642,45 @@ TEST_F(EmbeddingIndexTest, OptimizeEmbeddingsFromDifferentModels) {
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2));
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
+}
+
+TEST_F(EmbeddingIndexTest,
+       OptimizeEmbeddingsFromDifferentModelsAndDeleteTheFirst) {
+  PropertyProto::VectorProto vector1 = CreateVector("model1", {0.1, 0.2});
+  PropertyProto::VectorProto vector2 =
+      CreateVector("model2", {-0.1, -0.2, -0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/1, /*document_id=*/1), vector2));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(1);
+
+  // Before optimize
+  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+              IsOkAndHolds(ElementsAre(
+                  EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
+                               /*location=*/0))));
+  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+              IsOkAndHolds(ElementsAre(
+                  EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/1),
+                               /*location=*/2))));
+  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
+
+  // Run optimize to delete document 0, and check that the index is
+  // updated correctly.
+  ICING_ASSERT_OK(embedding_index_->Optimize(
+      /*document_id_old_to_new=*/{kInvalidDocumentId, 0},
+      /*new_last_added_document_id=*/0));
+  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+              IsOkAndHolds(ElementsAre(
+                  EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
+                               /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(-0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 

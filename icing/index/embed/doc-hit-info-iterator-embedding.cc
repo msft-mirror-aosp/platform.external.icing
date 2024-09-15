@@ -102,7 +102,8 @@ DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
   return &embedding_hit;
 }
 
-libtextclassifier3::Status DocHitInfoIteratorEmbedding::Advance() {
+libtextclassifier3::Status
+DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
   if (no_more_hit_ || posting_list_accessor_ == nullptr) {
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
@@ -150,13 +151,14 @@ libtextclassifier3::Status DocHitInfoIteratorEmbedding::Advance() {
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
+  return libtextclassifier3::Status::OK;
+}
 
+libtextclassifier3::Status DocHitInfoIteratorEmbedding::Advance() {
+  do {
+    ICING_RETURN_IF_ERROR(AdvanceToNextUnfilteredDocument());
+  } while (doc_hit_info_.hit_section_ids_mask() == kSectionIdMaskNone);
   ++num_advance_calls_;
-
-  // Skip the current document if it has no vector matched.
-  if (doc_hit_info_.hit_section_ids_mask() == kSectionIdMaskNone) {
-    return Advance();
-  }
   return libtextclassifier3::Status::OK;
 }
 

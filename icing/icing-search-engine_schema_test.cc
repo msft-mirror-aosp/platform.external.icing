@@ -735,8 +735,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify numeric (integer) search: will get document.
   SearchSpecProto search_spec2;
   search_spec2.set_query("b == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -846,8 +844,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify numeric (integer) search: won't get anything.
   SearchSpecProto search_spec2;
   search_spec2.set_query("a == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -992,8 +988,6 @@ TEST_F(
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results =
@@ -1243,8 +1237,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // 'timestamp'
   SearchSpecProto search_spec2;
   search_spec2.set_query("sender.age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1315,8 +1307,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   // document shouldn't match a query for 20 in either 'sender.age' or
   // 'timestamp'
   search_spec2.set_query("sender.age == 20");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -1523,8 +1513,6 @@ TEST_F(
   // 'timestamp' or 'sender.birthday'
   SearchSpecProto search_spec3;
   search_spec3.set_query("sender.age == 20");
-  search_spec3.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
@@ -1965,8 +1953,6 @@ TEST_F(
   // 'timestamp2'.
   SearchSpecProto search_spec2;
   search_spec2.set_query("timestamp2 == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2022,8 +2008,6 @@ TEST_F(
   // We should be able to retrieve the document by searching for 1234 in
   // 'timestamp'.
   search_spec2.set_query("timestamp2 == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2260,8 +2244,6 @@ TEST_F(
   // 'timestamp'.
   SearchSpecProto search_spec2;
   search_spec2.set_query("timestamp == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
@@ -2323,8 +2305,6 @@ TEST_F(
   // We should be able to retrieve the document by searching for 1234 in
   // 'timestamp'.
   search_spec2.set_query("timestamp == 1234");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),

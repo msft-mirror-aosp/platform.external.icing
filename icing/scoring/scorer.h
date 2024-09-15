@@ -16,11 +16,12 @@
 #define ICING_SCORING_SCORER_H_
 
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/proto/scoring.pb.h"
 
 namespace icing {
 namespace lib {
@@ -47,6 +48,18 @@ class Scorer {
   // to save a little more time and memory.
   virtual double GetScore(const DocHitInfo& hit_info,
                           const DocHitInfoIterator* query_it = nullptr) = 0;
+
+  // Returns additional score as specified in
+  // scoring_spec.additional_advanced_scoring_expressions(). As a result, only
+  // AdvancedScorer can produce additional scores.
+  //
+  // NOTE: This method is performance-sensitive as it's called for every
+  // potential result document. We're trying to avoid returning
+  // StatusOr<std::vector<double>> to save a little more time and memory.
+  virtual std::vector<double> GetAdditionalScores(
+      const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) {
+    return {};
+  }
 
   // Currently only overriden by the RelevanceScoreScorer.
   // NOTE: the query_term_iterators map must
