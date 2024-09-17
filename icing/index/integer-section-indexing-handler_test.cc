@@ -169,7 +169,6 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
@@ -48,7 +49,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -124,15 +125,12 @@ void WriteDocumentLogHeader(
 }
 
 struct DocumentStoreTestParam {
-  bool namespace_id_fingerprint;
   bool pre_mapping_fbv;
   bool use_persistent_hash_map;
 
-  explicit DocumentStoreTestParam(bool namespace_id_fingerprint_in,
-                                  bool pre_mapping_fbv_in,
+  explicit DocumentStoreTestParam(bool pre_mapping_fbv_in,
                                   bool use_persistent_hash_map_in)
-      : namespace_id_fingerprint(namespace_id_fingerprint_in),
-        pre_mapping_fbv(pre_mapping_fbv_in),
+      : pre_mapping_fbv(pre_mapping_fbv_in),
         use_persistent_hash_map(use_persistent_hash_map_in) {}
 };
 
@@ -229,8 +227,7 @@ class DocumentStoreTest
     const std::string header_file =
         absl_ports::StrCat(document_store_dir_, "/document_store_header");
     DocumentStore::Header header;
-    header.magic = DocumentStore::Header::GetCurrentMagic(
-        GetParam().namespace_id_fingerprint);
+    header.magic = DocumentStore::Header::kMagic;
     header.checksum = 10;  // Arbitrary garbage checksum
     filesystem_.DeleteFile(header_file.c_str());
     filesystem_.Write(header_file.c_str(), &header, sizeof(header));
@@ -242,8 +239,7 @@ class DocumentStoreTest
     return DocumentStore::Create(
         filesystem, base_dir, clock, schema_store,
         /*force_recovery_and_revalidate_documents=*/false,
-        GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-        GetParam().use_persistent_hash_map,
+        GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
         PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
         /*initialize_stats=*/nullptr);
   }
@@ -1540,10 +1536,11 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
   // Checks derived score cache
   EXPECT_THAT(
@@ -1645,10 +1642,11 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
   // Checks derived score cache
   EXPECT_THAT(
@@ -1747,10 +1745,11 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
   // Checks derived score cache.
   EXPECT_THAT(
@@ -1840,10 +1839,11 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
@@ -2285,10 +2285,11 @@ TEST_P(DocumentStoreTest, DeleteClearsFilterCache) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document1_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document1_.uri()),
+          /*schema_type_id=*/0, document1_expiration_timestamp_)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
                                     fake_clock_.GetSystemTimeMilliseconds()));
@@ -2447,10 +2448,11 @@ TEST_P(DocumentStoreTest,
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data, Eq(DocumentFilterData(
-                                   /*namespace_id=*/0,
-                                   /*schema_type_id=*/0,
-                                   /*expiration_timestamp_ms=*/1100)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(document.uri()),
+          /*schema_type_id=*/0, /*expiration_timestamp_ms=*/1100)));
 }
 
 TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
@@ -2481,7 +2483,7 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
   EXPECT_THAT(
       doc_filter_data,
       Eq(DocumentFilterData(
-          /*namespace_id=*/0,
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(document.uri()),
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
 }
@@ -2515,7 +2517,7 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
   EXPECT_THAT(
       doc_filter_data,
       Eq(DocumentFilterData(
-          /*namespace_id=*/0,
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(document.uri()),
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
 }
@@ -2760,6 +2762,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         DocumentFilterData email_data,
         document_store->GetAliveDocumentFilterData(
             email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(email_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(email_document.uri())));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
     email_expiration_timestamp = email_data.expiration_timestamp_ms();
@@ -2776,6 +2780,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         DocumentFilterData message_data,
         document_store->GetAliveDocumentFilterData(
             message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(message_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(message_document.uri())));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
@@ -2822,6 +2828,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.expiration_timestamp_ms(),
               Eq(email_expiration_timestamp));
 
@@ -2835,6 +2843,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.expiration_timestamp_ms(),
               Eq(message_expiration_timestamp));
 }
@@ -2892,6 +2902,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
       DocumentFilterData email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2903,6 +2915,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
       DocumentFilterData message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2932,12 +2946,16 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
       email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -3155,6 +3173,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       DocumentFilterData email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
@@ -3165,6 +3185,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       DocumentFilterData message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -3197,12 +3219,16 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -4005,8 +4031,7 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
       DocumentStore::Create(
           &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
-          GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-          GetParam().use_persistent_hash_map,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
           &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
@@ -4191,6 +4216,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
 
+    ASSERT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(doc.uri())));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 
@@ -4227,8 +4254,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         DocumentStore::Create(
             &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
             /*force_recovery_and_revalidate_documents=*/true,
-            GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-            GetParam().use_persistent_hash_map,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             &initialize_stats));
@@ -4240,6 +4266,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(std::string("email/1"))));
     EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
@@ -4306,6 +4334,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
 
+    EXPECT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(doc.uri())));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 
@@ -4348,6 +4378,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(std::string("email/1"))));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 }
@@ -4456,8 +4488,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
         DocumentStore::Create(
             &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
             /*force_recovery_and_revalidate_documents=*/true,
-            GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-            GetParam().use_persistent_hash_map,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -4656,7 +4687,6 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
           &filesystem_, document_store_dir, &fake_clock_, schema_store.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-          GetParam().namespace_id_fingerprint,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
           &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
@@ -4894,7 +4924,6 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().namespace_id_fingerprint,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
@@ -4936,7 +4965,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
             &filesystem_, document_store_dir_, &fake_clock_,
             schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
+            GetParam().pre_mapping_fbv,
             /*use_persistent_hash_map=*/switch_key_mapper_flag,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
@@ -4980,7 +5009,6 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().namespace_id_fingerprint,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
@@ -5019,7 +5047,6 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().namespace_id_fingerprint,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
@@ -5052,7 +5079,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
   }
 }
 
-TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceFingerprintIdentifier) {
+TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
   std::string dynamic_trie_uri_mapper_dir =
       document_store_dir_ + "/key_mapper_dir";
   std::string persistent_hash_map_uri_mapper_dir =
@@ -5062,8 +5089,7 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceFingerprintIdentifier) {
       DocumentStore::Create(
           &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
-          GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-          GetParam().use_persistent_hash_map,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
           /*initialize_stats=*/nullptr));
 
@@ -5077,49 +5103,27 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceFingerprintIdentifier) {
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId namespace_id,
       doc_store->GetNamespaceId(test_document1_.namespace_()));
-  NamespaceFingerprintIdentifier ns_fingerprint(
-      namespace_id,
-      /*target_str=*/test_document1_.uri());
-  if (GetParam().namespace_id_fingerprint) {
-    EXPECT_THAT(doc_store->GetDocumentId(ns_fingerprint),
-                IsOkAndHolds(document_id));
+  NamespaceIdFingerprint nsid_uri_fingerprint(
+      namespace_id, /*target_str=*/test_document1_.uri());
+  EXPECT_THAT(doc_store->GetDocumentId(nsid_uri_fingerprint),
+              IsOkAndHolds(document_id));
 
-    NamespaceFingerprintIdentifier non_existing_ns_fingerprint(
-        namespace_id + 1, /*target_str=*/test_document1_.uri());
-    EXPECT_THAT(doc_store->GetDocumentId(non_existing_ns_fingerprint),
-                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  } else {
-    EXPECT_THAT(doc_store->GetDocumentId(ns_fingerprint),
-                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  }
+  NamespaceIdFingerprint non_existing_nsid_uri_fingerprint(
+      namespace_id + 1, /*target_str=*/test_document1_.uri());
+  EXPECT_THAT(doc_store->GetDocumentId(non_existing_nsid_uri_fingerprint),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 INSTANTIATE_TEST_SUITE_P(
     DocumentStoreTest, DocumentStoreTest,
     testing::Values(
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/false,
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/false,
                                /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/false,
-                               /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/true,
-                               /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/true,
-                               /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/false,
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/false,
                                /*use_persistent_hash_map_in=*/true),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/false,
-                               /*use_persistent_hash_map_in=*/true),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/true,
-                               /*use_persistent_hash_map_in=*/true),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/true,
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/true,
+                               /*use_persistent_hash_map_in=*/false),
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/true,
                                /*use_persistent_hash_map_in=*/true)));
 
 }  // namespace

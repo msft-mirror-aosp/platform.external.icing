@@ -112,7 +112,8 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
              ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
     // childrenRankingSignals function
     expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
-        std::move(args), join_children_fetcher_);
+        std::move(args), document_store_, join_children_fetcher_,
+        current_time_ms_);
   } else if (function_name ==
              PropertyWeightsFunctionScoreExpression::kFunctionName) {
     // propertyWeights function

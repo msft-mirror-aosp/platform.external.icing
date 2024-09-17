@@ -88,6 +88,9 @@ constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_QUALIFIED_ID =
     JoinableConfig::ValueType::QUALIFIED_ID;
 
+constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_ENABLED =
+    PropertyConfigProto::ScorableType::ENABLED;
+
 class PropertyConfigBuilder {
  public:
   PropertyConfigBuilder() = default;
@@ -182,6 +185,12 @@ class PropertyConfigBuilder {
 
   PropertyConfigBuilder& SetDescription(std::string description) {
     property_.set_description(std::move(description));
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetScorableType(
+      PropertyConfigProto::ScorableType::Code scorable_type) {
+    property_.set_scorable_type(scorable_type);
     return *this;
   }
 

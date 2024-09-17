@@ -48,8 +48,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       DocumentStore::Create(
           &filesystem, doc_store_dir, &fake_clock, schema_store.get(),
           /*force_recovery_and_revalidate_documents=*/false,
-          /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-          /*use_persistent_hash_map=*/true,
+          /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
           /*initialize_stats=*/nullptr)
           .ValueOrDie()

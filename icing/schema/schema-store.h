@@ -40,6 +40,7 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
@@ -298,12 +299,10 @@ class SchemaStore {
   //   schema, as well as if the new schema can be set.
   //   INTERNAL_ERROR on any IO errors
   libtextclassifier3::StatusOr<const SetSchemaResult> SetSchema(
-      const SchemaProto& new_schema,
-      bool ignore_errors_and_delete_documents,
+      const SchemaProto& new_schema, bool ignore_errors_and_delete_documents,
       bool allow_circular_schema_definitions);
   libtextclassifier3::StatusOr<const SetSchemaResult> SetSchema(
-      SchemaProto&& new_schema,
-      bool ignore_errors_and_delete_documents,
+      SchemaProto&& new_schema, bool ignore_errors_and_delete_documents,
       bool allow_circular_schema_definitions);
 
   // Get the SchemaTypeConfigProto of schema_type name.
@@ -444,6 +443,29 @@ class SchemaStore {
   //   - NOT_FOUND if the schema type is not present in the schema
   libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
   GetSectionMetadata(const std::string& schema_type) const;
+
+  // Gets the index of the scorable property with name |property_name|, where
+  // the index N means that the property is the Nth scorable property in the
+  // schema config of the given |schema_type_id|.
+  //
+  // Returns:
+  //   - FAILED_PRECONDITION if the schema hasn't been set yet
+  //   - INVALID_ARGUMENT if |schema_type_id| is invalid, or no such scorable
+  //     property is found under the |schema_type_id|
+  libtextclassifier3::StatusOr<int> GetScorablePropertyIndex(
+      SchemaTypeId schema_type_id, const std::string& property_name) const;
+
+  // Returns the ordered list of scorable property names for the given
+  // |schema_type_id|.
+  //
+  // Returns:
+  //   - Vector of scorable property names on success. The vector can be empty
+  //     if no scorable property is found under the schema config of
+  //     |schema_type_id|.
+  //   - FAILED_PRECONDITION if the schema hasn't been set yet
+  //   - INVALID_ARGUMENT if |schema_type_id| is invalid
+  libtextclassifier3::StatusOr<const std::vector<std::string>*>
+  GetOrderedScorablePropertyNames(SchemaTypeId schema_type_id) const;
 
   // Calculates the StorageInfo for the Schema Store.
   //
@@ -634,6 +656,9 @@ class SchemaStore {
   // Manager of section (indexable property) and joinable property related
   // metadata for all Schemas.
   std::unique_ptr<const SchemaTypeManager> schema_type_manager_;
+
+  // Used to cache and manage the schema's scorable properties.
+  std::unique_ptr<ScorablePropertyManager> scorable_property_manager_;
 
   std::unique_ptr<Header> header_;
 };

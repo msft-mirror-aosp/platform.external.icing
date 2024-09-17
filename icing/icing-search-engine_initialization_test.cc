@@ -77,7 +77,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -1086,15 +1086,13 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -3922,9 +3920,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     qualified_id_join_index->set_last_added_document_id(0);
     ICING_ASSERT_OK(qualified_id_join_index->Put(
         /*schema_type_id=*/0, /*joinable_property_id=*/0, /*document_id=*/0,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                        /*target_str=*/"uri")}));
+        /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/0, /*target_str=*/"uri")}));
   }
 
   // 3. Create the index again. This should trigger index restoration.
@@ -4098,9 +4095,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK(qualified_id_join_index->Put(
         /*schema_type_id=*/1, /*joinable_property_id=*/0,
         /*document_id=*/original_last_added_doc_id + 1,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                        /*target_str=*/"person")}));
+        /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/0, /*target_str=*/"person")}));
   }
 
   // 3. Create the index again. This should trigger index restoration.
@@ -5490,15 +5486,13 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,

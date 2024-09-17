@@ -359,7 +359,8 @@ class IcingSearchEngine {
   //   InvalidArgumentError on invalid blob handle
   //   PermissionDeniedError on blob is committed
   //   INTERNAL_ERROR on IO error
-  BlobProto OpenWriteBlob(PropertyProto::BlobHandleProto blob_handle);
+  BlobProto OpenWriteBlob(std::string_view package_name,
+                          PropertyProto::BlobHandleProto blob_handle);
 
   // Gets or creates a file for read only purpose for the given blob handle.
   // The blob must be committed by calling commitBlob otherwise it is not

@@ -101,6 +101,7 @@
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
+#include <google/protobuf/repeated_field.h>
 
 namespace icing {
 namespace lib {
@@ -937,7 +938,6 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
       DocumentStore::Create(
           filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
           force_recovery_and_revalidate_documents,
-          /*document_store_namespace_id_fingerprint=*/true,
           /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
@@ -2039,6 +2039,23 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
       schema_store_->GetStorageInfo();
   *result.mutable_storage_info()->mutable_index_storage_info() =
       index_->GetStorageInfo();
+  if (blob_store_ != nullptr) {
+    auto package_blob_storage_infos_or = blob_store_->GetStorageInfo();
+    if (!package_blob_storage_infos_or.ok()) {
+      result.mutable_status()->set_code(StatusProto::INTERNAL);
+      result.mutable_status()->set_message(
+          package_blob_storage_infos_or.status().error_message());
+      return result;
+    }
+    std::vector<PackageBlobStorageInfoProto> package_blob_storage_infos =
+        std::move(package_blob_storage_infos_or).ValueOrDie();
+
+    std::move(package_blob_storage_infos.begin(),
+              package_blob_storage_infos.end(),
+              google::protobuf::RepeatedPtrFieldBackInserter(
+                  result.mutable_storage_info()
+                      ->mutable_package_blob_storage_info()));
+  }
   // TODO(b/259744228): add stats for integer index
   result.mutable_status()->set_code(StatusProto::OK);
   return result;
@@ -2550,7 +2567,7 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
 }
 
 BlobProto IcingSearchEngine::OpenWriteBlob(
-    PropertyProto::BlobHandleProto blob_handle) {
+    std::string_view package_name, PropertyProto::BlobHandleProto blob_handle) {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
 
@@ -2568,7 +2585,13 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
     return blob_proto;
   }
 
-  auto write_fd_or = blob_store_->OpenWrite(blob_handle);
+  if (package_name.empty()) {
+    status->set_code(StatusProto::INVALID_ARGUMENT);
+    status->set_message("Package name is empty!");
+    return blob_proto;
+  }
+
+  auto write_fd_or = blob_store_->OpenWrite(package_name, blob_handle);
   if (!write_fd_or.ok()) {
     TransformStatus(write_fd_or.status(), status);
     return blob_proto;
@@ -2693,7 +2716,6 @@ IcingSearchEngine::OptimizeDocumentStore(
     auto create_result_or = DocumentStore::Create(
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-        /*document_store_namespace_id_fingerprint=*/true,
         /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
         options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
@@ -2721,7 +2743,6 @@ IcingSearchEngine::OptimizeDocumentStore(
   auto create_result_or = DocumentStore::Create(
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-      /*document_store_namespace_id_fingerprint=*/true,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {

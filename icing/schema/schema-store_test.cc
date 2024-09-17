@@ -85,7 +85,8 @@ class SchemaStoreTest : public ::testing::Test {
                                    PropertyConfigBuilder()
                                        .SetName("timestamp")
                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                       .SetCardinality(CARDINALITY_OPTIONAL)))
+                                       .SetCardinality(CARDINALITY_OPTIONAL)
+                                       .SetScorableType(SCORABLE_TYPE_ENABLED)))
                   .Build();
   }
 
@@ -258,6 +259,15 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
     EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+    // Scorable property manager working as expected.
+    EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                    /*schema_type_id=*/0),
+                IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+    EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                    /*schema_type_id=*/0,
+                    /*property_name=*/"timestamp"),
+                IsOkAndHolds(0));
   }
 
   // "Corrupt" the derived SchemaTypeIds by deleting the entire directory. This
@@ -283,6 +293,15 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
                              schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+  // Scorable property manager working as expected.
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
 }
 
 TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
@@ -304,6 +323,15 @@ TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
     EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+    // Scorable property manager working as expected.
+    EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                    /*schema_type_id=*/0),
+                IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+    EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                    /*schema_type_id=*/0,
+                    /*property_name=*/"timestamp"),
+                IsOkAndHolds(0));
   }
 
   ICING_ASSERT_OK(
@@ -324,6 +352,15 @@ TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
                              schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+  // Scorable property manager working as expected.
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
 }
 
 TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
@@ -345,6 +382,15 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
     EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+    // Scorable property manager working as expected.
+    EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                    /*schema_type_id=*/0),
+                IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+    EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                    /*schema_type_id=*/0,
+                    /*property_name=*/"timestamp"),
+                IsOkAndHolds(0));
   }
 
   // Change the SchemaStore's header combined checksum so that it won't match
@@ -367,6 +413,15 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
                              schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+  // Scorable property manager working as expected.
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
 }
 
 TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
@@ -454,6 +509,15 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   EXPECT_THAT(section_group.integer_sections[0].content,
               ElementsAre(kDefaultTimestamp));
 
+  // Scorable property manager working as expected.
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
+
   // Verify that our persisted data is ok
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -472,6 +536,15 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
               ElementsAre("subject_content"));
   EXPECT_THAT(section_group.integer_sections[0].content,
               ElementsAre(kDefaultTimestamp));
+
+  // Scorable property manager working as expected.
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
 
   // Verify that our persisted data is ok
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -3379,6 +3452,239 @@ TEST_F(SchemaStoreTest, GetTypeWithMultiLevelBlobProperties) {
             Pair("B", UnorderedElementsAre("typeA.blob")),
             Pair("C", UnorderedElementsAre("blob", "typeB.typeA.blob")))));
   }
+}
+
+TEST_F(SchemaStoreTest, GetScorablePropertyIndex_SchemaNotSet) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(SchemaStoreTest, GetScorablePropertyIndex_InvalidSchemaTypeId) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Set schema
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema_, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // non-existing schema type id
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/100,
+                  /*property_name=*/"timestamp"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(SchemaStoreTest, GetScorablePropertyIndex_InvalidPropertyName) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetCardinality(CARDINALITY_OPTIONAL)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("timestamp")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)))
+          .Build();
+
+  // Set schema
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // non-scorable property
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"subject"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  // non-existing property
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"non_existing"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(SchemaStoreTest, GetScorablePropertyIndex_Ok) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Set schema
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema_, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
+}
+
+TEST_F(SchemaStoreTest, GetOrderedScorablePropertyNames_SchemaNotSet) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(SchemaStoreTest, GetOrderedScorablePropertyNames_InvalidSchemaTypeId) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Set schema
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema_, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/100),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(SchemaStoreTest, GetOrderedScorablePropertyNames_Ok) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetCardinality(CARDINALITY_OPTIONAL)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("timestamp")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Set schema
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+  EXPECT_THAT(schema_store->GetSchemaTypeId("message"), IsOkAndHolds(1));
+
+  // no scorable properties under the schema, 'message'.
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/1),
+              IsOkAndHolds(Pointee(ElementsAre())));
+
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("scoreDouble", "timestamp"))));
+}
+
+TEST_F(SchemaStoreTest, ScorablePropertyManagerUpdatesUponSchemaChange) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Sets the initial schema
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema_, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              IsOkAndHolds(0));
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("timestamp"))));
+
+  // The new schema drops the type 'email', and adds a new type 'message'.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("message")
+                  .AddProperty(
+                      // Add an indexed property so we generate
+                      // section metadata on it
+                      PropertyConfigBuilder()
+                          .SetName("content")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("scoreInt")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetCardinality(CARDINALITY_OPTIONAL)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)))
+          .Build();
+
+  // Force updates the schema.
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      new_schema, /*ignore_errors_and_delete_documents=*/true,
+      /*allow_circular_schema_definitions=*/false));
+
+  // "timestamp" is no longer a valid property name.
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"timestamp"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // ok cases for the new schema.
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"scoreInt"),
+              IsOkAndHolds(0));
+  EXPECT_THAT(schema_store->GetScorablePropertyIndex(
+                  /*schema_type_id=*/0,
+                  /*property_name=*/"scoreDouble"),
+              IsOkAndHolds(1));
+  EXPECT_THAT(schema_store->GetOrderedScorablePropertyNames(
+                  /*schema_type_id=*/0),
+              IsOkAndHolds(Pointee(ElementsAre("scoreInt", "scoreDouble"))));
 }
 
 }  // namespace

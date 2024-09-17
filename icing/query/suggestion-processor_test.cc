@@ -108,8 +108,7 @@ class SuggestionProcessorTest : public Test {
         DocumentStore::Create(
             &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));

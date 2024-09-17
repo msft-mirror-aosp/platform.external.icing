@@ -46,6 +46,7 @@
 #include "icing/schema/schema-property-iterator.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
@@ -568,6 +569,9 @@ libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
   ICING_ASSIGN_OR_RETURN(
       schema_type_manager_,
       SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  scorable_property_manager_ = std::make_unique<ScorablePropertyManager>();
+
   return libtextclassifier3::Status::OK;
 }
 
@@ -885,6 +889,22 @@ SchemaStore::ExtractJoinableProperties(const DocumentProto& document) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return schema_type_manager_->joinable_property_manager()
       .ExtractJoinableProperties(document);
+}
+
+libtextclassifier3::StatusOr<int> SchemaStore::GetScorablePropertyIndex(
+    SchemaTypeId schema_type_id, const std::string& property_name) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return scorable_property_manager_->GetScorablePropertyIndex(
+      schema_type_id, property_name, type_config_map_,
+      reverse_schema_type_mapper_);
+}
+
+libtextclassifier3::StatusOr<const std::vector<std::string>*>
+SchemaStore::GetOrderedScorablePropertyNames(
+    SchemaTypeId schema_type_id) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return scorable_property_manager_->GetOrderedScorablePropertyNames(
+      schema_type_id, type_config_map_, reverse_schema_type_mapper_);
 }
 
 libtextclassifier3::Status SchemaStore::PersistToDisk() {

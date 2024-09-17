@@ -338,7 +338,7 @@ public final class IcingSearchEngineTest {
             .build();
 
     // 2 Act: write the blob and read it back.
-    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    BlobProto openWriteBlobProto = icing.openWriteBlob("packageA", blobHandle);
     assertStatusOk(openWriteBlobProto.getStatus());
     Field field = FileDescriptor.class.getDeclaredField("fd");
     field.setAccessible(true); // Make the field accessible

@@ -34,8 +34,7 @@ message ScorablePropertyProto {
 // proto. This will be stored in the icing document store to allow faster
 // access of scorable properties during the scoring/ranking phase.
 //
-// TODO(b/357105837): Always use the util class(link TBD after cl/660373640 is
-// submitted) to interpret and populate this proto.
+// Use icing::lib::scorable_property_set.h to build/interpret this proto.
 //
 // See go/appsearch-docjoin-dd for the design doc.
 //

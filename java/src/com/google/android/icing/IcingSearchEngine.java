@@ -161,7 +161,6 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
         icingSearchEngineImpl.getNextPage(nextPageToken));
   }
 
-  @NonNull
   @Override
   public void invalidateNextPageToken(long nextPageToken) {
     icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);
@@ -169,9 +168,10 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
-  public BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle) {
+  public BlobProto openWriteBlob(
+      @NonNull String packageName, PropertyProto.BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
-        icingSearchEngineImpl.openWriteBlob(blobHandle.toByteArray()));
+        icingSearchEngineImpl.openWriteBlob(packageName, blobHandle.toByteArray()));
   }
 
   @NonNull

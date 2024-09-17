@@ -27,7 +27,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
@@ -56,7 +55,7 @@
 #include "icing/store/document-log-creator.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/store/usage-store.h"
@@ -275,27 +274,10 @@ void RemoveAliveBlobHandles(
 
 }  // namespace
 
-std::string DocumentStore::MakeFingerprint(
-    NamespaceId namespace_id, std::string_view namespace_,
-    std::string_view uri_or_schema) const {
-  if (!namespace_id_fingerprint_) {
-    // Using a 64-bit fingerprint to represent the key could lead to collisions.
-    // But, even with 200K unique keys, the probability of collision is about
-    // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
-    uint64_t fprint = tc3farmhash::Fingerprint64(
-        absl_ports::StrCat(namespace_, uri_or_schema));
-    return fingerprint_util::GetFingerprintString(fprint);
-  } else {
-    return NamespaceFingerprintIdentifier(namespace_id, uri_or_schema)
-        .EncodeToCString();
-  }
-}
-
 DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
                              const SchemaStore* schema_store,
-                             bool namespace_id_fingerprint,
                              bool pre_mapping_fbv, bool use_persistent_hash_map,
                              int32_t compression_level)
     : filesystem_(filesystem),
@@ -303,7 +285,6 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       clock_(*clock),
       schema_store_(schema_store),
       document_validator_(schema_store),
-      namespace_id_fingerprint_(namespace_id_fingerprint),
       pre_mapping_fbv_(pre_mapping_fbv),
       use_persistent_hash_map_(use_persistent_hash_map),
       compression_level_(compression_level) {}
@@ -333,16 +314,16 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
-    bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
-    bool pre_mapping_fbv, bool use_persistent_hash_map,
-    int32_t compression_level, InitializeStatsProto* initialize_stats) {
+    bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
+    bool use_persistent_hash_map, int32_t compression_level,
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
-      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint,
-      pre_mapping_fbv, use_persistent_hash_map, compression_level));
+      filesystem, base_dir, clock, schema_store, pre_mapping_fbv,
+      use_persistent_hash_map, compression_level));
   ICING_ASSIGN_OR_RETURN(
       InitializeResult initialize_result,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -502,8 +483,7 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic !=
-      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_)) {
+  if (header.magic != DocumentStore::Header::kMagic) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
@@ -646,10 +626,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
 
     // Updates key mapper and document_id mapper with the new document
     DocumentId new_document_id = document_id_mapper_->num_elements();
+    NamespaceIdFingerprint new_doc_nsid_uri_fingerprint(
+        namespace_id, document_wrapper.document().uri());
     ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
-                        document_wrapper.document().uri()),
-        new_document_id));
+        new_doc_nsid_uri_fingerprint.EncodeToCString(), new_document_id));
     ICING_RETURN_IF_ERROR(
         document_id_mapper_->Set(new_document_id, iterator.GetOffset()));
 
@@ -673,25 +653,25 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
     }
 
     // Update corpus maps
-    std::string corpus =
-        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
-                        document_wrapper.document().schema());
-    ICING_ASSIGN_OR_RETURN(
-        CorpusId corpusId,
-        corpus_mapper_->GetOrPut(corpus, corpus_mapper_->num_keys()));
+    NamespaceIdFingerprint corpus_nsid_schema_fingerprint(
+        namespace_id, document_wrapper.document().schema());
+    ICING_ASSIGN_OR_RETURN(CorpusId corpus_id,
+                           corpus_mapper_->GetOrPut(
+                               corpus_nsid_schema_fingerprint.EncodeToCString(),
+                               corpus_mapper_->num_keys()));
 
     ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
-                           GetCorpusAssociatedScoreDataToUpdate(corpusId));
+                           GetCorpusAssociatedScoreDataToUpdate(corpus_id));
     scoring_data.AddDocument(
         document_wrapper.document().internal_fields().length_in_tokens());
 
     ICING_RETURN_IF_ERROR(
-        UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
+        UpdateCorpusAssociatedScoreCache(corpus_id, scoring_data));
 
     ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
         new_document_id,
         DocumentAssociatedScoreData(
-            corpusId, document_wrapper.document().score(),
+            corpus_id, document_wrapper.document().score(),
             document_wrapper.document().creation_timestamp_ms(),
             document_wrapper.document().internal_fields().length_in_tokens())));
 
@@ -700,8 +680,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
         document_wrapper.document().ttl_ms());
 
     ICING_RETURN_IF_ERROR(UpdateFilterCache(
-        new_document_id, DocumentFilterData(namespace_id, schema_type_id,
-                                            expiration_timestamp_ms)));
+        new_document_id,
+        DocumentFilterData(namespace_id,
+                           new_doc_nsid_uri_fingerprint.fingerprint(),
+                           schema_type_id, expiration_timestamp_ms)));
     iterator_status = iterator.Advance();
   }
 
@@ -1063,8 +1045,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
 
   // Write the header
   DocumentStore::Header header;
-  header.magic =
-      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
+  header.magic = DocumentStore::Header::kMagic;
   header.checksum = total_checksum.Get();
 
   // This should overwrite the header.
@@ -1152,35 +1133,40 @@ DocumentStore::InternalPut(DocumentProto&& document,
       NamespaceId namespace_id,
       namespace_mapper_->GetOrPut(name_space, namespace_mapper_->num_keys()));
 
+  NamespaceIdFingerprint new_doc_nsid_uri_fingerprint(namespace_id, uri);
+
   // Updates key mapper and document_id mapper
   ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-      MakeFingerprint(namespace_id, name_space, uri), new_document_id));
+      new_doc_nsid_uri_fingerprint.EncodeToCString(), new_document_id));
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
 
   // Update corpus maps
-  ICING_ASSIGN_OR_RETURN(CorpusId corpusId,
-                         corpus_mapper_->GetOrPut(
-                             MakeFingerprint(namespace_id, name_space, schema),
-                             corpus_mapper_->num_keys()));
+  NamespaceIdFingerprint corpus_nsid_schema_fingerprint(namespace_id, schema);
+  ICING_ASSIGN_OR_RETURN(
+      CorpusId corpus_id,
+      corpus_mapper_->GetOrPut(corpus_nsid_schema_fingerprint.EncodeToCString(),
+                               corpus_mapper_->num_keys()));
 
   ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
-                         GetCorpusAssociatedScoreDataToUpdate(corpusId));
+                         GetCorpusAssociatedScoreDataToUpdate(corpus_id));
   scoring_data.AddDocument(length_in_tokens);
 
   ICING_RETURN_IF_ERROR(
-      UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
+      UpdateCorpusAssociatedScoreCache(corpus_id, scoring_data));
 
   ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
       new_document_id,
-      DocumentAssociatedScoreData(corpusId, document_score,
+      DocumentAssociatedScoreData(corpus_id, document_score,
                                   creation_timestamp_ms, length_in_tokens)));
 
   ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                          schema_store_->GetSchemaTypeId(schema));
 
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
-      new_document_id, DocumentFilterData(namespace_id, schema_type_id,
-                                          expiration_timestamp_ms)));
+      new_document_id,
+      DocumentFilterData(namespace_id,
+                         new_doc_nsid_uri_fingerprint.fingerprint(),
+                         schema_type_id, expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
     put_result.was_replacement = true;
@@ -1294,8 +1280,9 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
   libtextclassifier3::Status status = namespace_id_or.status();
   if (status.ok()) {
     NamespaceId namespace_id = namespace_id_or.ValueOrDie();
-    auto document_id_or = document_key_mapper_->Get(
-        MakeFingerprint(namespace_id, name_space, uri));
+    NamespaceIdFingerprint doc_nsid_uri_fingerprint(namespace_id, uri);
+    auto document_id_or =
+        document_key_mapper_->Get(doc_nsid_uri_fingerprint.EncodeToCString());
     status = document_id_or.status();
     if (status.ok()) {
       // Guaranteed to have a DocumentId now
@@ -1308,16 +1295,9 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
-    const NamespaceFingerprintIdentifier& namespace_fingerprint_identifier)
-    const {
-  if (!namespace_id_fingerprint_) {
-    return absl_ports::FailedPreconditionError(
-        "Cannot lookup document id by namespace id + fingerprint without "
-        "enabling it on uri_mapper");
-  }
-
+    const NamespaceIdFingerprint& doc_namespace_id_uri_fingerprint) const {
   auto document_id_or = document_key_mapper_->Get(
-      namespace_fingerprint_identifier.EncodeToCString());
+      doc_namespace_id_uri_fingerprint.EncodeToCString());
   if (document_id_or.ok()) {
     return document_id_or.ValueOrDie();
   }
@@ -1451,7 +1431,8 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
     const std::string_view name_space, const std::string_view schema) const {
   ICING_ASSIGN_OR_RETURN(NamespaceId namespace_id,
                          namespace_mapper_->Get(name_space));
-  return corpus_mapper_->Get(MakeFingerprint(namespace_id, name_space, schema));
+  NamespaceIdFingerprint corpus_nsid_schema_fp(namespace_id, schema);
+  return corpus_mapper_->Get(corpus_nsid_schema_fp.EncodeToCString());
 }
 
 libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
@@ -1985,8 +1966,8 @@ DocumentStore::OptimizeInto(
       auto doc_store_create_result,
       DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
                             /*force_recovery_and_revalidate_documents=*/false,
-                            namespace_id_fingerprint_, pre_mapping_fbv_,
-                            use_persistent_hash_map_, compression_level_,
+                            pre_mapping_fbv_, use_persistent_hash_map_,
+                            compression_level_,
                             /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
@@ -2226,8 +2207,10 @@ libtextclassifier3::Status DocumentStore::ClearDerivedData(
 
   // Resets the filter cache entry
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
-      document_id, DocumentFilterData(kInvalidNamespaceId, kInvalidSchemaTypeId,
-                                      /*expiration_timestamp_ms=*/-1)));
+      document_id,
+      DocumentFilterData(kInvalidNamespaceId, /*uri_fingerprint=*/0,
+                         kInvalidSchemaTypeId,
+                         /*expiration_timestamp_ms=*/-1)));
 
   // Clears the usage scores.
   return usage_store_->DeleteUsageScores(document_id);

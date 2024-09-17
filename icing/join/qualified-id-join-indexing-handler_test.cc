@@ -41,7 +41,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -152,15 +152,13 @@ class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
                 IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
     // Get FakeType related ids.
@@ -271,9 +269,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
       /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
   // Create and put (child) document. Also tokenize it.
@@ -306,14 +304,13 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
   // Verify the state of qualified_id_join_index_ after Handle().
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(), Eq(doc_id));
   // (kFakeType, kPropertyQualifiedId) should contain
-  // [(doc_id, ref_doc_ns_fingerprint_id)].
+  // [(doc_id, ref_doc_nsid_uri_fingerprint)].
   EXPECT_THAT(
       GetJoinData(*qualified_id_join_index_, /*schema_type_id=*/fake_type_id_,
                   /*joinable_property_id=*/fake_type_joinable_property_id_),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/doc_id,
-              /*join_info=*/ref_doc_ns_fingerprint_id))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/doc_id,
+          /*join_info=*/ref_doc_nsid_uri_fingerprint))));
 }
 
 TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
@@ -331,10 +328,10 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id1,
       doc_store_->GetNamespaceId(referenced_document1.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id1(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint1(
       /*namespace_id=*/ref_doc_ns_id1,
       /*target_str=*/referenced_document1.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id1),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint1),
               IsOkAndHolds(ref_doc_id1));
 
   // Create and put referenced (parent) document2. Get its document id and
@@ -351,10 +348,10 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id2,
       doc_store_->GetNamespaceId(referenced_document2.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id2(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint2(
       /*namespace_id=*/ref_doc_ns_id2,
       /*target_str=*/referenced_document2.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id2),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint2),
               IsOkAndHolds(ref_doc_id2));
 
   // Create and put (child) document:
@@ -405,24 +402,22 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
                   /*joinable_property_id=*/fake_type_joinable_property_id_),
       IsOkAndHolds(IsEmpty()));
   // (kNestedType, kPropertyNestedDoc.kPropertyQualifiedId) should contain
-  // [(doc_id, ref_doc_ns_fingerprint_id2)].
+  // [(doc_id, ref_doc_nsid_uri_fingerprint2)].
   EXPECT_THAT(
       GetJoinData(
           *qualified_id_join_index_, /*schema_type_id=*/nested_type_id_,
           /*joinable_property_id=*/nested_type_nested_joinable_property_id_),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/doc_id,
-              /*join_info=*/ref_doc_ns_fingerprint_id2))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/doc_id,
+          /*join_info=*/ref_doc_nsid_uri_fingerprint2))));
   // (kNestedType, kPropertyQualifiedId2) should contain
-  // [(doc_id, ref_doc_ns_fingerprint_id1)].
+  // [(doc_id, ref_doc_nsid_uri_fingerprint1)].
   EXPECT_THAT(
       GetJoinData(*qualified_id_join_index_, /*schema_type_id=*/nested_type_id_,
                   /*joinable_property_id=*/nested_type_joinable_property_id_),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/doc_id,
-              /*join_info=*/ref_doc_ns_fingerprint_id1))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/doc_id,
+          /*join_info=*/ref_doc_nsid_uri_fingerprint1))));
 }
 
 TEST_F(QualifiedIdJoinIndexingHandlerTest,
@@ -569,9 +564,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
       /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
   // Create and put (child) document. Also tokenize it.
@@ -642,9 +637,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
       /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
   // Create and put (child) document. Also tokenize it.
@@ -720,9 +715,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
       /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
   // Create and put (child) document. Also tokenize it.
@@ -758,10 +753,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
   EXPECT_THAT(
       GetJoinData(*qualified_id_join_index_, /*schema_type_id=*/fake_type_id_,
                   /*joinable_property_id=*/fake_type_joinable_property_id_),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/doc_id,
-              /*join_info=*/ref_doc_ns_fingerprint_id))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/doc_id,
+          /*join_info=*/ref_doc_nsid_uri_fingerprint))));
 }
 
 TEST_F(QualifiedIdJoinIndexingHandlerTest,
@@ -780,9 +774,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
-  NamespaceFingerprintIdentifier ref_doc_ns_fingerprint_id(
+  NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
       /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
-  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_ns_fingerprint_id),
+  ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
   // Create and put (child) document. Also tokenize it.

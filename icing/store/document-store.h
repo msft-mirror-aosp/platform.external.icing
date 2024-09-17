@@ -43,7 +43,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -60,19 +60,13 @@ namespace lib {
 class DocumentStore {
  public:
   struct Header {
-    static int32_t GetCurrentMagic(bool namespace_id_fingerprint) {
-      return namespace_id_fingerprint ? kNewMagic : kOldMagic;
-    }
+    static constexpr int32_t kMagic = 0x3e005b5e;
 
     // Holds the magic as a quick sanity check against file corruption.
     int32_t magic;
 
     // Checksum of the DocumentStore's sub-component's checksums.
     uint32_t checksum;
-
-   private:
-    static constexpr int32_t kOldMagic = 0x746f7265;
-    static constexpr int32_t kNewMagic = 0x1b99c8b0;
   };
 
   struct OptimizeInfo {
@@ -147,8 +141,7 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
-      bool force_recovery_and_revalidate_documents,
-      bool namespace_id_fingerprint, bool pre_mapping_fbv,
+      bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
       InitializeStatsProto* initialize_stats);
 
@@ -283,7 +276,7 @@ class DocumentStore {
       std::string_view name_space, std::string_view uri) const;
 
   // Helper method to find a DocumentId that is associated with the given
-  // NamespaceFingerprintIdentifier.
+  // NamespaceIdFingerprint.
   //
   // NOTE: The DocumentId may refer to a invalid document (deleted
   // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
@@ -294,8 +287,7 @@ class DocumentStore {
   //   NOT_FOUND if the key doesn't exist
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
-      const NamespaceFingerprintIdentifier& namespace_fingerprint_identifier)
-      const;
+      const NamespaceIdFingerprint& doc_namespace_id_uri_fingerprint) const;
 
   // Returns the CorpusId associated with the given namespace and schema.
   //
@@ -543,8 +535,7 @@ class DocumentStore {
   // Use DocumentStore::Create() to instantiate.
   explicit DocumentStore(const Filesystem* filesystem,
                          std::string_view base_dir, const Clock* clock,
-                         const SchemaStore* schema_store,
-                         bool namespace_id_fingerprint, bool pre_mapping_fbv,
+                         const SchemaStore* schema_store, bool pre_mapping_fbv,
                          bool use_persistent_hash_map,
                          int32_t compression_level);
 
@@ -558,10 +549,6 @@ class DocumentStore {
 
   // Used to validate incoming documents
   DocumentValidator document_validator_;
-
-  // Whether to use namespace id or namespace name to build up fingerprint for
-  // document_key_mapper_ and corpus_mapper_.
-  bool namespace_id_fingerprint_;
 
   // Flag indicating whether memory map max possible file size for underlying
   // FileBackedVector before growing the actual file size.
@@ -822,13 +809,6 @@ class DocumentStore {
   libtextclassifier3::StatusOr<
       google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
   CollectCorpusInfo() const;
-
-  // Build fingerprint for the keys of document_key_mapper_ and corpus_mapper_.
-  // Note that namespace_id_fingerprint_ controls the way that a fingerprint is
-  // built.
-  std::string MakeFingerprint(NamespaceId namespace_id,
-                              std::string_view namespace_,
-                              std::string_view uri_or_schema) const;
 };
 
 }  // namespace lib

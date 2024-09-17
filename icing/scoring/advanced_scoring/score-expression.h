@@ -372,7 +372,9 @@ class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
   static libtextclassifier3::StatusOr<
       std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
-         const JoinChildrenFetcher* join_children_fetcher);
+         const DocumentStore& document_store,
+         const JoinChildrenFetcher* join_children_fetcher,
+         int64_t current_time_ms);
 
   libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
@@ -384,9 +386,15 @@ class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
 
  private:
   explicit ChildrenRankingSignalsFunctionScoreExpression(
-      const JoinChildrenFetcher& join_children_fetcher)
-      : join_children_fetcher_(join_children_fetcher) {}
-  const JoinChildrenFetcher& join_children_fetcher_;
+      const DocumentStore& document_store,
+      const JoinChildrenFetcher& join_children_fetcher, int64_t current_time_ms)
+      : document_store_(document_store),
+        join_children_fetcher_(join_children_fetcher),
+        current_time_ms_(current_time_ms) {}
+
+  const DocumentStore& document_store_;               // Does not own.
+  const JoinChildrenFetcher& join_children_fetcher_;  // Does not own.
+  int64_t current_time_ms_;
 };
 
 class PropertyWeightsFunctionScoreExpression : public ScoreExpression {

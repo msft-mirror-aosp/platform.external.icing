@@ -586,7 +586,8 @@ libtextclassifier3::StatusOr<
     std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
 ChildrenRankingSignalsFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args,
-    const JoinChildrenFetcher* join_children_fetcher) {
+    const DocumentStore& document_store,
+    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms) {
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         "childrenRankingSignals must have 1 argument.");
@@ -605,7 +606,7 @@ ChildrenRankingSignalsFunctionScoreExpression::Create(
   }
   return std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>(
       new ChildrenRankingSignalsFunctionScoreExpression(
-          *join_children_fetcher));
+          document_store, *join_children_fetcher, current_time_ms));
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>

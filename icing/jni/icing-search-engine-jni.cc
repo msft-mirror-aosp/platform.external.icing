@@ -249,11 +249,15 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
   return;
 }
 
-jbyteArray nativeOpenWriteBlob(
-    JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
+// TODO(b/273591938): Change this API back to the pre-registered API.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
+    JNIEnv* env, jclass clazz, jobject object, jstring package_name,
+    jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
+  icing::lib::ScopedUtfChars scoped_package_name_chars(env, package_name);
   icing::lib::PropertyProto::BlobHandleProto blob_handle;
   if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
     ICING_LOG(icing::lib::ERROR)
@@ -261,7 +265,8 @@ jbyteArray nativeOpenWriteBlob(
     return nullptr;
   }
 
-  icing::lib::BlobProto blob_result_proto = icing->OpenWriteBlob(blob_handle);
+  icing::lib::BlobProto blob_result_proto =
+      icing->OpenWriteBlob(scoped_package_name_chars.c_str(), blob_handle);
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
@@ -575,9 +580,6 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeInvalidateNextPageToken",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;J)V",
        reinterpret_cast<void*>(nativeInvalidateNextPageToken)},
-      {"nativeOpenWriteBlob",
-       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
-       reinterpret_cast<void*>(nativeOpenWriteBlob)},
       {"nativeOpenReadBlob",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativeOpenReadBlob)},
