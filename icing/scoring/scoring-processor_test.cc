@@ -15,22 +15,39 @@
 #include "icing/scoring/scoring-processor.h"
 
 #include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer-test-utils.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -65,8 +82,8 @@ class ScoringProcessorTest
         DocumentStore::Create(
             &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -111,6 +128,10 @@ class ScoringProcessorTest
 
   const FakeClock& fake_clock() const { return fake_clock_; }
 
+  SearchSpecProto::EmbeddingQueryMetricType::Code default_semantic_metric_type =
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT;
+  EmbeddingQueryResults empty_embedding_query_results;
+
  private:
   const std::string test_dir_;
   const std::string doc_store_dir_;
@@ -142,10 +163,11 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
   std::vector<DocHitInfo> doc_hit_infos;
   std::vector<ScoredDocumentHit> scored_document_hits;
   for (int i = 0; i < scores.size(); i++) {
-    ICING_ASSIGN_OR_RETURN(DocumentId document_id,
+    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
                            document_store->Put(CreateDocument(
                                "icing", "email/" + std::to_string(i),
                                scores.at(i), kDefaultCreationTimestampMs)));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
     scored_document_hits.emplace_back(document_id, kSectionIdMaskNone,
                                       scores.at(i));
@@ -187,27 +209,31 @@ PropertyWeight CreatePropertyWeight(std::string path, double weight) {
 
 TEST_F(ScoringProcessorTest, CreationWithNullDocumentStoreShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(ScoringProcessor::Create(
-                  spec_proto, /*document_store=*/nullptr, schema_store(),
-                  fake_clock().GetSystemTimeMilliseconds()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, /*document_store=*/nullptr,
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
   ScoringSpecProto spec_proto;
   EXPECT_THAT(
-      ScoringProcessor::Create(spec_proto, document_store(),
-                               /*schema_store=*/nullptr,
-                               fake_clock().GetSystemTimeMilliseconds()),
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          /*schema_store=*/nullptr, fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_P(ScoringProcessorTest, ShouldCreateInstance) {
   ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
       ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
-  ICING_EXPECT_OK(
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(ScoringProcessor::Create(
+      spec_proto, default_semantic_metric_type, document_store(),
+      schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 }
 
 TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
@@ -222,8 +248,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/5),
@@ -233,9 +261,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
 TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Sets up documents
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(CreateDocument("icing", "email/1", /*score=*/1,
                                            kDefaultCreationTimestampMs)));
+  DocumentId document_id1 = put_result1.new_document_id;
   DocHitInfo doc_hit_info1(document_id1);
 
   // Creates a dummy DocHitInfoIterator
@@ -249,8 +278,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/-1),
@@ -280,8 +311,10 @@ TEST_P(ScoringProcessorTest, ShouldRespectNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/2),
@@ -313,8 +346,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByDocumentScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -336,14 +371,17 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/10));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store()->Put(document2, /*num_tokens=*/100));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store()->Put(document3, /*num_tokens=*/50));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
@@ -369,8 +407,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -406,14 +446,17 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/10));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store()->Put(document2, /*num_tokens=*/10));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store()->Put(document3, /*num_tokens=*/10));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
@@ -439,8 +482,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -475,14 +520,17 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/10));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store()->Put(document2, /*num_tokens=*/10));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store()->Put(document3, /*num_tokens=*/10));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   // Document 1 contains the query term "foo" 5 times
@@ -513,8 +561,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -543,8 +593,9 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/10));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   // Document 1 contains the term "foo" 0 times in the "subject" property
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
@@ -563,8 +614,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -592,11 +645,13 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/1));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store()->Put(document2, /*num_tokens=*/1));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
@@ -629,8 +684,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -665,11 +722,13 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/1));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store()->Put(document2, /*num_tokens=*/1));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
@@ -700,8 +759,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -738,8 +799,9 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/1));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
@@ -762,8 +824,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor with no explicit weights set.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   ScoringSpecProto spec_proto_with_weights =
       CreateScoringSpecForRankingStrategy(
@@ -778,9 +842,11 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor with default weight set for "body" property.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor_with_weights,
-      ScoringProcessor::Create(spec_proto_with_weights, document_store(),
-                               schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto_with_weights, default_semantic_metric_type,
+          document_store(), schema_store(),
+          fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -827,11 +893,13 @@ TEST_P(ScoringProcessorTest,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store()->Put(document1, /*num_tokens=*/1));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store()->Put(document2, /*num_tokens=*/1));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
@@ -866,8 +934,10 @@ TEST_P(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -901,12 +971,15 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/1571100003333);
   // Intentionally inserts documents in a different order
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store()->Put(document3));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store()->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store()->Put(document3));
+  DocumentId document_id3 = put_result3.new_document_id;
   DocHitInfo doc_hit_info1(document_id1);
   DocHitInfo doc_hit_info2(document_id2);
   DocHitInfo doc_hit_info3(document_id3);
@@ -929,8 +1002,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -950,12 +1025,15 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store()->Put(document2));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store()->Put(document3));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   // Report usage for doc1 once and doc2 twice.
   UsageReport usage_report_doc1 = CreateUsageReport(
@@ -990,8 +1068,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1011,12 +1091,15 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store()->Put(document2));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store()->Put(document3));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   // Report usage for doc1 and doc2.
   UsageReport usage_report_doc1 = CreateUsageReport(
@@ -1051,8 +1134,10 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1088,8 +1173,10 @@ TEST_P(ScoringProcessorTest, ShouldHandleNoScores) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/4),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
@@ -1107,12 +1194,15 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
                                            kDefaultCreationTimestampMs);
 
   // Intentionally inserts documents in a different order
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store()->Put(document3));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store()->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+  DocumentId document_id3 = put_result3.new_document_id;
   DocHitInfo doc_hit_info1(document_id1);
   DocHitInfo doc_hit_info2(document_id2);
   DocHitInfo doc_hit_info3(document_id3);
@@ -1138,8 +1228,10 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store(),
-                               fake_clock().GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),

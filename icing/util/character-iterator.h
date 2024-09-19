@@ -15,8 +15,12 @@
 #ifndef ICING_UTIL_CHARACTER_ITERATOR_H_
 #define ICING_UTIL_CHARACTER_ITERATOR_H_
 
+#include <string>
+#include <string_view>
+
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/i18n-utils.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {
@@ -36,7 +40,7 @@ class CharacterIterator {
 
   // Returns the character that the iterator currently points to.
   // i18n_utils::kInvalidUChar32 if unable to read that character.
-  UChar32 GetCurrentChar();
+  UChar32 GetCurrentChar() const;
 
   // Moves current position to desired_utf8_index.
   // REQUIRES: 0 <= desired_utf8_index <= text_.length()
@@ -104,7 +108,7 @@ class CharacterIterator {
   void ResetToStartIfNecessary();
 
   std::string_view text_;
-  UChar32 cached_current_char_;
+  mutable UChar32 cached_current_char_;
   int utf8_index_;
   int utf16_index_;
   int utf32_index_;

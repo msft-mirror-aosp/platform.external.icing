@@ -12,18 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
+#include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -31,6 +35,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scoring-processor.h"
@@ -95,8 +100,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
   return DocumentStore::Create(
       filesystem, base_dir, clock, schema_store,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/false,
+      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
@@ -131,11 +136,15 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get(),
-                               clock.GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results));
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
 
@@ -147,10 +156,11 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(
             /*id=*/i, /*document_score=*/distribution(random_generator),
             /*creation_timestamp_ms=*/1)));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -237,11 +247,15 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get(),
-                               clock.GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -254,10 +268,11 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(
             /*id=*/i, /*document_score=*/1,
             /*creation_timestamp_ms=*/distribution(random_generator))));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -344,11 +359,15 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get(),
-                               clock.GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -357,9 +376,10 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(/*id=*/i, /*document_score=*/1,
                                                 /*creation_timestamp_ms=*/1)));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -446,11 +466,15 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get(),
-                               clock.GetSystemTimeMilliseconds()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -466,11 +490,12 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(
                                 /*id=*/i, /*document_score=*/1,
                                 /*creation_timestamp_ms=*/1),
                             /*num_tokens=*/10));
+    DocumentId document_id = put_result.new_document_id;
     DocHitInfoTermFrequencyPair doc_hit =
         DocHitInfo(document_id, section_id_mask);
     // Set five matches for term "foo" for each document hit.

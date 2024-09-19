@@ -105,8 +105,8 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -135,8 +135,9 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        PopulateMatchedTermsStats_IncludesHitWithMatchingSection) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   // Arbitrary section ids for the documents in the DocHitInfoIterators.
   // Created to test correct section_id_mask behavior.
@@ -200,8 +201,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, EmptyOriginalIterator) {
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest, IncludesHitWithMatchingSection) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   SectionIdMask section_id_mask = 1U << kIndexedSectionId0;
 
@@ -227,8 +229,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, IncludesHitWithMatchingSection) {
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        IncludesHitWithMultipleMatchingSectionsWithMultipleSectionRestricts) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   SectionIdMask section_id_mask = 1U << kIndexedSectionId0;
   section_id_mask |= 1U << kIndexedSectionId1;
@@ -258,8 +261,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        IncludesHitWithMultipleMatchingSectionsWithSingleSectionRestrict) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   SectionIdMask section_id_mask = 1U << kIndexedSectionId0;
   section_id_mask |= 1U << kIndexedSectionId1;
@@ -288,8 +292,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        IncludesHitWithSingleMatchingSectionsWithMultiSectionRestrict) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   SectionIdMask section_id_mask = 1U << kIndexedSectionId1;
 
@@ -337,8 +342,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, NoMatchingDocumentFilterData) {
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        DoesntIncludeHitWithWrongSectionName) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   SectionIdMask section_id_mask = 1U << kIndexedSectionId0;
 
@@ -366,8 +372,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        DoesntIncludeHitWithNoSectionIds) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create a hit that doesn't exist in any sections, so it shouldn't match any
   // section filters
@@ -393,8 +400,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        DoesntIncludeHitWithDifferentSectionId) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   // Anything that's not 0, which is the indexed property
   SectionId not_matching_section_id = 2;
@@ -443,12 +451,15 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, GetCallStats) {
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
        TrimSectionRestrictIterator_TwoLayer) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(document3_));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   // 0 is the indexed property
   SectionId matching_section_id = 0;
@@ -501,10 +512,12 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest, TrimSectionRestrictIterator) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 0 is the indexed property
   SectionId matching_section_id = 0;

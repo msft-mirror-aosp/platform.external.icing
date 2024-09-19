@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,6 +24,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"

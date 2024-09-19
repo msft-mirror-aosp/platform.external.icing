@@ -20,9 +20,12 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -48,9 +51,20 @@ class SectionRestrictData {
   // Returns:
   //  - If type_property_filters_ has an entry for the given schema type or
   //    wildcard(*), return a bitwise or of section IDs in the schema type
-  //    that that are also present in the relevant filter list.
+  //    that are also present in the relevant filter list.
   //  - Otherwise, return kSectionIdMaskAll.
   SectionIdMask ComputeAllowedSectionsMask(const std::string& schema_type);
+
+  // Calculates the section mask of allowed sections(determined by the
+  // property filters map) for the given document id, by retrieving its schema
+  // type name and calling the above method.
+  //
+  // Returns:
+  //  - If type_property_filters_ has an entry for the given document's schema
+  //    type or wildcard(*), return a bitwise or of section IDs in the schema
+  //    type that are also present in the relevant filter list.
+  //  - Otherwise, return kSectionIdMaskAll.
+  SectionIdMask ComputeAllowedSectionsMask(DocumentId document_id);
 
   const DocumentStore& document_store() const { return document_store_; }
 
@@ -90,6 +104,33 @@ class SectionRestrictData {
   SectionIdMask GenerateSectionMask(
       const std::string& schema_type,
       const std::set<std::string>& target_sections) const;
+};
+
+// Indicate that the iterator can internally handle the section restriction
+// logic by itself.
+//
+// This is helpful when some iterators want to have better control for
+// optimization. For example, embedding iterator will be able to filter out
+// embedding hits from unwanted sections to avoid retrieving unnecessary vectors
+// and calculate scores for them.
+class DocHitInfoIteratorHandlingSectionRestrict
+    : public DocHitInfoLeafIterator {
+ protected:
+  bool HandleSectionRestriction(SectionRestrictData* other_data) override {
+    section_restrict_data_.push_back(other_data);
+    return true;
+  }
+
+  SectionIdMask ComputeAllowedSectionsMask(DocumentId document_id) {
+    SectionIdMask result = kSectionIdMaskAll;
+    for (SectionRestrictData* section_restrict_data : section_restrict_data_) {
+      result &= section_restrict_data->ComputeAllowedSectionsMask(document_id);
+    }
+    return result;
+  }
+
+  // Does not own the pointers.
+  std::vector<SectionRestrictData*> section_restrict_data_;
 };
 
 }  // namespace lib
