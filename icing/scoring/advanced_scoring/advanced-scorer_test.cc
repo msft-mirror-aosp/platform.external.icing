@@ -14,6 +14,7 @@
 
 #include "icing/scoring/advanced_scoring/advanced-scorer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -95,30 +96,70 @@ class AdvancedScorerTest : public testing::Test {
                         TermMatchType::PREFIX,
                         StringIndexingConfig::TokenizerType::PLAIN)
                     .SetCardinality(CARDINALITY_OPTIONAL)))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("person")
-                         .AddProperty(
-                             PropertyConfigBuilder()
-                                 .SetName("emailAddress")
-                                 .SetDataTypeString(
-                                     TermMatchType::PREFIX,
-                                     StringIndexingConfig::TokenizerType::PLAIN)
-                                 .SetCardinality(CARDINALITY_OPTIONAL))
-                         .AddProperty(
-                             PropertyConfigBuilder()
-                                 .SetName("name")
-                                 .SetDataTypeString(
-                                     TermMatchType::PREFIX,
-                                     StringIndexingConfig::TokenizerType::PLAIN)
-                                 .SetCardinality(CARDINALITY_OPTIONAL))
-
-                         .AddProperty(
-                             PropertyConfigBuilder()
-                                 .SetName("phoneNumber")
-                                 .SetDataTypeString(
-                                     TermMatchType::PREFIX,
-                                     StringIndexingConfig::TokenizerType::PLAIN)
-                                 .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("message")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("frequencyScore")
+                            .SetDataType(PropertyConfigProto::DataType::INT64)
+                            .SetCardinality(CARDINALITY_REPEATED)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("content")
+                            .SetDataTypeString(
+                                TermMatchType::PREFIX,
+                                StringIndexingConfig::TokenizerType::PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("person")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("emailAddress")
+                            .SetDataTypeString(
+                                TermMatchType::PREFIX,
+                                StringIndexingConfig::TokenizerType::PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("name")
+                            .SetDataTypeString(
+                                TermMatchType::PREFIX,
+                                StringIndexingConfig::TokenizerType::PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("frequencyScore")
+                            .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                            .SetCardinality(CARDINALITY_REPEATED)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("customizedScore")
+                            .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                            .SetCardinality(CARDINALITY_OPTIONAL)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("contactTimes")
+                            .SetDataType(PropertyConfigProto::DataType::INT64)
+                            .SetCardinality(CARDINALITY_REPEATED)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("isStarred")
+                            .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("phoneNumber")
+                            .SetDataTypeString(
+                                TermMatchType::PREFIX,
+                                StringIndexingConfig::TokenizerType::PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
@@ -1722,6 +1763,412 @@ TEST_F(AdvancedScorerTest, AdditionalScores) {
       scorer->GetAdditionalScores(docHitInfo, /*query_it=*/nullptr);
   EXPECT_THAT(additional_scores,
               ElementsAre(DoubleNear(4, kEps), DoubleNear(127, kEps)));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_WrongParamsNumber) {
+  ScoringSpecProto scoring_spec_with_one_param = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\"))");
+
+  EXPECT_THAT(
+      AdvancedScorer::Create(
+          scoring_spec_with_one_param, /*default_score=*/10,
+          kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr(
+                   "getScorableProperty must take exactly two string params")));
+
+  ScoringSpecProto scoring_spec_with_int_param = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\", 123))");
+
+  EXPECT_THAT(
+      AdvancedScorer::Create(
+          scoring_spec_with_int_param, /*default_score=*/10,
+          kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr(
+                   "getScorableProperty must take exactly two string params")));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_ParamsMustBeString) {
+  ScoringSpecProto scoring_spec_with_int_param = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\", 123))");
+
+  EXPECT_THAT(
+      AdvancedScorer::Create(
+          scoring_spec_with_int_param, /*default_score=*/10,
+          kDefaultSemanticMetricType, document_store_.get(),
+          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr(
+                   "getScorableProperty must take exactly two string params")));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_SchemaNotExist) {
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"non_exist\", \"frequencyScore\"))");
+
+  EXPECT_THAT(AdvancedScorer::Create(scoring_spec, /*default_score=*/10,
+                                     kDefaultSemanticMetricType,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds(),
+                                     /*join_children_fetcher=*/nullptr,
+                                     &empty_embedding_query_results_),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("Schema type 'non_exist' is not found")));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotScorable) {
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\", \"subject\"))");
+
+  EXPECT_THAT(AdvancedScorer::Create(scoring_spec, /*default_score=*/10,
+                                     kDefaultSemanticMetricType,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds(),
+                                     /*join_children_fetcher=*/nullptr,
+                                     &empty_embedding_query_results_),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("'subject' is not defined as a scorable "
+                                 "property under schema type")));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotExist) {
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\", \"non_exist\"))");
+
+  EXPECT_THAT(AdvancedScorer::Create(scoring_spec, /*default_score=*/10,
+                                     kDefaultSemanticMetricType,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds(),
+                                     /*join_children_fetcher=*/nullptr,
+                                     &empty_embedding_query_results_),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("'non_exist' is not defined as a scorable "
+                                 "property under schema type")));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_SomePropertiesNotScorable) {
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "100 * avg(getScorableProperty(\"person\", \"isStarred\")) + "
+      "10  * max(getScorableProperty(\"person\", \"frequencyScore\")) + "
+      "10  * sum(getScorableProperty(\"person\", \"non_exist\"))");
+
+  EXPECT_THAT(AdvancedScorer::Create(scoring_spec, /*default_score=*/10,
+                                     kDefaultSemanticMetricType,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds(),
+                                     /*join_children_fetcher=*/nullptr,
+                                     &empty_embedding_query_results_),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("'non_exist' is not defined as a scorable "
+                                 "property under schema type")));
+}
+
+TEST_F(AdvancedScorerTest,
+       GetScorableProperty_DocumentSchemaDifferentFromScoringSpecSchema) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("email")
+                               .SetScore(100)
+                               .SetCreationTimestampMs(123)
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  // getScorableProperty("person", "frequencyScore") will return an empty list
+  // because the schema type of the document is "email" instead of "person".
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"person\", \"frequencyScore\"))");
+  double expected_score = 100 + 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(
+          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       GetScorableProperty_DocumentWithoutScorableProperties) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("person")
+                               .SetScore(100)
+                               .SetCreationTimestampMs(123)
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  // getScorableProperty("person", "frequencyScore") will return an empty list.
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"person\", \"frequencyScore\"))");
+  double expected_score = 100 + 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(
+          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_WithDoubleList) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "max(getScorableProperty(\"person\", \"frequencyScore\"))");
+  double expected_score = 100 + std::max({1.0, 2.0, 3.0});
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_WithInt64List) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("person")
+                               .SetScore(100)
+                               .SetCreationTimestampMs(123)
+                               .AddInt64Property("contactTimes", 10, 20, 30)
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "min(getScorableProperty(\"person\", \"contactTimes\"))");
+  double expected_score = 100 + std::min({10, 20, 30});
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_WithBoolean) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("person")
+                               .SetScore(100)
+                               .SetCreationTimestampMs(123)
+                               .AddBooleanProperty("isStarred", true)
+                               .AddInt64Property("contactTimes", 10, 20, 30)
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "100 * avg(getScorableProperty(\"person\", \"isStarred\"))");
+  double expected_score = 100 + 100 * 1.0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       ScoreWithScorableProperty_ScoringSpecWithMultipleProperties) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddBooleanProperty("isStarred", false)
+          .AddInt64Property("contactTimes", 10, 20, 30)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "100 * avg(getScorableProperty(\"person\", \"isStarred\")) + "
+      "10  * max(getScorableProperty(\"person\", \"frequencyScore\")) + "
+      "10  * max(getScorableProperty(\"person\", \"contactTimes\"))");
+  double expected_score = 100 + 100 * 0 + 10 * std::max({1.0, 2.0, 3.0}) +
+                          10 * std::max({10, 20, 30});
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       ScoreWithScorableProperty_ScoringSpecWithMultipleSchemas) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddBooleanProperty("isStarred", false)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "100 * avg(getScorableProperty(\"person\", \"isStarred\")) + "
+      "10  * max(getScorableProperty(\"person\", \"frequencyScore\")) + "
+      "10  * sum(getScorableProperty(\"message\", \"frequencyScore\"))");
+  double expected_score =
+      100 + 100 * 0 + 10 * std::max({1.0, 2.0, 3.0}) + 10 * 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       ScoreWithScorableProperty_WithMathExpressionTakeEmptyList) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("email")
+                               .SetScore(100)
+                               .SetCreationTimestampMs(123)
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  // Expected score will fall back to the default score, because max() throws an
+  // error when it takes an empty list.
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "100 * avg(getScorableProperty(\"person\", \"isStarred\")) + "
+      "10  * max(getScorableProperty(\"person\", \"frequencyScore\"))");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(10, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       ScoreWithScorableProperty_MaxOrDefaultTakeEmptyList) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("email")
+                               .SetScore(100)
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo = DocHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "10  * maxOrDefault(getScorableProperty(\"person\", \"frequencyScore\"), "
+      "5)");
+  double expected_score = 100 + 10 * 5;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
 }
 
 }  // namespace

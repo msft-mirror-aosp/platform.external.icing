@@ -84,6 +84,22 @@ class MemoryMappedFileBackedProtoLog {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
 
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
+  //
+  // Returns:
+  //   Disk usage on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the file size of the all the elements held in the log. File size
+  // is in bytes. This excludes the size of the header of the log file.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
+
   // Reads the proto at the given index.
   //
   // Returns:
@@ -157,6 +173,18 @@ template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
 MemoryMappedFileBackedProtoLog<ProtoT>::UpdateChecksum() {
   return proto_fbv_->UpdateChecksum();
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+MemoryMappedFileBackedProtoLog<ProtoT>::GetDiskUsage() const {
+  return proto_fbv_->GetDiskUsage();
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+MemoryMappedFileBackedProtoLog<ProtoT>::GetElementsFileSize() const {
+  return proto_fbv_->GetElementsFileSize();
 }
 
 template <typename ProtoT>

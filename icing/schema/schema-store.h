@@ -19,6 +19,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -449,11 +450,13 @@ class SchemaStore {
   // schema config of the given |schema_type_id|.
   //
   // Returns:
+  //   - Index on success
+  //   - std::nullopt if the |property_name| is not a scorable property under
+  //     the |schema_type_id|
   //   - FAILED_PRECONDITION if the schema hasn't been set yet
-  //   - INVALID_ARGUMENT if |schema_type_id| is invalid, or no such scorable
-  //     property is found under the |schema_type_id|
-  libtextclassifier3::StatusOr<int> GetScorablePropertyIndex(
-      SchemaTypeId schema_type_id, const std::string& property_name) const;
+  //   - INVALID_ARGUMENT if |schema_type_id| is invalid
+  libtextclassifier3::StatusOr<std::optional<int>> GetScorablePropertyIndex(
+      SchemaTypeId schema_type_id, std::string_view property_name) const;
 
   // Returns the ordered list of scorable property names for the given
   // |schema_type_id|.

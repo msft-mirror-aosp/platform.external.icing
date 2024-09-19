@@ -26,10 +26,12 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file-backed-proto-log.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
@@ -52,6 +54,7 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/document-validator.h"
 #include "icing/util/fingerprint-util.h"
+#include "icing/util/scorable_property_set.h"
 
 namespace icing {
 namespace lib {
@@ -60,7 +63,9 @@ namespace lib {
 class DocumentStore {
  public:
   struct Header {
-    static constexpr int32_t kMagic = 0x3e005b5e;
+    // Previously used magic numbers, please avoid reusing those:
+    // [0x1b99c8b0, 0x3e005b5e]
+    static constexpr int32_t kMagic = 0x8a32cd1f;
 
     // Holds the magic as a quick sanity check against file corruption.
     int32_t magic;
@@ -217,6 +222,19 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentProto> Get(
       DocumentId document_id, bool clear_internal_fields = true) const;
+
+  // Returns the ScorablePropertySet of the document specified by the
+  // DocumentId.
+  //
+  // Returns:
+  //   - ScorablePropertySet on success
+  //   - nullptr when the ScorablePropertySet fails to be created, it could be
+  //     due to that:
+  //     - |document_id| is invalid, or
+  //     - no ScorablePropertySetProto is found for the document in the cache
+  //     - internal IO error
+  std::unique_ptr<ScorablePropertySet> GetScorablePropertySet(
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Returns all namespaces which have at least 1 active document (not deleted
   // or expired). Order of namespaces is undefined.
@@ -579,7 +597,13 @@ class DocumentStore {
   //   - Document score
   //   - Document creation timestamp in seconds
   //   - Document length in number of tokens
+  //   - Index of the ScorablePropertySetProto at the scorable_property_cache_
   std::unique_ptr<FileBackedVector<DocumentAssociatedScoreData>> score_cache_;
+
+  // A cache of document scorable properties. The ground truth of the data is
+  // DocumentProto stored in document_log_.
+  std::unique_ptr<MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>>
+      scorable_property_cache_;
 
   // A cache of data, indexed by DocumentId, used to filter documents. Currently
   // contains:
@@ -674,6 +698,12 @@ class DocumentStore {
   //
   // Returns OK or any IO errors.
   libtextclassifier3::Status ResetDocumentAssociatedScoreCache();
+
+  // Resets the unique_ptr to the |scorable_property_cache_|, deletes the
+  // underlying file, and re-creates a new instance of it.
+  //
+  // Returns OK or any IO errors.
+  libtextclassifier3::Status ResetScorablePropertyCache();
 
   // Resets the unique_ptr to the corpus_score_cache, deletes the underlying
   // file, and re-creates a new instance of the corpus_score_cache.
@@ -809,6 +839,20 @@ class DocumentStore {
   libtextclassifier3::StatusOr<
       google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
   CollectCorpusInfo() const;
+
+  // Extracts the ScorablePropertySetProto from the |document| and add it to
+  // the |scorable_property_cache_|.
+  //
+  // Returns:
+  //     - Index of the newly inserted ScorablePropertySetProto in the
+  //       |scorable_property_cache_|.
+  //     - kInvalidScorablePropertyCacheIndex if the schema contains no
+  //       scorable properties.
+  //     - INVALID_ARGUMENT if |schema_type_id| is invalid, or the converted
+  //       ScorablePropertySetProto exceeds the size limit of 16MiB.
+  //     - INTERNAL_ERROR on IO error.
+  libtextclassifier3::StatusOr<int> UpdateScorablePropertyCache(
+      const DocumentProto& document, SchemaTypeId schema_type_id);
 };
 
 }  // namespace lib

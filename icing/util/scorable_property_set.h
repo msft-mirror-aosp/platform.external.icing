@@ -68,10 +68,11 @@ class ScorablePropertySet {
   // Returns the scorable property proto for the given property name.
   //
   // Return:
-  //   - INVALID_ARGUMENT if the property name is not found in the schema config
+  //   - ScorablePropertyProto on success
+  //   - nullptr if the property name is not found in the schema config
   //     as a scorable property.
-  libtextclassifier3::StatusOr<const ScorablePropertyProto*>
-  GetScorablePropertyProto(const std::string& property_name) const;
+  const ScorablePropertyProto* GetScorablePropertyProto(
+      const std::string& property_name) const;
 
   // Returns the reference to the underlying ScorablePropertySetProto.
   const ScorablePropertySetProto& GetScorablePropertySetProto() const {

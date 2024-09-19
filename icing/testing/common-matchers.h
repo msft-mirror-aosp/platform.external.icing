@@ -105,6 +105,20 @@ MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
          actual.num_blocks_inspected == num_blocks_inspected;
 }
 
+// Used to match a DocumentAssociatedScoreData
+MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
+           creation_timestamp_ms, length_in_tokens,
+           has_valid_scorable_property_cache_index, "") {
+  bool expected_has_valid_scorable_property_cache_index =
+      arg.scorable_property_cache_index() != -1;
+  return arg.corpus_id() == corpus_id &&
+         arg.document_score() == document_score &&
+         arg.creation_timestamp_ms() == creation_timestamp_ms &&
+         arg.length_in_tokens() == length_in_tokens &&
+         expected_has_valid_scorable_property_cache_index ==
+             has_valid_scorable_property_cache_index;
+}
+
 struct ExtractTermFrequenciesResult {
   std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies = {0};
   SectionIdMask section_mask = kSectionIdMaskNone;

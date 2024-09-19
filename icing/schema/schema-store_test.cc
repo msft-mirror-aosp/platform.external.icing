@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -3519,12 +3520,12 @@ TEST_F(SchemaStoreTest, GetScorablePropertyIndex_InvalidPropertyName) {
   EXPECT_THAT(schema_store->GetScorablePropertyIndex(
                   /*schema_type_id=*/0,
                   /*property_name=*/"subject"),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+              IsOkAndHolds(Eq(std::nullopt)));
   // non-existing property
   EXPECT_THAT(schema_store->GetScorablePropertyIndex(
                   /*schema_type_id=*/0,
                   /*property_name=*/"non_existing"),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+              IsOkAndHolds(Eq(std::nullopt)));
 }
 
 TEST_F(SchemaStoreTest, GetScorablePropertyIndex_Ok) {
@@ -3671,7 +3672,7 @@ TEST_F(SchemaStoreTest, ScorablePropertyManagerUpdatesUponSchemaChange) {
   EXPECT_THAT(schema_store->GetScorablePropertyIndex(
                   /*schema_type_id=*/0,
                   /*property_name=*/"timestamp"),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+              IsOkAndHolds(Eq(std::nullopt)));
 
   // ok cases for the new schema.
   EXPECT_THAT(schema_store->GetScorablePropertyIndex(

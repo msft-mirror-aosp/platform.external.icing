@@ -37,6 +37,9 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -47,6 +50,7 @@
 #include "icing/store/document-store.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
+#include "icing/util/scorable_property_set.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -60,6 +64,23 @@ libtextclassifier3::Status CheckChildrenNotNull(
     ICING_RETURN_ERROR_IF_NULL(child);
   }
   return libtextclassifier3::Status::OK;
+}
+
+SchemaTypeId GetSchemaTypeId(DocumentId document_id,
+                             const DocumentStore& document_store,
+                             int64_t current_time_ms) {
+  auto filter_data_optional =
+      document_store.GetAliveDocumentFilterData(document_id, current_time_ms);
+  if (!filter_data_optional) {
+    // This should never happen. The only failure case for
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
+    ICING_LOG(WARNING) << "No document filter data for document ["
+                       << document_id << "]";
+    return kInvalidSchemaTypeId;
+  }
+  return filter_data_optional.value().schema_type_id();
 }
 
 }  // namespace
@@ -649,7 +670,8 @@ PropertyWeightsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator*) const {
   std::vector<double> weights;
   SectionIdMask sections = hit_info.hit_section_ids_mask();
-  SchemaTypeId schema_type_id = GetSchemaTypeId(hit_info.document_id());
+  SchemaTypeId schema_type_id = GetSchemaTypeId(
+      hit_info.document_id(), document_store_, current_time_ms_);
 
   while (sections != 0) {
     SectionId section_id = __builtin_ctzll(sections);
@@ -658,22 +680,6 @@ PropertyWeightsFunctionScoreExpression::EvaluateList(
         schema_type_id, section_id));
   }
   return weights;
-}
-
-SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
-    DocumentId document_id) const {
-  auto filter_data_optional =
-      document_store_.GetAliveDocumentFilterData(document_id, current_time_ms_);
-  if (!filter_data_optional) {
-    // This should never happen. The only failure case for
-    // GetAliveDocumentFilterData is if the document_id is outside of the range
-    // of allocated document_ids, which shouldn't be possible since we're
-    // getting this document_id from the posting lists.
-    ICING_LOG(WARNING) << "No document filter data for document ["
-                       << document_id << "]";
-    return kInvalidSchemaTypeId;
-  }
-  return filter_data_optional.value().schema_type_id();
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
@@ -794,6 +800,120 @@ MatchedSemanticScoresFunctionScoreExpression::EvaluateList(
     return std::vector<double>();
   }
   return *scores;
+}
+
+GetScorablePropertyFunctionScoreExpression::
+    GetScorablePropertyFunctionScoreExpression(
+        std::vector<std::unique_ptr<ScoreExpression>> args,
+        const DocumentStore* document_store, const SchemaStore* schema_store,
+        int64_t current_time_ms, SchemaTypeId schema_type_id,
+        std::string_view property_name)
+    : args_(std::move(args)),
+      document_store_(*document_store),
+      schema_store_(*schema_store),
+      current_time_ms_(current_time_ms),
+      schema_type_id_(schema_type_id),
+      property_name_(property_name) {}
+
+libtextclassifier3::StatusOr<
+    std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
+GetScorablePropertyFunctionScoreExpression::Create(
+    std::vector<std::unique_ptr<ScoreExpression>> args,
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    int64_t current_time_ms) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
+  if (args.size() != 2 || args[0]->type() != ScoreExpressionType::kString ||
+      args[1]->type() != ScoreExpressionType::kString) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        kFunctionName, " must take exactly two string params"));
+  }
+
+  // Validate schema type.
+  ICING_ASSIGN_OR_RETURN(std::string_view schema_type_requested,
+                         args[0]->EvaluateString());
+  libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
+      schema_store->GetSchemaTypeId(schema_type_requested);
+  if (!schema_type_id_or.ok()) {
+    if (absl_ports::IsNotFound(schema_type_id_or.status())) {
+      // Returns a more meaningful error message here.
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Schema type '", schema_type_requested,
+                             "' is not found in the schema store."));
+    }
+    return schema_type_id_or.status();
+  }
+  SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+  // Validate that the property name is defined as scorable.
+  ICING_ASSIGN_OR_RETURN(std::string_view property_name,
+                         args[1]->EvaluateString());
+
+  // Calls GetScorablePropertyIndex() here to validate if the property name is
+  // scorable, no need to check the returned index value.
+  libtextclassifier3::StatusOr<std::optional<int>> scorable_property_index_or =
+      schema_store->GetScorablePropertyIndex(schema_type_id, property_name);
+  if (!scorable_property_index_or.ok()) {
+    return scorable_property_index_or.status();
+  }
+  if (!scorable_property_index_or.ValueOrDie().has_value()) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "'%s' is not defined as a scorable property under schema type %d",
+        property_name.data(), schema_type_id));
+  }
+
+  return std::unique_ptr<GetScorablePropertyFunctionScoreExpression>(
+      new GetScorablePropertyFunctionScoreExpression(
+          std::move(args), document_store, schema_store, current_time_ms,
+          schema_type_id, property_name));
+}
+
+libtextclassifier3::StatusOr<std::vector<double>>
+GetScorablePropertyFunctionScoreExpression::EvaluateList(
+    const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
+  SchemaTypeId doc_schema_type_id = GetSchemaTypeId(
+      hit_info.document_id(), document_store_, current_time_ms_);
+  // Skip if the schema type requested is not the same as the schema type of
+  // the document.
+  // TODO(b/357105837): support matching appsearch schema type with icing's.
+  if (doc_schema_type_id != schema_type_id_) {
+    return std::vector<double>();
+  }
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      document_store_.GetScorablePropertySet(hit_info.document_id(),
+                                             current_time_ms_);
+  // It should never happen.
+  if (scorable_property_set == nullptr) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Failed to retrieve ScorablePropertySet for document %d",
+        hit_info.document_id()));
+  }
+
+  const ScorablePropertyProto* scorable_property_proto =
+      scorable_property_set->GetScorablePropertyProto(property_name_);
+  // It should never happen as icing generates a default value for each scorable
+  // property when the document is created.
+  if (scorable_property_proto == nullptr) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Failed to retrieve ScorablePropertyProto for document %d, and "
+        "property name %s",
+        hit_info.document_id(), property_name_.c_str()));
+  }
+
+  // Converts ScorablePropertyProto to a vector of doubles.
+  if (scorable_property_proto->int64_values_size() > 0) {
+    return std::vector<double>(scorable_property_proto->int64_values().begin(),
+                               scorable_property_proto->int64_values().end());
+  } else if (scorable_property_proto->double_values_size() > 0) {
+    return std::vector<double>(scorable_property_proto->double_values().begin(),
+                               scorable_property_proto->double_values().end());
+  } else if (scorable_property_proto->boolean_values_size() > 0) {
+    return std::vector<double>(
+        scorable_property_proto->boolean_values().begin(),
+        scorable_property_proto->boolean_values().end());
+  }
+  return std::vector<double>();
 }
 
 }  // namespace lib

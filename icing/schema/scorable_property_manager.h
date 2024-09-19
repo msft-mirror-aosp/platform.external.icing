@@ -15,7 +15,9 @@
 #ifndef ICING_SCHEMA_SCORABLE_PROPERTY_MANAGER_H_
 #define ICING_SCHEMA_SCORABLE_PROPERTY_MANAGER_H_
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -40,12 +42,13 @@ class ScorablePropertyManager {
   // Gets the index of the scorable property with name |property_name|, where
   // the index N means that the property is the Nth scorable property in the
   // schema config of the given |schema_type_id|.
-  //
   // Returns:
-  //   - INVALID_ARGUMENT if |schema_type_id| is invalid, or |property_name| is
-  //     not a scorable property under the schema config of |schema_type_id|.
-  libtextclassifier3::StatusOr<int> GetScorablePropertyIndex(
-      SchemaTypeId schema_type_id, const std::string& property_name,
+  //   - Index on success
+  //   - std::nullopt if the |property_name| is not a scorable property under
+  //     the |schema_type_id|
+  //   - INVALID_ARGUMENT if |schema_type_id| is invalid
+  libtextclassifier3::StatusOr<std::optional<int>> GetScorablePropertyIndex(
+      SchemaTypeId schema_type_id, std::string_view property_name,
       const SchemaUtil::TypeConfigMap& type_config_map,
       const std::unordered_map<SchemaTypeId, std::string>&
           schema_id_to_type_map);

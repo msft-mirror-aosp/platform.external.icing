@@ -14,6 +14,7 @@
 
 #include "icing/schema/scorable_property_manager.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -33,6 +34,7 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::Pointee;
 
 constexpr int kEmailSchemaTypeId = 1;
@@ -122,13 +124,13 @@ TEST_F(ScorablePropertyManagerTest,
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
                   kEmailSchemaTypeId, "non_existing", type_config_map_,
                   schema_id_to_type_map_),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+              IsOkAndHolds(Eq(std::nullopt)));
 
   // non-scorable property
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
                   kEmailSchemaTypeId, "subject", type_config_map_,
                   schema_id_to_type_map_),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+              IsOkAndHolds(Eq(std::nullopt)));
 }
 
 TEST_F(ScorablePropertyManagerTest, GetScorablePropertyIndex_Ok) {

@@ -152,22 +152,20 @@ TEST_F(ScorablePropertySetTest,
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
       ScorablePropertySet::Create(std::move(scorable_property_set_proto),
                                   email_schema_type_id_, schema_store_.get()));
-  ASSERT_THAT(
-      scorable_property_set->GetScorablePropertyProto("scoreInt64"),
-      IsOkAndHolds(Pointee(EqualsProto(scorable_property_proto_int64))));
-  ASSERT_THAT(
-      scorable_property_set->GetScorablePropertyProto("scoreDouble"),
-      IsOkAndHolds(Pointee(EqualsProto(scorable_property_proto_double))));
+  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreInt64"),
+              Pointee(EqualsProto(scorable_property_proto_int64)));
+  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreDouble"),
+              Pointee(EqualsProto(scorable_property_proto_double)));
   ASSERT_THAT(
       scorable_property_set->GetScorablePropertyProto("importanceBoolean"),
-      IsOkAndHolds(Pointee(EqualsProto(scorable_property_proto_boolean))));
+      Pointee(EqualsProto(scorable_property_proto_boolean)));
 
-  ASSERT_THAT(
+  EXPECT_EQ(
       scorable_property_set->GetScorablePropertyProto("non_exist_property"),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+      nullptr);
 
-  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("subject"),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_EQ(scorable_property_set->GetScorablePropertyProto("subject"),
+            nullptr);
 }
 
 TEST_F(ScorablePropertySetTest,
@@ -216,15 +214,13 @@ TEST_F(ScorablePropertySetTest,
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
       ScorablePropertySet::Create(std::move(scorable_property_set_proto),
                                   email_schema_type_id_, schema_store_.get()));
-  ASSERT_THAT(
-      scorable_property_set->GetScorablePropertyProto("scoreInt64"),
-      IsOkAndHolds(Pointee(EqualsProto(scorable_property_proto_int64))));
-  ASSERT_THAT(
-      scorable_property_set->GetScorablePropertyProto("scoreDouble"),
-      IsOkAndHolds(Pointee(EqualsProto(scorable_property_proto_double))));
+  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreInt64"),
+              Pointee(EqualsProto(scorable_property_proto_int64)));
+  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreDouble"),
+              Pointee(EqualsProto(scorable_property_proto_double)));
   ASSERT_THAT(
       scorable_property_set->GetScorablePropertyProto("importanceBoolean"),
-      IsOkAndHolds(Pointee(EqualsProto(scorable_property_proto_boolean))));
+      Pointee(EqualsProto(scorable_property_proto_boolean)));
 }
 
 TEST_F(ScorablePropertySetTest, BuildFromDocument_InvalidSchemaTypeId) {

@@ -30,6 +30,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/section-weights.h"
 #include "icing/store/document-filter-data.h"
@@ -418,8 +419,6 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
     return ScoreExpressionType::kDoubleList;
   }
 
-  SchemaTypeId GetSchemaTypeId(DocumentId document_id) const;
-
  private:
   explicit PropertyWeightsFunctionScoreExpression(
       const DocumentStore* document_store,
@@ -494,6 +493,43 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
   std::vector<std::unique_ptr<ScoreExpression>> args_;
   const SearchSpecProto::EmbeddingQueryMetricType::Code metric_type_;
   const EmbeddingQueryResults& embedding_query_results_;
+};
+
+// TODO(b/357105837): Add support for nested scorable document properties.
+class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
+ public:
+  static constexpr std::string_view kFunctionName = "getScorableProperty";
+
+  // Returns:
+  //   - FAILED_PRECONDITION on any null pointer in children.
+  //   - INVALID_ARGUMENT on |args| type errors.
+  static libtextclassifier3::StatusOr<
+      std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
+  Create(std::vector<std::unique_ptr<ScoreExpression>> args,
+         const DocumentStore* document_store, const SchemaStore* schema_store,
+         int64_t current_time_ms);
+
+  ScoreExpressionType type() const override {
+    return ScoreExpressionType::kDoubleList;
+  }
+
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+      const DocHitInfo& hit_info,
+      const DocHitInfoIterator* query_it) const override;
+
+ private:
+  explicit GetScorablePropertyFunctionScoreExpression(
+      std::vector<std::unique_ptr<ScoreExpression>> args,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      int64_t current_time_ms, SchemaTypeId schema_type_id,
+      std::string_view property_name);
+
+  std::vector<std::unique_ptr<ScoreExpression>> args_;
+  const DocumentStore& document_store_;
+  const SchemaStore& schema_store_;
+  int64_t current_time_ms_;
+  SchemaTypeId schema_type_id_;
+  std::string property_name_;
 };
 
 }  // namespace lib

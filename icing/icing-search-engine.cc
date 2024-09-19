@@ -2050,11 +2050,12 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
     std::vector<PackageBlobStorageInfoProto> package_blob_storage_infos =
         std::move(package_blob_storage_infos_or).ValueOrDie();
 
-    std::move(package_blob_storage_infos.begin(),
-              package_blob_storage_infos.end(),
-              google::protobuf::RepeatedPtrFieldBackInserter(
-                  result.mutable_storage_info()
-                      ->mutable_package_blob_storage_info()));
+    for (PackageBlobStorageInfoProto& package_blob_storage_info :
+         package_blob_storage_infos) {
+      *result.mutable_storage_info()
+           ->mutable_package_blob_storage_info()
+           ->Add() = std::move(package_blob_storage_info);
+    }
   }
   // TODO(b/259744228): add stats for integer index
   result.mutable_status()->set_code(StatusProto::OK);

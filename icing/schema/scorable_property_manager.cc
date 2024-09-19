@@ -14,7 +14,9 @@
 
 #include "icing/schema/scorable_property_manager.h"
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -29,20 +31,19 @@
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<int>
+libtextclassifier3::StatusOr<std::optional<int>>
 ScorablePropertyManager::GetScorablePropertyIndex(
-    SchemaTypeId schema_type_id, const std::string& property_name,
+    SchemaTypeId schema_type_id, std::string_view property_name,
     const SchemaUtil::TypeConfigMap& type_config_map,
     const std::unordered_map<SchemaTypeId, std::string>&
         schema_id_to_type_map) {
   ICING_ASSIGN_OR_RETURN(auto cache_iter, LookupAndMaybeUpdateCache(
                                               schema_type_id, type_config_map,
                                               schema_id_to_type_map));
-  auto iter = cache_iter->second.property_name_to_index_map.find(property_name);
+  auto iter =
+      cache_iter->second.property_name_to_index_map.find(property_name.data());
   if (iter == cache_iter->second.property_name_to_index_map.end()) {
-    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "Scorable property %s, not found under schema type id %d",
-        property_name.c_str(), schema_type_id));
+    return std::nullopt;
   }
   return iter->second;
 }

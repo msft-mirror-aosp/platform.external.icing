@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -891,8 +892,9 @@ SchemaStore::ExtractJoinableProperties(const DocumentProto& document) const {
       .ExtractJoinableProperties(document);
 }
 
-libtextclassifier3::StatusOr<int> SchemaStore::GetScorablePropertyIndex(
-    SchemaTypeId schema_type_id, const std::string& property_name) const {
+libtextclassifier3::StatusOr<std::optional<int>>
+SchemaStore::GetScorablePropertyIndex(SchemaTypeId schema_type_id,
+                                      std::string_view property_name) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return scorable_property_manager_->GetScorablePropertyIndex(
       schema_type_id, property_name, type_config_map_,

@@ -15,6 +15,7 @@
 #include "icing/util/scorable_property_set.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -106,12 +107,15 @@ ScorablePropertySet::Create(const DocumentProto& document,
                               schema_type_id, schema_store));
 }
 
-libtextclassifier3::StatusOr<const ScorablePropertyProto*>
-ScorablePropertySet::GetScorablePropertyProto(
+const ScorablePropertyProto* ScorablePropertySet::GetScorablePropertyProto(
     const std::string& property_name) const {
-  ICING_ASSIGN_OR_RETURN(int index, schema_store_->GetScorablePropertyIndex(
-                                        schema_type_id_, property_name));
-  return &scorable_property_set_proto_.properties(index);
+  libtextclassifier3::StatusOr<std::optional<int>> index_or =
+      schema_store_->GetScorablePropertyIndex(schema_type_id_, property_name);
+  if (!index_or.ok() || !index_or.ValueOrDie().has_value()) {
+    return nullptr;
+  }
+  return &scorable_property_set_proto_.properties(
+      index_or.ValueOrDie().value());
 }
 
 ScorablePropertySet::ScorablePropertySet(

@@ -143,6 +143,11 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     expression = MatchedSemanticScoresFunctionScoreExpression::Create(
         std::move(args), default_semantic_metric_type_,
         &embedding_query_results_);
+  } else if (function_name ==
+             GetScorablePropertyFunctionScoreExpression::kFunctionName) {
+    // getScorableProperty function
+    expression = GetScorablePropertyFunctionScoreExpression::Create(
+        std::move(args), &document_store_, &schema_store_, current_time_ms_);
   }
 
   if (!expression.ok()) {

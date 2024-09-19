@@ -52,7 +52,7 @@ message NamespaceStorageInfoProto {
   // LINT.ThenChange()
 }
 
-// Next tag: 15
+// Next tag: 16
 message DocumentStorageInfoProto {
   // Total number of alive documents.
   optional int32 num_alive_documents = 1;
@@ -99,6 +99,10 @@ message DocumentStorageInfoProto {
   // Size of the namespace id mapper in bytes. Will be set to -1 if an IO error
   // is encountered while calculating this field.
   optional int64 namespace_id_mapper_size = 12;
+
+  // Size of the scorable properties cache in bytes. Will be set to -1 if an IO
+  // error is encountered while calculating this field.
+  optional int64 scorable_property_cache_size = 15;
 
   // Number of namespaces seen from the current documents.
   //

@@ -37,6 +37,7 @@
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
@@ -46,6 +47,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
+#include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
@@ -59,6 +61,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/crc32.h"
+#include "icing/util/scorable_property_set.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -77,6 +80,7 @@ using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Not;
+using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
 
@@ -124,6 +128,29 @@ void WriteDocumentLogHeader(
                    sizeof(PortableFileBackedProtoLog<DocumentWrapper>::Header));
 }
 
+ScorablePropertyProto BuildScorablePropertyProtoFromBoolean(
+    bool boolean_value) {
+  ScorablePropertyProto scorable_property;
+  scorable_property.add_boolean_values(boolean_value);
+  return scorable_property;
+}
+
+ScorablePropertyProto BuildScorablePropertyProtoFromInt64(
+    const std::vector<int64_t>& int64_values) {
+  ScorablePropertyProto scorable_property;
+  scorable_property.mutable_int64_values()->Add(int64_values.begin(),
+                                                int64_values.end());
+  return scorable_property;
+}
+
+ScorablePropertyProto BuildScorablePropertyProtoFromDouble(
+    const std::vector<double>& double_values) {
+  ScorablePropertyProto scorable_property;
+  scorable_property.mutable_double_values()->Add(double_values.begin(),
+                                                 double_values.end());
+  return scorable_property;
+}
+
 struct DocumentStoreTestParam {
   bool pre_mapping_fbv;
   bool use_persistent_hash_map;
@@ -147,6 +174,7 @@ class DocumentStoreTest
             .SetSchema("email")
             .AddStringProperty("subject", "subject foo")
             .AddStringProperty("body", "body bar")
+            .AddDoubleProperty("score", 1.5, 2.5)
             .SetScore(document1_score_)
             .SetCreationTimestampMs(
                 document1_creation_timestamp_)  // A random timestamp
@@ -158,6 +186,7 @@ class DocumentStoreTest
             .SetSchema("email")
             .AddStringProperty("subject", "subject foo 2")
             .AddStringProperty("body", "body bar 2")
+            .AddDoubleProperty("score", 3.5, 4.5)
             .SetScore(document2_score_)
             .SetCreationTimestampMs(
                 document2_creation_timestamp_)  // A random timestamp
@@ -198,7 +227,13 @@ class DocumentStoreTest
                                      .SetName("body")
                                      .SetDataTypeString(TERM_MATCH_EXACT,
                                                         TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("score")
+                            .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED)
+                            .SetCardinality(CARDINALITY_REPEATED)))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
@@ -1485,17 +1520,33 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 
     // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
@@ -1545,12 +1596,24 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
@@ -1581,17 +1644,33 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
+
     // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
                                   fake_clock_.GetSystemTimeMilliseconds()),
@@ -1651,9 +1730,10 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
@@ -1667,6 +1747,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
       doc_store->GetUsageScores(document_id2,
                                 fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
@@ -1697,17 +1788,34 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
+
     // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
                                   fake_clock_.GetSystemTimeMilliseconds()),
@@ -1754,9 +1862,10 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
   // Checks derived score cache.
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
@@ -1770,6 +1879,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
       doc_store->GetUsageScores(document_id2,
                                 fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
@@ -1800,17 +1920,34 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
+
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
                                   fake_clock_.GetSystemTimeMilliseconds()),
                 IsOk());
@@ -1847,12 +1984,24 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, GetStorageInfo) {
@@ -2186,14 +2335,16 @@ TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
 
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id1),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-          /*length_in_tokens=*/5)));
+          /*length_in_tokens=*/5,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/7)));
+          /*length_in_tokens=*/7,
+          /*has_valid_scorable_property_cache_index=*/true)));
 }
 
 TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
@@ -2234,14 +2385,16 @@ TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
 
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id1),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-          /*length_in_tokens=*/5)));
+          /*length_in_tokens=*/5,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/1, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/7)));
+          /*length_in_tokens=*/7,
+          /*has_valid_scorable_property_cache_index=*/true)));
 }
 
 TEST_P(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataNotFound) {
@@ -2313,21 +2466,45 @@ TEST_P(DocumentStoreTest, DeleteClearsScoreCache) {
   DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
-              IsOkAndHolds(DocumentAssociatedScoreData(
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
                   /*corpus_id=*/0,
                   /*document_score=*/document1_score_,
                   /*creation_timestamp_ms=*/document1_creation_timestamp_,
-                  /*length_in_tokens=*/4)));
+                  /*length_in_tokens=*/4,
+                  /*has_valid_scorable_property_cache_index=*/true)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
                                     fake_clock_.GetSystemTimeMilliseconds()));
   // Associated entry of the deleted document is removed.
-  EXPECT_THAT(
-      doc_store->GetDocumentAssociatedScoreData(document_id),
-      IsOkAndHolds(DocumentAssociatedScoreData(kInvalidCorpusId,
-                                               /*document_score=*/-1,
-                                               /*creation_timestamp_ms=*/-1,
-                                               /*length_in_tokens=*/0)));
+  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
+                  kInvalidCorpusId,
+                  /*document_score=*/-1,
+                  /*creation_timestamp_ms=*/-1,
+                  /*length_in_tokens=*/0,
+                  /*has_valid_scorable_property_cache_index=*/false)));
+}
+
+TEST_P(DocumentStoreTest, DeleteClearsScorablePropertyCache) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(test_document1_, /*num_tokens=*/4));
+  DocumentId document_id = put_result1.new_document_id;
+  EXPECT_NE(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  // Scorable property set is not found for deleted documents.
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
 }
 
 TEST_P(DocumentStoreTest, DeleteShouldPreventUsageScores) {
@@ -2586,16 +2763,18 @@ TEST_P(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id1),
-              IsOkAndHolds(DocumentAssociatedScoreData(
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
                   /*corpus_id=*/0,
                   /*document_score=*/0, /*creation_timestamp_ms=*/0,
-                  /*length_in_tokens=*/0)));
+                  /*length_in_tokens=*/0,
+                  /*has_valid_scorable_property_cache_index=*/true)));
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
-              IsOkAndHolds(DocumentAssociatedScoreData(
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
                   /*corpus_id=*/0,
                   /*document_score=*/5, /*creation_timestamp_ms=*/0,
-                  /*length_in_tokens=*/0)));
+                  /*length_in_tokens=*/0,
+                  /*has_valid_scorable_property_cache_index=*/true)));
 }
 
 TEST_P(DocumentStoreTest, GetChecksumDoesntUpdateStoredChecksum) {
@@ -2636,7 +2815,8 @@ TEST_P(DocumentStoreTest, UpdateChecksumNextInitializationSucceeds) {
                                          &fake_clock_, schema_store_.get()));
   EXPECT_FALSE(create_result.derived_files_regenerated);
 
-  std::unique_ptr<DocumentStore> document_store_two = std::move(create_result.document_store);
+  std::unique_ptr<DocumentStore> document_store_two =
+      std::move(create_result.document_store);
   EXPECT_THAT(document_store_two->GetChecksum(), IsOkAndHolds(checksum));
   EXPECT_THAT(document_store_two->UpdateChecksum(), IsOkAndHolds(checksum));
   EXPECT_THAT(document_store_two->GetChecksum(), IsOkAndHolds(checksum));
@@ -5112,6 +5292,368 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
       namespace_id + 1, /*target_str=*/test_document1_.uri());
   EXPECT_THAT(doc_store->GetDocumentId(non_existing_nsid_uri_fingerprint),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_P(DocumentStoreTest, PutDocumentWithNoScorablePropertiesInSchema) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("foo", "1")
+                               .SetSchema("message")
+                               .AddStringProperty("subject", "subject foo")
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  DocumentId document_id = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentAssociatedScoreData score_data,
+      doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_EQ(score_data.scorable_property_cache_index(), -1);
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+}
+
+TEST_P(DocumentStoreTest, PutDocumentWithNoScorableProperties) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "email/1")
+                               .SetSchema("email")
+                               .AddStringProperty("subject", "subject foo")
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  DocumentId document_id = put_result.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      doc_store->GetScorablePropertySet(
+          document_id, fake_clock_.GetSystemTimeMilliseconds());
+  // scorable property data for the document exists but is empty.
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("score"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({}))));
+}
+
+TEST_P(DocumentStoreTest, PutDocumentWithScorablePropertyThenRead) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("importance")
+                          .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("scoreInt64")
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 1.5, 2.5)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("bar", "2")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject bar")
+                                .AddBooleanProperty("importance", false)
+                                .AddInt64Property("scoreInt64", 5)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(document1));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+      doc_store->GetScorablePropertySet(
+          document_id1, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(false))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({5}))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({}))));
+
+  // document3 is a copy of document1 with scorable property scoreDouble
+  // updated.
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 0.5, 0.8)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  // Add document3 to the document store, it will result in document1 being
+  // deleted.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             doc_store->Put(document3));
+  DocumentId document_id3 = put_result3.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc3 =
+      doc_store->GetScorablePropertySet(
+          document_id3, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc3->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+
+  EXPECT_THAT(
+      scorable_property_set_doc3->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc3->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+
+  // document4 is a copy of document3 with scorable property scoreInt64
+  // removed.
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddDoubleProperty("scoreDouble", 0.5, 0.8)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  // Add document4 to the document store, it will result in document3 being
+  // deleted.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
+                             doc_store->Put(document4));
+  DocumentId document_id4 = put_result4.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc4 =
+      doc_store->GetScorablePropertySet(
+          document_id4, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc4->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc4->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({}))));
+  EXPECT_THAT(
+      scorable_property_set_doc4->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+}
+
+TEST_P(DocumentStoreTest, ReadScorablePropertyAfterOptimization) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("importance")
+                          .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("scoreInt64")
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 1.5, 2.5)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(document1));
+  DocumentId document_id1 = put_result1.new_document_id;
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+      doc_store->GetScorablePropertySet(
+          document_id1, fake_clock_.GetSystemTimeMilliseconds());
+
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+
+  // document2 is a copy of document1 with scorable property scoreDouble
+  // updated.
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 0.5, 0.8)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+
+  // Add document2 to the document store, it will result in document1 being
+  // deleted.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+
+  // Optimize the document store.
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result,
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
+
+  // Verify that the scorable property set is still correct after optimization.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id_post_optimization,
+                             doc_store->GetDocumentId("foo", "1"));
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_post_optimization =
+      doc_store->GetScorablePropertySet(
+          doc_id_post_optimization, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_post_optimization->GetScorablePropertyProto(
+          "importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(scorable_property_set_post_optimization->GetScorablePropertyProto(
+                  "scoreInt64"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_post_optimization->GetScorablePropertyProto(
+          "scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
 }
 
 INSTANTIATE_TEST_SUITE_P(
