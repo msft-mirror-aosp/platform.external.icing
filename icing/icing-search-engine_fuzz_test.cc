@@ -26,9 +26,9 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {

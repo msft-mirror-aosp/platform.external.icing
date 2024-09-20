@@ -15,6 +15,7 @@
 #ifndef ICING_FILE_MEMORY_MAPPED_FILE_BACKED_PROTO_LOG_H_
 #define ICING_FILE_MEMORY_MAPPED_FILE_BACKED_PROTO_LOG_H_
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -215,9 +216,10 @@ MemoryMappedFileBackedProtoLog<ProtoT>::Read(int32_t index) const {
         IcingStringUtil::StringPrintf("Index, %d, is less than 0", index));
   }
   if (index + sizeof(ProtoMetadata) >= proto_fbv_->num_elements()) {
+    uint64_t upper_index = proto_fbv_->num_elements() - sizeof(ProtoMetadata);
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-        "Index, %d, is greater/equal than the upper bound, %d", index,
-        proto_fbv_->num_elements() - sizeof(ProtoMetadata)));
+        "Index, %" PRId32 ", is greater/equal than the upper bound, %" PRIu64,
+        index,  upper_index));
   }
 
   ProtoMetadata proto_metadata;

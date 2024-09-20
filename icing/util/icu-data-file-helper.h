@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_ICU_DATA_FILE_HELPER
-#define ICING_TESTING_ICU_DATA_FILE_HELPER
+#ifndef ICING_UTIL_ICU_DATA_FILE_HELPER
+#define ICING_UTIL_ICU_DATA_FILE_HELPER
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 
@@ -22,8 +22,8 @@ namespace lib {
 
 namespace icu_data_file_helper {
 
-// The library binary doesn't contain any ICU data files, so we generate a .dat
-// file at compile time and here make ICU use that file.
+// Initializes ICU using the specified absolute path to the ICU data file.
+// The data file can either be downloaded via MDD or generated at compile time.
 //
 // NOTE: This target does NOT contain the ICU .dat file. To use this helper
 // function, the calling target must include a data dependency on the .dat file
@@ -40,4 +40,4 @@ libtextclassifier3::Status SetUpICUDataFile(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_ICU_DATA_FILE_HELPER
+#endif  // ICING_UTIL_ICU_DATA_FILE_HELPER

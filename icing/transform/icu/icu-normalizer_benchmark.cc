@@ -15,10 +15,10 @@
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt

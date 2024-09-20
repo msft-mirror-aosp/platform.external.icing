@@ -36,7 +36,6 @@
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -45,6 +44,7 @@
 #include "icing/transform/map/map-normalizer.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/snippet-helpers.h"
 #include "unicode/uloc.h"
 

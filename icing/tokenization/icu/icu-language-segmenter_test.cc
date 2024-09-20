@@ -23,13 +23,13 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/character-iterator.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {

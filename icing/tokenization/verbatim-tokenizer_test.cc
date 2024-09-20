@@ -18,13 +18,13 @@
 #include "gtest/gtest.h"
 #include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/util/character-iterator.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {

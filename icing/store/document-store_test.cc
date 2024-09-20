@@ -55,12 +55,12 @@
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/crc32.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/scorable_property_set.h"
 #include "unicode/uloc.h"
 
