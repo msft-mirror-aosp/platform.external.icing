@@ -89,7 +89,7 @@ class Lexer {
   // Returns:
   //   A vector of LexerToken on success
   //   INVALID_ARGUMENT on syntax error.
-  libtextclassifier3::StatusOr<std::vector<LexerToken>> ExtractTokens();
+  libtextclassifier3::StatusOr<std::vector<LexerToken>> ExtractTokens() &&;
 
  private:
   // Advance to current_index_ + n.

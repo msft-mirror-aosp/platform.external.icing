@@ -157,7 +157,7 @@ class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
                               /*force_recovery_and_revalidate_documents=*/false,
                               /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
+                              /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
                                   DocumentWrapper>::kDeflateCompressionLevel,
                               /*initialize_stats=*/nullptr));
@@ -265,8 +265,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store_->Put(referenced_document));
+  DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
@@ -283,7 +284,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -323,8 +325,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store_->Put(referenced_document1));
+  DocumentId ref_doc_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id1,
       doc_store_->GetNamespaceId(referenced_document1.namespace_()));
@@ -342,8 +345,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "two")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store_->Put(referenced_document2));
+  DocumentId ref_doc_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id2,
       doc_store_->GetNamespaceId(referenced_document2.namespace_()));
@@ -373,8 +377,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
           .AddStringProperty(std::string(kPropertyQualifiedId2),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store_->Put(nested_document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -436,7 +441,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              std::string(kInvalidFormatQualifiedId))
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -478,7 +485,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
               std::string(kPropertyQualifiedId),
               absl_ports::StrCat(kUnknownNamespace, "#", "ref_type/1"))
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -512,7 +521,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleShouldSkipEmptyQualifiedId) {
                                .SetKey("icing", "fake_type/1")
                                .SetSchema(std::string(kFakeType))
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -552,8 +563,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store_->Put(referenced_document));
+  DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
@@ -624,8 +636,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store_->Put(referenced_document));
+  DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
@@ -642,7 +655,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -700,8 +714,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store_->Put(referenced_document));
+  DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
@@ -718,7 +733,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
@@ -758,8 +774,9 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId ref_doc_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store_->Put(referenced_document));
+  DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
       doc_store_->GetNamespaceId(referenced_document.namespace_()));
@@ -776,7 +793,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, doc_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
+  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),

@@ -22,6 +22,8 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
+// TODO(b/305098009): fix byte size vs size naming issue.
+
 // Next tag: 10
 message NamespaceStorageInfoProto {
   // Name of the namespace

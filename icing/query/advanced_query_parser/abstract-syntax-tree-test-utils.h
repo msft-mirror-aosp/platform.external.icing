@@ -29,7 +29,6 @@ namespace lib {
 // A visitor that simply collects the nodes and flattens them in left-side
 // depth-first order.
 enum class NodeType {
-  kFunctionName,
   kString,
   kText,
   kMember,
@@ -60,9 +59,6 @@ MATCHER_P2(EqualsNodeInfo, value, type, "") {
 
 class SimpleVisitor : public AbstractSyntaxTreeVisitor {
  public:
-  void VisitFunctionName(const FunctionNameNode* node) override {
-    nodes_.push_back({node->value(), NodeType::kFunctionName});
-  }
   void VisitString(const StringNode* node) override {
     nodes_.push_back({node->value(), NodeType::kString});
   }
@@ -79,11 +75,10 @@ class SimpleVisitor : public AbstractSyntaxTreeVisitor {
     nodes_.push_back({"", NodeType::kMember});
   }
   void VisitFunction(const FunctionNode* node) override {
-    node->function_name()->Accept(this);
     for (const std::unique_ptr<Node>& arg : node->args()) {
       arg->Accept(this);
     }
-    nodes_.push_back({"", NodeType::kFunction});
+    nodes_.push_back({node->function_name(), NodeType::kFunction});
   }
   void VisitUnaryOperator(const UnaryOperatorNode* node) override {
     node->child()->Accept(this);

@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -199,9 +200,19 @@ class ScoredDocumentHitEqualComparator {
  public:
   bool operator()(const ScoredDocumentHit& lhs,
                   const ScoredDocumentHit& rhs) const {
+    bool additional_scores_match = true;
+    if (lhs.additional_scores() != nullptr &&
+        rhs.additional_scores() != nullptr) {
+      additional_scores_match =
+          *lhs.additional_scores() == *rhs.additional_scores();
+    } else {
+      additional_scores_match =
+          lhs.additional_scores() == rhs.additional_scores();
+    }
     return lhs.document_id() == rhs.document_id() &&
            lhs.hit_section_id_mask() == rhs.hit_section_id_mask() &&
-           std::fabs(lhs.score() - rhs.score()) < 1e-6;
+           std::fabs(lhs.score() - rhs.score()) < 1e-6 &&
+           additional_scores_match;
   }
 };
 
@@ -574,6 +585,18 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   }
   return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
                             actual_copy, result_listener);
+}
+
+MATCHER_P(EqualsHit, expected_hit, "") {
+  const Hit& actual = arg;
+  return actual.value() == expected_hit.value() &&
+         actual.flags() == expected_hit.flags() &&
+         actual.term_frequency() == expected_hit.term_frequency();
+}
+
+MATCHER(EqualsHit, "") {
+  return ExplainMatchResult(EqualsHit(std::get<1>(arg)), std::get<0>(arg),
+                            result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
