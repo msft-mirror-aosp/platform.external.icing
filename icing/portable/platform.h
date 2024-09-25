@@ -15,6 +15,12 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
+#include "unicode/uconfig.h"  // IWYU pragma: keep
+// clang-format: do not reorder the above include.
+
+#include "icing/expand/stemming/stemmer-factory.h"
+#include "unicode/uvernum.h"
+
 namespace icing {
 namespace lib {
 
@@ -33,6 +39,19 @@ inline bool IsReverseJniTokenization() {
 #endif  // ICING_REVERSE_JNI_SEGMENTATION
   return false;
 }
+
+inline bool IsIcuTokenization() {
+  return !IsReverseJniTokenization() && !IsCfStringTokenization();
+}
+
+inline int GetIcuTokenizationVersion() {
+  return IsIcuTokenization() ? U_ICU_VERSION_MAJOR_NUM : 0;
+}
+// Indicates whether stemming is enabled.
+//
+// This is false if stemmer_factory is compiled with the none-stemmer
+// implementation and true for the snowball-stemmer implementation.
+inline bool IsStemmingEnabled() { return stemmer_factory::IsStemmingEnabled(); }
 
 // Whether we're running on android_x86
 inline bool IsAndroidX86() {
@@ -58,6 +77,15 @@ inline bool IsIosPlatform() {
   return false;
 }
 
+// TODO(b/259129263): verify the flag works for different platforms.
+#if defined(__arm__) || defined(__i386__)
+#define ICING_ARCH_BIT_32
+#elif defined(__aarch64__) || defined(__x86_64__)
+#define ICING_ARCH_BIT_64
+#else
+#define ICING_ARCH_BIT_UNKNOWN
+#endif
+
 enum Architecture {
   UNKNOWN,
   BIT_32,
@@ -69,9 +97,9 @@ enum Architecture {
 // Architecture macros pulled from
 // https://developer.android.com/ndk/guides/cpu-features
 inline Architecture GetArchitecture() {
-#if defined(__arm__) || defined(__i386__)
+#if defined(ICING_ARCH_BIT_32)
   return BIT_32;
-#elif defined(__aarch64__) || defined(__x86_64__)
+#elif defined(ICING_ARCH_BIT_64)
   return BIT_64;
 #else
   return UNKNOWN;

@@ -20,13 +20,13 @@
 #ifndef ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
 #define ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -83,7 +83,11 @@ class IcingArrayStorage {
   void Truncate(uint32_t len);
 
   // Push changes to crc into crc_ptr. No effect if crc_ptr is NULL.
-  void UpdateCrc();
+  Crc32 UpdateCrc();
+
+  // Returns the crc of the current content or 0 if crc_ptr is NULL. Does not
+  // modify crc_ptr.
+  Crc32 GetCrc() const;
 
   // Write and sync dirty pages to fd starting at offset. Returns
   // number of pages synced.

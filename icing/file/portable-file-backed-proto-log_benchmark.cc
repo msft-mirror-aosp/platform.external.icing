@@ -33,7 +33,7 @@
 //   icing/file:portable-file-backed-proto-log_benchmark
 //
 //   $ blaze-bin/icing/file/portable-file-backed-proto-log_benchmark
-//   --benchmarks=all
+//   --benchmark_filter=all
 //
 //
 // To build and run on an Android device (must be connected and rooted):
@@ -48,14 +48,14 @@
 //   /data/local/tmp/
 //
 //   $ adb shell /data/local/tmp/portable-file-backed-proto-log-benchmark
-//   --benchmarks=all
+//   --benchmark_filter=all
 
 namespace icing {
 namespace lib {
 
 namespace {
 
-static void BM_Write(benchmark::State& state) {
+void BM_Write(benchmark::State& state) {
   const Filesystem filesystem;
   int string_length = state.range(0);
   const std::string file_path = IcingStringUtil::StringPrintf(
@@ -108,7 +108,7 @@ BENCHMARK(BM_Write)
                               // 16MiB, and we need some extra space for the
                               // rest of the document properties
 
-static void BM_Read(benchmark::State& state) {
+void BM_Read(benchmark::State& state) {
   const Filesystem filesystem;
   int string_length = state.range(0);
   const std::string file_path = IcingStringUtil::StringPrintf(
@@ -164,7 +164,7 @@ BENCHMARK(BM_Read)
                               // 16MiB, and we need some extra space for the
                               // rest of the document properties
                               //
-static void BM_Erase(benchmark::State& state) {
+void BM_Erase(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = IcingStringUtil::StringPrintf(
       "%s%s", GetTestTempDir().c_str(), "/proto.log");
@@ -204,7 +204,7 @@ static void BM_Erase(benchmark::State& state) {
 }
 BENCHMARK(BM_Erase);
 
-static void BM_ComputeChecksum(benchmark::State& state) {
+void BM_UpdateChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -238,15 +238,15 @@ static void BM_ComputeChecksum(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksum)->Range(1024, 1 << 20);
+BENCHMARK(BM_UpdateChecksum)->Range(1024, 1 << 20);
 
-static void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
+void BM_UpdateChecksumWithCachedChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -279,18 +279,18 @@ static void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
   ICING_ASSERT_OK(proto_log->WriteProto(document));
   ICING_ASSERT_OK(proto_log->PersistToDisk());
 
-  // This ComputeChecksum call shouldn't need to do any computation since we can
+  // This UpdateChecksum call shouldn't need to do any computation since we can
   // reuse our cached checksum.
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksumWithCachedChecksum);
+BENCHMARK(BM_UpdateChecksumWithCachedChecksum);
 
-static void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
+void BM_UpdateChecksumOnlyForTail(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -327,16 +327,16 @@ static void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
   // checksum since we didn't call persist.
   ICING_ASSERT_OK(proto_log->WriteProto(document));
 
-  // ComputeChecksum should be calculating the checksum of the tail and adding
+  // UpdateChecksum should be calculating the checksum of the tail and adding
   // it to the cached checksum we have.
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksumOnlyForTail);
+BENCHMARK(BM_UpdateChecksumOnlyForTail);
 
 }  // namespace
 }  // namespace lib

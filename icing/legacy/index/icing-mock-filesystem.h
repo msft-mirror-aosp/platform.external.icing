@@ -15,16 +15,14 @@
 #ifndef ICING_LEGACY_INDEX_ICING_MOCK_FILESYSTEM_H_
 #define ICING_LEGACY_INDEX_ICING_MOCK_FILESYSTEM_H_
 
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
-#include <memory>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
-#include "icing/legacy/index/icing-filesystem.h"
 #include "gmock/gmock.h"
+#include "icing/legacy/index/icing-filesystem.h"
 
 namespace icing {
 namespace lib {
@@ -114,6 +112,11 @@ class IcingMockFilesystem : public IcingFilesystem {
     ON_CALL(*this, Grow).WillByDefault([this](int fd, uint64_t new_size) {
       return real_icing_filesystem_.Grow(fd, new_size);
     });
+
+    ON_CALL(*this, GrowUsingPWrite)
+        .WillByDefault([this](int fd, uint64_t new_size) {
+          return real_icing_filesystem_.GrowUsingPWrite(fd, new_size);
+        });
 
     ON_CALL(*this, Write)
         .WillByDefault([this](int fd, const void *data, size_t data_size) {
@@ -209,6 +212,9 @@ class IcingMockFilesystem : public IcingFilesystem {
               (const, override));
 
   MOCK_METHOD(bool, Grow, (int fd, uint64_t new_size), (const, override));
+
+  MOCK_METHOD(bool, GrowUsingPWrite, (int fd, uint64_t new_size),
+              (const, override));
 
   MOCK_METHOD(bool, Write, (int fd, const void *data, size_t data_size),
               (const, override));

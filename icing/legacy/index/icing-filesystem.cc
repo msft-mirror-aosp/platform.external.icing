@@ -16,7 +16,6 @@
 
 #include <dirent.h>
 #include <dlfcn.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <pthread.h>
@@ -27,10 +26,17 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/portable/icing-zlib.h"
 #include "icing/util/logging.h"
@@ -65,18 +71,16 @@ void LogOpenFileDescriptors() {
   constexpr int kMaxFileDescriptorsToStat = 4096;
   struct rlimit rlim = {0, 0};
   if (getrlimit(RLIMIT_NOFILE, &rlim) != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "getrlimit() failed (errno=%d)", errno);
+    ICING_LOG(ERROR) << "getrlimit() failed (errno=" << errno << ")";
     return;
   }
   int fd_lim = rlim.rlim_cur;
   if (fd_lim > kMaxFileDescriptorsToStat) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Maximum number of file descriptors (%d) too large.", fd_lim);
+    ICING_LOG(ERROR) << "Maximum number of file descriptors (" << fd_lim
+                     << ") too large.";
     fd_lim = kMaxFileDescriptorsToStat;
   }
-  ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-      "Listing up to %d file descriptors.", fd_lim);
+  ICING_LOG(ERROR) << "Listing up to " << fd_lim << " file descriptors.";
 
   // Verify that /proc/self/fd is a directory. If not, procfs is not mounted or
   // inaccessible for some other reason. In that case, there's no point trying
@@ -98,15 +102,12 @@ void LogOpenFileDescriptors() {
     if (len >= 0) {
       // Zero-terminate the buffer, because readlink() won't.
       target[len < target_size ? len : target_size - 1] = '\0';
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("fd %d -> \"%s\"", fd,
-                                                        target);
+      ICING_LOG(ERROR) << "fd " << fd << " -> \"" << target << "\"";
     } else if (errno != ENOENT) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("fd %d -> ? (errno=%d)",
-                                                        fd, errno);
+      ICING_LOG(ERROR) << "fd " << fd << " -> ? (errno=" << errno << ")";
     }
   }
-  ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-      "File descriptor list complete.");
+  ICING_LOG(ERROR) << "File descriptor list complete.";
 }
 
 // Logs an error formatted as: desc1 + file_name + desc2 + strerror(errnum).
@@ -115,8 +116,7 @@ void LogOpenFileDescriptors() {
 // file descriptors (see LogOpenFileDescriptors() above).
 void LogOpenError(const char *desc1, const char *file_name, const char *desc2,
                   int errnum) {
-  ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-      "%s%s%s%s", desc1, file_name, desc2, strerror(errnum));
+  ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);
   if (errnum == EMFILE) {
     LogOpenFileDescriptors();
   }
@@ -157,8 +157,7 @@ bool ListDirectoryInternal(const char *dir_name,
     }
   }
   if (closedir(dir) != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Error closing %s: %s", dir_name, strerror(errno));
+    ICING_LOG(ERROR) << "Error closing " << dir_name << ": " << strerror(errno);
   }
   return true;
 }
@@ -181,12 +180,12 @@ void IcingScopedFd::reset(int fd) {
 const uint64_t IcingFilesystem::kBadFileSize;
 
 bool IcingFilesystem::DeleteFile(const char *file_name) const {
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf("Deleting file %s", file_name);
+  ICING_VLOG(1) << "Deleting file " << file_name;
   int ret = unlink(file_name);
   bool success = (ret == 0) || (errno == ENOENT);
   if (!success) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Deleting file %s failed: %s", file_name, strerror(errno));
+    ICING_LOG(ERROR) << "Deleting file " << file_name
+                     << " failed: " << strerror(errno);
   }
   return success;
 }
@@ -195,8 +194,8 @@ bool IcingFilesystem::DeleteDirectory(const char *dir_name) const {
   int ret = rmdir(dir_name);
   bool success = (ret == 0) || (errno == ENOENT);
   if (!success) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Deleting directory %s failed: %s", dir_name, strerror(errno));
+    ICING_LOG(ERROR) << "Deleting directory " << dir_name
+                     << " failed: " << strerror(errno);
   }
   return success;
 }
@@ -208,8 +207,7 @@ bool IcingFilesystem::DeleteDirectoryRecursively(const char *dir_name) const {
     if (errno == ENOENT) {
       return true;  // If directory didn't exist, this was successful.
     }
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Stat %s failed: %s", dir_name, strerror(errno));
+    ICING_LOG(ERROR) << "Stat " << dir_name << " failed: " << strerror(errno);
     return false;
   }
   vector<std::string> entries;
@@ -222,8 +220,7 @@ bool IcingFilesystem::DeleteDirectoryRecursively(const char *dir_name) const {
        ++i) {
     std::string filename = std::string(dir_name) + '/' + *i;
     if (stat(filename.c_str(), &st) < 0) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Stat %s failed: %s", filename.c_str(), strerror(errno));
+      ICING_LOG(ERROR) << "Stat " << filename << " failed: " << strerror(errno);
       success = false;
     } else if (S_ISDIR(st.st_mode)) {
       success = DeleteDirectoryRecursively(filename.c_str()) && success;
@@ -246,8 +243,8 @@ bool IcingFilesystem::FileExists(const char *file_name) const {
     exists = S_ISREG(st.st_mode) != 0;
   } else {
     if (errno != ENOENT) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Unable to stat file %s: %s", file_name, strerror(errno));
+      ICING_LOG(ERROR) << "Unable to stat file " << file_name << ": "
+                       << strerror(errno);
     }
     exists = false;
   }
@@ -261,8 +258,8 @@ bool IcingFilesystem::DirectoryExists(const char *dir_name) const {
     exists = S_ISDIR(st.st_mode) != 0;
   } else {
     if (errno != ENOENT) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Unable to stat directory %s: %s", dir_name, strerror(errno));
+      ICING_LOG(ERROR) << "Unable to stat directory " << dir_name << ": "
+                       << strerror(errno);
     }
     exists = false;
   }
@@ -317,8 +314,7 @@ bool IcingFilesystem::GetMatchingFiles(const char *glob,
   int basename_idx = GetBasenameIndex(glob);
   if (basename_idx == 0) {
     // We need a directory.
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-        "Expected directory, no matching files for: %s", glob);
+    ICING_VLOG(1) << "Expected directory, no matching files for: " << glob;
     return true;
   }
   const char *basename_glob = glob + basename_idx;
@@ -374,8 +370,7 @@ uint64_t IcingFilesystem::GetFileSize(int fd) const {
   struct stat st;
   uint64_t size = kBadFileSize;
   if (fstat(fd, &st) < 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Unable to stat file: %s",
-                                                      strerror(errno));
+    ICING_LOG(ERROR) << "Unable to stat file: " << strerror(errno);
   } else {
     size = st.st_size;
   }
@@ -386,8 +381,8 @@ uint64_t IcingFilesystem::GetFileSize(const char *filename) const {
   struct stat st;
   uint64_t size = kBadFileSize;
   if (stat(filename, &st) < 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Unable to stat file %s: %s", filename, strerror(errno));
+    ICING_LOG(ERROR) << "Unable to stat file " << filename << ": "
+                     << strerror(errno);
   } else {
     size = st.st_size;
   }
@@ -399,8 +394,7 @@ bool IcingFilesystem::Truncate(int fd, uint64_t new_size) const {
   if (ret == 0) {
     lseek(fd, new_size, SEEK_SET);
   } else {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Unable to truncate file: %s", strerror(errno));
+    ICING_LOG(ERROR) << "Unable to truncate file: " << strerror(errno);
   }
   return (ret == 0);
 }
@@ -418,10 +412,34 @@ bool IcingFilesystem::Truncate(const char *filename, uint64_t new_size) const {
 bool IcingFilesystem::Grow(int fd, uint64_t new_size) const {
   int ret = ftruncate(fd, new_size);
   if (ret != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Unable to grow file: %s",
-                                                      strerror(errno));
+    ICING_LOG(ERROR) << "Unable to grow file: " << strerror(errno);
   }
   return (ret == 0);
+}
+
+bool IcingFilesystem::GrowUsingPWrite(int fd, uint64_t new_size) const {
+  uint64_t curr_file_size = GetFileSize(fd);
+  if (curr_file_size == kBadFileSize) {
+    return false;
+  }
+  if (new_size <= curr_file_size) {
+    return true;
+  }
+
+  uint64_t page_size = IcingMMapper::system_page_size();
+  auto buf = std::make_unique<uint8_t[]>(page_size);
+  uint64_t size_to_write = std::min(page_size - (curr_file_size % page_size),
+                                    new_size - curr_file_size);
+  while (size_to_write > 0 && curr_file_size < new_size) {
+    if (!PWrite(fd, curr_file_size, buf.get(), size_to_write)) {
+      ICING_LOG(ERROR) << "Failed to grow file using pwrite.";
+      return false;
+    }
+    curr_file_size += size_to_write;
+    size_to_write = std::min(page_size - (curr_file_size % page_size),
+                             new_size - curr_file_size);
+  }
+  return true;
 }
 
 bool IcingFilesystem::Write(int fd, const void *data, size_t data_size) const {
@@ -431,8 +449,7 @@ bool IcingFilesystem::Write(int fd, const void *data, size_t data_size) const {
     size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
     ssize_t wrote = write(fd, data, chunk_size);
     if (wrote < 0) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Bad write: %s",
-                                                        strerror(errno));
+      ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
       return false;
     }
     data = static_cast<const uint8_t *>(data) + wrote;
@@ -449,8 +466,7 @@ bool IcingFilesystem::PWrite(int fd, off_t offset, const void *data,
     size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
     ssize_t wrote = pwrite(fd, data, chunk_size, offset);
     if (wrote < 0) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Bad write: %s",
-                                                        strerror(errno));
+      ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
       return false;
     }
     data = static_cast<const uint8_t *>(data) + wrote;
@@ -468,8 +484,7 @@ bool IcingFilesystem::DataSync(int fd) const {
 #endif
 
   if (result < 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Unable to sync data: %s",
-                                                      strerror(errno));
+    ICING_LOG(ERROR) << "Unable to sync data: " << strerror(errno);
     return false;
   }
   return true;
@@ -478,9 +493,8 @@ bool IcingFilesystem::DataSync(int fd) const {
 bool IcingFilesystem::RenameFile(const char *old_name,
                                  const char *new_name) const {
   if (rename(old_name, new_name) < 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Unable to rename file %s to %s: %s", old_name, new_name,
-        strerror(errno));
+    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to "
+                     << new_name << ": " << strerror(errno);
     return false;
   }
   return true;
@@ -518,8 +532,8 @@ bool IcingFilesystem::CreateDirectory(const char *dir_name) const {
     if (mkdir(dir_name, S_IRUSR | S_IWUSR | S_IXUSR) == 0) {
       success = true;
     } else {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Creating directory %s failed: %s", dir_name, strerror(errno));
+      ICING_LOG(ERROR) << "Creating directory " << dir_name
+                       << " failed: " << strerror(errno);
     }
   }
   return success;
@@ -561,8 +575,7 @@ end:
   if (src_fd > 0) close(src_fd);
   if (dst_fd > 0) close(dst_fd);
   if (!success) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Couldn't copy file %s to %s", src, dst);
+    ICING_LOG(ERROR) << "Couldn't copy file " << src << " to " << dst;
   }
   return success;
 }
@@ -583,8 +596,7 @@ bool IcingFilesystem::ComputeChecksum(int fd, uint32_t *checksum,
 uint64_t IcingFilesystem::GetDiskUsage(int fd) const {
   struct stat st;
   if (fstat(fd, &st) < 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Unable to stat file: %s",
-                                                      strerror(errno));
+    ICING_LOG(ERROR) << "Unable to stat file: " << strerror(errno);
     return kBadFileSize;
   }
   return st.st_blocks * kStatBlockSize;
@@ -593,8 +605,7 @@ uint64_t IcingFilesystem::GetDiskUsage(int fd) const {
 uint64_t IcingFilesystem::GetFileDiskUsage(const char *path) const {
   struct stat st;
   if (stat(path, &st) != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Unable to stat %s: %s",
-                                                      path, strerror(errno));
+    ICING_LOG(ERROR) << "Unable to stat " << path << ": " << strerror(errno);
     return kBadFileSize;
   }
   return st.st_blocks * kStatBlockSize;
@@ -603,8 +614,7 @@ uint64_t IcingFilesystem::GetFileDiskUsage(const char *path) const {
 uint64_t IcingFilesystem::GetDiskUsage(const char *path) const {
   struct stat st;
   if (stat(path, &st) != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Unable to stat %s: %s",
-                                                      path, strerror(errno));
+    ICING_LOG(ERROR) << "Unable to stat " << path << ": " << strerror(errno);
     return kBadFileSize;
   }
   uint64_t result = st.st_blocks * kStatBlockSize;

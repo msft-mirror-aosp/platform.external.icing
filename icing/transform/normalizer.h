@@ -44,17 +44,13 @@ class Normalizer {
   // Returns a CharacterIterator pointing to one past the end of the segment of
   // term that (once normalized) matches with normalized_term.
   //
-  // Ex. CalculateNormalizedMatchLength("YELLOW", "yell") will return
+  // Ex. FindNormalizedMatchEndPosition("YELLOW", "yell") will return
   // CharacterIterator(u8:4, u16:4, u32:4).
   //
-  // Ex. CalculateNormalizedMatchLength("YELLOW", "red") will return
+  // Ex. FindNormalizedMatchEndPosition("YELLOW", "red") will return
   // CharacterIterator(u8:0, u16:0, u32:0).
-  virtual CharacterIterator CalculateNormalizedMatchLength(
-      std::string_view term, std::string_view normalized_term) const {
-    // TODO(b/195720764) Remove this default impl and implement in all
-    // subclasses.
-    return CharacterIterator(term, 0, 0, 0);
-  }
+  virtual CharacterIterator FindNormalizedMatchEndPosition(
+      std::string_view term, std::string_view normalized_term) const = 0;
 };
 
 }  // namespace lib
