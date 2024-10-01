@@ -35,6 +35,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
@@ -72,20 +73,16 @@ class Index {
   struct Options {
     explicit Options(const std::string& base_dir, uint32_t index_merge_size,
                      bool lite_index_sort_at_indexing,
-                     uint32_t lite_index_sort_size,
-                     bool include_property_existence_metadata_hits = false)
+                     uint32_t lite_index_sort_size)
         : base_dir(base_dir),
           index_merge_size(index_merge_size),
           lite_index_sort_at_indexing(lite_index_sort_at_indexing),
-          lite_index_sort_size(lite_index_sort_size),
-          include_property_existence_metadata_hits(
-              include_property_existence_metadata_hits) {}
+          lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
     bool lite_index_sort_at_indexing;
     int32_t lite_index_sort_size;
-    bool include_property_existence_metadata_hits;
   };
 
   // Creates an instance of Index in the directory pointed by file_dir.
@@ -133,6 +130,22 @@ class Index {
     return main_index_->PersistToDisk();
   }
 
+  // Updates all checksums in the index and returns the combined index checksum.
+  Crc32 UpdateChecksum() {
+    Crc32 lite_crc = lite_index_->UpdateChecksum();
+    Crc32 main_crc = main_index_->UpdateChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
+  // Calculates and returns the combined index checksum.
+  Crc32 GetChecksum() const {
+    Crc32 lite_crc = lite_index_->GetChecksum();
+    Crc32 main_crc = main_index_->GetChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
   // Discard parts of the index if they contain data for document ids greater
   // than document_id.
   //
@@ -176,6 +189,13 @@ class Index {
     *debug_info.mutable_main_index_info() =
         main_index_->GetDebugInfo(verbosity);
     return debug_info;
+  }
+
+  void PublishQueryStats(QueryStatsProto* query_stats) const {
+    query_stats->set_lite_index_hit_buffer_byte_size(
+        lite_index_->GetHitBufferByteSize());
+    query_stats->set_lite_index_hit_buffer_unsorted_byte_size(
+        lite_index_->GetHitBufferUnsortedByteSize());
   }
 
   // Returns the byte size of the all the elements held in the index. This
@@ -301,9 +321,7 @@ class Index {
   }
 
   // Sorts the LiteIndex HitBuffer.
-  void SortLiteIndex() {
-    lite_index_->SortHits();
-  }
+  void SortLiteIndex() { lite_index_->SortHits(); }
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
   // new_last_added_document_id will be used to update the last added document

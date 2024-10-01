@@ -148,7 +148,7 @@ class JoinProcessorTest : public ::testing::Test {
             &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -190,7 +190,9 @@ class JoinProcessorTest : public ::testing::Test {
 
   libtextclassifier3::StatusOr<DocumentId> PutAndIndexDocument(
       const DocumentProto& document) {
-    ICING_ASSIGN_OR_RETURN(DocumentId document_id, doc_store_->Put(document));
+    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
+                           doc_store_->Put(document));
+    DocumentId document_id = put_result.new_document_id;
     ICING_ASSIGN_OR_RETURN(
         TokenizedDocument tokenized_document,
         TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
