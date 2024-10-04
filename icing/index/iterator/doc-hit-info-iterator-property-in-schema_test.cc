@@ -100,8 +100,8 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -130,8 +130,9 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithIndexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -150,8 +151,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithUnindexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -183,8 +185,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest, NoMatchWithUndefinedProperty) {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        CorrectlySetsSectionIdMasksAndPopulatesTermMatchInfo) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   // Arbitrary section ids for the documents in the DocHitInfoIterators.
   // Created to test correct section_id_mask behavior.
@@ -199,8 +202,7 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   auto original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "hi");
-  original_iterator->set_hit_intersect_section_ids_mask(
-      original_section_id_mask);
+  original_iterator->set_hit_section_ids_mask(original_section_id_mask);
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -218,7 +220,7 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
   // The expected mask is the same as the original mask, since the iterator
   // should treat it as a pass-through.
   SectionIdMask expected_section_id_mask = original_section_id_mask;
-  EXPECT_EQ(property_defined_iterator.hit_intersect_section_ids_mask(),
+  EXPECT_EQ(property_defined_iterator.doc_hit_info().hit_section_ids_mask(),
             expected_section_id_mask);
 
   property_defined_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
@@ -246,10 +248,12 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        FindPropertyDefinedByMultipleTypes) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_));
+  DocumentId document_id2 = put_result2.new_document_id;
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
 

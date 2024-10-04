@@ -78,7 +78,7 @@ message DocumentProto {
 }
 
 // Holds a property field of the Document.
-// Next tag: 8
+// Next tag: 10
 message PropertyProto {
   // Name of the property.
   // See icing.lib.PropertyConfigProto.property_name for details.
@@ -92,10 +92,31 @@ message PropertyProto {
   repeated bool boolean_values = 5;
   repeated bytes bytes_values = 6;
   repeated DocumentProto document_values = 7;
+
+  message VectorProto {
+    // The values of the vector.
+    repeated float values = 1 [packed = true];
+    // The model signature of the vector, which can be any string used to
+    // identify the model, so that embedding searches can be restricted only to
+    // the vectors with the matching target signature.
+    // Eg: "universal-sentence-encoder_v0"
+    optional string model_signature = 2;
+  }
+  repeated VectorProto vector_values = 8;
+
+  // Holds a blob handle field of the property.
+  // Next tag: 3
+  message BlobHandleProto {
+    // The sha-256 hashed digest for a blob.
+    optional bytes digest = 1;
+    // The label of the blob.
+    optional string label = 2;
+  }
+  repeated BlobHandleProto blob_handle_values = 9;
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 3
+// Next tag: 4
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -115,6 +136,9 @@ message PutResultProto {
   // be accurate only when the status above is OK. See logging.proto for
   // details.
   optional PutDocumentStatsProto put_document_stats = 2;
+
+  // Whether or not the document was a replacement of an existing document.
+  optional bool was_replacement = 3;
 }
 
 // Result of a call to IcingSearchEngine.Get

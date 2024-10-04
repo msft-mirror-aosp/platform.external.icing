@@ -14,14 +14,20 @@
 
 #include "icing/index/main/main-index-merger.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <memory>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/file/posting_list/index-block.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/lite/lite-index.h"
 #include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
@@ -71,7 +77,7 @@ class HitSelector {
           best_prefix_hit_.term_id(),
           Hit(prefix_hit.section_id(), prefix_hit.document_id(),
               final_term_frequency, prefix_hit.is_in_prefix_section(),
-              prefix_hit.is_prefix_hit()));
+              prefix_hit.is_prefix_hit(), prefix_hit.is_stemmed_hit()));
       (*hits)[pos++] = best_prefix_hit_;
       // Ensure sorted.
       if (best_prefix_hit_.hit() < best_exact_hit_.hit()) {
@@ -107,7 +113,8 @@ class HitSelector {
           term_id_hit_pair.term_id(),
           Hit(hit.section_id(), hit.document_id(), final_term_frequency,
               best_prefix_hit_.hit().is_in_prefix_section(),
-              best_prefix_hit_.hit().is_prefix_hit()));
+              best_prefix_hit_.hit().is_prefix_hit(),
+              best_prefix_hit_.hit().is_stemmed_hit()));
     }
   }
 
@@ -125,7 +132,8 @@ class HitSelector {
           term_id_hit_pair.term_id(),
           Hit(hit.section_id(), hit.document_id(), final_term_frequency,
               best_exact_hit_.hit().is_in_prefix_section(),
-              best_exact_hit_.hit().is_prefix_hit()));
+              best_exact_hit_.hit().is_prefix_hit(),
+              best_exact_hit_.hit().is_stemmed_hit()));
     }
   }
 
@@ -143,7 +151,7 @@ class HitComparator {
         main_tvi_to_block_index_(&main_tvi_to_block_index) {}
 
   bool operator()(const TermIdHitPair& lhs, const TermIdHitPair& rhs) const {
-    // Primary sort by index block. This acheives two things:
+    // Primary sort by index block. This achieves two things:
     // 1. It reduces the number of flash writes by grouping together new hits
     // for terms whose posting lists might share the same index block.
     // 2. More importantly, this ensures that newly added backfill branch points
@@ -281,7 +289,8 @@ MainIndexMerger::TranslateAndExpandLiteHits(
       size_t len = itr_prefixes->second.second;
       size_t offset_end_exclusive = offset + len;
       Hit prefix_hit(hit.section_id(), hit.document_id(), hit.term_frequency(),
-                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                     /*is_stemmed_hit=*/false);
       for (; offset < offset_end_exclusive; ++offset) {
         // Take the tvi (in the main lexicon) of each prefix term.
         uint32_t prefix_main_tvi =

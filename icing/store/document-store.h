@@ -19,11 +19,11 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
@@ -43,6 +43,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
+#include "icing/store/namespace-fingerprint-identifier.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -106,6 +107,11 @@ class DocumentStore {
     // unpersisted. This may be used to signal that any derived data off of the
     // document store may need to be regenerated.
     DataLoss data_loss;
+
+    // A boolean flag indicating if derived files of the document store have
+    // been regenerated or not. This is usually a signal for callers to detect
+    // if any id assignment has changed (e.g. NamespaceId).
+    bool derived_files_regenerated;
   };
 
   // Not copyable
@@ -174,17 +180,23 @@ class DocumentStore {
   // If put_document_stats is present, the fields related to DocumentStore will
   // be populated.
   //
-  // Returns:
-  //   A newly generated document id on success
-  //   RESOURCE_EXHAUSED if exceeds maximum number of allowed documents
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   NOT_FOUND if the schema_type or a property config of the document doesn't
-  //     exist in schema
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentId> Put(
+  //  Returns:
+  //   - On success, a PutResult with the DocumentId of the newly added document
+  //     and a bool indicating whether this is a new document or a replacement
+  //     of an existing document.
+  //   - RESOURCE_EXHAUSTED if exceeds maximum number of allowed documents
+  //   - FAILED_PRECONDITION if schema hasn't been set yet
+  //   - NOT_FOUND if the schema_type or a property config of the document
+  //     doesn't exist in schema
+  //   - INTERNAL_ERROR on IO error
+  struct PutResult {
+    DocumentId new_document_id = kInvalidDocumentId;
+    bool was_replacement = false;
+  };
+  libtextclassifier3::StatusOr<PutResult> Put(
       const DocumentProto& document, int32_t num_tokens = 0,
       PutDocumentStatsProto* put_document_stats = nullptr);
-  libtextclassifier3::StatusOr<DocumentId> Put(
+  libtextclassifier3::StatusOr<PutResult> Put(
       DocumentProto&& document, int32_t num_tokens = 0,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
@@ -269,6 +281,21 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
       std::string_view name_space, std::string_view uri) const;
+
+  // Helper method to find a DocumentId that is associated with the given
+  // NamespaceFingerprintIdentifier.
+  //
+  // NOTE: The DocumentId may refer to a invalid document (deleted
+  // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
+  // refers to a valid Document.
+  //
+  // Returns:
+  //   A DocumentId on success
+  //   NOT_FOUND if the key doesn't exist
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
+      const NamespaceFingerprintIdentifier& namespace_fingerprint_identifier)
+      const;
 
   // Returns the CorpusId associated with the given namespace and schema.
   //
@@ -439,10 +466,26 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Optimize();
 
+  struct OptimizeResult {
+    // A vector that maps old document id to new document id.
+    std::vector<DocumentId> document_id_old_to_new;
+
+    // A vector that maps old namespace id to new namespace id. Will be empty if
+    // should_rebuild_index is set to true.
+    std::vector<NamespaceId> namespace_id_old_to_new;
+
+    // A boolean flag that hints the caller (usually IcingSearchEngine) if it
+    // should rebuild index instead of adopting the id changes via the 2 vectors
+    // above. It will be set to true if finding any id inconsistency.
+    bool should_rebuild_index = false;
+
+    // A set of blob handles that are dead and need to be removed.
+    std::unordered_set<std::string> dead_blob_handles;
+  };
   // Copy data from current base directory into a new directory. Any outdated or
-  // deleted data won't be copied. During the process, document ids will be
-  // reassigned so any files / classes that are based on old document ids may be
-  // outdated.
+  // deleted data won't be copied. During the process, document/namespace ids
+  // will be reassigned so any files / classes that are based on old
+  // document/namespace ids may be outdated.
   //
   // stats will be set if non-null.
   //
@@ -451,12 +494,15 @@ class DocumentStore {
   // method based on device usage.
   //
   // Returns:
-  //   A vector that maps from old document id to new document id on success
+  //   OptimizeResult which contains a vector mapping from old document id to
+  //   new document id and another vector mapping from old namespace id to new
+  //   namespace id, on success
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeInto(
+  libtextclassifier3::StatusOr<OptimizeResult> OptimizeInto(
       const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
-      OptimizeStatsProto* stats = nullptr);
+      std::unordered_set<std::string>&& expired_blob_handles,
+      OptimizeStatsProto* stats = nullptr) const;
 
   // Calculates status for a potential Optimize call. Includes how many docs
   // there are vs how many would be optimized away. And also includes an
@@ -467,13 +513,20 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<OptimizeInfo> GetOptimizeInfo() const;
 
-  // Computes the combined checksum of the document store - includes the ground
-  // truth and all derived files.
+  // Update, replace and persist the header file. Creates the header file if it
+  // doesn't exist.
   //
   // Returns:
-  //   Combined checksum on success
-  //   INTERNAL_ERROR on compute error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the checksum of the document store.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
   // Get debug information for the document store.
   // verbosity <= 0, simplest debug information
@@ -580,7 +633,15 @@ class DocumentStore {
   // worry about this field.
   bool initialized_ = false;
 
-  libtextclassifier3::StatusOr<DataLoss> Initialize(
+  struct InitializeResult {
+    DataLoss data_loss;
+
+    // A boolean flag indicating if derived files of the document store have
+    // been regenerated or not. This is usually a signal for callers to detect
+    // if any id assignment has changed (e.g. NamespaceId).
+    bool derived_files_regenerated;
+  };
+  libtextclassifier3::StatusOr<InitializeResult> Initialize(
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats);
 
@@ -655,15 +716,7 @@ class DocumentStore {
   // if it doesn't exist.
   bool HeaderExists();
 
-  // Update, replace and persist the header file. Creates the header file if it
-  // doesn't exist.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL on I/O error
-  libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
-
-  libtextclassifier3::StatusOr<DocumentId> InternalPut(
+  libtextclassifier3::StatusOr<PutResult> InternalPut(
       DocumentProto&& document,
       PutDocumentStatsProto* put_document_stats = nullptr);
 

@@ -65,10 +65,9 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(options.base_dir + "/idx/lite.",
-                            options.index_merge_size,
-                            options.lite_index_sort_at_indexing,
-                            options.lite_index_sort_size);
+  return LiteIndex::Options(
+      options.base_dir + "/idx/lite.", options.index_merge_size,
+      options.lite_index_sort_at_indexing, options.lite_index_sort_size);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -243,8 +242,7 @@ Index::FindLiteTermsByPrefix(
     SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
     const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
-  IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
-                                           prefix.c_str());
+  IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(), prefix);
 
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
@@ -260,7 +258,7 @@ Index::FindLiteTermsByPrefix(
     if (hit_score > 0) {
       // There is at least one document in the given namespace has this term.
       term_metadata_list.push_back(
-          TermMetadata(term_iterator.GetKey(), hit_score));
+          TermMetadata(std::string(term_iterator.GetKey()), hit_score));
     }
 
     term_iterator.Advance();
@@ -279,7 +277,6 @@ Index::FindTermsByPrefix(
     return term_metadata_list;
   }
   // Get results from the LiteIndex.
-  // TODO(b/250648165) support score term by prefix_hit in lite_index.
   ICING_ASSIGN_OR_RETURN(
       std::vector<TermMetadata> lite_term_metadata_list,
       FindLiteTermsByPrefix(prefix, rank_by, suggestion_result_checker));
@@ -345,7 +342,8 @@ libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
 libtextclassifier3::Status Index::Editor::IndexAllBufferedTerms() {
   for (auto itr = seen_tokens_.begin(); itr != seen_tokens_.end(); itr++) {
     Hit hit(section_id_, document_id_, /*term_frequency=*/itr->second,
-            term_match_type_ == TermMatchType::PREFIX);
+            /*is_in_prefix_section=*/term_match_type_ == TermMatchType::PREFIX,
+            /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id, term_id_codec_->EncodeTvi(itr->first, TviType::LITE));
     ICING_RETURN_IF_ERROR(lite_index_->AddHit(term_id, hit));

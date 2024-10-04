@@ -18,13 +18,12 @@ package icing.lib;
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
 // Encapsulates the configurations on how Icing should query/index these terms.
 // Next tag: 0
 message TermMatchType {
-  // Next tag: 3
+  // Next tag: 4
   enum Code {
     // A default for all other use-cases.
     UNKNOWN = 0;
@@ -36,5 +35,9 @@ message TermMatchType {
     // A term is a prefix of other terms.
     // Ex. "foo" is a prefix of "foot"
     PREFIX = 2;
+
+    // A term is a stem of other terms.
+    // Ex. "run" is a stem for "running" and "runs"
+    STEMMING = 3;
   }
 }

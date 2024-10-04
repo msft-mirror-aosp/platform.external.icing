@@ -169,9 +169,9 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
+                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
+                              /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
                                   DocumentWrapper>::kDeflateCompressionLevel,
                               /*initialize_stats=*/nullptr));
@@ -232,8 +232,9 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle document.
@@ -281,8 +282,9 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(nested_document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle nested_document.
@@ -343,8 +345,9 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle document. Index data should remain unchanged since there is no
@@ -443,8 +446,9 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerSectionIndexingHandler> handler,
@@ -519,11 +523,13 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(tokenized_document1.document()));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(tokenized_document2.document()));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerSectionIndexingHandler> handler,

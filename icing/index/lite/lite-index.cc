@@ -74,7 +74,7 @@ size_t header_size() { return sizeof(LiteIndex_HeaderImpl::HeaderData); }
 }  // namespace
 
 const TermIdHitPair::Value TermIdHitPair::kInvalidValue =
-    TermIdHitPair(0, Hit()).value();
+    TermIdHitPair(0, Hit(Hit::kInvalidValue)).value();
 
 libtextclassifier3::StatusOr<std::unique_ptr<LiteIndex>> LiteIndex::Create(
     const LiteIndex::Options& options, const IcingFilesystem* filesystem) {
@@ -178,7 +178,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
       goto error;
     }
 
-    UpdateChecksum();
+    UpdateChecksumInternal();
   } else {
     header_mmap_.Remap(hit_buffer_fd_.get(), kHeaderFileOffset, header_size());
     header_ = std::make_unique<LiteIndex_HeaderImpl>(
@@ -198,11 +198,12 @@ libtextclassifier3::Status LiteIndex::Initialize() {
       status = absl_ports::InternalError("Lite index header magic mismatch");
       goto error;
     }
-    Crc32 crc = ComputeChecksum();
-    if (crc.Get() != header_->lite_index_crc()) {
-      status = absl_ports::DataLossError(
-          IcingStringUtil::StringPrintf("Lite index crc check failed: %u vs %u",
-                                        crc.Get(), header_->lite_index_crc()));
+    Crc32 expected_crc(header_->lite_index_crc());
+    Crc32 crc = GetChecksumInternal();
+    if (crc != expected_crc) {
+      status = absl_ports::DataLossError(IcingStringUtil::StringPrintf(
+          "Lite index crc check failed: %u vs %u", crc.Get(),
+          header_->lite_index_crc().Get()));
       goto error;
     }
   }
@@ -224,27 +225,6 @@ error:
   return status;
 }
 
-Crc32 LiteIndex::ComputeChecksum() {
-  IcingTimer timer;
-
-  // Update crcs.
-  uint32_t dependent_crcs[2];
-  hit_buffer_.UpdateCrc();
-  dependent_crcs[0] = hit_buffer_crc_;
-  dependent_crcs[1] = lexicon_.UpdateCrc();
-
-  // Compute the master crc.
-
-  // Header crc, excluding the actual crc field.
-  Crc32 all_crc(header_->CalculateHeaderCrc());
-  all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
-                                  sizeof(dependent_crcs)));
-  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000
-                << "ms";
-
-  return all_crc;
-}
-
 libtextclassifier3::Status LiteIndex::Reset() {
   IcingTimer timer;
 
@@ -254,7 +234,7 @@ libtextclassifier3::Status LiteIndex::Reset() {
   lexicon_.Clear();
   hit_buffer_.Clear();
   header_->Reset();
-  UpdateChecksum();
+  UpdateChecksumInternal();
 
   ICING_VLOG(2) << "Lite index clear in " << timer.Elapsed() * 1000 << "ms";
   return libtextclassifier3::Status::OK;
@@ -274,7 +254,7 @@ libtextclassifier3::Status LiteIndex::PersistToDisk() {
     success = false;
   }
   hit_buffer_.Sync();
-  UpdateChecksum();
+  UpdateChecksumInternal();
   header_mmap_.Sync();
 
   return (success) ? libtextclassifier3::Status::OK
@@ -282,8 +262,49 @@ libtextclassifier3::Status LiteIndex::PersistToDisk() {
                          "Unable to sync lite index components.");
 }
 
-void LiteIndex::UpdateChecksum() {
-  header_->set_lite_index_crc(ComputeChecksum().Get());
+Crc32 LiteIndex::UpdateChecksum() {
+  absl_ports::unique_lock l(&mutex_);
+  return UpdateChecksumInternal();
+}
+
+Crc32 LiteIndex::UpdateChecksumInternal() {
+  IcingTimer timer;
+
+  // Update crcs.
+  uint32_t dependent_crcs[2];
+  hit_buffer_.UpdateCrc();
+  dependent_crcs[0] = hit_buffer_crc_;
+  dependent_crcs[1] = lexicon_.UpdateCrc().Get();
+
+  // Update the header. The header is mmapped. So we don't need to explicitly
+  // write it.
+  Crc32 all_crc(header_->GetHeaderCrc());
+  all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
+                                  sizeof(dependent_crcs)));
+  header_->set_lite_index_crc(all_crc);
+  ICING_VLOG(2) << "Lite index crc updated in " << timer.Elapsed() * 1000
+                << "ms";
+  return all_crc;
+}
+
+Crc32 LiteIndex::GetChecksum() const {
+  absl_ports::unique_lock l(&mutex_);
+  return GetChecksumInternal();
+}
+
+Crc32 LiteIndex::GetChecksumInternal() const {
+  IcingTimer timer;
+
+  uint32_t dependent_crcs[2];
+  dependent_crcs[0] = hit_buffer_.GetCrc().Get();
+  dependent_crcs[1] = lexicon_.GetCrc().Get();
+
+  Crc32 all_crc(header_->GetHeaderCrc());
+  all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
+                                  sizeof(dependent_crcs)));
+  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000
+                << "ms";
+  return all_crc;
 }
 
 libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
@@ -291,8 +312,7 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
     NamespaceId namespace_id) {
   absl_ports::unique_lock l(&mutex_);
   uint32_t tvi;
-  libtextclassifier3::Status status =
-      lexicon_.Insert(term.c_str(), "", &tvi, false);
+  libtextclassifier3::Status status = lexicon_.Insert(term, "", &tvi, false);
   if (!status.ok()) {
     ICING_LOG(DBG) << "Unable to add term " << term << " to lexicon!\n"
                    << status.error_message();
@@ -350,7 +370,7 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
   absl_ports::shared_lock l(&mutex_);
   char dummy;
   uint32_t tvi;
-  if (!lexicon_.Find(term.c_str(), &dummy, &tvi)) {
+  if (!lexicon_.Find(term, &dummy, &tvi)) {
     return absl_ports::NotFoundError(
         absl_ports::StrCat("Could not find ", term, " in the lexicon."));
   }
@@ -497,7 +517,7 @@ int LiteIndex::FetchHits(
   // When disabled, the entire HitBuffer should be sorted already and only
   // binary search is needed.
   if (options_.hit_buffer_sort_at_indexing) {
-    uint32_t unsorted_length = header_->cur_size() - header_->searchable_end();
+    uint32_t unsorted_length = GetHitBufferUnsortedSizeImpl();
     for (uint32_t i = 1; i <= unsorted_length; ++i) {
       TermIdHitPair term_id_hit_pair = array[header_->cur_size() - i];
       if (term_id_hit_pair.term_id() == term_id) {
@@ -517,7 +537,8 @@ int LiteIndex::FetchHits(
 
   // Do binary search over the sorted section and repeat the above steps.
   TermIdHitPair target_term_id_hit_pair(
-      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultTermFrequency));
+      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kNoEnabledFlags,
+                   Hit::kDefaultTermFrequency));
   for (const TermIdHitPair* ptr = std::lower_bound(
            array, array + header_->searchable_end(), target_term_id_hit_pair);
        ptr < array + header_->searchable_end(); ++ptr) {
@@ -553,7 +574,7 @@ bool LiteIndex::is_full() const {
           lexicon_.min_free_fraction() < (1.0 - kTrieFullFraction));
 }
 
-std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) {
+std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
   absl_ports::unique_lock l(&mutex_);
   std::string res;
   std::string lexicon_info;
@@ -569,7 +590,7 @@ std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) {
       "lite_lexicon_info:\n%s\n",
       header_->cur_size(), options_.hit_buffer_size,
       header_->last_added_docid(), header_->searchable_end(),
-      ComputeChecksum().Get(), lexicon_info.c_str());
+      GetChecksumInternal().Get(), lexicon_info.c_str());
   return res;
 }
 
@@ -605,13 +626,13 @@ IndexStorageInfoProto LiteIndex::GetStorageInfo(
 
 void LiteIndex::SortHitsImpl() {
   // Make searchable by sorting by hit buffer.
-  uint32_t sort_len = header_->cur_size() - header_->searchable_end();
-  if (sort_len <= 0) {
+  uint32_t need_sort_len = GetHitBufferUnsortedSizeImpl();
+  if (need_sort_len <= 0) {
     return;
   }
   IcingTimer timer;
 
-  auto* array_start =
+  TermIdHitPair::Value* array_start =
       hit_buffer_.GetMutableMem<TermIdHitPair::Value>(0, header_->cur_size());
   TermIdHitPair::Value* sort_start = array_start + header_->searchable_end();
   std::sort(sort_start, array_start + header_->cur_size());
@@ -623,7 +644,7 @@ void LiteIndex::SortHitsImpl() {
     std::inplace_merge(array_start, array_start + header_->searchable_end(),
                        array_start + header_->cur_size());
   }
-  ICING_VLOG(2) << "Lite index sort and merge " << sort_len << " into "
+  ICING_VLOG(2) << "Lite index sort and merge " << need_sort_len << " into "
                 << header_->searchable_end() << " in " << timer.Elapsed() * 1000
                 << "ms";
 
@@ -631,7 +652,7 @@ void LiteIndex::SortHitsImpl() {
   header_->set_searchable_end(header_->cur_size());
 
   // Update crc in-line.
-  UpdateChecksum();
+  UpdateChecksumInternal();
 }
 
 libtextclassifier3::Status LiteIndex::Optimize(
@@ -693,7 +714,7 @@ libtextclassifier3::Status LiteIndex::Optimize(
   for (IcingDynamicTrie::Iterator term_iter(lexicon_, /*prefix=*/"");
        term_iter.IsValid(); term_iter.Advance()) {
     if (tvi_to_delete.find(term_iter.GetValueIndex()) != tvi_to_delete.end()) {
-      terms_to_delete.insert(term_iter.GetKey());
+      terms_to_delete.insert(std::string(term_iter.GetKey()));
     }
   }
   for (const std::string& term : terms_to_delete) {

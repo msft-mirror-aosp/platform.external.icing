@@ -18,8 +18,17 @@ import androidx.build.SdkHelperKt
 
 plugins {
     id("AndroidXPlugin")
+    id("AndroidXRepackagePlugin")
     id("java-library")
     id("com.google.protobuf")
+}
+
+repackage {
+    // Must match what is in frameworks/support/appsearch/appsearch-external-protobuf/build.gradle
+    addRelocation {
+        sourcePackage = "com.google.protobuf"
+        targetPackage = "com.google.android.icing.protobuf"
+    }
 }
 
 sourceSets {
@@ -32,7 +41,7 @@ sourceSets {
 dependencies {
     compileOnly("androidx.annotation:annotation:1.1.0")
     compileOnly(SdkHelperKt.getSdkDependency(project))
-    implementation(libs.protobufLite)
+    compileOnly(libs.protobufLite)
 }
 
 afterEvaluate {
@@ -40,21 +49,6 @@ afterEvaluate {
         lintOptions {
             // protobuf generates unannotated methods
             disable("UnknownNullness")
-        }
-    }
-}
-
-protobuf {
-    protoc {
-        artifact = libs.protobufCompiler.get()
-    }
-    generateProtoTasks {
-        all().each { task ->
-            task.builtins {
-                java {
-                    option 'lite'
-                }
-            }
         }
     }
 }
