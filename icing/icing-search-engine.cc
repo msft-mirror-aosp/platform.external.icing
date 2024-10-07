@@ -726,7 +726,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
           blob_store_dir, " and ", doc_store_dir));
     }
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+      ICING_RETURN_IF_ERROR(
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
     }
     ICING_ASSIGN_OR_RETURN(
         bool document_store_derived_files_regenerated,
@@ -746,7 +747,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // of InitializeDocumentStore (document_store_derived_files_regenerated) is
     // unused.
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+      ICING_RETURN_IF_ERROR(
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
     }
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
@@ -822,7 +824,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
   } else if (version_state_change != version_util::StateChange::kCompatible) {
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+      ICING_RETURN_IF_ERROR(
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
     }
     ICING_ASSIGN_OR_RETURN(bool document_store_derived_files_regenerated,
                            InitializeDocumentStore(
@@ -848,7 +851,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         InitializeStatsProto::VERSION_CHANGED);
   } else {
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(InitializeBlobStore());
+      ICING_RETURN_IF_ERROR(
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
     }
     ICING_ASSIGN_OR_RETURN(
         bool document_store_derived_files_regenerated,
@@ -940,7 +944,8 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
   return create_result.derived_files_regenerated;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore() {
+libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
+    int32_t orphan_blob_time_to_live_ms) {
   std::string blob_dir = MakeBlobDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(blob_dir.c_str())) {
@@ -950,7 +955,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore() {
 
   ICING_ASSIGN_OR_RETURN(
       auto blob_store_or,
-      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get()));
+      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get(),
+                        orphan_blob_time_to_live_ms));
   blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
   return libtextclassifier3::Status::OK;
 }
@@ -1196,8 +1202,14 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         std::move(index_incompatible_type));
   }
 
+  // Join index is incompatible and needs rebuild if:
+  // - Any schema type is join incompatible.
+  // - OR existing schema type id assignment has changed, since join index
+  //   stores schema type id (+ joinable property path) as a key to group join
+  //   data.
   bool join_incompatible =
-      !set_schema_result.schema_types_join_incompatible_by_name.empty();
+      !set_schema_result.schema_types_join_incompatible_by_name.empty() ||
+      !set_schema_result.old_schema_type_ids_changed.empty();
   for (const std::string& join_incompatible_type :
        set_schema_result.schema_types_join_incompatible_by_name) {
     result_proto.add_join_incompatible_changed_schema_types(
@@ -1343,14 +1355,15 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   TokenizedDocument tokenized_document(
       std::move(tokenized_document_or).ValueOrDie());
 
-  auto document_id_or = document_store_->Put(
+  auto put_result_or = document_store_->Put(
       tokenized_document.document(), tokenized_document.num_string_tokens(),
       put_document_stats);
-  if (!document_id_or.ok()) {
-    TransformStatus(document_id_or.status(), result_status);
+  if (!put_result_or.ok()) {
+    TransformStatus(put_result_or.status(), result_status);
     return result_proto;
   }
-  DocumentId document_id = document_id_or.ValueOrDie();
+  DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
+  result_proto.set_was_replacement(put_result_or.ValueOrDie().was_replacement);
 
   auto data_indexing_handlers_or = CreateDataIndexingHandlers();
   if (!data_indexing_handlers_or.ok()) {
@@ -1763,11 +1776,19 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   optimize_stats->set_storage_size_before(
       Filesystem::SanitizeFileSize(before_size));
 
+  // Get all expired blob handles
+  std::unordered_set<std::string> potentially_optimizable_blob_handles;
+  if (blob_store_ != nullptr) {
+    potentially_optimizable_blob_handles =
+        blob_store_->GetPotentiallyOptimizableBlobHandles();
+  }
+
   // TODO(b/143646633): figure out if we need to optimize index and doc store
   // at the same time.
   std::unique_ptr<Timer> optimize_doc_store_timer = clock_->GetNewTimer();
   libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
-      optimize_result_or = OptimizeDocumentStore(optimize_stats);
+      optimize_result_or = OptimizeDocumentStore(
+          std::move(potentially_optimizable_blob_handles), optimize_stats);
   optimize_stats->set_document_store_optimize_latency_ms(
       optimize_doc_store_timer->GetElapsedMilliseconds());
 
@@ -1781,10 +1802,22 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     return result_proto;
   }
 
+  libtextclassifier3::Status doc_store_optimize_result_status =
+      optimize_result_or.status();
+  if (blob_store_ != nullptr && doc_store_optimize_result_status.ok()) {
+    // optimize blob store
+    libtextclassifier3::Status blob_store_optimize_status =
+        blob_store_->Optimize(
+            optimize_result_or.ValueOrDie().dead_blob_handles);
+    if (!blob_store_optimize_status.ok()) {
+      TransformStatus(status, result_status);
+      return result_proto;
+    }
+  }
+
   // The status is either OK or DATA_LOSS. The optimized document store is
   // guaranteed to work, so we update index according to the new document store.
   std::unique_ptr<Timer> optimize_index_timer = clock_->GetNewTimer();
-  auto doc_store_optimize_result_status = optimize_result_or.status();
   bool should_rebuild_index =
       !optimize_result_or.ok() ||
       optimize_result_or.ValueOrDie().should_rebuild_index ||
@@ -2055,19 +2088,29 @@ DebugInfoResultProto IcingSearchEngine::GetDebugInfo(
 
 libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
     PersistType::Code persist_type) {
-  // persist blob store for both cases.
   if (blob_store_ != nullptr) {
+    // For all valid PersistTypes, we persist the ground truth. The ground truth
+    // in the schema_store is always persisted immediately after changes are
+    // applied. So there is nothing to do if persist_type is LITE.
     ICING_RETURN_IF_ERROR(blob_store_->PersistToDisk());
   }
-  if (persist_type == PersistType::LITE) {
-    return document_store_->PersistToDisk(persist_type);
+  ICING_RETURN_IF_ERROR(document_store_->PersistToDisk(persist_type));
+  if (persist_type == PersistType::RECOVERY_PROOF) {
+    // Persist RECOVERY_PROOF will persist the ground truth and then update all
+    // checksums. There is no need to call document_store_->UpdateChecksum()
+    // because PersistToDisk(RECOVERY_PROOF) will update the checksum anyways.
+    ICING_RETURN_IF_ERROR(schema_store_->UpdateChecksum());
+    index_->UpdateChecksum();
+    ICING_RETURN_IF_ERROR(integer_index_->UpdateChecksums());
+    ICING_RETURN_IF_ERROR(qualified_id_join_index_->UpdateChecksums());
+    ICING_RETURN_IF_ERROR(embedding_index_->UpdateChecksums());
+  } else if (persist_type == PersistType::FULL) {
+    ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
+    ICING_RETURN_IF_ERROR(index_->PersistToDisk());
+    ICING_RETURN_IF_ERROR(integer_index_->PersistToDisk());
+    ICING_RETURN_IF_ERROR(qualified_id_join_index_->PersistToDisk());
+    ICING_RETURN_IF_ERROR(embedding_index_->PersistToDisk());
   }
-  ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(document_store_->PersistToDisk(PersistType::FULL));
-  ICING_RETURN_IF_ERROR(index_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(integer_index_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(qualified_id_join_index_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(embedding_index_->PersistToDisk());
 
   return libtextclassifier3::Status::OK;
 }
@@ -2592,7 +2635,9 @@ BlobProto IcingSearchEngine::CommitBlob(
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
-IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
+IcingSearchEngine::OptimizeDocumentStore(
+    std::unordered_set<std::string>&& potentially_optimizable_blob_handles,
+    OptimizeStatsProto* optimize_stats) {
   // Gets the current directory path and an empty tmp directory path for
   // document store optimization.
   const std::string current_document_dir =
@@ -2610,7 +2655,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   // Copies valid document data to tmp directory
   libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
       optimize_result_or = document_store_->OptimizeInto(
-          temporary_document_dir, language_segmenter_.get(), optimize_stats);
+          temporary_document_dir, language_segmenter_.get(),
+          std::move(potentially_optimizable_blob_handles), optimize_stats);
 
   // Handles error if any
   if (!optimize_result_or.ok()) {

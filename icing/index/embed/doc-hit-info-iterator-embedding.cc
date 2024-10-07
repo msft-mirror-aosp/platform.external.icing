@@ -41,7 +41,6 @@ namespace lib {
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIteratorEmbedding>>
 DocHitInfoIteratorEmbedding::Create(
     const PropertyProto::VectorProto* query,
-    std::unique_ptr<SectionRestrictData> section_restrict_data,
     SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
     double score_low, double score_high,
     EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
@@ -68,10 +67,9 @@ DocHitInfoIteratorEmbedding::Create(
                          EmbeddingScorer::Create(metric_type));
 
   return std::unique_ptr<DocHitInfoIteratorEmbedding>(
-      new DocHitInfoIteratorEmbedding(query, std::move(section_restrict_data),
-                                      metric_type, std::move(embedding_scorer),
-                                      score_low, score_high, score_map,
-                                      embedding_index, std::move(pl_accessor)));
+      new DocHitInfoIteratorEmbedding(
+          query, metric_type, std::move(embedding_scorer), score_low,
+          score_high, score_map, embedding_index, std::move(pl_accessor)));
 }
 
 libtextclassifier3::StatusOr<const EmbeddingHit*>
@@ -89,11 +87,8 @@ DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
       cached_embedding_hits_[cached_embedding_hits_idx_];
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
     doc_hit_info_.set_document_id(embedding_hit.basic_hit().document_id());
-    if (section_restrict_data_ != nullptr) {
-      current_allowed_sections_mask_ =
-          section_restrict_data_->ComputeAllowedSectionsMask(
-              doc_hit_info_.document_id());
-    }
+    current_allowed_sections_mask_ =
+        ComputeAllowedSectionsMask(doc_hit_info_.document_id());
   } else if (doc_hit_info_.document_id() !=
              embedding_hit.basic_hit().document_id()) {
     return nullptr;

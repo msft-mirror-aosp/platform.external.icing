@@ -142,7 +142,10 @@ class NumericIndexIntegerTest : public ::testing::Test {
     }
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::OptimizeResult doc_store_optimize_result,
-        doc_store_->OptimizeInto(document_store_compact_dir, nullptr));
+        doc_store_->OptimizeInto(document_store_compact_dir,
+                                 /*lang_segmenter=*/nullptr,
+                                 /*potentially_optimizable_blob_handles=*/
+                                 std::unordered_set<std::string>()));
 
     doc_store_.reset();
     if (!filesystem_.SwapFiles(document_store_dir.c_str(),

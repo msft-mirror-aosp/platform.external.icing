@@ -2506,7 +2506,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   // - Doc 0: Contains 'val0', 'val1', 'val2' in 'prop0'. Shouldn't match.
   DocumentProto doc =
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
+                             document_store_->Put(doc));
+  DocumentId docid0 = put_result0.new_document_id;
   Index::Editor editor =
       index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
@@ -2516,7 +2518,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
 
   // - Doc 1: Contains 'val0', 'val1', 'val2' in 'prop1'. Should match.
   doc = DocumentBuilder(doc).SetUri("uri1").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid1, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(doc));
+  DocumentId docid1 = put_result1.new_document_id;
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
   ICING_ASSERT_OK(editor.BufferTerm("val1"));
@@ -2525,7 +2529,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
 
   // - Doc 2: Contains 'val0', 'val1', 'val2' in 'prop2'. Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri2").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid2, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store_->Put(doc));
+  DocumentId docid2 = put_result2.new_document_id;
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
   ICING_ASSERT_OK(editor.BufferTerm("val1"));
@@ -2534,7 +2540,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
 
   // - Doc 3: Contains 'val0' in 'prop0', 'val1' in 'prop1' etc. Should match.
   doc = DocumentBuilder(doc).SetUri("uri3").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid3, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store_->Put(doc));
+  DocumentId docid3 = put_result3.new_document_id;
   editor = index_->Edit(docid3, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -2548,7 +2556,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   // - Doc 4: Contains 'val1' in 'prop0', 'val2' in 'prop1', 'val0' in 'prop2'.
   //          Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri4").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid4, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
+                             document_store_->Put(doc));
+  DocumentId docid4 = put_result4.new_document_id;
   editor = index_->Edit(docid4, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val1"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -2612,7 +2622,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   // - Doc 0: Contains 'val0', 'val1', 'val2' in 'prop0'. Should match.
   DocumentProto doc =
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
+                             document_store_->Put(doc));
+  DocumentId docid0 = put_result0.new_document_id;
   Index::Editor editor =
       index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
@@ -2622,7 +2634,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
 
   // - Doc 1: Contains 'val0', 'val1', 'val2' in 'prop1'. Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri1").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid1, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(doc));
+  DocumentId docid1 = put_result1.new_document_id;
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
   ICING_ASSERT_OK(editor.BufferTerm("val1"));
@@ -2631,7 +2645,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
 
   // - Doc 2: Contains 'val0', 'val1', 'val2' in 'prop2'. Should match.
   doc = DocumentBuilder(doc).SetUri("uri2").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid2, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store_->Put(doc));
+  DocumentId docid2 = put_result2.new_document_id;
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
   ICING_ASSERT_OK(editor.BufferTerm("val1"));
@@ -2640,7 +2656,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
 
   // - Doc 3: Contains 'val0' in 'prop0', 'val1' in 'prop1' etc. Should match.
   doc = DocumentBuilder(doc).SetUri("uri3").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid3, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store_->Put(doc));
+  DocumentId docid3 = put_result3.new_document_id;
   editor = index_->Edit(docid3, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val0"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -2654,7 +2672,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   // - Doc 4: Contains 'val1' in 'prop0', 'val2' in 'prop1', 'val0' in 'prop2'.
   //          Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri4").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid4, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
+                             document_store_->Put(doc));
+  DocumentId docid4 = put_result4.new_document_id;
   editor = index_->Edit(docid4, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("val1"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -2870,57 +2890,66 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   NamespaceId ns_id = 0;
   DocumentProto doc =
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
+                             document_store_->Put(doc));
+  DocumentId docid0 = put_result0.new_document_id;
   Index::Editor editor =
       index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
+  DocumentId docid1 = put_result1.new_document_id;
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
+  DocumentId docid2 = put_result2.new_document_id;
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
+  DocumentId docid3 = put_result3.new_document_id;
   editor = index_->Edit(docid3, prop3_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid4,
+      DocumentStore::PutResult put_result4,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
+  DocumentId docid4 = put_result4.new_document_id;
   editor = index_->Edit(docid4, prop4_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid5,
+      DocumentStore::PutResult put_result5,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
+  DocumentId docid5 = put_result5.new_document_id;
   editor = index_->Edit(docid5, prop5_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid6,
+      DocumentStore::PutResult put_result6,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
+  DocumentId docid6 = put_result6.new_document_id;
   editor = index_->Edit(docid6, prop6_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid7,
+      DocumentStore::PutResult put_result7,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
+  DocumentId docid7 = put_result7.new_document_id;
   editor = index_->Edit(docid7, prop7_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -3023,57 +3052,66 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
   NamespaceId ns_id = 0;
   DocumentProto doc =
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
+                             document_store_->Put(doc));
+  DocumentId docid0 = put_result0.new_document_id;
   Index::Editor editor =
       index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
+  DocumentId docid1 = put_result1.new_document_id;
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
+  DocumentId docid2 = put_result2.new_document_id;
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
+  DocumentId docid3 = put_result3.new_document_id;
   editor = index_->Edit(docid3, prop3_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid4,
+      DocumentStore::PutResult put_result4,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
+  DocumentId docid4 = put_result4.new_document_id;
   editor = index_->Edit(docid4, prop4_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid5,
+      DocumentStore::PutResult put_result5,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
+  DocumentId docid5 = put_result5.new_document_id;
   editor = index_->Edit(docid5, prop5_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid6,
+      DocumentStore::PutResult put_result6,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
+  DocumentId docid6 = put_result6.new_document_id;
   editor = index_->Edit(docid6, prop6_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid7,
+      DocumentStore::PutResult put_result7,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
+  DocumentId docid7 = put_result7.new_document_id;
   editor = index_->Edit(docid7, prop7_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -3148,7 +3186,9 @@ TEST_P(QueryVisitorTest, QueryStringParameterHandlesPunctuation) {
   NamespaceId ns_id = 0;
   DocumentProto doc =
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
+                             document_store_->Put(doc));
+  DocumentId docid0 = put_result0.new_document_id;
   Index::Editor editor =
       index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
@@ -3156,15 +3196,17 @@ TEST_P(QueryVisitorTest, QueryStringParameterHandlesPunctuation) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
+  DocumentId docid1 = put_result1.new_document_id;
   editor = index_->Edit(docid1, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("bar"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
+  DocumentId docid2 = put_result2.new_document_id;
   editor = index_->Edit(docid2, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -3265,7 +3307,9 @@ TEST_P(QueryVisitorTest, QueryStringParameterPropertyRestricts) {
   NamespaceId ns_id = 0;
   DocumentProto doc =
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
+                             document_store_->Put(doc));
+  DocumentId docid0 = put_result0.new_document_id;
   Index::Editor editor =
       index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("foo"));
@@ -3273,8 +3317,9 @@ TEST_P(QueryVisitorTest, QueryStringParameterPropertyRestricts) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
+  DocumentId docid1 = put_result1.new_document_id;
   editor = index_->Edit(docid1, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("bar"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -3283,8 +3328,9 @@ TEST_P(QueryVisitorTest, QueryStringParameterPropertyRestricts) {
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId docid2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
+  DocumentId docid2 = put_result2.new_document_id;
   editor = index_->Edit(docid2, prop0_id, TERM_MATCH_PREFIX, ns_id);
   ICING_ASSERT_OK(editor.BufferTerm("bar"));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
@@ -3885,78 +3931,6 @@ TEST_F(QueryVisitorTest,
   query = "semanticSearch(getEmbeddingParameter(0), 10.1, 10.1)";
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   EXPECT_THAT(ProcessQuery(search_spec, root_node.get()), IsOk());
-}
-
-// TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding are
-// migrated.
-TEST_F(QueryVisitorTest, OldSemanticSearchFunctionSimpleLowerBound) {
-  // Index two embedding vectors.
-  PropertyProto::VectorProto vector0 =
-      CreateVector("my_model", {0.1, 0.2, 0.3});
-  PropertyProto::VectorProto vector1 =
-      CreateVector("my_model", {-0.1, -0.2, -0.3});
-  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector0));
-  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId1), vector1));
-  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
-
-  // Create an embedding query that has a semantic score of 1 with vector0 and
-  // -1 with vector1.
-  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
-      CreateVector("my_model", {0.1, 0.2, 0.3})};
-
-  // The query should match vector0 only.
-  std::string query = "semanticSearch(getSearchSpecEmbedding(0), 0.5)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  SearchSpecProto search_spec =
-      CreateSearchSpec(query, TERM_MATCH_PREFIX, embedding_query_vectors,
-                       EMBEDDING_METRIC_COSINE);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             ProcessQuery(search_spec, root_node.get()));
-  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
-  EXPECT_THAT(query_results.query_terms, IsEmpty());
-  EXPECT_THAT(query_results.features_in_use,
-              UnorderedElementsAre(kListFilterQueryLanguageFeature));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              ElementsAre(kDocumentId0));
-  EXPECT_THAT(
-      query_results.embedding_query_results.GetMatchedScoresForDocument(
-          /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(1, kEps))));
-
-  // The query should match both vector0 and vector1.
-  query = "semanticSearch(getSearchSpecEmbedding(0), -1.5)";
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             ProcessQuery(search_spec, root_node.get()));
-  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
-  EXPECT_THAT(query_results.query_terms, IsEmpty());
-  EXPECT_THAT(query_results.features_in_use,
-              UnorderedElementsAre(kListFilterQueryLanguageFeature));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              ElementsAre(kDocumentId1, kDocumentId0));
-  EXPECT_THAT(
-      query_results.embedding_query_results.GetMatchedScoresForDocument(
-          /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(1, kEps))));
-  EXPECT_THAT(
-      query_results.embedding_query_results.GetMatchedScoresForDocument(
-          /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1),
-      Pointee(UnorderedElementsAre(DoubleNear(-1, kEps))));
-
-  // The query should match nothing, since there is no vector with a
-  // score >= 1.01.
-  query = "semanticSearch(getSearchSpecEmbedding(0), 1.01)";
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             ProcessQuery(search_spec, root_node.get()));
-  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
-  EXPECT_THAT(query_results.query_terms, IsEmpty());
-  EXPECT_THAT(query_results.features_in_use,
-              UnorderedElementsAre(kListFilterQueryLanguageFeature));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {

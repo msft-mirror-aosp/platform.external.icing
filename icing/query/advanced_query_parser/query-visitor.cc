@@ -268,14 +268,6 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert({get_embedding_parameter_function.name(),
                                 get_embedding_parameter_function});
 
-  // vector_index getSearchSpecEmbedding(long);
-  // DEPRECATED: This function has been deprecated in favor of
-  // getEmbeddingParameter. It just trivially calls that function.
-  // TODO(b/352780707): Delete this once all callers of getSearchSpecEmbedding
-  // are migrated.
-  registered_functions_.insert(
-      {"getSearchSpecEmbedding", std::move(get_embedding_parameter_function)});
-
   // DocHitInfoIterator semanticSearch(vector_index, double, double, string);
   auto semantic_search = [this](std::vector<PendingValue>&& args) {
     return this->SemanticSearchFunction(std::move(args));
@@ -451,27 +443,14 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
         embedding_util::GetEmbeddingQueryMetricTypeFromName(metric));
   }
 
-  // Create SectionRestrictData for section restriction.
-  std::unique_ptr<SectionRestrictData> section_restrict_data = nullptr;
-  if (pending_property_restricts_.has_active_property_restricts()) {
-    std::unordered_map<std::string, std::set<std::string>>
-        type_property_filters;
-    type_property_filters[std::string(SchemaStore::kSchemaTypeWildcard)] =
-        pending_property_restricts_.active_property_restricts();
-    section_restrict_data = std::make_unique<SectionRestrictData>(
-        &document_store_, &schema_store_, current_time_ms_,
-        type_property_filters);
-  }
-
   // Create and return iterator.
   EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
       &embedding_query_results_.result_scores[vector_index][metric_type];
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<DocHitInfoIterator> iterator,
       DocHitInfoIteratorEmbedding::Create(
-          &search_spec_.embedding_query_vectors(vector_index),
-          std::move(section_restrict_data), metric_type, low, high, score_map,
-          &embedding_index_));
+          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
+          high, score_map, &embedding_index_));
   return PendingValue(std::move(iterator));
 }
 
