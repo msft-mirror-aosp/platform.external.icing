@@ -63,21 +63,14 @@ class BlobStore {
     // The offset of the package name stored in the package name file.
     int32_t package_offset;
 
-    bool is_committed;
-
     // The param needed for dynamic trie, we shouldn't call this constructor
     // directly.
-    BlobInfo()
-        : BlobInfo(/*creation_time_ms=*/-1, /*package_offset=*/-1,
-                   /*is_committed=*/false) {}
+    BlobInfo() : BlobInfo(/*creation_time_ms=*/-1, /*package_offset=*/-1) {}
 
-    BlobInfo(int64_t creation_time_ms, int32_t package_offset,
-             bool is_committed)
-        : creation_time_ms(creation_time_ms),
-          package_offset(package_offset),
-          is_committed(is_committed) {}
+    BlobInfo(int64_t creation_time_ms, int32_t package_offset)
+        : creation_time_ms(creation_time_ms), package_offset(package_offset) {}
   } __attribute__((packed));
-  static_assert(sizeof(BlobInfo) == 13, "Invalid BlobInfo size");
+  static_assert(sizeof(BlobInfo) == 12, "Invalid BlobInfo size");
 
   // Factory function to create a BlobStore instance. The base directory is
   // used to persist blobs. If a blob store was previously created with
@@ -128,6 +121,7 @@ class BlobStore {
   //                        file content.
   //   NOT_FOUND on blob is not found.
   libtextclassifier3::Status CommitBlob(
+      std::string_view package_name,
       const PropertyProto::BlobHandleProto& blob_handle);
 
   // Persists the blobs to disk.
@@ -197,8 +191,23 @@ class BlobStore {
   int64_t orphan_blob_time_to_live_ms_;
   ScopedFd package_name_fd_;
 
+  // The key mapper for BlobHandle string to BlobInfo.
+  // The keys are the Encoded CString from 2 states of blobs.
+  // 1. pending blob: The key is constructed of digest, package name, and label.
+  //    Represents a blob that is being written, and the owner is the caller
+  //    package.
+  // 2. committed blob: The key is constructed of digest and label.
+  //    Represents a blob that is already written and committed, and the owner
+  //    is the Icing.
+  // TODO(b/273591938) Separate the key mapper for pending blob and committed
+  // blob.
   std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper_;
   std::unordered_map<std::string, int32_t> package_name_to_offset_;
+  // The map to tracking sent file descriptors for write.
+  // The key is the pending blob handle CString which is constructed of
+  // digest, package name, and label.
+  // The value is the set of file descriptors for write.
+  std::unordered_map<std::string, int> file_descriptors_for_write_;
   std::unordered_set<std::string> known_file_names_;
   bool has_mutated_ = false;
 };

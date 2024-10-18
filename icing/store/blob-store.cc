@@ -14,8 +14,11 @@
 
 #include "icing/store/blob-store.h"
 
+#include <fcntl.h>
+
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -48,6 +51,7 @@ namespace lib {
 
 static constexpr std::string_view kKeyMapperDir = "key_mapper";
 static constexpr std::string_view kPackageNameFileName = "package_name_file";
+static constexpr char kPackageNameDelimiter = '\0';
 
 // - Key: sha 256 digest (32 bytes)
 // - Value: BlobInfo (24 bytes)
@@ -179,15 +183,31 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
     std::string_view package_name,
     const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
-  std::string blob_handle_str =
-      encode_util::EncodeStringToCString(blob_handle.digest()) +
-      blob_handle.label();
-  ICING_ASSIGN_OR_RETURN(BlobInfo blob_info,
-                         GetOrCreateBlobInfo(blob_handle_str, package_name));
-  if (blob_info.is_committed) {
-    return absl_ports::AlreadyExistsError(
-        "Rewriting the committed blob is not allowed.");
+  std::string committed_blob_handle_str = encode_util::EncodeStringToCString(
+      blob_handle.digest() + blob_handle.label());
+
+  if (blob_info_mapper_->Get(committed_blob_handle_str).ok()) {
+    return absl_ports::AlreadyExistsError(absl_ports::StrCat(
+        "Rewriting the committed blob is not allowed for blob handle: ",
+        blob_handle.label()));
   }
+
+  // Create the pending blob handle string and get the blob info.
+  std::string pending_blob_handle_str = encode_util::EncodeStringToCString(
+      blob_handle.digest() + std::string(package_name) + kPackageNameDelimiter +
+      blob_handle.label());
+  auto itr = file_descriptors_for_write_.find(pending_blob_handle_str);
+  if (itr != file_descriptors_for_write_.end()) {
+    if (fcntl(itr->second, F_GETFD) != -1 || errno != EBADF) {
+      // The file descriptor is still valid, return it.
+      return itr->second;
+    }
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      BlobInfo blob_info,
+      GetOrCreateBlobInfo(pending_blob_handle_str, package_name));
+
   std::string file_name = absl_ports::StrCat(
       base_dir_, "/", std::to_string(blob_info.creation_time_ms));
   int file_descriptor = filesystem_.OpenForWrite(file_name.c_str());
@@ -195,20 +215,19 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to open blob file for handle: ", blob_handle.label()));
   }
+  // Add the file descriptor for write to the file descriptors set under
+  // pending_blob_handle_str.
+  file_descriptors_for_write_[pending_blob_handle_str] = file_descriptor;
   return file_descriptor;
 }
 
 libtextclassifier3::StatusOr<int> BlobStore::OpenRead(
     const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
-  std::string blob_handle_str =
-      encode_util::EncodeStringToCString(blob_handle.digest()) +
-      blob_handle.label();
+  std::string committed_blob_handle_str = encode_util::EncodeStringToCString(
+      blob_handle.digest() + blob_handle.label());
   ICING_ASSIGN_OR_RETURN(BlobInfo blob_info,
-                         blob_info_mapper_->Get(blob_handle_str));
-  if (!blob_info.is_committed) {
-    return absl_ports::NotFoundError("Cannot find blob file to read.");
-  }
+                         blob_info_mapper_->Get(committed_blob_handle_str));
 
   std::string file_name = absl_ports::StrCat(
       base_dir_, "/", std::to_string(blob_info.creation_time_ms));
@@ -221,48 +240,72 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenRead(
 }
 
 libtextclassifier3::Status BlobStore::CommitBlob(
+    std::string_view package_name,
     const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
-  std::string blob_handle_str =
-      encode_util::EncodeStringToCString(blob_handle.digest()) +
-      blob_handle.label();
-  ICING_ASSIGN_OR_RETURN(BlobInfo blob_info,
-                         blob_info_mapper_->Get(blob_handle_str));
-  if (blob_info.is_committed) {
+
+  std::string pending_blob_handle_str = encode_util::EncodeStringToCString(
+      blob_handle.digest() + std::string(package_name) + kPackageNameDelimiter +
+      blob_handle.label());
+  auto pending_blob_info_or = blob_info_mapper_->Get(pending_blob_handle_str);
+
+  // Check if the blob is already committed.
+  std::string committed_blob_handle_str = encode_util::EncodeStringToCString(
+      blob_handle.digest() + blob_handle.label());
+  if (blob_info_mapper_->Get(committed_blob_handle_str).ok()) {
+    // The blob is already committed, delete the pending blob file and info.
+    if (pending_blob_info_or.ok()) {
+      blob_info_mapper_->Delete(pending_blob_handle_str);
+      std::string file_name = absl_ports::StrCat(
+          base_dir_, "/",
+          std::to_string(pending_blob_info_or.ValueOrDie().creation_time_ms));
+      if (!filesystem_.DeleteFile(file_name.c_str())) {
+        ICING_LOG(ERROR) << "Failed to delete blob file: " << file_name;
+      }
+    }
     return absl_ports::AlreadyExistsError(absl_ports::StrCat(
         "The blob is already committed for handle: ", blob_handle.label()));
   }
 
+  if (!pending_blob_info_or.ok()) {
+    // Cannot find the pending blob to commit.
+    return std::move(pending_blob_info_or).status();
+  }
+
   // Read the file and verify the digest.
+  BlobInfo blob_info = std::move(pending_blob_info_or).ValueOrDie();
   std::string file_name = absl_ports::StrCat(
       base_dir_, "/", std::to_string(blob_info.creation_time_ms));
-  ScopedFd sfd(filesystem_.OpenForRead(file_name.c_str()));
-  if (!sfd.is_valid()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to open blob file for handle: ", blob_handle.label()));
-  }
-
-  int64_t file_size = filesystem_.GetFileSize(sfd.get());
-  if (file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to get file size for handle: ", blob_handle.label()));
-  }
-
   Sha256 sha256;
-  // Read 8 KiB per iteration
-  int64_t prev_total_read_size = 0;
-  auto buffer = std::make_unique<uint8_t[]>(kReadBufferSize);
-  while (prev_total_read_size < file_size) {
-    int32_t size_to_read =
-        std::min<int32_t>(kReadBufferSize, file_size - prev_total_read_size);
-    if (!filesystem_.Read(sfd.get(), buffer.get(), size_to_read)) {
+  {
+    ScopedFd sfd(filesystem_.OpenForRead(file_name.c_str()));
+    if (!sfd.is_valid()) {
       return absl_ports::InternalError(absl_ports::StrCat(
-          "Failed to read blob file for handle: ", blob_handle.label()));
+          "Failed to open blob file for handle: ", blob_handle.label()));
     }
 
-    sha256.Update(buffer.get(), size_to_read);
-    prev_total_read_size += size_to_read;
+    int64_t file_size = filesystem_.GetFileSize(sfd.get());
+    if (file_size == Filesystem::kBadFileSize) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Failed to get file size for handle: ", blob_handle.label()));
+    }
+
+    // Read 8 KiB per iteration
+    int64_t prev_total_read_size = 0;
+    uint8_t buffer[kReadBufferSize];
+    while (prev_total_read_size < file_size) {
+      int32_t size_to_read =
+          std::min<int32_t>(kReadBufferSize, file_size - prev_total_read_size);
+      if (!filesystem_.Read(sfd.get(), buffer, size_to_read)) {
+        return absl_ports::InternalError(absl_ports::StrCat(
+            "Failed to read blob file for handle: ", blob_handle.label()));
+      }
+
+      sha256.Update(buffer, size_to_read);
+      prev_total_read_size += size_to_read;
+    }
   }
+
   std::array<uint8_t, 32> hash = std::move(sha256).Finalize();
 
   const std::string& digest = blob_handle.digest();
@@ -270,14 +313,30 @@ libtextclassifier3::Status BlobStore::CommitBlob(
       digest.compare(0, digest.length(),
                      reinterpret_cast<const char*>(hash.data()),
                      hash.size()) != 0) {
+    // The blob content doesn't match to the digest. Delete this corrupted blob.
+    if (!filesystem_.DeleteFile(file_name.c_str())) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Failed to delete corrupted blob file for handle: ",
+          blob_handle.label()));
+    }
+    if (!blob_info_mapper_->Delete(pending_blob_handle_str)) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Failed to delete corrupted blob info for handle: ",
+          blob_handle.label()));
+    }
     return absl_ports::InvalidArgumentError(
         "The blob content doesn't match to the digest.");
   }
 
-  // Mark the blob is committed
-  blob_info.is_committed = true;
+  // Mark the blob is committed by removing package name from the blob handle
+  // str.
+  // Close sent file descriptor for write.
+  close(file_descriptors_for_write_[pending_blob_handle_str]);
+  file_descriptors_for_write_.erase(pending_blob_handle_str);
   has_mutated_ = true;
-  ICING_RETURN_IF_ERROR(blob_info_mapper_->Put(blob_handle_str, blob_info));
+  ICING_RETURN_IF_ERROR(
+      blob_info_mapper_->Put(committed_blob_handle_str, blob_info));
+  blob_info_mapper_->Delete(pending_blob_handle_str);
 
   return libtextclassifier3::Status::OK;
 }
@@ -309,7 +368,7 @@ BlobStore::GetOrCreateBlobInfo(const std::string& blob_handle_str,
 
     ICING_ASSIGN_OR_RETURN(int32_t offset,
                            GetOrCreatePackageOffset(std::string(package_name)));
-    BlobInfo blob_info = {timestamp, offset, /*is_committed=*/false};
+    BlobInfo blob_info(timestamp, offset);
     ICING_RETURN_IF_ERROR(blob_info_mapper_->Put(blob_handle_str, blob_info));
     has_mutated_ = true;
     return blob_info;

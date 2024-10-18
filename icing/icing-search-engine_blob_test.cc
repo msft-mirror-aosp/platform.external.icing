@@ -46,7 +46,6 @@ static constexpr int64_t kBlobInfoTTLMs = 7 * 24 * 60 * 60 * 1000;  // 1 Week
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
-using ::testing::Eq;
 using ::testing::UnorderedElementsAre;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
@@ -147,7 +146,7 @@ TEST_F(IcingSearchEngineBlobTest, InvalidBlobHandle) {
   BlobProto write_blob_proto = icing.OpenWriteBlob("packageA", blob_handle);
   EXPECT_THAT(write_blob_proto.status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing.CommitBlob("packageA", blob_handle);
   EXPECT_THAT(commit_blob_proto.status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
   BlobProto read_blob_proto = icing.OpenReadBlob(blob_handle);
@@ -172,7 +171,7 @@ TEST_F(IcingSearchEngineBlobTest, BlobStoreDisabled) {
   BlobProto write_blob_proto = icing.OpenWriteBlob("packageA", blob_handle);
   EXPECT_THAT(write_blob_proto.status(),
               ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing.CommitBlob("packageA", blob_handle);
   EXPECT_THAT(commit_blob_proto.status(),
               ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
   BlobProto read_blob_proto = icing.OpenReadBlob(blob_handle);
@@ -197,7 +196,7 @@ TEST_F(IcingSearchEngineBlobTest, WriteAndReadBlob) {
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
 
-  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
   BlobProto read_blob_proto = icing.OpenReadBlob(blob_handle);
@@ -233,7 +232,7 @@ TEST_F(IcingSearchEngineBlobTest, WriteAndReadBlobByDocument) {
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
 
-  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
   // Set schema and put a document that contains the blob handle
@@ -286,7 +285,7 @@ TEST_F(IcingSearchEngineBlobTest, CommitDigestMisMatch) {
         filesystem()->Write(write_fd.get(), data2.data(), data2.size()));
   }
 
-  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commit_blob_proto.status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
@@ -310,7 +309,7 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithoutPersistToDisk) {
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
 
-  BlobProto commit_blob_proto = icing1.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing1.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
   // Recreate icing, the blob info will be dropped since we haven't called
@@ -341,7 +340,7 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskFull) {
     ScopedFd write_fd(write_blob_proto.file_descriptor());
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
-  BlobProto commit_blob_proto = icing1.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing1.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
   EXPECT_THAT(icing1.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
@@ -385,7 +384,7 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskLite) {
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
 
-  BlobProto commit_blob_proto = icing1.CommitBlob(blob_handle);
+  BlobProto commit_blob_proto = icing1.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
   EXPECT_THAT(icing1.PersistToDisk(PersistType::LITE).status(), ProtoIsOk());
@@ -447,7 +446,7 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   // The blob file is created.
   ASSERT_THAT(file_names.size(), file_count + 1);
 
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   // persist blob to disk
@@ -536,10 +535,11 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {
   ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
 
   // Blob is able to commit before optimize
-  EXPECT_THAT(icing2.CommitBlob(blob_handle1).status(), ProtoIsOk());
+  EXPECT_THAT(icing2.CommitBlob("packageA", blob_handle1).status(),
+              ProtoIsOk());
   // Optimize remove the expired orphan blob. so it's not able to commit.
   ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
-  EXPECT_THAT(icing2.CommitBlob(blob_handle2).status(),
+  EXPECT_THAT(icing2.CommitBlob("packageA", blob_handle2).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
@@ -565,7 +565,7 @@ TEST_F(IcingSearchEngineBlobTest, ReferenceCount) {
   ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   close(write_fd.get());
 
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   // Set schema and put a document that contains the blob handle
@@ -647,7 +647,7 @@ TEST_F(IcingSearchEngineBlobTest, ReferenceCountNestedDocument) {
   ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   close(write_fd.get());
 
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   // Set an multi-level schema and put a document that contains the blob handle
@@ -758,7 +758,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleReferenceDocument) {
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
 
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   // Set schema and put 3 documents that contains the blob handle
@@ -862,7 +862,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
         filesystem()->Write(write_fd.get(), data1.data(), data1.size()));
   }
 
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle1);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle1);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle2;
@@ -879,7 +879,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
         filesystem()->Write(write_fd.get(), data2.data(), data2.size()));
   }
 
-  BlobProto commitBlobProto2 = icing.CommitBlob(blob_handle2);
+  BlobProto commitBlobProto2 = icing.CommitBlob("packageA", blob_handle2);
   ASSERT_THAT(commitBlobProto2.status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle3;
@@ -896,7 +896,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
         filesystem()->Write(write_fd.get(), data3.data(), data3.size()));
   }
 
-  BlobProto commitBlobProto3 = icing.CommitBlob(blob_handle3);
+  BlobProto commitBlobProto3 = icing.CommitBlob("packageA", blob_handle3);
   ASSERT_THAT(commitBlobProto3.status(), ProtoIsOk());
 
   file_names = std::vector<std::string>();
@@ -1000,7 +1000,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
     ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
   }
 
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   // persist blob to disk
@@ -1072,7 +1072,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizePackageUsage) {
     ASSERT_TRUE(
         filesystem()->Write(write_fd.get(), data1.data(), data1.size()));
   }
-  BlobProto commitBlobProto = icing.CommitBlob(blob_handle1);
+  BlobProto commitBlobProto = icing.CommitBlob("packageA", blob_handle1);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle2;
@@ -1087,7 +1087,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizePackageUsage) {
     ASSERT_TRUE(
         filesystem()->Write(write_fd.get(), data2.data(), data2.size()));
   }
-  BlobProto commitBlobProto2 = icing.CommitBlob(blob_handle2);
+  BlobProto commitBlobProto2 = icing.CommitBlob("packageB", blob_handle2);
   ASSERT_THAT(commitBlobProto2.status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle3;
@@ -1102,7 +1102,7 @@ TEST_F(IcingSearchEngineBlobTest, OptimizePackageUsage) {
     ASSERT_TRUE(
         filesystem()->Write(write_fd.get(), data3.data(), data3.size()));
   }
-  BlobProto commitBlobProto3 = icing.CommitBlob(blob_handle3);
+  BlobProto commitBlobProto3 = icing.CommitBlob("packageC", blob_handle3);
   ASSERT_THAT(commitBlobProto3.status(), ProtoIsOk());
 
   // Set schema and put a documents that contains the blob handle2 only

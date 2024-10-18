@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -26,6 +27,7 @@
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/join/join-processor.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
@@ -49,6 +51,7 @@
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
@@ -92,7 +95,7 @@ class IcingSearchEngineSchemaTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -117,6 +120,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_use_new_qualified_id_join_index(true);
+  icing_options.set_enable_schema_database(true);
   return icing_options;
 }
 
@@ -827,6 +831,368 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   EXPECT_THAT(
       icing.Search(search_spec3, GetDefaultScoringSpec(), result_spec),
       EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto3));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create and set schema in db1 with 2 properties:
+  // - 'a': string type, indexed.
+  // - 'b': int64 type, indexed.
+  SchemaTypeConfigProto db1_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db1_type")
+          .SetDatabase("db1")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("a")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("b")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
+  SetSchemaResultProto set_schema_result = icing.SetSchema(db1_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto db1_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("db1_type")
+          .AddStringProperty("a", "message body")
+          .AddInt64Property("b", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(db1_document).status(), ProtoIsOk());
+
+  SearchResultProto expected_search_result_proto_db1;
+  expected_search_result_proto_db1.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto_db1.mutable_results()
+       ->Add()
+       ->mutable_document() = db1_document;
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_db1));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("b == 123");
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_db1));
+
+  // Add a schema for db2:
+  // - 'a': string type, indexed.
+  // - 'c': int64 type, indexed.
+  SchemaTypeConfigProto db2_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db2_type")
+          .SetDatabase("db2")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
+  set_schema_result = icing.SetSchema(db2_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto db2_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("db2_type")
+          .AddStringProperty("a", "message body")
+          .AddInt64Property("c", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  EXPECT_THAT(icing.Put(db2_document).status(), ProtoIsOk());
+
+  SearchResultProto expected_search_result_proto_both_docs;
+  expected_search_result_proto_both_docs.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_search_result_proto_both_docs.mutable_results()
+       ->Add()
+       ->mutable_document() = db2_document;
+  *expected_search_result_proto_both_docs.mutable_results()
+       ->Add()
+       ->mutable_document() = db1_document;
+
+  // Verify term search: will get both documents for query "a:message".
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_both_docs));
+
+  // Verify numeric (integer) search: will only get first document for query
+  // "b == 123".
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_db1));
+
+  // Get full schema
+  GetSchemaResultProto expected_get_schema_result_proto_full;
+  expected_get_schema_result_proto_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_full.mutable_schema() =
+      SchemaBuilder().AddType(db1_type).AddType(db2_type).Build();
+  EXPECT_THAT(icing.GetSchema(),
+              EqualsProto(expected_get_schema_result_proto_full));
+
+  // Get db1 schema
+  GetSchemaResultProto expected_get_schema_result_proto_db1_full;
+  expected_get_schema_result_proto_db1_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db1_full.mutable_schema() = db1_schema;
+  EXPECT_THAT(icing.GetSchema("db1"),
+              EqualsProto(expected_get_schema_result_proto_db1_full));
+
+  // Get db2 schema
+  GetSchemaResultProto expected_get_schema_result_proto_db2_full;
+  expected_get_schema_result_proto_db2_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db2_full.mutable_schema() = db2_schema;
+  EXPECT_THAT(icing.GetSchema("db2"),
+              EqualsProto(expected_get_schema_result_proto_db2_full));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create and set schema in db1 with 2 properties:
+  // - 'b': string type, indexed.
+  // - 'c': int64 type, indexed.
+  SchemaTypeConfigProto db1_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db1_type")
+          .SetDatabase("db1")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("b")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
+  SetSchemaResultProto set_schema_result = icing.SetSchema(db1_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Add a schema for db2:
+  // - 'b': string type, indexed.
+  // - 'd': int64 type, indexed.
+  SchemaTypeConfigProto db2_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db2_type")
+          .SetDatabase("db2")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("d")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
+  set_schema_result = icing.SetSchema(db2_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Add documents
+  DocumentProto db1_document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("db1_type")
+          .AddStringProperty("b", "message body")
+          .AddInt64Property("c", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto db2_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("db2_type")
+          .AddStringProperty("b", "message body")
+          .AddInt64Property("d", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  EXPECT_THAT(icing.Put(db1_document1).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(db2_document).status(), ProtoIsOk());
+
+  // Verify term search. Should match both docs.
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("b:message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_result_db1doc1;
+  expected_result_db1doc1.mutable_status()->set_code(StatusProto::OK);
+  *expected_result_db1doc1.mutable_results()->Add()->mutable_document() =
+      db1_document1;
+
+  SearchResultProto expected_result_db1doc1_db2;
+  expected_result_db1doc1_db2.mutable_status()->set_code(StatusProto::OK);
+  *expected_result_db1doc1_db2.mutable_results()->Add()->mutable_document() =
+      db2_document;
+  *expected_result_db1doc1_db2.mutable_results()->Add()->mutable_document() =
+      db1_document1;
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_result_db1doc1_db2));
+
+  // Verify numeric (integer) search. Should only match db1_document1.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("c == 123");
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result_db1doc1));
+
+  // Update the db1 schema:
+  // - db1_schema:
+  //   - 'a': string type, indexed. (new)
+  //   - 'b': string type, indexed.
+  //   - 'c': int64 type, indexed.
+  // - db2_schema:
+  //   - 'b': string type, indexed.
+  //   - 'd': int64 type, indexed.
+  db1_type.mutable_properties()->Add(
+      PropertyConfigBuilder()
+          .SetName("a")
+          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .Build());
+  db1_schema = SchemaBuilder().AddType(db1_type).Build();
+  set_schema_result = icing.SetSchema(db1_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
+      ->Add("db1_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Add new document
+  DocumentProto db1_document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("db1_type")
+          .AddStringProperty("a", "message body")
+          .AddStringProperty("b", "string value")
+          .AddInt64Property("c", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  EXPECT_THAT(icing.Put(db1_document2).status(), ProtoIsOk());
+
+  // Check that the original docs are still searchable.
+  // Verify term search. "b:message" should still only match db1_document1 and
+  // db2_document.
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_result_db1doc1_db2));
+
+  // Verify numeric (integer) search. "c == 123" should now match match
+  // db1_document1 and db1_document2.
+  SearchResultProto expected_result_all_db1;
+  expected_result_all_db1.mutable_status()->set_code(StatusProto::OK);
+  *expected_result_all_db1.mutable_results()->Add()->mutable_document() =
+      db1_document2;
+  *expected_result_all_db1.mutable_results()->Add()->mutable_document() =
+      db1_document1;
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result_all_db1));
+
+  // "message" should match all docs
+  SearchSpecProto search_spec3;
+  search_spec3.set_query("message");
+  search_spec3.set_term_match_type(TermMatchType::PREFIX);
+
+  SearchResultProto expected_result_all_docs;
+  expected_result_all_docs.mutable_status()->set_code(StatusProto::OK);
+  *expected_result_all_docs.mutable_results()->Add()->mutable_document() =
+      db1_document2;
+  *expected_result_all_docs.mutable_results()->Add()->mutable_document() =
+      db2_document;
+  *expected_result_all_docs.mutable_results()->Add()->mutable_document() =
+      db1_document1;
+
+  actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result_all_docs));
+
+  // Get full schema
+  GetSchemaResultProto expected_get_schema_result_proto_full;
+  expected_get_schema_result_proto_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_full.mutable_schema() =
+      SchemaBuilder().AddType(db1_type).AddType(db2_type).Build();
+  EXPECT_THAT(icing.GetSchema(),
+              EqualsProto(expected_get_schema_result_proto_full));
+
+  // Get db1 schema
+  GetSchemaResultProto expected_get_schema_result_proto_db1_full;
+  expected_get_schema_result_proto_db1_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db1_full.mutable_schema() = db1_schema;
+  EXPECT_THAT(icing.GetSchema("db1"),
+              EqualsProto(expected_get_schema_result_proto_db1_full));
+
+  // Get db2 schema
+  GetSchemaResultProto expected_get_schema_result_proto_db2_full;
+  expected_get_schema_result_proto_db2_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db2_full.mutable_schema() = db2_schema;
+  EXPECT_THAT(icing.GetSchema("db2"),
+              EqualsProto(expected_get_schema_result_proto_db2_full));
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
@@ -2926,6 +3292,125 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaOk) {
   expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_get_schema_result_proto.mutable_schema() = CreateMessageSchema();
   EXPECT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Add a schema for db1:
+  SchemaTypeConfigProto db1_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db1_type")
+          .SetDatabase("db1")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("a")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("b")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
+  SetSchemaResultProto set_schema_result = icing.SetSchema(db1_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Add a schema for db2:
+  SchemaTypeConfigProto db2_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db2_type")
+          .SetDatabase("db2")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
+  set_schema_result = icing.SetSchema(db2_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // GetSchema per database
+  GetSchemaResultProto expected_get_schema_result_proto_db1;
+  expected_get_schema_result_proto_db1.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
+  EXPECT_THAT(icing.GetSchema("db1"),
+              EqualsProto(expected_get_schema_result_proto_db1));
+  GetSchemaResultProto expected_get_schema_result_proto_db2;
+  expected_get_schema_result_proto_db2.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
+  EXPECT_THAT(icing.GetSchema("db2"),
+              EqualsProto(expected_get_schema_result_proto_db2));
+
+  // Get full schema
+  GetSchemaResultProto expected_get_schema_result_proto_full;
+  expected_get_schema_result_proto_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_full.mutable_schema() =
+      SchemaBuilder().AddType(db1_type).AddType(db2_type).Build();
+  EXPECT_THAT(icing.GetSchema(),
+              EqualsProto(expected_get_schema_result_proto_full));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  GetSchemaResultProto get_schema_result_proto =
+      icing.GetSchema("nonexistent_db");
+  EXPECT_THAT(get_schema_result_proto.status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+  EXPECT_THAT(get_schema_result_proto.status().message(),
+              HasSubstr("No schema found"));
+
+  // Add a schema for db1:
+  SchemaProto db1_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1_type")
+                       .SetDatabase("db1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  SetSchemaResultProto set_schema_result = icing.SetSchema(db1_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  get_schema_result_proto = icing.GetSchema("nonexistent_db");
+  EXPECT_THAT(get_schema_result_proto.status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+  EXPECT_THAT(get_schema_result_proto.status().message(),
+              HasSubstr("No schema found"));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeFailedPrecondition) {

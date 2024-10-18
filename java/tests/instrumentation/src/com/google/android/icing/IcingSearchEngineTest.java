@@ -354,7 +354,7 @@ public final class IcingSearchEngineTest {
     }
 
     // Commit and read the blob.
-    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    BlobProto commitBlobProto = icing.commitBlob("packageA", blobHandle);
     assertStatusOk(commitBlobProto.getStatus());
 
     BlobProto openReadBlobProto = icing.openReadBlob(blobHandle);

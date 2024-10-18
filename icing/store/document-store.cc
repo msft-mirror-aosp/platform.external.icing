@@ -30,6 +30,7 @@
 #include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
@@ -49,6 +50,7 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
@@ -273,9 +275,8 @@ void RemoveAliveBlobHandles(
     if (content_or.ok()) {
       for (const PropertyProto::BlobHandleProto& blob_handle :
            content_or.ValueOrDie()) {
-        dead_blob_handles.erase(
-            encode_util::EncodeStringToCString(blob_handle.digest()) +
-            blob_handle.label());
+        dead_blob_handles.erase(encode_util::EncodeStringToCString(
+            blob_handle.digest() + blob_handle.label()));
       }
     }
   }
@@ -287,11 +288,13 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
                              const SchemaStore* schema_store,
+                             const FeatureFlags* feature_flags,
                              bool pre_mapping_fbv, bool use_persistent_hash_map,
                              int32_t compression_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
+      feature_flags_(*feature_flags),
       schema_store_(schema_store),
       document_validator_(schema_store),
       pre_mapping_fbv_(pre_mapping_fbv),
@@ -323,15 +326,17 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags* feature_flags,
     bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
     bool use_persistent_hash_map, int32_t compression_level,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
-      filesystem, base_dir, clock, schema_store, pre_mapping_fbv,
+      filesystem, base_dir, clock, schema_store, feature_flags, pre_mapping_fbv,
       use_persistent_hash_map, compression_level));
   ICING_ASSIGN_OR_RETURN(
       InitializeResult initialize_result,
@@ -384,6 +389,11 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
   // Corpus associated score cache
   ICING_RETURN_IF_ERROR(FileBackedVector<CorpusAssociatedScoreData>::Delete(
       *filesystem, MakeCorpusScoreCache(base_dir)));
+
+  // Scorable Property Cache
+  ICING_RETURN_IF_ERROR(
+      MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>::Delete(
+          *filesystem, MakeScorablePropertyCacheFilename(base_dir)));
 
   return libtextclassifier3::Status::OK;
 }
@@ -1334,6 +1344,10 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 std::unique_ptr<ScorablePropertySet> DocumentStore::GetScorablePropertySet(
     DocumentId document_id, int64_t current_time_ms) const {
+  if (!feature_flags_.enable_scorable_properties()) {
+    return nullptr;
+  }
+
   // Get scorable property cache index from the score_cache_
   libtextclassifier3::StatusOr<const DocumentAssociatedScoreData*>
       score_data_or = score_cache_->Get(document_id);
@@ -2064,11 +2078,11 @@ DocumentStore::OptimizeInto(
 
   ICING_ASSIGN_OR_RETURN(
       auto doc_store_create_result,
-      DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            pre_mapping_fbv_, use_persistent_hash_map_,
-                            compression_level_,
-                            /*initialize_stats=*/nullptr));
+      DocumentStore::Create(
+          filesystem_, new_directory, &clock_, schema_store_, &feature_flags_,
+          /*force_recovery_and_revalidate_documents=*/false, pre_mapping_fbv_,
+          use_persistent_hash_map_, compression_level_,
+          /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
 
@@ -2387,25 +2401,25 @@ DocumentStore::GetDebugInfo(int verbosity) const {
 
 libtextclassifier3::StatusOr<int> DocumentStore::UpdateScorablePropertyCache(
     const DocumentProto& document, SchemaTypeId schema_type_id) {
-  int32_t scorable_property_cache_index = kInvalidScorablePropertyCacheIndex;
+  if (!feature_flags_.enable_scorable_properties()) {
+    return kInvalidScorablePropertyCacheIndex;
+  }
   ICING_ASSIGN_OR_RETURN(
-      const std::vector<std::string>* ordered_scorable_property_names,
-      schema_store_->GetOrderedScorablePropertyNames(schema_type_id));
-  if (ordered_scorable_property_names == nullptr ||
-      ordered_scorable_property_names->empty()) {
+      const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*
+          ordered_scorable_property_info,
+      schema_store_->GetOrderedScorablePropertyInfo(schema_type_id));
+  if (ordered_scorable_property_info == nullptr ||
+      ordered_scorable_property_info->empty()) {
     // No scorable property defined under the schema config of the
     // schema_type_id.
-    return scorable_property_cache_index;
+    return kInvalidScorablePropertyCacheIndex;
   }
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
       ScorablePropertySet::Create(document, schema_type_id, schema_store_));
 
-  ICING_ASSIGN_OR_RETURN(
-      scorable_property_cache_index,
-      scorable_property_cache_->Write(
-          scorable_property_set->GetScorablePropertySetProto()));
-  return scorable_property_cache_index;
+  return scorable_property_cache_->Write(
+      scorable_property_set->GetScorablePropertySetProto());
 }
 
 }  // namespace lib

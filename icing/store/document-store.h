@@ -24,6 +24,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file-backed-proto-log.h"
@@ -146,6 +147,7 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
+      const FeatureFlags* feature_flags,
       bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
       InitializeStatsProto* initialize_stats);
@@ -553,13 +555,15 @@ class DocumentStore {
   // Use DocumentStore::Create() to instantiate.
   explicit DocumentStore(const Filesystem* filesystem,
                          std::string_view base_dir, const Clock* clock,
-                         const SchemaStore* schema_store, bool pre_mapping_fbv,
-                         bool use_persistent_hash_map,
+                         const SchemaStore* schema_store,
+                         const FeatureFlags* feature_flags,
+                         bool pre_mapping_fbv, bool use_persistent_hash_map,
                          int32_t compression_level);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
   const Clock& clock_;
+  const FeatureFlags& feature_flags_;  // Does not own.
 
   // Handles the ground truth schema and all of the derived data off of the
   // schema

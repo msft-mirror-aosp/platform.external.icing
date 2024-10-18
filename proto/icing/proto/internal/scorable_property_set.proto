@@ -40,31 +40,101 @@ message ScorablePropertyProto {
 //
 // Next tag: 2
 message ScorablePropertySetProto {
-  // The order of the properties in this proto should match the order of the
-  // scorable properties in the schema proto.
+  // The order of the properties in this proto should match the lexicographical
+  // order of the scorable properties paths in the schema proto.
+  //
+  // All values under a property path will be merged into a list.
   //
   // For example, if you have a schema like:
-  //   SchemaTypeConfigBuilder()
-  //    .setType('email')
-  //    .AddProperty('subject')    // not scorable
-  //    .AddProperty('importance') // scorable
-  //    .AddProperty('title')      // not scorable
-  //    .AddProperty('score')      // scorable
+  //   SchemaBuilder()
+  //     .AddType(
+  //       SchemaTypeConfigBuilder()
+  //         .setType('person')
+  //           .AddProperty('name')                 // not scorable
+  //           .AddProperty('age')                  // scorable
+  //           .AddProperty('address')              // not scorable
+  //           .AddProperty('income'))              // scorable
+  //     .AddType(
+  //       SchemaTypeConfigBuilder()
+  //         .setType('email')
+  //           .AddProperty('subject')              // not scorable
+  //           .AddProperty('importance')           // scorable
+  //           .AddProperty('title')                // not scorable
+  //           .AddProperty('score')                // scorable
+  //           .AddDocumentProperty('receiver'))    // scorable, person type
+  //           .AddDocumentProperty('sender'))      // scorable, person type
   //
   // And an email document like:
-  //   Document email_document =
-  //     DocumentBuilder()
-  //       .AddStringProperty('subject', 'foo')
-  //       .AddDoubleProperty('score', 1.5, 2.5, 3.5)
-  //       .Build();
+  //   Document email_document {
+  //     schema: 'email'
+  //     properties: {
+  //       name: 'subject'
+  //       string_values: 'foo'
+  //     }
+  //     properties: {
+  //       name: 'score'
+  //       double_values: [1.5, 2.5, 3.5]
+  //     }
+  //     properties: {
+  //       name: 'receiver
+  //       document_values: {
+  //         properties: {
+  //           name: 'age'
+  //           int64_values: [30]
+  //         }
+  //         properties: {
+  //           name: 'income'
+  //           double_values: [10000, 20000]
+  //         }
+  //         properties: {
+  //           name: 'isStarred'
+  //           boolean_values: [true]
+  //         }
+  //       }
+  //       document_values: {
+  //         properties: {
+  //           name: 'age'
+  //           int64_values: [40]
+  //         }
+  //         properties: {
+  //           name: 'income'
+  //           double_values: [30000, 40000]
+  //         }
+  //         properties: {
+  //           name: 'isStarred'
+  //           boolean_values: [false]
+  //         }
+  //       }
+  //     }
+  //   }
   //
   // When email_document is put into the icing document store, the following
   // proto will be generated and stored in icing:
   // {
-  //   properties: {} // empty entry for the 'importance' property
+  //   # For the 'importance' property
+  //   properties: {}
+  //   # For the 'receiver.age' property
   //   properties: {
-  //     double_values: [1.5, 2.5, 3.5] // The 'score' property
+  //     int64_values: [30, 40]
   //   }
+  //   # For the 'receiver.income' property
+  //   properties: {
+  //     double_values: [10000, 20000, 30000, 40000]
+  //   }
+  //   # For the 'receiver.isStarred' property
+  //   properties: {
+  //     boolean_values: [true, false]
+  //   }
+  //   # For the 'score' property
+  //   properties: {
+  //     double_values: [1.5, 2.5, 3.5]
+  //   }
+  //   # For the 'sender.age' property
+  //   properties: {}
+  //   # For the 'sender.income' property
+  //   properties: {}
+  //   # For the 'sender.isStarred' property
+  //   properties: {}
   // }
   //
   // During the scoring/ranking phase, the implicit property order can be used

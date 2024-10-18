@@ -26,6 +26,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
@@ -46,6 +47,7 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/status-macros.h"
 
@@ -68,24 +70,26 @@ class ScoringProcessorTest
         schema_store_dir_(test_dir_ + "/schema_store") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     // Creates file directories
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -131,7 +135,7 @@ class ScoringProcessorTest
       SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT;
   EmbeddingQueryResults empty_embedding_query_results;
 
- private:
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const std::string test_dir_;
   const std::string doc_store_dir_;
   const std::string schema_store_dir_;
@@ -208,12 +212,13 @@ PropertyWeight CreatePropertyWeight(std::string path, double weight) {
 
 TEST_F(ScoringProcessorTest, CreationWithNullDocumentStoreShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(
-      ScoringProcessor::Create(
-          spec_proto, default_semantic_metric_type, /*document_store=*/nullptr,
-          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(ScoringProcessor::Create(
+                  spec_proto, default_semantic_metric_type,
+                  /*document_store=*/nullptr, schema_store(),
+                  fake_clock().GetSystemTimeMilliseconds(),
+                  /*join_children_fetcher=*/nullptr,
+                  &empty_embedding_query_results, feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
@@ -222,7 +227,8 @@ TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           /*schema_store=*/nullptr, fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -232,7 +238,8 @@ TEST_P(ScoringProcessorTest, ShouldCreateInstance) {
   ICING_EXPECT_OK(ScoringProcessor::Create(
       spec_proto, default_semantic_metric_type, document_store(),
       schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+      feature_flags_.get()));
 }
 
 TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
@@ -250,7 +257,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/5),
@@ -280,7 +288,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/-1),
@@ -313,7 +322,8 @@ TEST_P(ScoringProcessorTest, ShouldRespectNumToScore) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/2),
@@ -348,7 +358,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByDocumentScore) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -409,7 +420,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -484,7 +496,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -563,7 +576,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -616,7 +630,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -686,7 +701,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -761,7 +777,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -826,7 +843,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   ScoringSpecProto spec_proto_with_weights =
       CreateScoringSpecForRankingStrategy(
@@ -845,7 +863,8 @@ TEST_P(ScoringProcessorTest,
           spec_proto_with_weights, default_semantic_metric_type,
           document_store(), schema_store(),
           fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -936,7 +955,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -1004,7 +1024,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1070,7 +1091,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1136,7 +1158,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1175,7 +1198,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleNoScores) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/4),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
@@ -1230,7 +1254,8 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),

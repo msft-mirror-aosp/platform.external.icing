@@ -31,7 +31,6 @@ namespace lib {
 // ScorablePropertySetProto.
 //
 // This class serves as an utility to access the scorable property data.
-// TODO(b/357105837): Add support for nested document properties.
 class ScorablePropertySet {
  public:
   // Creates a class that represents the data from the proto of
@@ -65,14 +64,14 @@ class ScorablePropertySet {
   ScorablePropertySet(const ScorablePropertySet&) = delete;
   ScorablePropertySet& operator=(const ScorablePropertySet&) = delete;
 
-  // Returns the scorable property proto for the given property name.
+  // Returns the scorable property proto for the given property path.
   //
   // Return:
   //   - ScorablePropertyProto on success
-  //   - nullptr if the property name is not found in the schema config
+  //   - nullptr if the property path is not found in the schema config
   //     as a scorable property.
   const ScorablePropertyProto* GetScorablePropertyProto(
-      const std::string& property_name) const;
+      const std::string& property_path) const;
 
   // Returns the reference to the underlying ScorablePropertySetProto.
   const ScorablePropertySetProto& GetScorablePropertySetProto() const {

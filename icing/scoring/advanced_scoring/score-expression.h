@@ -51,6 +51,10 @@ enum class ScoreExpressionType {
   kString,
 };
 
+// A map from alias schema type to a set of Icing schema types.
+using SchemaTypeAliasMap =
+    std::unordered_map<std::string, std::unordered_set<std::string>>;
+
 class ScoreExpression {
  public:
   virtual ~ScoreExpression() = default;
@@ -495,18 +499,23 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
   const EmbeddingQueryResults& embedding_query_results_;
 };
 
-// TODO(b/357105837): Add support for nested scorable document properties.
 class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
  public:
   static constexpr std::string_view kFunctionName = "getScorableProperty";
 
   // Returns:
   //   - FAILED_PRECONDITION on any null pointer in children.
-  //   - INVALID_ARGUMENT on |args| type errors.
+  //   - INVALID_ARGUMENT on
+  //     - |args| type errors.
+  //     - alias_schema_type in the scoring expression does not match to any
+  //       schema type in the |schema_type_alias_map|.
+  //     - any matched schema type not having the specified property_path as a
+  //       scorable property.
   static libtextclassifier3::StatusOr<
       std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
          const DocumentStore* document_store, const SchemaStore* schema_store,
+         const SchemaTypeAliasMap& schema_type_alias_map,
          int64_t current_time_ms);
 
   ScoreExpressionType type() const override {
@@ -519,17 +528,32 @@ class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
 
  private:
   explicit GetScorablePropertyFunctionScoreExpression(
-      std::vector<std::unique_ptr<ScoreExpression>> args,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      int64_t current_time_ms, SchemaTypeId schema_type_id,
-      std::string_view property_name);
+      int64_t current_time_ms,
+      std::unordered_set<SchemaTypeId>&& schema_type_ids,
+      std::string_view property_path);
 
-  std::vector<std::unique_ptr<ScoreExpression>> args_;
+  // Returns a set of schema type ids that are matched to the
+  // |alias_schema_type| in the scoring expression, based on the
+  // |schema_type_alias_map|.
+  //
+  // For each of the schema type in the returned set, this function also
+  // validates that:
+  //   - The schema type is valid in the schema store.
+  //   - The |property_path| is defined as scorable under the schema type.
+  static libtextclassifier3::StatusOr<std::unordered_set<SchemaTypeId>>
+  GetAndValidateSchemaTypeIds(std::string_view alias_schema_type,
+                              std::string_view property_path,
+                              const SchemaTypeAliasMap& schema_type_alias_map,
+                              const SchemaStore& schema_store);
+
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
   int64_t current_time_ms_;
-  SchemaTypeId schema_type_id_;
-  std::string property_name_;
+  // A doc hit is evaluated by this function only if its schema type id is in
+  // this set.
+  std::unordered_set<SchemaTypeId> schema_type_ids_;
+  std::string property_path_;
 };
 
 }  // namespace lib

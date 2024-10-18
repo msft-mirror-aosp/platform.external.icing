@@ -21,9 +21,11 @@
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/schema/schema-property-iterator.h"
 #include "icing/schema/schema-util.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/util/status-macros.h"
@@ -33,7 +35,7 @@ namespace lib {
 
 libtextclassifier3::StatusOr<std::optional<int>>
 ScorablePropertyManager::GetScorablePropertyIndex(
-    SchemaTypeId schema_type_id, std::string_view property_name,
+    SchemaTypeId schema_type_id, std::string_view property_path,
     const SchemaUtil::TypeConfigMap& type_config_map,
     const std::unordered_map<SchemaTypeId, std::string>&
         schema_id_to_type_map) {
@@ -41,15 +43,16 @@ ScorablePropertyManager::GetScorablePropertyIndex(
                                               schema_type_id, type_config_map,
                                               schema_id_to_type_map));
   auto iter =
-      cache_iter->second.property_name_to_index_map.find(property_name.data());
-  if (iter == cache_iter->second.property_name_to_index_map.end()) {
+      cache_iter->second.property_path_to_index_map.find(property_path.data());
+  if (iter == cache_iter->second.property_path_to_index_map.end()) {
     return std::nullopt;
   }
   return iter->second;
 }
 
-libtextclassifier3::StatusOr<const std::vector<std::string>*>
-ScorablePropertyManager::GetOrderedScorablePropertyNames(
+libtextclassifier3::StatusOr<
+    const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*>
+ScorablePropertyManager::GetOrderedScorablePropertyInfo(
     SchemaTypeId schema_type_id,
     const SchemaUtil::TypeConfigMap& type_config_map,
     const std::unordered_map<SchemaTypeId, std::string>&
@@ -57,7 +60,7 @@ ScorablePropertyManager::GetOrderedScorablePropertyNames(
   ICING_ASSIGN_OR_RETURN(auto cache_iter, LookupAndMaybeUpdateCache(
                                               schema_type_id, type_config_map,
                                               schema_id_to_type_map));
-  return &cache_iter->second.ordered_scorable_property_names;
+  return &cache_iter->second.ordered_scorable_property_info;
 }
 
 libtextclassifier3::StatusOr<std::unordered_map<
@@ -96,20 +99,34 @@ bool ScorablePropertyManager::UpdateCache(
   if (schema_config_iter == type_config_map.end()) {
     return false;
   }
-  std::vector<std::string> scorable_property_names;
+  std::vector<ScorablePropertyInfo> property_info_vector;
   std::unordered_map<std::string, int> index_map;
-  for (const PropertyConfigProto& property_config :
-       schema_config_iter->second.properties()) {
-    if (property_config.scorable_type() ==
+
+  SchemaPropertyIterator iterator(schema_config_iter->second, type_config_map);
+  while (true) {
+    libtextclassifier3::Status status = iterator.Advance();
+    if (!status.ok()) {
+      if (absl_ports::IsOutOfRange(status)) {
+        break;
+      }
+      // Swallow other type of errors which should not happen if the schema has
+      // been validated already.
+      return false;
+    }
+    if (iterator.GetCurrentPropertyConfig().scorable_type() ==
         PropertyConfigProto::ScorableType::ENABLED) {
-      index_map[property_config.property_name()] =
-          scorable_property_names.size();
-      scorable_property_names.push_back(property_config.property_name());
+      index_map[iterator.GetCurrentPropertyPath()] =
+          property_info_vector.size();
+      ScorablePropertyInfo scorable_property_info;
+      scorable_property_info.property_path = iterator.GetCurrentPropertyPath();
+      scorable_property_info.data_type =
+          iterator.GetCurrentPropertyConfig().data_type();
+      property_info_vector.push_back(std::move(scorable_property_info));
     }
   }
   scorable_property_schema_cache_.insert(
       {schema_type_id,
-       DerivedScorablePropertySchema(std::move(scorable_property_names),
+       DerivedScorablePropertySchema(std::move(property_info_vector),
                                      std::move(index_map))});
   return true;
 }

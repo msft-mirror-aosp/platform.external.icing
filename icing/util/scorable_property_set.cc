@@ -14,11 +14,11 @@
 
 #include "icing/util/scorable_property_set.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -27,7 +27,9 @@
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/util/status-macros.h"
 
@@ -39,10 +41,11 @@ ScorablePropertySet::Create(
     ScorablePropertySetProto&& scorable_property_set_proto,
     SchemaTypeId schema_type_id, const SchemaStore* schema_store) {
   ICING_ASSIGN_OR_RETURN(
-      const std::vector<std::string>* ordered_scorable_property_names,
-      schema_store->GetOrderedScorablePropertyNames(schema_type_id));
-  if (ordered_scorable_property_names == nullptr ||
-      ordered_scorable_property_names->size() !=
+      const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*
+          ordered_scorable_property_info,
+      schema_store->GetOrderedScorablePropertyInfo(schema_type_id));
+  if (ordered_scorable_property_info == nullptr ||
+      ordered_scorable_property_info->size() !=
           scorable_property_set_proto.properties_size()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "ScorablePropertySetProto data is inconsistent with the schema config "
@@ -58,48 +61,53 @@ ScorablePropertySet::Create(const DocumentProto& document,
                             SchemaTypeId schema_type_id,
                             const SchemaStore* schema_store) {
   ICING_ASSIGN_OR_RETURN(
-      const std::vector<std::string>* ordered_scorable_property_names,
-      schema_store->GetOrderedScorablePropertyNames(schema_type_id));
-  if (ordered_scorable_property_names == nullptr) {
+      const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*
+          ordered_scorable_property_info,
+      schema_store->GetOrderedScorablePropertyInfo(schema_type_id));
+  if (ordered_scorable_property_info == nullptr) {
     // It should never happen
     return absl_ports::InternalError(
-        "SchemaStore::GetOrderedScorablePropertyNames returned nullptr");
+        "SchemaStore::ordered_scorable_property_paths returned nullptr");
   }
-  if (ordered_scorable_property_names->empty()) {
+  if (ordered_scorable_property_info->empty()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "No scorable property defined under the config of type id %d",
         schema_type_id));
   }
 
-  std::unordered_map<std::string_view, int> document_property_name_to_index_map;
-  for (int i = 0; i < document.properties_size(); ++i) {
-    const PropertyProto& doc_property = document.properties(i);
-    document_property_name_to_index_map[doc_property.name()] = i;
-  }
-
   ScorablePropertySetProto scorable_property_set_proto_to_build;
-  for (const std::string& property_name : *ordered_scorable_property_names) {
+  for (const ScorablePropertyManager::ScorablePropertyInfo&
+           scorable_property_info : *ordered_scorable_property_info) {
     ScorablePropertyProto* new_property =
         scorable_property_set_proto_to_build.add_properties();
-    auto iter = document_property_name_to_index_map.find(property_name);
-    if (iter == document_property_name_to_index_map.end()) {
-      // When the document doesn't populate the scorable property, icing will
-      // populate an empty ScorablePropertyProto as a placeholder.
-      continue;
-    }
-    const PropertyProto& doc_property = document.properties(iter->second);
-    if (doc_property.int64_values_size() > 0) {
-      new_property->mutable_int64_values()->Add(
-          doc_property.int64_values().begin(),
-          doc_property.int64_values().end());
-    } else if (doc_property.double_values_size() > 0) {
-      new_property->mutable_double_values()->Add(
-          doc_property.double_values().begin(),
-          doc_property.double_values().end());
-    } else if (doc_property.boolean_values_size() > 0) {
-      new_property->mutable_boolean_values()->Add(
-          doc_property.boolean_values().begin(),
-          doc_property.boolean_values().end());
+
+    if (scorable_property_info.data_type ==
+        PropertyConfigProto::DataType::DOUBLE) {
+      libtextclassifier3::StatusOr<std::vector<double>> content_or =
+          property_util::ExtractPropertyValuesFromDocument<double>(
+              document, scorable_property_info.property_path);
+      if (content_or.ok()) {
+        new_property->mutable_double_values()->Add(
+            content_or.ValueOrDie().begin(), content_or.ValueOrDie().end());
+      }
+    } else if (scorable_property_info.data_type ==
+               PropertyConfigProto::DataType::INT64) {
+      libtextclassifier3::StatusOr<std::vector<int64_t>> content_or =
+          property_util::ExtractPropertyValuesFromDocument<int64_t>(
+              document, scorable_property_info.property_path);
+      if (content_or.ok()) {
+        new_property->mutable_int64_values()->Add(
+            content_or.ValueOrDie().begin(), content_or.ValueOrDie().end());
+      }
+    } else if (scorable_property_info.data_type ==
+               PropertyConfigProto::DataType::BOOLEAN) {
+      libtextclassifier3::StatusOr<std::vector<bool>> content_or =
+          property_util::ExtractPropertyValuesFromDocument<bool>(
+              document, scorable_property_info.property_path);
+      if (content_or.ok()) {
+        new_property->mutable_boolean_values()->Add(
+            content_or.ValueOrDie().begin(), content_or.ValueOrDie().end());
+      }
     }
   }
   return std::unique_ptr<ScorablePropertySet>(
@@ -108,9 +116,9 @@ ScorablePropertySet::Create(const DocumentProto& document,
 }
 
 const ScorablePropertyProto* ScorablePropertySet::GetScorablePropertyProto(
-    const std::string& property_name) const {
+    const std::string& property_path) const {
   libtextclassifier3::StatusOr<std::optional<int>> index_or =
-      schema_store_->GetScorablePropertyIndex(schema_type_id_, property_name);
+      schema_store_->GetScorablePropertyIndex(schema_type_id_, property_path);
   if (!index_or.ok() || !index_or.ValueOrDie().has_value()) {
     return nullptr;
   }

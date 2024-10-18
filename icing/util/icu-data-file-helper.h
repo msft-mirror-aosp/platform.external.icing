@@ -32,7 +32,7 @@ namespace icu_data_file_helper {
 // Returns:
 //   Ok on success
 //   INTERNAL_ERROR if failed on any errors
-libtextclassifier3::Status SetUpICUDataFile(
+libtextclassifier3::Status SetUpIcuDataFile(
     const std::string& icu_data_file_absolute_path);
 
 }  // namespace icu_data_file_helper

@@ -804,23 +804,69 @@ MatchedSemanticScoresFunctionScoreExpression::EvaluateList(
 
 GetScorablePropertyFunctionScoreExpression::
     GetScorablePropertyFunctionScoreExpression(
-        std::vector<std::unique_ptr<ScoreExpression>> args,
         const DocumentStore* document_store, const SchemaStore* schema_store,
-        int64_t current_time_ms, SchemaTypeId schema_type_id,
-        std::string_view property_name)
-    : args_(std::move(args)),
-      document_store_(*document_store),
+        int64_t current_time_ms,
+        std::unordered_set<SchemaTypeId>&& schema_type_ids,
+        std::string_view property_path)
+    : document_store_(*document_store),
       schema_store_(*schema_store),
       current_time_ms_(current_time_ms),
-      schema_type_id_(schema_type_id),
-      property_name_(property_name) {}
+      schema_type_ids_(std::move(schema_type_ids)),
+      property_path_(property_path) {}
+
+libtextclassifier3::StatusOr<std::unordered_set<SchemaTypeId>>
+GetScorablePropertyFunctionScoreExpression::GetAndValidateSchemaTypeIds(
+    std::string_view alias_schema_type, std::string_view property_path,
+    const SchemaTypeAliasMap& schema_type_alias_map,
+    const SchemaStore& schema_store) {
+  auto alias_map_iter = schema_type_alias_map.find(alias_schema_type.data());
+  if (alias_map_iter == schema_type_alias_map.end()) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "The alias schema type in the score expression is not found in the "
+        "schema_type_alias_map: ",
+        alias_schema_type));
+  }
+
+  std::unordered_set<SchemaTypeId> schema_type_ids;
+  for (std::string_view schema_type : alias_map_iter->second) {
+    // First, verify that the schema type has a valid schema type id in the
+    // schema store.
+    libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
+        schema_store.GetSchemaTypeId(schema_type);
+    if (!schema_type_id_or.ok()) {
+      if (absl_ports::IsNotFound(schema_type_id_or.status())) {
+        // Ignores the schema type if it is not found in the schema store.
+        continue;
+      }
+      return schema_type_id_or.status();
+    }
+    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+    // Then, calls GetScorablePropertyIndex() here to validate if the property
+    // path is scorable under the schema type, no need to check the returned
+    // index value.
+    libtextclassifier3::StatusOr<std::optional<int>>
+        scorable_property_index_or = schema_store.GetScorablePropertyIndex(
+            schema_type_id, property_path);
+    if (!scorable_property_index_or.ok()) {
+      return scorable_property_index_or.status();
+    }
+    if (!scorable_property_index_or.ValueOrDie().has_value()) {
+      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+          "'%s' is not defined as a scorable property under schema type %d",
+          property_path.data(), schema_type_id));
+    }
+    schema_type_ids.insert(schema_type_id);
+  }
+  return schema_type_ids;
+}
 
 libtextclassifier3::StatusOr<
     std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
 GetScorablePropertyFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    int64_t current_time_ms) {
+    const SchemaTypeAliasMap& schema_type_alias_map, int64_t current_time_ms) {
   ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
 
   if (args.size() != 2 || args[0]->type() != ScoreExpressionType::kString ||
@@ -830,42 +876,19 @@ GetScorablePropertyFunctionScoreExpression::Create(
   }
 
   // Validate schema type.
-  ICING_ASSIGN_OR_RETURN(std::string_view schema_type_requested,
+  ICING_ASSIGN_OR_RETURN(std::string_view alias_schema_type,
                          args[0]->EvaluateString());
-  libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
-      schema_store->GetSchemaTypeId(schema_type_requested);
-  if (!schema_type_id_or.ok()) {
-    if (absl_ports::IsNotFound(schema_type_id_or.status())) {
-      // Returns a more meaningful error message here.
-      return absl_ports::InvalidArgumentError(
-          absl_ports::StrCat("Schema type '", schema_type_requested,
-                             "' is not found in the schema store."));
-    }
-    return schema_type_id_or.status();
-  }
-  SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
-
-  // Validate that the property name is defined as scorable.
-  ICING_ASSIGN_OR_RETURN(std::string_view property_name,
+  ICING_ASSIGN_OR_RETURN(std::string_view property_path,
                          args[1]->EvaluateString());
-
-  // Calls GetScorablePropertyIndex() here to validate if the property name is
-  // scorable, no need to check the returned index value.
-  libtextclassifier3::StatusOr<std::optional<int>> scorable_property_index_or =
-      schema_store->GetScorablePropertyIndex(schema_type_id, property_name);
-  if (!scorable_property_index_or.ok()) {
-    return scorable_property_index_or.status();
-  }
-  if (!scorable_property_index_or.ValueOrDie().has_value()) {
-    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "'%s' is not defined as a scorable property under schema type %d",
-        property_name.data(), schema_type_id));
-  }
+  ICING_ASSIGN_OR_RETURN(
+      std::unordered_set<SchemaTypeId> schema_type_ids,
+      GetAndValidateSchemaTypeIds(alias_schema_type, property_path,
+                                  schema_type_alias_map, *schema_store));
 
   return std::unique_ptr<GetScorablePropertyFunctionScoreExpression>(
       new GetScorablePropertyFunctionScoreExpression(
-          std::move(args), document_store, schema_store, current_time_ms,
-          schema_type_id, property_name));
+          document_store, schema_store, current_time_ms,
+          std::move(schema_type_ids), property_path));
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
@@ -873,10 +896,7 @@ GetScorablePropertyFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   SchemaTypeId doc_schema_type_id = GetSchemaTypeId(
       hit_info.document_id(), document_store_, current_time_ms_);
-  // Skip if the schema type requested is not the same as the schema type of
-  // the document.
-  // TODO(b/357105837): support matching appsearch schema type with icing's.
-  if (doc_schema_type_id != schema_type_id_) {
+  if (schema_type_ids_.find(doc_schema_type_id) == schema_type_ids_.end()) {
     return std::vector<double>();
   }
 
@@ -891,14 +911,14 @@ GetScorablePropertyFunctionScoreExpression::EvaluateList(
   }
 
   const ScorablePropertyProto* scorable_property_proto =
-      scorable_property_set->GetScorablePropertyProto(property_name_);
+      scorable_property_set->GetScorablePropertyProto(property_path_);
   // It should never happen as icing generates a default value for each scorable
   // property when the document is created.
   if (scorable_property_proto == nullptr) {
     return absl_ports::InternalError(IcingStringUtil::StringPrintf(
         "Failed to retrieve ScorablePropertyProto for document %d, and "
-        "property name %s",
-        hit_info.document_id(), property_name_.c_str()));
+        "property path %s",
+        hit_info.document_id(), property_path_.c_str()));
   }
 
   // Converts ScorablePropertyProto to a vector of doubles.

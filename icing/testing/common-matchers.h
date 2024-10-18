@@ -37,6 +37,7 @@
 #include "icing/proto/status.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
 
@@ -117,6 +118,12 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
          arg.length_in_tokens() == length_in_tokens &&
          expected_has_valid_scorable_property_cache_index ==
              has_valid_scorable_property_cache_index;
+}
+
+// Used to match a ScorablePropertyManager::ScorablePropertyInfo
+MATCHER_P2(EqualsScorablePropertyInfo, property_path, data_type, "") {
+  const ScorablePropertyManager::ScorablePropertyInfo& actual = arg;
+  return actual.property_path == property_path && actual.data_type == data_type;
 }
 
 struct ExtractTermFrequenciesResult {
@@ -473,7 +480,13 @@ MATCHER_P3(EqualsSectionMetadata, expected_id, expected_property_path,
                  .term_match_type() &&
          actual.numeric_match_type ==
              expected_property_config_proto.integer_indexing_config()
-                 .numeric_match_type();
+                 .numeric_match_type() &&
+         actual.embedding_indexing_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .embedding_indexing_type() &&
+         actual.quantization_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .quantization_type();
 }
 
 MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,

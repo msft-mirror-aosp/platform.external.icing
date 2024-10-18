@@ -168,9 +168,9 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @NonNull
-  public byte[] commitBlob(@NonNull byte[] blobHandleBytes) {
+  public byte[] commitBlob(@NonNull String packageName, @NonNull byte[] blobHandleBytes) {
     throwIfClosed();
-    return nativeCommitBlob(this, blobHandleBytes);
+    return nativeCommitBlob(this, packageName, blobHandleBytes);
   }
 
   @Nullable
@@ -313,7 +313,7 @@ public class IcingSearchEngineImpl implements Closeable {
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeCommitBlob(
-      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+      IcingSearchEngineImpl instance, String packageName, byte[] blobHandleBytes);
 
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);

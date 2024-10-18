@@ -104,7 +104,7 @@ public interface IcingSearchEngineInterface extends Closeable {
   BlobProto openReadBlob(PropertyProto.BlobHandleProto blobHandle);
 
   /** Marks the blob is committed. */
-  BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle);
+  BlobProto commitBlob(String packageName, PropertyProto.BlobHandleProto blobHandle);
 
   /**
    * Deletes the document.

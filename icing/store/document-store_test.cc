@@ -28,6 +28,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -56,6 +57,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -195,6 +197,7 @@ class DocumentStoreTest
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       // If we've specified using the reverse-JNI method for segmentation (i.e.
       // not ICU), then we won't have the ICU data file included to set up.
@@ -205,7 +208,7 @@ class DocumentStoreTest
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
 
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
@@ -236,8 +239,8 @@ class DocumentStoreTest
                             .SetCardinality(CARDINALITY_REPEATED)))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
                     schema, /*ignore_errors_and_delete_documents=*/false,
                     /*allow_circular_schema_definitions=*/false),
@@ -272,13 +275,14 @@ class DocumentStoreTest
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store) {
     return DocumentStore::Create(
-        filesystem, base_dir, clock, schema_store,
+        filesystem, base_dir, clock, schema_store, feature_flags_.get(),
         /*force_recovery_and_revalidate_documents=*/false,
         GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
         PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
         /*initialize_stats=*/nullptr);
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   FakeClock fake_clock_;
@@ -798,7 +802,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -936,7 +941,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -1033,7 +1039,8 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -2908,7 +2915,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
     filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                            feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2977,7 +2985,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -3043,7 +3052,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3156,7 +3166,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3238,7 +3249,8 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3315,7 +3327,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3429,7 +3442,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3514,7 +3528,8 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -4210,6 +4225,7 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
           &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
@@ -4358,7 +4374,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4431,13 +4448,14 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
-            /*force_recovery_and_revalidate_documents=*/true,
-            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            &initialize_stats));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/true,
+                              GetParam().pre_mapping_fbv,
+                              GetParam().use_persistent_hash_map,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4476,7 +4494,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4586,7 +4605,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4665,13 +4685,14 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     CorruptDocStoreHeaderChecksumFile();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
-            /*force_recovery_and_revalidate_documents=*/true,
-            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/true,
+                              GetParam().pre_mapping_fbv,
+                              GetParam().use_persistent_hash_map,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4705,7 +4726,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4821,7 +4843,8 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
@@ -4865,6 +4888,7 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
           &filesystem_, document_store_dir, &fake_clock_, schema_store.get(),
+          feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
@@ -4952,7 +4976,8 @@ TEST_P(DocumentStoreTest, GetDebugInfo) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -5057,7 +5082,8 @@ TEST_P(DocumentStoreTest, GetDebugInfoWithoutSchema) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5102,7 +5128,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
@@ -5143,7 +5169,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
             &filesystem_, document_store_dir_, &fake_clock_,
-            schema_store_.get(),
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             GetParam().pre_mapping_fbv,
             /*use_persistent_hash_map=*/switch_key_mapper_flag,
@@ -5187,7 +5213,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
@@ -5225,7 +5251,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
@@ -5268,6 +5294,7 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
           &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
@@ -5310,7 +5337,8 @@ TEST_P(DocumentStoreTest, PutDocumentWithNoScorablePropertiesInSchema) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -5401,7 +5429,8 @@ TEST_P(DocumentStoreTest, PutDocumentWithScorablePropertyThenRead) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -5558,7 +5587,8 @@ TEST_P(DocumentStoreTest, ReadScorablePropertyAfterOptimization) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));

@@ -183,9 +183,10 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
-  public BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle) {
+  public BlobProto commitBlob(
+      @NonNull String packageName, PropertyProto.BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
-        icingSearchEngineImpl.commitBlob(blobHandle.toByteArray()));
+        icingSearchEngineImpl.commitBlob(packageName, blobHandle.toByteArray()));
   }
 
   @NonNull

@@ -24,6 +24,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -32,6 +33,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -43,9 +45,10 @@ using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Pointee;
 
 ScorablePropertyProto BuildScorablePropertyProtoFromBoolean(
-    bool boolean_value) {
+    const std::vector<bool>& boolean_values) {
   ScorablePropertyProto scorable_property;
-  scorable_property.add_boolean_values(boolean_value);
+  scorable_property.mutable_boolean_values()->Add(boolean_values.begin(),
+                                                  boolean_values.end());
   return scorable_property;
 }
 
@@ -71,14 +74,45 @@ class ScorablePropertySetTest : public ::testing::Test {
       : schema_store_dir_(GetTestTempDir() + "/schema_store") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaProto schema_proto =
         SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("dummy").AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("id")
+                    .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                    .SetCardinality(CARDINALITY_REPEATED)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("person")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("id")
+                                     .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                     .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("income")
+                            .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED)
+                            .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("age")
+                            .SetDataType(PropertyConfigProto::DataType::INT64)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("isStarred")
+                            .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("email")
@@ -87,6 +121,18 @@ class ScorablePropertySetTest : public ::testing::Test {
                                      .SetDataTypeString(TERM_MATCH_EXACT,
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("sender")
+                            .SetDataTypeDocument(
+                                "person", /*index_nested_properties=*/true)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("receiver")
+                            .SetDataTypeDocument(
+                                "person", /*index_nested_properties=*/true)
+                            .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName("importanceBoolean")
@@ -104,11 +150,6 @@ class ScorablePropertySetTest : public ::testing::Test {
                                      .SetScorableType(SCORABLE_TYPE_ENABLED)
                                      .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                      .SetCardinality(CARDINALITY_REPEATED)))
-            .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
-                PropertyConfigBuilder()
-                    .SetName("id")
-                    .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                    .SetCardinality(CARDINALITY_REPEATED)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
         schema_proto, /*ignore_errors_and_delete_documents=*/false,
@@ -117,6 +158,8 @@ class ScorablePropertySetTest : public ::testing::Test {
         schema_store_->GetSchemaTypeId("email").ValueOrDie();
     person_schema_type_id_ =
         schema_store_->GetSchemaTypeId("person").ValueOrDie();
+    dummy_schema_type_id_ =
+        schema_store_->GetSchemaTypeId("dummy").ValueOrDie();
   }
 
   void TearDown() override {
@@ -124,41 +167,40 @@ class ScorablePropertySetTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(schema_store_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   std::string schema_store_dir_;
   FakeClock fake_clock_;
   SchemaTypeId email_schema_type_id_;
   SchemaTypeId person_schema_type_id_;
+  SchemaTypeId dummy_schema_type_id_;
   std::unique_ptr<SchemaStore> schema_store_;
 };
 
 TEST_F(ScorablePropertySetTest,
        BuildFromScorablePropertySetProto_GetScorablePropertyProto) {
-  ScorablePropertyProto scorable_property_proto_boolean =
-      BuildScorablePropertyProtoFromBoolean(true);
-  ScorablePropertyProto scorable_property_proto_double =
+  ScorablePropertyProto is_starred_scorable_property =
+      BuildScorablePropertyProtoFromBoolean({true});
+  ScorablePropertyProto income_scorable_property =
       BuildScorablePropertyProtoFromDouble({1.5, 2.5});
-  ScorablePropertyProto scorable_property_proto_int64 =
-      BuildScorablePropertyProtoFromInt64({1, 2, 3});
+  ScorablePropertyProto age_scorable_property =
+      BuildScorablePropertyProtoFromInt64({45});
 
   ScorablePropertySetProto scorable_property_set_proto;
-  *scorable_property_set_proto.add_properties() =
-      scorable_property_proto_boolean;
-  *scorable_property_set_proto.add_properties() =
-      scorable_property_proto_double;
-  *scorable_property_set_proto.add_properties() = scorable_property_proto_int64;
+  *scorable_property_set_proto.add_properties() = age_scorable_property;
+  *scorable_property_set_proto.add_properties() = income_scorable_property;
+  *scorable_property_set_proto.add_properties() = is_starred_scorable_property;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
       ScorablePropertySet::Create(std::move(scorable_property_set_proto),
-                                  email_schema_type_id_, schema_store_.get()));
-  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreInt64"),
-              Pointee(EqualsProto(scorable_property_proto_int64)));
-  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreDouble"),
-              Pointee(EqualsProto(scorable_property_proto_double)));
-  ASSERT_THAT(
-      scorable_property_set->GetScorablePropertyProto("importanceBoolean"),
-      Pointee(EqualsProto(scorable_property_proto_boolean)));
+                                  person_schema_type_id_, schema_store_.get()));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("age"),
+              Pointee(EqualsProto(age_scorable_property)));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(income_scorable_property)));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("isStarred"),
+              Pointee(EqualsProto(is_starred_scorable_property)));
 
   EXPECT_EQ(
       scorable_property_set->GetScorablePropertyProto("non_exist_property"),
@@ -171,12 +213,12 @@ TEST_F(ScorablePropertySetTest,
 TEST_F(ScorablePropertySetTest,
        BuildFromScorablePropertySetProto_InconsistentWithSchemaConfig) {
   ScorablePropertyProto scorable_property_proto_boolean =
-      BuildScorablePropertyProtoFromBoolean(true);
+      BuildScorablePropertyProtoFromBoolean({true});
 
   ScorablePropertySetProto scorable_property_set_proto;
   *scorable_property_set_proto.add_properties() =
       scorable_property_proto_boolean;
-  ASSERT_THAT(
+  EXPECT_THAT(
       ScorablePropertySet::Create(std::move(scorable_property_set_proto),
                                   email_schema_type_id_, schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -185,12 +227,12 @@ TEST_F(ScorablePropertySetTest,
 TEST_F(ScorablePropertySetTest,
        BuildFromScorablePropertySetProto_InvalidSchemaTypeId) {
   ScorablePropertyProto scorable_property_proto_boolean =
-      BuildScorablePropertyProtoFromBoolean(true);
+      BuildScorablePropertyProtoFromBoolean({true});
 
   ScorablePropertySetProto scorable_property_set_proto;
   *scorable_property_set_proto.add_properties() =
       scorable_property_proto_boolean;
-  ASSERT_THAT(
+  EXPECT_THAT(
       ScorablePropertySet::Create(std::move(scorable_property_set_proto),
                                   /*schema_type_id=*/1000, schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -198,29 +240,26 @@ TEST_F(ScorablePropertySetTest,
 
 TEST_F(ScorablePropertySetTest,
        BuildFromScorablePropertySetProto_WithSomePropertiesNotPopulated) {
-  ScorablePropertyProto scorable_property_proto_boolean;
-  ScorablePropertyProto scorable_property_proto_double;
-  ScorablePropertyProto scorable_property_proto_int64 =
+  ScorablePropertyProto age_scorable_property;
+  ScorablePropertyProto is_starred_scorable_property;
+  ScorablePropertyProto income_scorable_property =
       BuildScorablePropertyProtoFromInt64({1, 2, 3});
 
   ScorablePropertySetProto scorable_property_set_proto;
-  *scorable_property_set_proto.add_properties() =
-      scorable_property_proto_boolean;
-  *scorable_property_set_proto.add_properties() =
-      scorable_property_proto_double;
-  *scorable_property_set_proto.add_properties() = scorable_property_proto_int64;
+  *scorable_property_set_proto.add_properties() = age_scorable_property;
+  *scorable_property_set_proto.add_properties() = income_scorable_property;
+  *scorable_property_set_proto.add_properties() = is_starred_scorable_property;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
       ScorablePropertySet::Create(std::move(scorable_property_set_proto),
-                                  email_schema_type_id_, schema_store_.get()));
-  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreInt64"),
-              Pointee(EqualsProto(scorable_property_proto_int64)));
-  ASSERT_THAT(scorable_property_set->GetScorablePropertyProto("scoreDouble"),
-              Pointee(EqualsProto(scorable_property_proto_double)));
-  ASSERT_THAT(
-      scorable_property_set->GetScorablePropertyProto("importanceBoolean"),
-      Pointee(EqualsProto(scorable_property_proto_boolean)));
+                                  person_schema_type_id_, schema_store_.get()));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("age"),
+              Pointee(EqualsProto(age_scorable_property)));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("isStarred"),
+              Pointee(EqualsProto(is_starred_scorable_property)));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(income_scorable_property)));
 }
 
 TEST_F(ScorablePropertySetTest, BuildFromDocument_InvalidSchemaTypeId) {
@@ -232,7 +271,7 @@ TEST_F(ScorablePropertySetTest, BuildFromDocument_InvalidSchemaTypeId) {
           .SetCreationTimestampMs(0)
           .Build();
 
-  ASSERT_THAT(
+  EXPECT_THAT(
       ScorablePropertySet::Create(document,
                                   /*schema_type_id=*/1000, schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -249,9 +288,15 @@ TEST_F(ScorablePropertySetTest,
           .Build();
 
   ScorablePropertySetProto expected_scorable_property_set;
-  expected_scorable_property_set.add_properties();
-  expected_scorable_property_set.add_properties();
-  expected_scorable_property_set.add_properties();
+  expected_scorable_property_set.add_properties();  // importanceBoolean
+  expected_scorable_property_set.add_properties();  // receiver.age
+  expected_scorable_property_set.add_properties();  // receiver.income
+  expected_scorable_property_set.add_properties();  // receiver.isStarred
+  expected_scorable_property_set.add_properties();  // scoreDouble
+  expected_scorable_property_set.add_properties();  // scoreInt64
+  expected_scorable_property_set.add_properties();  // sender.age
+  expected_scorable_property_set.add_properties();  // sender.income
+  expected_scorable_property_set.add_properties();  // sender.isStarred
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
@@ -264,31 +309,75 @@ TEST_F(ScorablePropertySetTest,
 TEST_F(ScorablePropertySetTest,
        BuildFromDocument_NoScorablePropertiesFromSchema) {
   DocumentProto document;
-  ASSERT_THAT(ScorablePropertySet::Create(document, person_schema_type_id_,
+  EXPECT_THAT(ScorablePropertySet::Create(document, dummy_schema_type_id_,
                                           schema_store_.get()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(ScorablePropertySetTest,
-       BuildFromDocument_AllScorablePropertiesPopulated) {
+TEST_F(ScorablePropertySetTest, ScorablePropertySetFromNestedDocument) {
   DocumentProto document =
       DocumentBuilder()
           .SetKey("foo", "1")
           .SetSchema("email")
-          .AddDoubleProperty("scoreDouble", 1.5, 2.5)
           .AddStringProperty("subjectString", "subject foo")
           .AddBooleanProperty("importanceBoolean", true)
           .AddInt64Property("scoreInt64", 1, 2, 3)
+          .AddDocumentProperty(
+              "receiver",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("person")
+                  .AddInt64Property("age", 30)
+                  .AddDoubleProperty("income", 10000, 20000, 30000)
+                  .AddBooleanProperty("isStarred", true)
+                  .Build(),
+              DocumentBuilder()
+                  .SetKey("namespace", "uri2")
+                  .SetSchema("person")
+                  .AddInt64Property("age", 35)
+                  .AddDoubleProperty("income", 10001, 20001, 30001)
+                  .AddBooleanProperty("isStarred", false)
+                  .Build())
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri3")
+                            .SetSchema("person")
+                            .AddInt64Property("age", 50)
+                            .AddDoubleProperty("income", 21001, 21002, 21003)
+                            .AddBooleanProperty("isStarred", false)
+                            .Build())
           .SetCreationTimestampMs(0)
           .Build();
 
   ScorablePropertySetProto expected_scorable_property_set;
+  // importanceBoolean
   *expected_scorable_property_set.add_properties() =
-      BuildScorablePropertyProtoFromBoolean(true);
+      BuildScorablePropertyProtoFromBoolean({true});
+  // receiver.age
   *expected_scorable_property_set.add_properties() =
-      BuildScorablePropertyProtoFromDouble({1.5, 2.5});
+      BuildScorablePropertyProtoFromInt64({30, 35});
+  // receiver.income
+  *expected_scorable_property_set.add_properties() =
+      BuildScorablePropertyProtoFromDouble(
+          {10000, 20000, 30000, 10001, 20001, 30001});
+  // receiver.isStarred
+  *expected_scorable_property_set.add_properties() =
+      BuildScorablePropertyProtoFromBoolean({true, false});
+  // scoreDouble
+  *expected_scorable_property_set.add_properties() =
+      BuildScorablePropertyProtoFromDouble({});
+  // scoreInt64
   *expected_scorable_property_set.add_properties() =
       BuildScorablePropertyProtoFromInt64({1, 2, 3});
+  // sender.age
+  *expected_scorable_property_set.add_properties() =
+      BuildScorablePropertyProtoFromInt64({50});
+  // sender.income
+  *expected_scorable_property_set.add_properties() =
+      BuildScorablePropertyProtoFromDouble({21001, 21002, 21003});
+  // sender.isStarred
+  *expected_scorable_property_set.add_properties() =
+      BuildScorablePropertyProtoFromBoolean({false});
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScorablePropertySet> scorable_property_set,
@@ -296,33 +385,35 @@ TEST_F(ScorablePropertySetTest,
                                   schema_store_.get()));
   EXPECT_THAT(scorable_property_set->GetScorablePropertySetProto(),
               EqualsProto(expected_scorable_property_set));
-}
 
-TEST_F(ScorablePropertySetTest,
-       BuildFromDocument_ScorablePropertiesPartiallyPopulated) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("foo", "1")
-          .SetSchema("email")
-          .AddInt64Property("scoreInt64", 1, 2, 3)
-          .AddDoubleProperty("scoreDouble", 1.5, 2.5)
-          .AddStringProperty("subjectString", "subject foo")
-          .SetCreationTimestampMs(0)
-          .Build();
-
-  ScorablePropertySetProto expected_scorable_property_set;
-  expected_scorable_property_set.add_properties();
-  *expected_scorable_property_set.add_properties() =
-      BuildScorablePropertyProtoFromDouble({1.5, 2.5});
-  *expected_scorable_property_set.add_properties() =
-      BuildScorablePropertyProtoFromInt64({1, 2, 3});
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScorablePropertySet> scorable_property_set,
-      ScorablePropertySet::Create(document, email_schema_type_id_,
-                                  schema_store_.get()));
-  EXPECT_THAT(scorable_property_set->GetScorablePropertySetProto(),
-              EqualsProto(expected_scorable_property_set));
+  // Test GetScorablePropertyProto() for each property path.
+  EXPECT_THAT(
+      scorable_property_set->GetScorablePropertyProto("importanceBoolean"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean({true}))));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("scoreDouble"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({}))));
+  EXPECT_THAT(
+      scorable_property_set->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1, 2, 3}))));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("sender.age"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({50}))));
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("sender.income"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble(
+                  {21001, 21002, 21003}))));
+  EXPECT_THAT(
+      scorable_property_set->GetScorablePropertyProto("sender.isStarred"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean({false}))));
+  EXPECT_THAT(
+      scorable_property_set->GetScorablePropertyProto("receiver.age"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({30, 35}))));
+  EXPECT_THAT(
+      scorable_property_set->GetScorablePropertyProto("receiver.income"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble(
+          {10000, 20000, 30000, 10001, 20001, 30001}))));
+  EXPECT_THAT(
+      scorable_property_set->GetScorablePropertyProto("receiver.isStarred"),
+      Pointee(
+          EqualsProto(BuildScorablePropertyProtoFromBoolean({true, false}))));
 }
 
 }  // namespace

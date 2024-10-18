@@ -63,6 +63,11 @@ constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
 constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
     EMBEDDING_INDEXING_LINEAR_SEARCH =
         EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
+constexpr EmbeddingIndexingConfig::QuantizationType::Code
+    QUANTIZATION_TYPE_NONE = EmbeddingIndexingConfig::QuantizationType::NONE;
+constexpr EmbeddingIndexingConfig::QuantizationType::Code
+    QUANTIZATION_TYPE_QUANTIZE_8_BIT =
+        EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT;
 
 constexpr PropertyConfigProto::DataType::Code TYPE_UNKNOWN =
     PropertyConfigProto::DataType::UNKNOWN;
@@ -90,6 +95,10 @@ constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_QUALIFIED_ID =
 
 constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_ENABLED =
     PropertyConfigProto::ScorableType::ENABLED;
+constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_DISABLED =
+    PropertyConfigProto::ScorableType::DISABLED;
+constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_UNKNOWN =
+    PropertyConfigProto::ScorableType::UNKNOWN;
 
 class PropertyConfigBuilder {
  public:
@@ -163,10 +172,15 @@ class PropertyConfigBuilder {
 
   PropertyConfigBuilder& SetDataTypeVector(
       EmbeddingIndexingConfig::EmbeddingIndexingType::Code
-          embedding_indexing_type) {
+          embedding_indexing_type,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+          EmbeddingIndexingConfig::QuantizationType::NONE) {
     property_.set_data_type(PropertyConfigProto::DataType::VECTOR);
-    property_.mutable_embedding_indexing_config()->set_embedding_indexing_type(
+    EmbeddingIndexingConfig* embedding_indexing_config =
+        property_.mutable_embedding_indexing_config();
+    embedding_indexing_config->set_embedding_indexing_type(
         embedding_indexing_type);
+    embedding_indexing_config->set_quantization_type(quantization_type);
     return *this;
   }
 
@@ -223,6 +237,11 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetDescription(std::string description) {
     type_config_.set_description(std::move(description));
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetDatabase(std::string database) {
+    type_config_.set_database(std::move(database));
     return *this;
   }
 

@@ -137,11 +137,11 @@ TEST_F(ScorablePropertyManagerTest, GetScorablePropertyIndex_Ok) {
   ScorablePropertyManager scorable_property_manager;
 
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
-                  kEmailSchemaTypeId, "scorableInt64", type_config_map_,
+                  kEmailSchemaTypeId, "scorableDouble", type_config_map_,
                   schema_id_to_type_map_),
               IsOkAndHolds(0));
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
-                  kEmailSchemaTypeId, "scorableDouble", type_config_map_,
+                  kEmailSchemaTypeId, "scorableInt64", type_config_map_,
                   schema_id_to_type_map_),
               IsOkAndHolds(1));
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
@@ -155,11 +155,11 @@ TEST_F(ScorablePropertyManagerTest, GetScorablePropertyIndex_Ok) {
 
   // Repeat those calls to test the cache hits scenarios.
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
-                  kEmailSchemaTypeId, "scorableInt64", type_config_map_,
+                  kEmailSchemaTypeId, "scorableDouble", type_config_map_,
                   schema_id_to_type_map_),
               IsOkAndHolds(0));
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
-                  kEmailSchemaTypeId, "scorableDouble", type_config_map_,
+                  kEmailSchemaTypeId, "scorableInt64", type_config_map_,
                   schema_id_to_type_map_),
               IsOkAndHolds(1));
   EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
@@ -173,52 +173,229 @@ TEST_F(ScorablePropertyManagerTest, GetScorablePropertyIndex_Ok) {
 }
 
 TEST_F(ScorablePropertyManagerTest,
-       GetOrderedScorablePropertyNames_InvalidSchemaTypeId) {
+       GetOrderedScorablePropertyInfo_InvalidSchemaTypeId) {
   ScorablePropertyManager scorable_property_manager;
 
   EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
+      scorable_property_manager.GetOrderedScorablePropertyInfo(
           /*schema_type_id=*/100, type_config_map_, schema_id_to_type_map_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(ScorablePropertyManagerTest,
-       GetOrderedScorablePropertyNames_NoScorablePropertyInSchema) {
+       GetOrderedScorablePropertyInfo_NoScorablePropertyInSchema) {
   ScorablePropertyManager scorable_property_manager;
 
   EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
+      scorable_property_manager.GetOrderedScorablePropertyInfo(
           kPersonSchemaTypeId, type_config_map_, schema_id_to_type_map_),
       IsOkAndHolds(Pointee(ElementsAre())));
 
   // Repeat the call to test the cache hits scenarios.
   EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
+      scorable_property_manager.GetOrderedScorablePropertyInfo(
           kPersonSchemaTypeId, type_config_map_, schema_id_to_type_map_),
       IsOkAndHolds(Pointee(ElementsAre())));
 }
 
-TEST_F(ScorablePropertyManagerTest, GetOrderedScorablePropertyNames_Ok) {
+TEST_F(ScorablePropertyManagerTest, GetOrderedScorablePropertyInfo_Ok) {
   ScorablePropertyManager scorable_property_manager;
 
+  EXPECT_THAT(scorable_property_manager.GetOrderedScorablePropertyInfo(
+                  kEmailSchemaTypeId, type_config_map_, schema_id_to_type_map_),
+              IsOkAndHolds(Pointee(ElementsAre(
+                  EqualsScorablePropertyInfo("scorableDouble", TYPE_DOUBLE),
+                  EqualsScorablePropertyInfo("scorableInt64", TYPE_INT64)))));
   EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
-          kEmailSchemaTypeId, type_config_map_, schema_id_to_type_map_),
-      IsOkAndHolds(Pointee(ElementsAre("scorableInt64", "scorableDouble"))));
-  EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
+      scorable_property_manager.GetOrderedScorablePropertyInfo(
           kMessageSchemaTypeId, type_config_map_, schema_id_to_type_map_),
-      IsOkAndHolds(Pointee(ElementsAre("scorableBoolean", "scorableDouble"))));
+      IsOkAndHolds(Pointee(ElementsAre(
+          EqualsScorablePropertyInfo("scorableBoolean", TYPE_BOOLEAN),
+          EqualsScorablePropertyInfo("scorableDouble", TYPE_DOUBLE)))));
 
   // Repeat those calls to test the cache hits scenarios.
+  EXPECT_THAT(scorable_property_manager.GetOrderedScorablePropertyInfo(
+                  kEmailSchemaTypeId, type_config_map_, schema_id_to_type_map_),
+              IsOkAndHolds(Pointee(ElementsAre(
+                  EqualsScorablePropertyInfo("scorableDouble", TYPE_DOUBLE),
+                  EqualsScorablePropertyInfo("scorableInt64", TYPE_INT64)))));
   EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
-          kEmailSchemaTypeId, type_config_map_, schema_id_to_type_map_),
-      IsOkAndHolds(Pointee(ElementsAre("scorableInt64", "scorableDouble"))));
-  EXPECT_THAT(
-      scorable_property_manager.GetOrderedScorablePropertyNames(
+      scorable_property_manager.GetOrderedScorablePropertyInfo(
           kMessageSchemaTypeId, type_config_map_, schema_id_to_type_map_),
-      IsOkAndHolds(Pointee(ElementsAre("scorableBoolean", "scorableDouble"))));
+      IsOkAndHolds(Pointee(ElementsAre(
+          EqualsScorablePropertyInfo("scorableBoolean", TYPE_BOOLEAN),
+          EqualsScorablePropertyInfo("scorableDouble", TYPE_DOUBLE)))));
+}
+
+TEST_F(ScorablePropertyManagerTest,
+       GetOrderedScorablePropertyInfo_WithNestedSchemas) {
+  std::string person_schema_name = "Person";
+  std::string gmail_schema_name = "Gmail";
+  std::string interaction_log_schema_name = "InteractionLog";
+
+  SchemaTypeConfigProto person_schema_config =
+      SchemaTypeConfigBuilder()
+          .SetType(person_schema_name)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("networth")
+                           .SetDataType(TYPE_DOUBLE)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaTypeConfigProto gmail_schema_config =
+      SchemaTypeConfigBuilder()
+          .SetType(gmail_schema_name)
+          .AddProperty(
+              PropertyConfigBuilder().SetName("subject").SetDataTypeString(
+                  TERM_MATCH_UNKNOWN, TOKENIZER_NONE))
+          .AddProperty(
+              PropertyConfigBuilder().SetName("sender").SetDataTypeDocument(
+                  person_schema_name,
+                  /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("recipient")
+                  .SetDataTypeDocument(person_schema_name,
+                                       /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto interaction_log_schema_config =
+      SchemaTypeConfigBuilder()
+          .SetType(interaction_log_schema_name)
+          .AddProperty(
+              PropertyConfigBuilder().SetName("summary").SetDataTypeString(
+                  TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("contactGmail")
+                  .SetDataTypeDocument(gmail_schema_name,
+                                       /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("mostContactedPerson")
+                  .SetDataTypeDocument(person_schema_name,
+                                       /*index_nested_properties=*/true))
+          .Build();
+  SchemaUtil::TypeConfigMap type_config_map = {
+      {person_schema_name, person_schema_config},
+      {gmail_schema_name, gmail_schema_config},
+      {interaction_log_schema_name, interaction_log_schema_config}};
+  std::unordered_map<SchemaTypeId, std::string> schema_id_to_type_map = {
+      {1, person_schema_name},
+      {2, gmail_schema_name},
+      {3, interaction_log_schema_name}};
+  ScorablePropertyManager scorable_property_manager;
+
+  EXPECT_THAT(scorable_property_manager.GetOrderedScorablePropertyInfo(
+                  /*schema_type_id=*/1, type_config_map, schema_id_to_type_map),
+              IsOkAndHolds(Pointee(ElementsAre(
+                  EqualsScorablePropertyInfo("networth", TYPE_DOUBLE)))));
+  EXPECT_THAT(
+      scorable_property_manager.GetOrderedScorablePropertyInfo(
+          /*schema_type_id=*/2, type_config_map, schema_id_to_type_map),
+      IsOkAndHolds(Pointee(ElementsAre(
+          EqualsScorablePropertyInfo("recipient.networth", TYPE_DOUBLE),
+          EqualsScorablePropertyInfo("sender.networth", TYPE_DOUBLE)))));
+  EXPECT_THAT(scorable_property_manager.GetOrderedScorablePropertyInfo(
+                  /*schema_type_id=*/3, type_config_map, schema_id_to_type_map),
+              IsOkAndHolds(Pointee(ElementsAre(
+                  EqualsScorablePropertyInfo("contactGmail.recipient.networth",
+                                             TYPE_DOUBLE),
+                  EqualsScorablePropertyInfo("contactGmail.sender.networth",
+                                             TYPE_DOUBLE),
+                  EqualsScorablePropertyInfo("mostContactedPerson.networth",
+                                             TYPE_DOUBLE)))));
+}
+
+TEST_F(ScorablePropertyManagerTest,
+       GetScorablePropertyIndex_WithNestedSchemas) {
+  std::string person_schema_name = "Person";
+  std::string gmail_schema_name = "Gmail";
+  std::string interaction_log_schema_name = "InteractionLog";
+
+  SchemaTypeConfigProto person_schema_config =
+      SchemaTypeConfigBuilder()
+          .SetType(person_schema_name)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("networth")
+                           .SetDataType(TYPE_DOUBLE)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaTypeConfigProto gmail_schema_config =
+      SchemaTypeConfigBuilder()
+          .SetType(gmail_schema_name)
+          .AddProperty(
+              PropertyConfigBuilder().SetName("subject").SetDataTypeString(
+                  TERM_MATCH_UNKNOWN, TOKENIZER_NONE))
+          .AddProperty(
+              PropertyConfigBuilder().SetName("sender").SetDataTypeDocument(
+                  person_schema_name,
+                  /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("recipient")
+                  .SetDataTypeDocument(person_schema_name,
+                                       /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto interaction_log_schema_config =
+      SchemaTypeConfigBuilder()
+          .SetType(interaction_log_schema_name)
+          .AddProperty(
+              PropertyConfigBuilder().SetName("summary").SetDataTypeString(
+                  TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("contactGmail")
+                  .SetDataTypeDocument(gmail_schema_name,
+                                       /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("mostContactedPerson")
+                  .SetDataTypeDocument(person_schema_name,
+                                       /*index_nested_properties=*/true))
+          .Build();
+  SchemaUtil::TypeConfigMap type_config_map = {
+      {person_schema_name, person_schema_config},
+      {gmail_schema_name, gmail_schema_config},
+      {interaction_log_schema_name, interaction_log_schema_config}};
+  std::unordered_map<SchemaTypeId, std::string> schema_id_to_type_map = {
+      {1, person_schema_name},
+      {2, gmail_schema_name},
+      {3, interaction_log_schema_name}};
+  ScorablePropertyManager scorable_property_manager;
+
+  EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
+                  /*schema_type_id=*/1, "networth", type_config_map,
+                  schema_id_to_type_map),
+              IsOkAndHolds(0));
+  EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
+                  /*schema_type_id=*/2, "recipient.networth", type_config_map,
+                  schema_id_to_type_map),
+              IsOkAndHolds(0));
+  EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
+                  /*schema_type_id=*/2, "sender.networth", type_config_map,
+                  schema_id_to_type_map),
+              IsOkAndHolds(1));
+  EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
+                  /*schema_type_id=*/3, "contactGmail.recipient.networth",
+                  type_config_map, schema_id_to_type_map),
+              IsOkAndHolds(0));
+  EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
+                  /*schema_type_id=*/3, "contactGmail.sender.networth",
+                  type_config_map, schema_id_to_type_map),
+              IsOkAndHolds(1));
+  EXPECT_THAT(scorable_property_manager.GetScorablePropertyIndex(
+                  /*schema_type_id=*/3, "mostContactedPerson.networth",
+                  type_config_map, schema_id_to_type_map),
+              IsOkAndHolds(2));
 }
 
 }  // namespace

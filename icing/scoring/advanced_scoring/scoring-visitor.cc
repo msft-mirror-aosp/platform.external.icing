@@ -133,7 +133,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
   } else if (function_name ==
-                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
+             GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
     // getEmbeddingParameter function
     expression =
         GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));
@@ -145,9 +145,15 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         &embedding_query_results_);
   } else if (function_name ==
              GetScorablePropertyFunctionScoreExpression::kFunctionName) {
-    // getScorableProperty function
-    expression = GetScorablePropertyFunctionScoreExpression::Create(
-        std::move(args), &document_store_, &schema_store_, current_time_ms_);
+    if (feature_flags_.enable_scorable_properties()) {
+      // getScorableProperty function
+      expression = GetScorablePropertyFunctionScoreExpression::Create(
+          std::move(args), &document_store_, &schema_store_,
+          schema_type_alias_map_, current_time_ms_);
+    } else {
+      expression = absl_ports::InvalidArgumentError(
+          "getScorableProperty function is not enabled.");
+    }
   }
 
   if (!expression.ok()) {

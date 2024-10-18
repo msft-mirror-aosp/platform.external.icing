@@ -33,36 +33,45 @@ namespace lib {
 // properties, with the schema-store being the source of truth.
 class ScorablePropertyManager {
  public:
+  struct ScorablePropertyInfo {
+    // Scorable property's property_path in the schema config, eg:
+    // "property_name", "parent_schema.nested_child_schema.property_name".
+    std::string property_path;
+    // Data type of the property.
+    PropertyConfigProto::DataType::Code data_type;
+  };
+
   ScorablePropertyManager() = default;
 
   // Delete copy constructor and assignment operator.
   ScorablePropertyManager(const ScorablePropertyManager&) = delete;
   ScorablePropertyManager& operator=(const ScorablePropertyManager&) = delete;
 
-  // Gets the index of the scorable property with name |property_name|, where
-  // the index N means that the property is the Nth scorable property in the
-  // schema config of the given |schema_type_id|.
+  // Gets the index of the given |property_path|, where the index N means that
+  // it is the Nth scorable property path in the schema config of the given
+  // |schema_type_id|, in lexicographical order.
+  //
   // Returns:
   //   - Index on success
-  //   - std::nullopt if the |property_name| is not a scorable property under
-  //     the |schema_type_id|
+  //   - std::nullopt if the |property_path| doesnn't point to a scorable
+  //     property under the |schema_type_id|
   //   - INVALID_ARGUMENT if |schema_type_id| is invalid
   libtextclassifier3::StatusOr<std::optional<int>> GetScorablePropertyIndex(
-      SchemaTypeId schema_type_id, std::string_view property_name,
+      SchemaTypeId schema_type_id, std::string_view property_path,
       const SchemaUtil::TypeConfigMap& type_config_map,
       const std::unordered_map<SchemaTypeId, std::string>&
           schema_id_to_type_map);
 
-  // Returns the ordered list of scorable property names for the given
-  // |schema_type_id|.
+  // Returns the list of ScorablePropertyInfo for the given |schema_type_id|,
+  // in lexicographical order of its property path.
   //
   // Returns:
-  //   - Vector of scorable property names on success. The vector can be empty
+  //   - Vector of scorable property info on success. The vector can be empty
   //     if no scorable property is found under the schema config of
   //     |schema_type_id|.
   //   - INVALID_ARGUMENT if |schema_type_id| is invalid.
-  libtextclassifier3::StatusOr<const std::vector<std::string>*>
-  GetOrderedScorablePropertyNames(
+  libtextclassifier3::StatusOr<const std::vector<ScorablePropertyInfo>*>
+  GetOrderedScorablePropertyInfo(
       SchemaTypeId schema_type_id,
       const SchemaUtil::TypeConfigMap& type_config_map,
       const std::unordered_map<SchemaTypeId, std::string>&
@@ -70,17 +79,19 @@ class ScorablePropertyManager {
 
  private:
   struct DerivedScorablePropertySchema {
-    // Ordered list of scorable property names in a schema config.
-    std::vector<std::string> ordered_scorable_property_names;
-    // Map of scorable property name to its index, where index N means that the
-    // property is the Nth scorable property in the schema config.
-    std::unordered_map<std::string, int> property_name_to_index_map;
+    // vector of ScorablePropertyInfo, in lexicographical order of its property
+    // path.
+    std::vector<ScorablePropertyInfo> ordered_scorable_property_info;
+    // Map of scorable property path to its index, where index N means that the
+    // property is the Nth scorable property in the schema config, in
+    // lexicographical order.
+    std::unordered_map<std::string, int> property_path_to_index_map;
 
     explicit DerivedScorablePropertySchema(
-        std::vector<std::string>&& property_names_map,
+        std::vector<ScorablePropertyInfo>&& ordered_properties,
         std::unordered_map<std::string, int>&& index_map)
-        : ordered_scorable_property_names(std::move(property_names_map)),
-          property_name_to_index_map(std::move(index_map)) {}
+        : ordered_scorable_property_info(std::move(ordered_properties)),
+          property_path_to_index_map(std::move(index_map)) {}
   };
 
   // Looks up the entry in |scorable_property_schema_cache_| for the key

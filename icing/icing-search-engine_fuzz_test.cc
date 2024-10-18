@@ -64,7 +64,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // Initialize
   IcingSearchEngineOptions icing_options = Setup();
   std::string icu_data_file_path = GetTestFilePath("icing/icu.dat");
-  if (!icu_data_file_helper::SetUpICUDataFile(icu_data_file_path).ok()) {
+  if (!icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path).ok()) {
     return 1;
   }
   IcingSearchEngine icing(icing_options);

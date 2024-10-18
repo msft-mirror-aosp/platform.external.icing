@@ -30,6 +30,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/persist.pb.h"
@@ -39,6 +40,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 
@@ -108,13 +110,14 @@ SchemaProto CreateSchema() {
       .Build();
 }
 
-std::unique_ptr<SchemaStore> CreateSchemaStore(Filesystem filesystem,
-                                               const std::string directory,
-                                               const Clock* clock) {
+std::unique_ptr<SchemaStore> CreateSchemaStore(
+    Filesystem filesystem, const std::string directory, const Clock* clock,
+    const FeatureFlags& feature_flags) {
   const std::string schema_store_dir = directory + "/schema";
   filesystem.CreateDirectoryRecursively(schema_store_dir.data());
   std::unique_ptr<SchemaStore> schema_store =
-      SchemaStore::Create(&filesystem, schema_store_dir, clock).ValueOrDie();
+      SchemaStore::Create(&filesystem, schema_store_dir, clock, &feature_flags)
+          .ValueOrDie();
 
   auto set_schema_status = schema_store->SetSchema(
       CreateSchema(), /*ignore_errors_and_delete_documents=*/false,
@@ -128,9 +131,10 @@ std::unique_ptr<SchemaStore> CreateSchemaStore(Filesystem filesystem,
 
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store) {
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
   return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store,
+      filesystem, base_dir, clock, schema_store, &feature_flags,
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
@@ -138,6 +142,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
 }
 
 void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   Filesystem filesystem;
   Clock clock;
 
@@ -146,13 +151,13 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
 
   std::string document_store_dir = directory + "/store";
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, directory, &clock);
+      CreateSchemaStore(filesystem, directory, &clock, feature_flags);
 
   filesystem.CreateDirectoryRecursively(document_store_dir.data());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -180,6 +185,7 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
 BENCHMARK(BM_DoesDocumentExistBenchmark);
 
 void BM_Put(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   Filesystem filesystem;
   Clock clock;
 
@@ -188,13 +194,13 @@ void BM_Put(benchmark::State& state) {
 
   std::string document_store_dir = directory + "/store";
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, directory, &clock);
+      CreateSchemaStore(filesystem, directory, &clock, feature_flags);
 
   filesystem.CreateDirectoryRecursively(document_store_dir.data());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -209,6 +215,7 @@ void BM_Put(benchmark::State& state) {
 BENCHMARK(BM_Put);
 
 void BM_GetSameDocument(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   Filesystem filesystem;
   Clock clock;
 
@@ -217,13 +224,13 @@ void BM_GetSameDocument(benchmark::State& state) {
 
   std::string document_store_dir = directory + "/store";
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, directory, &clock);
+      CreateSchemaStore(filesystem, directory, &clock, feature_flags);
 
   filesystem.CreateDirectoryRecursively(document_store_dir.data());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -236,6 +243,7 @@ void BM_GetSameDocument(benchmark::State& state) {
 BENCHMARK(BM_GetSameDocument);
 
 void BM_Delete(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   Filesystem filesystem;
   Clock clock;
 
@@ -244,13 +252,13 @@ void BM_Delete(benchmark::State& state) {
 
   std::string document_store_dir = directory + "/store";
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, directory, &clock);
+      CreateSchemaStore(filesystem, directory, &clock, feature_flags);
 
   filesystem.CreateDirectoryRecursively(document_store_dir.data());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -268,6 +276,7 @@ void BM_Delete(benchmark::State& state) {
 BENCHMARK(BM_Delete);
 
 void BM_Create(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   Filesystem filesystem;
   Clock clock;
 
@@ -275,7 +284,7 @@ void BM_Create(benchmark::State& state) {
   std::string document_store_dir = directory + "/store";
 
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, directory, &clock);
+      CreateSchemaStore(filesystem, directory, &clock, feature_flags);
 
   // Create an initial document store and put some data in.
   {
@@ -285,7 +294,7 @@ void BM_Create(benchmark::State& state) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                            schema_store.get()));
+                            schema_store.get(), feature_flags));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -300,13 +309,15 @@ void BM_Create(benchmark::State& state) {
   filesystem.CreateDirectoryRecursively(document_store_dir.data());
 
   for (auto s : state) {
-    benchmark::DoNotOptimize(CreateDocumentStore(
-        &filesystem, document_store_dir, &clock, schema_store.get()));
+    benchmark::DoNotOptimize(
+        CreateDocumentStore(&filesystem, document_store_dir, &clock,
+                            schema_store.get(), feature_flags));
   }
 }
 BENCHMARK(BM_Create);
 
 void BM_UpdateChecksum(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   Filesystem filesystem;
   Clock clock;
 
@@ -315,13 +326,13 @@ void BM_UpdateChecksum(benchmark::State& state) {
 
   std::string document_store_dir = directory + "/store";
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, directory, &clock);
+      CreateSchemaStore(filesystem, directory, &clock, feature_flags);
 
   filesystem.CreateDirectoryRecursively(document_store_dir.data());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
