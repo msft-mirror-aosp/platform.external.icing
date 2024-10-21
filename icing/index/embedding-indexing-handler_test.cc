@@ -28,6 +28,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-hit.h"
@@ -45,11 +46,12 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
@@ -100,10 +102,11 @@ static constexpr SectionId kSectionIdFullDocEmbedding = 4;
 class EmbeddingIndexingHandlerTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -115,10 +118,6 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
     schema_store_dir_ = base_dir_ + "/schema_store";
     document_store_dir_ = base_dir_ + "/document_store";
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_working_path_));
-
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         lang_segmenter_,
@@ -128,8 +127,8 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()),
         IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -188,15 +187,20 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
                                   DocumentWrapper>::kDeflateCompressionLevel,
                               /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        embedding_index_,
+        EmbeddingIndex::Create(&filesystem_, embedding_index_working_path_,
+                               &fake_clock_, document_store_.get(),
+                               schema_store_.get()));
   }
 
   void TearDown() override {
@@ -245,6 +249,7 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
         data_or.ValueOrDie() + embedding_index_->GetTotalVectorSize());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
   std::string base_dir_;
@@ -262,11 +267,13 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
 
 TEST_F(EmbeddingIndexingHandlerTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(EmbeddingIndexingHandler::Create(/*clock=*/nullptr,
-                                               embedding_index_.get()),
+                                               embedding_index_.get(),
+                                               /*enable_embedding_index=*/true),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(EmbeddingIndexingHandler::Create(&fake_clock_,
-                                               /*embedding_index=*/nullptr),
+                                               /*embedding_index=*/nullptr,
+                                               /*enable_embedding_index=*/true),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -299,7 +306,8 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
+                                       /*enable_embedding_index=*/true));
   EXPECT_THAT(
       handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
@@ -317,6 +325,50 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
                        /*location=*/6))));
   EXPECT_THAT(GetRawEmbeddingData(),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
+  EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
+}
+
+TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyTitle), "title")
+          .AddVectorProperty(std::string(kPropertyTitleEmbedding),
+                             CreateVector("model", {0.1, 0.2, 0.3}))
+          .AddStringProperty(std::string(kPropertyBody), "body")
+          .AddVectorProperty(std::string(kPropertyBodyEmbedding),
+                             CreateVector("model", {0.4, 0.5, 0.6}),
+                             CreateVector("model", {0.7, 0.8, 0.9}))
+          .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
+                             CreateVector("model", {1.1, 1.2, 1.3}))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
+
+  ASSERT_THAT(embedding_index_->last_added_document_id(),
+              Eq(kInvalidDocumentId));
+  // If enable_embedding_index is false, the handler should not index any
+  // embeddings.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndexingHandler> handler,
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
+                                       /*enable_embedding_index=*/false));
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+
+  // Check that the embedding index is empty.
+  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
@@ -358,7 +410,8 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
+                                       /*enable_embedding_index=*/true));
   EXPECT_THAT(
       handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
@@ -413,7 +466,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
+                                       /*enable_embedding_index=*/true));
 
   // Handling document with kInvalidDocumentId should cause a failure, and both
   // index data and last_added_document_id should remain unchanged.
@@ -470,7 +524,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
+                                       /*enable_embedding_index=*/true));
 
   // Handling document with document_id == last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -556,7 +611,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
+                                       /*enable_embedding_index=*/true));
 
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.

@@ -33,8 +33,11 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::DoubleNear;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
+
+constexpr double kEps = 0.0000001;  // 1e-7
 
 static constexpr std::string_view kTypeTest = "Test";
 static constexpr std::string_view kPropertySingleString = "singleString";
@@ -86,6 +89,25 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeInteger) {
 
   EXPECT_THAT(property_util::ExtractPropertyValues<int64_t>(property),
               IsOkAndHolds(ElementsAre(123, -456, 0)));
+}
+
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeDouble) {
+  PropertyProto property;
+  property.mutable_double_values()->Add(3.5);
+  property.mutable_double_values()->Add(-2.0);
+
+  EXPECT_THAT(
+      property_util::ExtractPropertyValues<double>(property),
+      IsOkAndHolds(ElementsAre(DoubleNear(3.5, kEps), DoubleNear(-2.0, kEps))));
+}
+
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeBoolean) {
+  PropertyProto property;
+  property.mutable_boolean_values()->Add(true);
+  property.mutable_boolean_values()->Add(false);
+
+  EXPECT_THAT(property_util::ExtractPropertyValues<bool>(property),
+              IsOkAndHolds(ElementsAre(true, false)));
 }
 
 TEST(PropertyUtilTest, ExtractPropertyValuesTypeVector) {

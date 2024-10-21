@@ -14,6 +14,7 @@
 
 #include "icing/index/embed/doc-hit-info-iterator-embedding.h"
 
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -29,10 +30,10 @@
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -44,10 +45,12 @@ DocHitInfoIteratorEmbedding::Create(
     SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
     double score_low, double score_high,
     EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
-    const EmbeddingIndex* embedding_index) {
+    const EmbeddingIndex* embedding_index, const DocumentStore* document_store,
+    int64_t current_time_ms) {
   ICING_RETURN_ERROR_IF_NULL(query);
   ICING_RETURN_ERROR_IF_NULL(embedding_index);
   ICING_RETURN_ERROR_IF_NULL(score_map);
+  ICING_RETURN_ERROR_IF_NULL(document_store);
 
   libtextclassifier3::StatusOr<std::unique_ptr<PostingListEmbeddingHitAccessor>>
       pl_accessor_or = embedding_index->GetAccessorForVector(*query);
@@ -69,7 +72,8 @@ DocHitInfoIteratorEmbedding::Create(
   return std::unique_ptr<DocHitInfoIteratorEmbedding>(
       new DocHitInfoIteratorEmbedding(
           query, metric_type, std::move(embedding_scorer), score_low,
-          score_high, score_map, embedding_index, std::move(pl_accessor)));
+          score_high, score_map, embedding_index, std::move(pl_accessor),
+          document_store, current_time_ms));
 }
 
 libtextclassifier3::StatusOr<const EmbeddingHit*>

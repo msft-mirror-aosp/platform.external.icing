@@ -592,7 +592,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/true,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true)),
+                /*needs_qualified_id_join_index_rebuild=*/true,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version -1, max_version 2 (invalid)
         // - Existing enabled features = {}
@@ -610,7 +611,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/true,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true)),
+                /*needs_qualified_id_join_index_rebuild=*/true,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 3, max_version 3 (pre v2 version check)
         // - Existing enabled features = {}
@@ -628,7 +630,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/false,
                 /*needs_term_index_rebuild=*/false,
                 /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false)),
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
 
         // - Existing version 3, max_version 3 (pre v2 version check)
         // - Existing enabled features = {}
@@ -647,7 +650,28 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/false,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false)),
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
+
+        // - Existing version 3, max_version 3 (pre v2 version check)
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/3, /*max_version_in=*/3,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -665,7 +689,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/false,
                 /*needs_term_index_rebuild=*/false,
                 /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false)),
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
 
         // - Existing version 4, max_version 5
         // - Existing enabled features = {}
@@ -683,7 +708,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/true,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true)),
+                /*needs_qualified_id_join_index_rebuild=*/true,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 5, max_version 5
         // - Existing enabled features = {}
@@ -701,7 +727,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/true,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true)),
+                /*needs_qualified_id_join_index_rebuild=*/true,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -720,7 +747,28 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/false,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false)),
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
@@ -739,7 +787,28 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/false,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false)),
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {UNKNOWN}
@@ -759,7 +828,8 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_schema_store_derived_files_rebuild=*/true,
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true))));
+                /*needs_qualified_id_join_index_rebuild=*/true,
+                /*needs_embedding_index_rebuild=*/true))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
   EXPECT_THAT(
@@ -873,7 +943,8 @@ TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildResult_unknown) {
                   /*needs_schema_store_derived_files_rebuild=*/true,
                   /*needs_term_index_rebuild=*/true,
                   /*needs_integer_index_rebuild=*/true,
-                  /*needs_qualified_id_join_index_rebuild=*/true)));
+                  /*needs_qualified_id_join_index_rebuild=*/true,
+                  /*needs_embedding_index_rebuild=*/true)));
 }
 
 TEST(VersionUtilTest,
@@ -886,7 +957,21 @@ TEST(VersionUtilTest,
           /*needs_schema_store_derived_files_rebuild=*/false,
           /*needs_term_index_rebuild=*/true,
           /*needs_integer_index_rebuild=*/false,
-          /*needs_qualified_id_join_index_rebuild=*/false)));
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureEmbeddingIndex) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild=*/false,
+                  /*needs_schema_store_derived_files_rebuild=*/false,
+                  /*needs_term_index_rebuild=*/false,
+                  /*needs_integer_index_rebuild=*/false,
+                  /*needs_qualified_id_join_index_rebuild=*/false,
+                  /*needs_embedding_index_rebuild=*/true)));
 }
 
 class VersionUtilFeatureProtoTest
@@ -913,13 +998,16 @@ TEST_P(VersionUtilFeatureProtoTest, GetFeatureInfoProto) {
               Eq(rebuild_result.needs_integer_index_rebuild));
   EXPECT_THAT(feature_info.needs_qualified_id_join_index_rebuild(),
               Eq(rebuild_result.needs_qualified_id_join_index_rebuild));
+  EXPECT_THAT(feature_info.needs_embedding_index_rebuild(),
+              Eq(rebuild_result.needs_embedding_index_rebuild));
 }
 
 INSTANTIATE_TEST_SUITE_P(
     VersionUtilFeatureProtoTest, VersionUtilFeatureProtoTest,
     testing::Values(
         IcingSearchEngineFeatureInfoProto::UNKNOWN,
-        IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR));
+        IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR,
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
 
 }  // namespace
 

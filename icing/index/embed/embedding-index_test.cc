@@ -28,15 +28,24 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/hit/hit.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/embedding-test-utils.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/status-macros.h"
 
@@ -53,15 +62,74 @@ using ::testing::Test;
 class EmbeddingIndexTest : public Test {
  protected:
   void SetUp() override {
-    embedding_index_dir_ = GetTestTempDir() + "/embedding_index_test";
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    test_dir_ = GetTestTempDir() + "/icing";
+    embedding_index_dir_ = test_dir_ + "/embedding_index";
+    document_store_dir_ = test_dir_ + "/document_store";
+    schema_store_dir_ = test_dir_ + "/schema_store";
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &clock_, feature_flags_.get()));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
+    document_store_ = std::move(create_result.document_store);
+
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
+                               document_store_.get(), schema_store_.get()));
+
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("type")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("prop1")
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("prop2")
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    // Quantized embedding
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("prop3")
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                               QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build(),
+        /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+    ICING_ASSERT_OK(document_store_->Put(
+        DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+    ICING_ASSERT_OK(document_store_->Put(
+        DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+    ICING_ASSERT_OK(document_store_->Put(
+        DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   }
 
   void TearDown() override {
+    document_store_.reset();
+    schema_store_.reset();
     embedding_index_.reset();
-    filesystem_.DeleteDirectoryRecursively(embedding_index_dir_.c_str());
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
   libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetHits(
@@ -119,13 +187,44 @@ class EmbeddingIndexTest : public Test {
     return sub_dirs.size() == 1 && sub_dirs[0] == "metadata";
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
+  IcingFilesystem icing_filesystem_;
+  std::string test_dir_;
   std::string embedding_index_dir_;
+  std::string schema_store_dir_;
+  std::string document_store_dir_;
+  Clock clock_;
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> document_store_;
   std::unique_ptr<EmbeddingIndex> embedding_index_;
 };
 
 TEST_F(EmbeddingIndexTest, EmptyIndexContainsMetadataOnly) {
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
+}
+
+TEST_F(EmbeddingIndexTest, InitializationShouldFailWithNullPointer) {
+  std::string embedding_index_dir =
+      GetTestTempDir() + "/embedding_index_test_local";
+
+  EXPECT_THAT(
+      EmbeddingIndex::Create(nullptr, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, nullptr,
+                             document_store_.get(), schema_store_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                                     nullptr, schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                                     document_store_.get(), nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(EmbeddingIndexTest,
@@ -135,11 +234,13 @@ TEST_F(EmbeddingIndexTest,
       GetTestTempDir() + "/embedding_index_test_local";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index,
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()));
 
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index->CommitBufferToIndex());
   embedding_index->set_last_added_document_id(0);
 
@@ -156,8 +257,10 @@ TEST_F(EmbeddingIndexTest,
 
   // 2. Try to create another index with the same directory. This should fail
   // due to checksum mismatch.
-  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   embedding_index.reset();
   filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
@@ -169,11 +272,13 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
       GetTestTempDir() + "/embedding_index_test_local";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index,
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()));
 
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index->CommitBufferToIndex());
   embedding_index->set_last_added_document_id(0);
 
@@ -194,7 +299,8 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
   // 3. Create another index and confirm that the data is still there.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index_two,
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()));
 
   EXPECT_THAT(
       GetHits(embedding_index_two.get(), /*dimension=*/3,
@@ -216,11 +322,13 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
       GetTestTempDir() + "/embedding_index_test_local";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index,
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()));
 
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index->CommitBufferToIndex());
   embedding_index->set_last_added_document_id(0);
 
@@ -239,7 +347,8 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   // 3. Create another index and confirm that the data is still there.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index_two,
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir));
+      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                             document_store_.get(), schema_store_.get()));
 
   EXPECT_THAT(
       GetHits(embedding_index_two.get(), /*dimension=*/3,
@@ -258,7 +367,8 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
 TEST_F(EmbeddingIndexTest, AddSingleEmbedding) {
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
@@ -275,9 +385,11 @@ TEST_F(EmbeddingIndexTest, AddMultipleEmbeddingsInTheSameSection) {
   PropertyProto::VectorProto vector2 =
       CreateVector("model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
@@ -297,9 +409,11 @@ TEST_F(EmbeddingIndexTest, HitsWithLowerSectionIdReturnedFirst) {
   PropertyProto::VectorProto vector2 =
       CreateVector("model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/5, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/5, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/2, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/2, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
@@ -319,9 +433,11 @@ TEST_F(EmbeddingIndexTest, HitsWithHigherDocumentIdReturnedFirst) {
   PropertyProto::VectorProto vector2 =
       CreateVector("model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/1), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/1), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(1);
 
@@ -341,9 +457,11 @@ TEST_F(EmbeddingIndexTest, AddEmbeddingsFromDifferentModels) {
   PropertyProto::VectorProto vector2 =
       CreateVector("model2", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
@@ -368,9 +486,11 @@ TEST_F(EmbeddingIndexTest,
   PropertyProto::VectorProto vector2 =
       CreateVector("model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
@@ -394,9 +514,11 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
     PropertyProto::VectorProto vector2 =
         CreateVector("model", {-0.1, -0.2, -0.3});
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-        BasicHit(/*section_id=*/1, /*document_id=*/0), vector1));
+        BasicHit(/*section_id=*/1, /*document_id=*/0), vector1,
+        QUANTIZATION_TYPE_NONE));
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-        BasicHit(/*section_id=*/2, /*document_id=*/1), vector2));
+        BasicHit(/*section_id=*/2, /*document_id=*/1), vector2,
+        QUANTIZATION_TYPE_NONE));
     ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
     embedding_index_->set_last_added_document_id(1);
 
@@ -429,9 +551,11 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
     PropertyProto::VectorProto vector2 =
         CreateVector("model", {-0.1, -0.2, -0.3});
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-        BasicHit(/*section_id=*/1, /*document_id=*/0), vector1));
+        BasicHit(/*section_id=*/1, /*document_id=*/0), vector1,
+        QUANTIZATION_TYPE_NONE));
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-        BasicHit(/*section_id=*/2, /*document_id=*/1), vector2));
+        BasicHit(/*section_id=*/2, /*document_id=*/1), vector2,
+        QUANTIZATION_TYPE_NONE));
     ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
     embedding_index_->set_last_added_document_id(1);
 
@@ -452,7 +576,8 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
     EmbeddingIndex::Discard(filesystem_, embedding_index_dir_);
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
+                               document_store_.get(), schema_store_.get()));
     EXPECT_TRUE(embedding_index_->is_empty());
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
     EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
@@ -473,11 +598,13 @@ TEST_F(EmbeddingIndexTest, MultipleCommits) {
       CreateVector("model", {-0.1, -0.2, -0.3});
 
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/1, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/1, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
@@ -497,11 +624,13 @@ TEST_F(EmbeddingIndexTest,
       CreateVector("model", {-0.1, -0.2, -0.3});
 
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/1, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/1, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   // Posting list with delta encoding can only allow decreasing values.
   EXPECT_THAT(embedding_index_->CommitBufferToIndex(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -513,11 +642,13 @@ TEST_F(EmbeddingIndexTest, InvalidCommit_DocumentIdCanOnlyIncrease) {
       CreateVector("model", {-0.1, -0.2, -0.3});
 
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/1), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/1), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   // Posting list with delta encoding can only allow decreasing values, which
   // means document ids must be committed increasingly, since document ids are
   // inverted in hit values.
@@ -537,7 +668,8 @@ TEST_F(EmbeddingIndexTest, EmptyOptimizeIsOk) {
 TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/2), vector));
+      BasicHit(/*section_id=*/0, /*document_id=*/2), vector,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(2);
 
@@ -590,9 +722,11 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
   PropertyProto::VectorProto vector2 =
       CreateVector("model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/2), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/2), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/2), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/2), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(2);
 
@@ -655,11 +789,14 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
   PropertyProto::VectorProto vector3 =
       CreateVector("model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/1, /*document_id=*/0), vector2));
+      BasicHit(/*section_id=*/1, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/1), vector3));
+      BasicHit(/*section_id=*/0, /*document_id=*/1), vector3,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(1);
 
@@ -718,11 +855,14 @@ TEST_F(EmbeddingIndexTest, OptimizeEmbeddingsFromDifferentModels) {
   PropertyProto::VectorProto vector3 =
       CreateVector("model2", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/1), vector2));
+      BasicHit(/*section_id=*/0, /*document_id=*/1), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/1, /*document_id=*/1), vector3));
+      BasicHit(/*section_id=*/1, /*document_id=*/1), vector3,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(1);
 
@@ -789,9 +929,11 @@ TEST_F(EmbeddingIndexTest,
   PropertyProto::VectorProto vector2 =
       CreateVector("model2", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1));
+      BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(/*section_id=*/1, /*document_id=*/1), vector2));
+      BasicHit(/*section_id=*/1, /*document_id=*/1), vector2,
+      QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(1);
 

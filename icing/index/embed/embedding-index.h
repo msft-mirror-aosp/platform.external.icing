@@ -35,9 +35,13 @@
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/embed/posting-list-embedding-hit-serializer.h"
 #include "icing/index/hit/hit.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/key-mapper.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -84,7 +88,9 @@ class EmbeddingIndex : public PersistentStorage {
   //   - Any error from MemoryMappedFile, FlashIndexStorage,
   //     DynamicTrieKeyMapper, or FileBackedVector.
   static libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>> Create(
-      const Filesystem* filesystem, std::string working_path);
+      const Filesystem* filesystem, std::string working_path,
+      const Clock* clock, const DocumentStore* document_store,
+      const SchemaStore* schema_store);
 
   static libtextclassifier3::Status Discard(const Filesystem& filesystem,
                                             const std::string& working_path) {
@@ -93,6 +99,14 @@ class EmbeddingIndex : public PersistentStorage {
   }
 
   libtextclassifier3::Status Clear();
+
+  ~EmbeddingIndex() override {
+    if (!PersistToDisk().ok()) {
+      ICING_LOG(WARNING)
+          << "Failed to persist embedding index to disk while destructing "
+          << working_path_;
+    }
+  }
 
   // Buffer an embedding pending to be added to the index. This is required
   // since EmbeddingHits added in posting lists must be decreasing, which means
@@ -104,7 +118,8 @@ class EmbeddingIndex : public PersistentStorage {
   //   - INVALID_ARGUMENT error if the dimension is 0.
   //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status BufferEmbedding(
-      const BasicHit& basic_hit, const PropertyProto::VectorProto& vector);
+      const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type);
 
   // Commit the embedding hits in the buffer to the index.
   //
@@ -196,9 +211,14 @@ class EmbeddingIndex : public PersistentStorage {
 
  private:
   explicit EmbeddingIndex(const Filesystem& filesystem,
-                          std::string working_path)
+                          std::string working_path, const Clock* clock,
+                          const DocumentStore* document_store,
+                          const SchemaStore* schema_store)
       : PersistentStorage(filesystem, std::move(working_path),
-                          kWorkingPathType) {}
+                          kWorkingPathType),
+        clock_(*clock),
+        document_store_(*document_store),
+        schema_store_(*schema_store) {}
 
   // Creates the storage data if the index is not empty. This will initialize
   // flash_index_storage_, embedding_posting_list_mapper_, embedding_vectors_.
@@ -270,6 +290,10 @@ class EmbeddingIndex : public PersistentStorage {
     return *reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
                                           kInfoMetadataBufferOffset);
   }
+
+  const Clock& clock_;
+  const DocumentStore& document_store_;
+  const SchemaStore& schema_store_;
 
   // In memory data:
   // Pending embedding hits with their embedding keys used for
