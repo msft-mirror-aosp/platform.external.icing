@@ -23,7 +23,7 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Next tag: 7
+// Next tag: 8
 message IcingSearchEngineFeatureInfoProto {
   // REQUIRED: Enum representing an IcingLib feature flagged using
   // IcingSearchEngineOptions
@@ -41,6 +41,16 @@ message IcingSearchEngineFeatureInfoProto {
     // feature, and related metadata hits indexing used for property existence
     // check.
     FEATURE_HAS_PROPERTY_OPERATOR = 1;
+
+    // Feature for flag IcingSearchEngineOptions::enable_embedding_index.
+    //
+    // This feature covers the embedding index.
+    FEATURE_EMBEDDING_INDEX = 2;
+
+    // Feature for flag IcingSearchEngineOptions::enable_scorable_properties.
+    //
+    // This feature covers the scorable properties feature.
+    FEATURE_SCORABLE_PROPERTIES = 3;
   }
 
   // Whether the feature requires the document store to be rebuilt.
@@ -62,6 +72,10 @@ message IcingSearchEngineFeatureInfoProto {
   // Whether the feature requires the qualified id join index to be rebuilt.
   // The default value is false.
   optional bool needs_qualified_id_join_index_rebuild = 6;
+
+  // Whether the feature requires the embedding index to be rebuilt.
+  // The default value is false.
+  optional bool needs_embedding_index_rebuild = 7;
 }
 
 // Next tag: 4
@@ -73,7 +87,7 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 18
+// Next tag: 22
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -188,6 +202,33 @@ message IcingSearchEngineOptions {
   // for this amount of time, it will be deleted.
   // If set to 0, the blob will never be deleted.
   optional int64 orphan_blob_time_to_live_ms = 17;
+
+  // Whether to enable schema database.
+  // If set to true, the schema database field will be used to store and
+  // retrieve schemas.
+  //
+  // TODO - b/337913932: Remove this flag once the schema database is fully
+  // rolled out.
+  optional bool enable_schema_database = 18;
+
+  // Whether to enable embedding index.
+  // If set to false, the EmbeddingIndex will only be created with a header, and
+  // embedding properties will not be indexed.
+  // TODO(b/326656531): Change the default value to false when the flag is
+  // propagated from AppSearch.
+  optional bool enable_embedding_index = 19 [default = true];
+
+  // Whether to perform the migration to populate the database field in the
+  // schema proto.
+  //
+  // Setting this field to true does not mean that schema will always be
+  // migrated during initialization. Icing will detect whether the migration is
+  // required and will only perform it if necessary.
+  optional bool perform_schema_database_migration_if_required = 20;
+
+  // Feature flag guarding the new scorable properties feature.
+  // TODO - b/357105837: Remove this flag once the feature is fully rolled out.
+  optional bool enable_scorable_properties = 21;
 
   reserved 2;
 }

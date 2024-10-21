@@ -112,7 +112,8 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
              ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
     // childrenRankingSignals function
     expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
-        std::move(args), join_children_fetcher_);
+        std::move(args), document_store_, join_children_fetcher_,
+        current_time_ms_);
   } else if (function_name ==
              PropertyWeightsFunctionScoreExpression::kFunctionName) {
     // propertyWeights function
@@ -132,7 +133,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
   } else if (function_name ==
-                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
+             GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
     // getEmbeddingParameter function
     expression =
         GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));
@@ -142,6 +143,17 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     expression = MatchedSemanticScoresFunctionScoreExpression::Create(
         std::move(args), default_semantic_metric_type_,
         &embedding_query_results_);
+  } else if (function_name ==
+             GetScorablePropertyFunctionScoreExpression::kFunctionName) {
+    if (feature_flags_.enable_scorable_properties()) {
+      // getScorableProperty function
+      expression = GetScorablePropertyFunctionScoreExpression::Create(
+          std::move(args), &document_store_, &schema_store_,
+          schema_type_alias_map_, current_time_ms_);
+    } else {
+      expression = absl_ports::InvalidArgumentError(
+          "getScorableProperty function is not enabled.");
+    }
   }
 
   if (!expression.ok()) {

@@ -38,7 +38,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -46,11 +46,11 @@ namespace icing {
 namespace lib {
 
 // QualifiedIdJoinIndexImplV2: a class to maintain join data (DocumentId to
-// referenced NamespaceFingerprintIdentifier). It stores join data in posting
-// lists and bucketizes them by (schema_type_id, joinable_property_id).
+// referenced NamespaceIdFingerprint). It stores join data in posting lists
+// and bucketizes them by (schema_type_id, joinable_property_id).
 class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
  public:
-  using JoinDataType = DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>;
+  using JoinDataType = DocumentIdToJoinInfo<NamespaceIdFingerprint>;
 
   class JoinDataIterator : public JoinDataIteratorBase {
    public:
@@ -85,7 +85,7 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
   };
 
   struct Info {
-    static constexpr int32_t kMagic = 0x12d1c074;
+    static constexpr int32_t kMagic = 0x32e374a7;
 
     int32_t magic;
     int32_t num_data;
@@ -109,10 +109,10 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
       WorkingPathType::kDirectory;
 
   // Creates a QualifiedIdJoinIndexImplV2 instance to store join data
-  // (DocumentId to referenced NamespaceFingerPrintIdentifier) for future
-  // joining search. If any of the underlying file is missing, then delete the
-  // whole working_path and (re)initialize with new ones. Otherwise initialize
-  // and create the instance by existing files.
+  // (DocumentId to referenced NamespaceIdFingerprint) for future joining
+  // search. If any of the underlying file is missing, then delete the whole
+  // working_path and (re)initialize with new ones. Otherwise initialize and
+  // create the instance by existing files.
   //
   // filesystem: Object to make system level calls
   // working_path: Specifies the working path for PersistentStorage.
@@ -163,11 +163,11 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
-  libtextclassifier3::Status Put(SchemaTypeId schema_type_id,
-                                 JoinablePropertyId joinable_property_id,
-                                 DocumentId document_id,
-                                 std::vector<NamespaceFingerprintIdentifier>&&
-                                     ref_namespace_fingerprint_ids) override;
+  libtextclassifier3::Status Put(
+      SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
+      DocumentId document_id,
+      std::vector<NamespaceIdFingerprint>&& ref_namespace_id_uri_fingerprints)
+      override;
 
   libtextclassifier3::StatusOr<std::unique_ptr<JoinDataIteratorBase>>
   GetIterator(SchemaTypeId schema_type_id,
@@ -296,7 +296,7 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
       schema_joinable_id_to_posting_list_mapper_;
 
   // Posting list related members. Use posting list to store join data
-  // (document id to referenced NamespaceFingerprintIdentifier).
+  // (document id to referenced NamespaceIdFingerprint).
   std::unique_ptr<PostingListJoinDataSerializer<JoinDataType>>
       posting_list_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;

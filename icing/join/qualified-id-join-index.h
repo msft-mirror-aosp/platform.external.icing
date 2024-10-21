@@ -31,7 +31,7 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -48,8 +48,8 @@ class QualifiedIdJoinIndex : public PersistentStorage {
 
     virtual libtextclassifier3::Status Advance() = 0;
 
-    virtual const DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>&
-    GetCurrent() const = 0;
+    virtual const DocumentIdToJoinInfo<NamespaceIdFingerprint>& GetCurrent()
+        const = 0;
   };
 
   static constexpr WorkingPathType kWorkingPathType =
@@ -82,8 +82,8 @@ class QualifiedIdJoinIndex : public PersistentStorage {
       const DocJoinInfo& doc_join_info,
       std::string_view ref_qualified_id_str) = 0;
 
-  // (v2 only) Puts a list of referenced NamespaceFingerprintIdentifier into
-  // index, given the DocumentId, SchemaTypeId and JoinablePropertyId.
+  // (v2 only) Puts a list of referenced NamespaceIdFingerprint into index,
+  // given the DocumentId, SchemaTypeId and JoinablePropertyId.
   //
   // Returns:
   //   - OK on success
@@ -93,8 +93,8 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::Status Put(
       SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
       DocumentId document_id,
-      std::vector<NamespaceFingerprintIdentifier>&&
-          ref_namespace_fingerprint_ids) = 0;
+      std::vector<NamespaceIdFingerprint>&&
+          ref_namespace_id_uri_fingerprints) = 0;
 
   // (v1 only) Gets the referenced document's qualified id string by
   // DocJoinInfo.

@@ -98,13 +98,13 @@ public interface IcingSearchEngineInterface extends Closeable {
   void invalidateNextPageToken(long nextPageToken);
 
   /** Gets a file descriptor to write blob data. */
-  BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);
+  BlobProto openWriteBlob(String packageName, PropertyProto.BlobHandleProto blobHandle);
 
   /** Gets a file descriptor to read blob data. */
   BlobProto openReadBlob(PropertyProto.BlobHandleProto blobHandle);
 
   /** Marks the blob is committed. */
-  BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle);
+  BlobProto commitBlob(String packageName, PropertyProto.BlobHandleProto blobHandle);
 
   /**
    * Deletes the document.

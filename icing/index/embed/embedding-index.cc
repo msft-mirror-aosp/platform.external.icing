@@ -36,9 +36,12 @@
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/hit/hit.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/encode-util.h"
 #include "icing/util/logging.h"
@@ -100,11 +103,17 @@ std::string GetPostingListKey(const PropertyProto::VectorProto& vector) {
 }  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>>
-EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path) {
+EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
+                       const Clock* clock, const DocumentStore* document_store,
+                       const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
+  ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   std::unique_ptr<EmbeddingIndex> index = std::unique_ptr<EmbeddingIndex>(
-      new EmbeddingIndex(*filesystem, std::move(working_path)));
+      new EmbeddingIndex(*filesystem, std::move(working_path), clock,
+                         document_store, schema_store));
   ICING_RETURN_IF_ERROR(index->Initialize());
   return index;
 }
@@ -219,7 +228,12 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
 }
 
 libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
-    const BasicHit& basic_hit, const PropertyProto::VectorProto& vector) {
+    const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type) {
+  if (quantization_type != EmbeddingIndexingConfig::QuantizationType::NONE) {
+    return absl_ports::UnimplementedError(
+        "Quantization is not implemented yet");
+  }
   if (vector.values_size() == 0) {
     return absl_ports::InvalidArgumentError("Vector dimension is 0");
   }
@@ -424,7 +438,8 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   {
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<EmbeddingIndex> new_index,
-        EmbeddingIndex::Create(&filesystem_, temporary_index_dir.dir()));
+        EmbeddingIndex::Create(&filesystem_, temporary_index_dir.dir(), &clock_,
+                               &document_store_, &schema_store_));
     ICING_RETURN_IF_ERROR(
         TransferIndex(document_id_old_to_new, new_index.get()));
     new_index->set_last_added_document_id(new_last_added_document_id);

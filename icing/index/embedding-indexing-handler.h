@@ -40,7 +40,8 @@ class EmbeddingIndexingHandler : public DataIndexingHandler {
   //   - An EmbeddingIndexingHandler instance on success
   //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
   static libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndexingHandler>>
-  Create(const Clock* clock, EmbeddingIndex* embedding_index);
+  Create(const Clock* clock, EmbeddingIndex* embedding_index,
+         bool enable_embedding_index);
 
   // Handles the embedding indexing process: add hits into the embedding index
   // for all contents in tokenized_document.vector_sections.
@@ -58,10 +59,14 @@ class EmbeddingIndexingHandler : public DataIndexingHandler {
 
  private:
   explicit EmbeddingIndexingHandler(const Clock* clock,
-                                    EmbeddingIndex* embedding_index)
-      : DataIndexingHandler(clock), embedding_index_(*embedding_index) {}
+                                    EmbeddingIndex* embedding_index,
+                                    bool enable_embedding_index)
+      : DataIndexingHandler(clock),
+        embedding_index_(*embedding_index),
+        enable_embedding_index_(enable_embedding_index) {}
 
   EmbeddingIndex& embedding_index_;
+  bool enable_embedding_index_;
 };
 
 }  // namespace lib

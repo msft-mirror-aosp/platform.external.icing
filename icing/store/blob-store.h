@@ -19,13 +19,16 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 
@@ -56,16 +59,18 @@ class BlobStore {
     // We are using creation_time_ms to be file name of the blob, so this field
     // is unique for each blob.
     int64_t creation_time_ms;
-    bool is_committed;
+
+    // The offset of the package name stored in the package name file.
+    int32_t package_offset;
 
     // The param needed for dynamic trie, we shouldn't call this constructor
     // directly.
-    BlobInfo() : BlobInfo(/*creation_time_ms=*/-1, /*is_committed=*/false) {}
+    BlobInfo() : BlobInfo(/*creation_time_ms=*/-1, /*package_offset=*/-1) {}
 
-    BlobInfo(int64_t creation_time_ms, bool is_committed)
-        : creation_time_ms(creation_time_ms), is_committed(is_committed) {}
+    BlobInfo(int64_t creation_time_ms, int32_t package_offset)
+        : creation_time_ms(creation_time_ms), package_offset(package_offset) {}
   } __attribute__((packed));
-  static_assert(sizeof(BlobInfo) == 9, "Invalid BlobInfo size");
+  static_assert(sizeof(BlobInfo) == 12, "Invalid BlobInfo size");
 
   // Factory function to create a BlobStore instance. The base directory is
   // used to persist blobs. If a blob store was previously created with
@@ -91,6 +96,7 @@ class BlobStore {
   //   ALREADY_EXISTS if the blob has already been committed
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> OpenWrite(
+      std::string_view package_name,
       const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets a file for read only purpose for the given blob handle.
@@ -115,6 +121,7 @@ class BlobStore {
   //                        file content.
   //   NOT_FOUND on blob is not found.
   libtextclassifier3::Status CommitBlob(
+      std::string_view package_name,
       const PropertyProto::BlobHandleProto& blob_handle);
 
   // Persists the blobs to disk.
@@ -140,27 +147,67 @@ class BlobStore {
   libtextclassifier3::Status Optimize(
       const std::unordered_set<std::string>& dead_blob_handles);
 
+  // Calculates the StorageInfo for the Blob Store.
+  //
+  // Returns:
+  //   Vector of PackageBlobStorageInfoProto contains size of each package.
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<std::vector<PackageBlobStorageInfoProto>>
+  GetStorageInfo() const;
+
  private:
-  explicit BlobStore(const Filesystem* filesystem, std::string base_dir,
-                     const Clock* clock, int64_t orphan_blob_time_to_live_ms,
-                     std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
-                     std::unordered_set<std::string> known_file_names)
+  explicit BlobStore(
+      const Filesystem* filesystem, std::string base_dir, const Clock* clock,
+      int64_t orphan_blob_time_to_live_ms, ScopedFd package_name_fd,
+      std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
+      std::unordered_map<std::string, int32_t> package_name_to_offset,
+      std::unordered_set<std::string> known_file_names)
       : filesystem_(*filesystem),
         base_dir_(std::move(base_dir)),
         clock_(*clock),
         orphan_blob_time_to_live_ms_(orphan_blob_time_to_live_ms),
+        package_name_fd_(std::move(package_name_fd)),
         blob_info_mapper_(std::move(blob_info_mapper)),
+        package_name_to_offset_(std::move(package_name_to_offset)),
         known_file_names_(std::move(known_file_names)) {}
 
   libtextclassifier3::StatusOr<BlobStore::BlobInfo> GetOrCreateBlobInfo(
-      const std::string& blob_handle_str);
+      const std::string& blob_handle_str, std::string_view package_name);
+
+  libtextclassifier3::StatusOr<int32_t> GetOrCreatePackageOffset(
+      const std::string& package_name);
+
+  // Optimize the package name file. Package names that have no blob will be
+  // removed. The old package name file will be replaced by a new file with new
+  // offsets.
+  //
+  // Return a map from old offset to new offset.
+  libtextclassifier3::StatusOr<std::unordered_map<int32_t, int32_t>>
+  OptimizePackageNameFile(const std::unordered_set<int32_t>& existing_offsets);
 
   const Filesystem& filesystem_;
   std::string base_dir_;
   const Clock& clock_;
   int64_t orphan_blob_time_to_live_ms_;
+  ScopedFd package_name_fd_;
 
+  // The key mapper for BlobHandle string to BlobInfo.
+  // The keys are the Encoded CString from 2 states of blobs.
+  // 1. pending blob: The key is constructed of digest, package name, and label.
+  //    Represents a blob that is being written, and the owner is the caller
+  //    package.
+  // 2. committed blob: The key is constructed of digest and label.
+  //    Represents a blob that is already written and committed, and the owner
+  //    is the Icing.
+  // TODO(b/273591938) Separate the key mapper for pending blob and committed
+  // blob.
   std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper_;
+  std::unordered_map<std::string, int32_t> package_name_to_offset_;
+  // The map to tracking sent file descriptors for write.
+  // The key is the pending blob handle CString which is constructed of
+  // digest, package name, and label.
+  // The value is the set of file descriptors for write.
+  std::unordered_map<std::string, int> file_descriptors_for_write_;
   std::unordered_set<std::string> known_file_names_;
   bool has_mutated_ = false;
 };

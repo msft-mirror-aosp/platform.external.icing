@@ -450,7 +450,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
       std::unique_ptr<DocHitInfoIterator> iterator,
       DocHitInfoIteratorEmbedding::Create(
           &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, score_map, &embedding_index_));
+          high, score_map, &embedding_index_, &document_store_,
+          current_time_ms_));
   return PendingValue(std::move(iterator));
 }
 
