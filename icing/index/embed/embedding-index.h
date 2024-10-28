@@ -25,6 +25,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -32,8 +33,10 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/embed/posting-list-embedding-hit-serializer.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
@@ -89,8 +92,7 @@ class EmbeddingIndex : public PersistentStorage {
   //     DynamicTrieKeyMapper, or FileBackedVector.
   static libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>> Create(
       const Filesystem* filesystem, std::string working_path,
-      const Clock* clock, const DocumentStore* document_store,
-      const SchemaStore* schema_store);
+      const Clock* clock, const FeatureFlags* feature_flags);
 
   static libtextclassifier3::Status Discard(const Filesystem& filesystem,
                                             const std::string& working_path) {
@@ -162,6 +164,7 @@ class EmbeddingIndex : public PersistentStorage {
   //   - INTERNAL_ERROR on IO error, this indicates that the index may be in an
   //     invalid state and should be cleared.
   libtextclassifier3::Status Optimize(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id);
 
@@ -180,6 +183,31 @@ class EmbeddingIndex : public PersistentStorage {
     }
     return embedding_vectors_->array() + hit.location();
   }
+  libtextclassifier3::StatusOr<const char*> GetQuantizedEmbeddingVector(
+      const EmbeddingHit& hit, uint32_t dimension) const {
+    // quantized_embedding_vectors_ stores data in char format. Every quantized
+    // embedding vector contains a Quantizer header followed by the actual
+    // vector, and every value in the vector is stored in uint8_t.
+    if (static_cast<int64_t>(hit.location()) + sizeof(Quantizer) +
+            sizeof(uint8_t) * dimension >
+        GetTotalQuantizedVectorSize()) {
+      return absl_ports::OutOfRangeError(
+          "Got an embedding hit that refers to a vector out of range.");
+    }
+    return quantized_embedding_vectors_->array() + hit.location();
+  }
+
+  // Calculates the score for the given embedding hit with the given query.
+  //
+  // Returns:
+  //   - The score on success.
+  //   - OUT_OF_RANGE_ERROR if the referred vector is out of range based on the
+  //     location and dimension.
+  //   - Any error from schema store when getting the quantization type.
+  libtextclassifier3::StatusOr<float> ScoreEmbeddingHit(
+      const EmbeddingScorer& scorer, const PropertyProto::VectorProto& query,
+      const EmbeddingHit& hit,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type) const;
 
   libtextclassifier3::StatusOr<const float*> GetRawEmbeddingData() const {
     if (is_empty()) {
@@ -193,6 +221,13 @@ class EmbeddingIndex : public PersistentStorage {
       return 0;
     }
     return embedding_vectors_->num_elements();
+  }
+
+  int32_t GetTotalQuantizedVectorSize() const {
+    if (is_empty()) {
+      return 0;
+    }
+    return quantized_embedding_vectors_->num_elements();
   }
 
   DocumentId last_added_document_id() const {
@@ -212,13 +247,11 @@ class EmbeddingIndex : public PersistentStorage {
  private:
   explicit EmbeddingIndex(const Filesystem& filesystem,
                           std::string working_path, const Clock* clock,
-                          const DocumentStore* document_store,
-                          const SchemaStore* schema_store)
+                          const FeatureFlags* feature_flags)
       : PersistentStorage(filesystem, std::move(working_path),
                           kWorkingPathType),
         clock_(*clock),
-        document_store_(*document_store),
-        schema_store_(*schema_store) {}
+        feature_flags_(feature_flags) {}
 
   // Creates the storage data if the index is not empty. This will initialize
   // flash_index_storage_, embedding_posting_list_mapper_, embedding_vectors_.
@@ -241,6 +274,17 @@ class EmbeddingIndex : public PersistentStorage {
 
   libtextclassifier3::Status Initialize();
 
+  // Transfers the embedding vector of the given hit from the current index to
+  // the new index.
+  //
+  // Returns:
+  //   - The location of the transferred vector in the new index on success.
+  //   - Any error when allocating the vector storage in the new index.
+  libtextclassifier3::StatusOr<uint32_t> TransferEmbeddingVector(
+      const EmbeddingHit& old_hit, uint32_t dimension,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+      EmbeddingIndex* new_index) const;
+
   // Transfers embedding data and hits from the current index to new_index.
   //
   // Returns:
@@ -250,6 +294,7 @@ class EmbeddingIndex : public PersistentStorage {
   //     in an invalid state and the caller should handle it properly (e.g.
   //     discard and rebuild)
   libtextclassifier3::Status TransferIndex(
+      const DocumentStore& document_store, const SchemaStore& schema_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       EmbeddingIndex* new_index) const;
 
@@ -270,6 +315,18 @@ class EmbeddingIndex : public PersistentStorage {
   }
 
   libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
+
+  // Appends the given embedding vector to the appropriate vector storage
+  // (embedding_vectors_ or quantized_embedding_vectors_) based on the
+  // quantization type.
+  //
+  // Returns:
+  //   - The location of the appended vector (i.e., the starting index within
+  //     the vector storage).
+  //   - Any error when allocating the vector storage.
+  libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
+      const PropertyProto::VectorProto& vector,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type);
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
@@ -292,8 +349,7 @@ class EmbeddingIndex : public PersistentStorage {
   }
 
   const Clock& clock_;
-  const DocumentStore& document_store_;
-  const SchemaStore& schema_store_;
+  const FeatureFlags* feature_flags_;  // Does not own.
 
   // In memory data:
   // Pending embedding hits with their embedding keys used for
@@ -325,6 +381,7 @@ class EmbeddingIndex : public PersistentStorage {
   //
   // null if the index is empty.
   std::unique_ptr<FileBackedVector<float>> embedding_vectors_;
+  std::unique_ptr<FileBackedVector<char>> quantized_embedding_vectors_;
 };
 
 }  // namespace lib

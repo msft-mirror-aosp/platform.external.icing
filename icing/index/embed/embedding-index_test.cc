@@ -33,12 +33,13 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-hit.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -47,7 +48,6 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -56,8 +56,14 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::FloatNear;
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::Pointwise;
 using ::testing::Test;
+
+static constexpr SectionId kSectionIdQuantizedEmbedding = 2;
+static constexpr float kEpsQuantized = 0.01f;
 
 class EmbeddingIndexTest : public Test {
  protected:
@@ -90,7 +96,7 @@ class EmbeddingIndexTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
-                               document_store_.get(), schema_store_.get()));
+                               feature_flags_.get()));
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
         SchemaBuilder()
@@ -132,52 +138,6 @@ class EmbeddingIndexTest : public Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
-  libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetHits(
-      uint32_t dimension, std::string_view model_signature) {
-    return GetHits(embedding_index_.get(), dimension, model_signature);
-  }
-
-  static libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetHits(
-      const EmbeddingIndex* embedding_index, uint32_t dimension,
-      std::string_view model_signature) {
-    std::vector<EmbeddingHit> hits;
-
-    libtextclassifier3::StatusOr<
-        std::unique_ptr<PostingListEmbeddingHitAccessor>>
-        pl_accessor_or =
-            embedding_index->GetAccessor(dimension, model_signature);
-    std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor;
-    if (pl_accessor_or.ok()) {
-      pl_accessor = std::move(pl_accessor_or).ValueOrDie();
-    } else if (absl_ports::IsNotFound(pl_accessor_or.status())) {
-      return hits;
-    } else {
-      return std::move(pl_accessor_or).status();
-    }
-
-    while (true) {
-      ICING_ASSIGN_OR_RETURN(std::vector<EmbeddingHit> batch,
-                             pl_accessor->GetNextHitsBatch());
-      if (batch.empty()) {
-        return hits;
-      }
-      hits.insert(hits.end(), batch.begin(), batch.end());
-    }
-  }
-
-  std::vector<float> GetRawEmbeddingData() {
-    return GetRawEmbeddingData(embedding_index_.get());
-  }
-
-  static std::vector<float> GetRawEmbeddingData(
-      const EmbeddingIndex* embedding_index) {
-    ICING_ASSIGN_OR_RETURN(const float* data,
-                           embedding_index->GetRawEmbeddingData(),
-                           std::vector<float>());
-    return std::vector<float>(data,
-                              data + embedding_index->GetTotalVectorSize());
-  }
-
   libtextclassifier3::StatusOr<bool> IndexContainsMetadataOnly() {
     std::vector<std::string> sub_dirs;
     if (!filesystem_.ListDirectory(embedding_index_dir_.c_str(), /*exclude=*/{},
@@ -208,22 +168,12 @@ TEST_F(EmbeddingIndexTest, InitializationShouldFailWithNullPointer) {
   std::string embedding_index_dir =
       GetTestTempDir() + "/embedding_index_test_local";
 
-  EXPECT_THAT(
-      EmbeddingIndex::Create(nullptr, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  EXPECT_THAT(
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, nullptr,
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                                     nullptr, schema_store_.get()),
+  EXPECT_THAT(EmbeddingIndex::Create(nullptr, embedding_index_dir, &clock_,
+                                     feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                                     document_store_.get(), nullptr),
+  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir, nullptr,
+                                     feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -235,7 +185,7 @@ TEST_F(EmbeddingIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index,
       EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()));
+                             feature_flags_.get()));
 
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index->BufferEmbedding(
@@ -245,11 +195,11 @@ TEST_F(EmbeddingIndexTest,
   embedding_index->set_last_added_document_id(0);
 
   EXPECT_THAT(
-      GetHits(embedding_index.get(), /*dimension=*/3,
-              /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(embedding_index.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index.get()),
               ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index->last_added_document_id(), 0);
   // GetChecksum should succeed without updating the checksum.
@@ -257,10 +207,9 @@ TEST_F(EmbeddingIndexTest,
 
   // 2. Try to create another index with the same directory. This should fail
   // due to checksum mismatch.
-  EXPECT_THAT(
-      EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
+                                     feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   embedding_index.reset();
   filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
@@ -273,7 +222,7 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index,
       EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()));
+                             feature_flags_.get()));
 
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index->BufferEmbedding(
@@ -283,11 +232,11 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
   embedding_index->set_last_added_document_id(0);
 
   EXPECT_THAT(
-      GetHits(embedding_index.get(), /*dimension=*/3,
-              /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(embedding_index.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index.get()),
               ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index->last_added_document_id(), 0);
 
@@ -300,14 +249,14 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index_two,
       EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()));
+                             feature_flags_.get()));
 
   EXPECT_THAT(
-      GetHits(embedding_index_two.get(), /*dimension=*/3,
-              /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_two.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(embedding_index_two.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_two.get()),
               ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index_two->last_added_document_id(), 0);
 
@@ -323,7 +272,7 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index,
       EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()));
+                             feature_flags_.get()));
 
   PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index->BufferEmbedding(
@@ -333,11 +282,11 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   embedding_index->set_last_added_document_id(0);
 
   EXPECT_THAT(
-      GetHits(embedding_index.get(), /*dimension=*/3,
-              /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(embedding_index.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index.get()),
               ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index->last_added_document_id(), 0);
 
@@ -348,20 +297,53 @@ TEST_F(EmbeddingIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndex> embedding_index_two,
       EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
-                             document_store_.get(), schema_store_.get()));
+                             feature_flags_.get()));
 
   EXPECT_THAT(
-      GetHits(embedding_index_two.get(), /*dimension=*/3,
-              /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_two.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(embedding_index_two.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_two.get()),
               ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index_two->last_added_document_id(), 0);
 
   embedding_index.reset();
   embedding_index_two.reset();
   filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
+}
+
+TEST_F(EmbeddingIndexTest, GetEmbeddingVectorShouldFailWhenOutOfRange) {
+  BasicHit basic_hit(/*section_id=*/0, /*document_id=*/0);
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(basic_hit, vector,
+                                                    QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  EmbeddingHit embedding_hit(basic_hit, /*location=*/0);
+  uint32_t dimension = 3;
+  ICING_ASSERT_OK(
+      embedding_index_->GetEmbeddingVector(embedding_hit, dimension));
+  EXPECT_THAT(
+      embedding_index_->GetEmbeddingVector(embedding_hit, dimension + 1),
+      StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(EmbeddingIndexTest,
+       GetQuantizedEmbeddingVectorShouldFailWhenOutOfRange) {
+  BasicHit basic_hit(kSectionIdQuantizedEmbedding, /*document_id=*/0);
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      basic_hit, vector, QUANTIZATION_TYPE_QUANTIZE_8_BIT));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  EmbeddingHit embedding_hit(basic_hit, /*location=*/0);
+  uint32_t dimension = 3;
+  ICING_ASSERT_OK(
+      embedding_index_->GetQuantizedEmbeddingVector(embedding_hit, dimension));
+  EXPECT_THAT(embedding_index_->GetQuantizedEmbeddingVector(embedding_hit,
+                                                            dimension + 1),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
 TEST_F(EmbeddingIndexTest, AddSingleEmbedding) {
@@ -373,10 +355,36 @@ TEST_F(EmbeddingIndexTest, AddSingleEmbedding) {
   embedding_index_->set_last_added_document_id(0);
 
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/0), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
+}
+
+TEST_F(EmbeddingIndexTest, AddSingleQuantizedEmbedding) {
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0), vector,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(0);
+
+  EmbeddingHit hit(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0),
+                   /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit)));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     hit,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -393,14 +401,49 @@ TEST_F(EmbeddingIndexTest, AddMultipleEmbeddingsInTheSameSection) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0),
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/3))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
+}
+
+TEST_F(EmbeddingIndexTest, AddMultipleQuantizedEmbeddingsInTheSameSection) {
+  PropertyProto::VectorProto vector1 = CreateVector("model", {0.1, 0.2, 0.3});
+  PropertyProto::VectorProto vector2 =
+      CreateVector("model", {-0.1, -0.2, -0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0), vector1,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0), vector2,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(0);
+
+  EmbeddingHit hit1(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0),
+                    /*location=*/0);
+  EmbeddingHit hit2(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0),
+                    /*location=*/3 + sizeof(Quantizer));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit1, hit2)));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(2 * (3 + sizeof(Quantizer))));  // Two quantized vectors
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     hit1, /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     hit2, /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {-0.1, -0.2, -0.3})));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -417,13 +460,14 @@ TEST_F(EmbeddingIndexTest, HitsWithLowerSectionIdReturnedFirst) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/2, /*document_id=*/0),
                                /*location=*/3),
                   EmbeddingHit(BasicHit(/*section_id=*/5, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
@@ -441,13 +485,14 @@ TEST_F(EmbeddingIndexTest, HitsWithHigherDocumentIdReturnedFirst) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(1);
 
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
                                /*location=*/3),
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
 }
@@ -465,18 +510,22 @@ TEST_F(EmbeddingIndexTest, AddEmbeddingsFromDifferentModels) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
-  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                        /*model_signature=*/"model1"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model2"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/2))));
-  EXPECT_THAT(
-      GetHits(/*dimension=*/5, /*model_signature=*/"non-existent-model"),
-      IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(),
+                  /*dimension=*/5, /*model_signature=*/"non-existent-model"),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -494,15 +543,18 @@ TEST_F(EmbeddingIndexTest,
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(0);
 
-  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/2))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -513,24 +565,41 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
     PropertyProto::VectorProto vector1 = CreateVector("model", {0.1, 0.2, 0.3});
     PropertyProto::VectorProto vector2 =
         CreateVector("model", {-0.1, -0.2, -0.3});
+    PropertyProto::VectorProto vector3 = CreateVector("model", {0.4, 0.5, 0.6});
+
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
         BasicHit(/*section_id=*/1, /*document_id=*/0), vector1,
         QUANTIZATION_TYPE_NONE));
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
         BasicHit(/*section_id=*/2, /*document_id=*/1), vector2,
         QUANTIZATION_TYPE_NONE));
+    ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+        BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2), vector3,
+        QUANTIZATION_TYPE_QUANTIZE_8_BIT));
     ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
-    embedding_index_->set_last_added_document_id(1);
+    embedding_index_->set_last_added_document_id(2);
 
-    EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
-                IsOkAndHolds(ElementsAre(
-                    EmbeddingHit(BasicHit(/*section_id=*/2, /*document_id=*/1),
-                                 /*location=*/3),
-                    EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
-                                 /*location=*/0))));
-    EXPECT_THAT(GetRawEmbeddingData(),
+    EmbeddingHit hit1(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2),
+                      /*location=*/0);
+    EmbeddingHit hit2(BasicHit(/*section_id=*/2, /*document_id=*/1),
+                      /*location=*/3);
+    EmbeddingHit hit3(BasicHit(/*section_id=*/1, /*document_id=*/0),
+                      /*location=*/0);
+
+    EXPECT_THAT(
+        GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                  /*model_signature=*/"model"),
+        IsOkAndHolds(ElementsAre(hit1, hit2, hit3)));
+    EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
                 ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
-    EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
+    EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+                Eq(3 + sizeof(Quantizer)));
+    EXPECT_THAT(
+        GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                       hit1,
+                                                       /*dimension=*/3),
+        IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector3.values())));
+    EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
     EXPECT_FALSE(embedding_index_->is_empty());
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(false));
 
@@ -538,7 +607,9 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
     ICING_ASSERT_OK(embedding_index_->Clear());
     EXPECT_TRUE(embedding_index_->is_empty());
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
-    EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+    EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+                IsEmpty());
+    EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(), Eq(0));
     EXPECT_EQ(embedding_index_->last_added_document_id(), kInvalidDocumentId);
   }
 }
@@ -550,24 +621,40 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
     PropertyProto::VectorProto vector1 = CreateVector("model", {0.1, 0.2, 0.3});
     PropertyProto::VectorProto vector2 =
         CreateVector("model", {-0.1, -0.2, -0.3});
+    PropertyProto::VectorProto vector3 = CreateVector("model", {0.4, 0.5, 0.6});
+
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
         BasicHit(/*section_id=*/1, /*document_id=*/0), vector1,
         QUANTIZATION_TYPE_NONE));
     ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
         BasicHit(/*section_id=*/2, /*document_id=*/1), vector2,
         QUANTIZATION_TYPE_NONE));
+    ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+        BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2), vector3,
+        QUANTIZATION_TYPE_QUANTIZE_8_BIT));
     ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
-    embedding_index_->set_last_added_document_id(1);
+    embedding_index_->set_last_added_document_id(2);
 
-    EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
-                IsOkAndHolds(ElementsAre(
-                    EmbeddingHit(BasicHit(/*section_id=*/2, /*document_id=*/1),
-                                 /*location=*/3),
-                    EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
-                                 /*location=*/0))));
-    EXPECT_THAT(GetRawEmbeddingData(),
+    EmbeddingHit hit1(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2),
+                      /*location=*/0);
+    EmbeddingHit hit2(BasicHit(/*section_id=*/2, /*document_id=*/1),
+                      /*location=*/3);
+    EmbeddingHit hit3(BasicHit(/*section_id=*/1, /*document_id=*/0),
+                      /*location=*/0);
+    EXPECT_THAT(
+        GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                  /*model_signature=*/"model"),
+        IsOkAndHolds(ElementsAre(hit1, hit2, hit3)));
+    EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
                 ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
-    EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
+    EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+                Eq(3 + sizeof(Quantizer)));
+    EXPECT_THAT(
+        GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                       hit1,
+                                                       /*dimension=*/3),
+        IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector3.values())));
+    EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
     EXPECT_FALSE(embedding_index_->is_empty());
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(false));
 
@@ -577,10 +664,12 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
-                               document_store_.get(), schema_store_.get()));
+                               feature_flags_.get()));
     EXPECT_TRUE(embedding_index_->is_empty());
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
-    EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+    EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+                IsEmpty());
+    EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(), Eq(0));
     EXPECT_EQ(embedding_index_->last_added_document_id(), kInvalidDocumentId);
   }
 }
@@ -589,7 +678,8 @@ TEST_F(EmbeddingIndexTest, EmptyCommitIsOk) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(), Eq(0));
 }
 
 TEST_F(EmbeddingIndexTest, MultipleCommits) {
@@ -607,13 +697,14 @@ TEST_F(EmbeddingIndexTest, MultipleCommits) {
       QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/3),
                   EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
 }
 
@@ -656,13 +747,47 @@ TEST_F(EmbeddingIndexTest, InvalidCommit_DocumentIdCanOnlyIncrease) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
+TEST_F(EmbeddingIndexTest, OptimizeShouldFailWithNullPointer) {
+  EXPECT_THAT(embedding_index_->Optimize(
+                  /*document_store=*/nullptr, schema_store_.get(),
+                  /*document_id_old_to_new=*/{},
+                  /*new_last_added_document_id=*/kInvalidDocumentId),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(embedding_index_->Optimize(
+                  document_store_.get(), /*schema_store=*/nullptr,
+                  /*document_id_old_to_new=*/{},
+                  /*new_last_added_document_id=*/kInvalidDocumentId),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(EmbeddingIndexTest, OptimizeShouldFailWhenDocumentIdMapIsTooSmall) {
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/2), vector,
+      QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(2);
+
+  // Optimize should fail because the provided document_id_old_to_new map does
+  // not contain an entry for document id 2.
+  EXPECT_THAT(embedding_index_
+                  ->Optimize(document_store_.get(), schema_store_.get(),
+                             /*document_id_old_to_new=*/{0, 1},
+                             /*new_last_added_document_id=*/2)
+                  .error_message(),
+              HasSubstr("The provided map is too small"));
+}
+
 TEST_F(EmbeddingIndexTest, EmptyOptimizeIsOk) {
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{},
       /*new_last_added_document_id=*/kInvalidDocumentId));
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(), Eq(0));
 }
 
 TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
@@ -675,45 +800,131 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
 
   // Before optimize
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/2), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
 
   // Run optimize without deleting any documents, and check that the index is
   // not changed.
-  ICING_ASSERT_OK(embedding_index_->Optimize(
-      /*document_id_old_to_new=*/{0, 1, 2},
-      /*new_last_added_document_id=*/2));
+  ICING_ASSERT_OK(
+      embedding_index_->Optimize(document_store_.get(), schema_store_.get(),
+                                 /*document_id_old_to_new=*/{0, 1, 2},
+                                 /*new_last_added_document_id=*/2));
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/2), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
 
   // Run optimize to map document id 2 to 1, and check that the index is
   // updated correctly.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
       /*new_last_added_document_id=*/1));
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(EmbeddingHit(
           BasicHit(/*section_id=*/0, /*document_id=*/1), /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
 
   // Run optimize to delete the document.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{0, kInvalidDocumentId},
       /*new_last_added_document_id=*/0));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
+}
+
+TEST_F(EmbeddingIndexTest, OptimizeSingleQuantizedEmbeddingSingleDocument) {
+  PropertyProto::VectorProto vector = CreateVector("model", {0.1, 0.2, 0.3});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2), vector,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(2);
+
+  // Before optimize
+  EmbeddingHit hit(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2),
+                   /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit)));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     hit, /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
+
+  // Run optimize without deleting any documents, and check that the index is
+  // not changed
+  ICING_ASSERT_OK(
+      embedding_index_->Optimize(document_store_.get(), schema_store_.get(),
+                                 /*document_id_old_to_new=*/{0, 1, 2},
+                                 /*new_last_added_document_id=*/2));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit)));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     hit, /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
+
+  // Run optimize to map document id 2 to 1, and check that the index is
+  // updated correctly
+  ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
+      /*new_last_added_document_id=*/1));
+  hit = EmbeddingHit(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/1),
+                     /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit)));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     hit, /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
+
+  // Run optimize to delete the document
+  ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId},
+      /*new_last_added_document_id=*/0));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(), Eq(0));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -721,65 +932,108 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
   PropertyProto::VectorProto vector1 = CreateVector("model", {0.1, 0.2, 0.3});
   PropertyProto::VectorProto vector2 =
       CreateVector("model", {-0.1, -0.2, -0.3});
+  PropertyProto::VectorProto vector3 = CreateVector("model", {0.4, 0.5, 0.6});
+
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(/*section_id=*/0, /*document_id=*/2), vector1,
       QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(/*section_id=*/0, /*document_id=*/2), vector2,
       QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2), vector3,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(2);
 
   // Before optimize
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EmbeddingHit quantized_hit(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2),
+      /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/2),
                                /*location=*/0),
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/2),
-                               /*location=*/3))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+                               /*location=*/3),
+                  quantized_hit)));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector3.values())));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
 
   // Run optimize without deleting any documents, and check that the index is
   // not changed.
-  ICING_ASSERT_OK(embedding_index_->Optimize(
-      /*document_id_old_to_new=*/{0, 1, 2},
-      /*new_last_added_document_id=*/2));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  ICING_ASSERT_OK(
+      embedding_index_->Optimize(document_store_.get(), schema_store_.get(),
+                                 /*document_id_old_to_new=*/{0, 1, 2},
+                                 /*new_last_added_document_id=*/2));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/2),
                                /*location=*/0),
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/2),
-                               /*location=*/3))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+                               /*location=*/3),
+                  quantized_hit)));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector3.values())));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
 
   // Run optimize to map document id 2 to 1, and check that the index is
   // updated correctly.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
       /*new_last_added_document_id=*/1));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  quantized_hit =
+      EmbeddingHit(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/1),
+                   /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
                                /*location=*/0),
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
-                               /*location=*/3))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+                               /*location=*/3),
+                  quantized_hit)));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector3.values())));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
 
   // Run optimize to delete the document.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{0, kInvalidDocumentId},
       /*new_last_added_document_id=*/0));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(), Eq(0));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -788,6 +1042,8 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
   PropertyProto::VectorProto vector2 = CreateVector("model", {1, 2, 3});
   PropertyProto::VectorProto vector3 =
       CreateVector("model", {-0.1, -0.2, -0.3});
+  PropertyProto::VectorProto vector4 = CreateVector("model", {0.4, 0.5, 0.6});
+
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
       QUANTIZATION_TYPE_NONE));
@@ -797,20 +1053,35 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(/*section_id=*/0, /*document_id=*/1), vector3,
       QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/1), vector4,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
   embedding_index_->set_last_added_document_id(1);
 
   // Before optimize
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EmbeddingHit quantized_hit(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/1),
+      /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
                                /*location=*/6),
+                  quantized_hit,
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0),
                   EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
                                /*location=*/3))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 0.3, 1, 2, 3, -0.1, -0.2, -0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector4.values())));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
 
   // Run optimize without deleting any documents. It is expected to see that the
@@ -820,32 +1091,57 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
   // Also keep in mind that once the raw data is rearranged, calling another
   // Optimize subsequently will not change the raw data again.
   for (int i = 0; i < 2; i++) {
-    ICING_ASSERT_OK(embedding_index_->Optimize(
-        /*document_id_old_to_new=*/{0, 1},
-        /*new_last_added_document_id=*/1));
-    EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
-                IsOkAndHolds(ElementsAre(
-                    EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
-                                 /*location=*/0),
-                    EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
-                                 /*location=*/3),
-                    EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
-                                 /*location=*/6))));
-    EXPECT_THAT(GetRawEmbeddingData(),
+    ICING_ASSERT_OK(
+        embedding_index_->Optimize(document_store_.get(), schema_store_.get(),
+                                   /*document_id_old_to_new=*/{0, 1},
+                                   /*new_last_added_document_id=*/1));
+    EXPECT_THAT(
+        GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                  /*model_signature=*/"model"),
+        IsOkAndHolds(ElementsAre(
+            EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
+                         /*location=*/0),
+            quantized_hit,
+            EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
+                         /*location=*/3),
+            EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
+                         /*location=*/6))));
+    EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
                 ElementsAre(-0.1, -0.2, -0.3, 0.1, 0.2, 0.3, 1, 2, 3));
+    EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+                Eq(3 + sizeof(Quantizer)));
+    EXPECT_THAT(
+        GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                       quantized_hit,
+                                                       /*dimension=*/3),
+        IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector4.values())));
     EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
   }
 
   // Run optimize to delete document 0, and check that the index is
   // updated correctly.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{kInvalidDocumentId, 0},
       /*new_last_added_document_id=*/0));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  quantized_hit =
+      EmbeddingHit(BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0),
+                   /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
-                               /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(-0.1, -0.2, -0.3));
+                               /*location=*/0),
+                  quantized_hit)));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(-0.1, -0.2, -0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), vector4.values())));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -867,17 +1163,19 @@ TEST_F(EmbeddingIndexTest, OptimizeEmbeddingsFromDifferentModels) {
   embedding_index_->set_last_added_document_id(1);
 
   // Before optimize
-  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                        /*model_signature=*/"model1"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
                                /*location=*/2),
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model2"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/1),
                                /*location=*/4))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.1, 0.2, 1, 2, -0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
 
@@ -890,20 +1188,25 @@ TEST_F(EmbeddingIndexTest, OptimizeEmbeddingsFromDifferentModels) {
   // Also keep in mind that once the raw data is rearranged, calling another
   // Optimize subsequently will not change the raw data again.
   for (int i = 0; i < 2; i++) {
-    ICING_ASSERT_OK(embedding_index_->Optimize(
-        /*document_id_old_to_new=*/{0, 1},
-        /*new_last_added_document_id=*/1));
-    EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
-                IsOkAndHolds(ElementsAre(
-                    EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
-                                 /*location=*/0),
-                    EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
-                                 /*location=*/2))));
-    EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
-                IsOkAndHolds(ElementsAre(
-                    EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/1),
-                                 /*location=*/4))));
-    EXPECT_THAT(GetRawEmbeddingData(),
+    ICING_ASSERT_OK(
+        embedding_index_->Optimize(document_store_.get(), schema_store_.get(),
+                                   /*document_id_old_to_new=*/{0, 1},
+                                   /*new_last_added_document_id=*/1));
+    EXPECT_THAT(
+        GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                  /*model_signature=*/"model1"),
+        IsOkAndHolds(ElementsAre(
+            EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/1),
+                         /*location=*/0),
+            EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
+                         /*location=*/2))));
+    EXPECT_THAT(
+        GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                  /*model_signature=*/"model2"),
+        IsOkAndHolds(ElementsAre(
+            EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/1),
+                         /*location=*/4))));
+    EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
                 ElementsAre(1, 2, 0.1, 0.2, -0.1, -0.2, -0.3));
     EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
   }
@@ -911,15 +1214,19 @@ TEST_F(EmbeddingIndexTest, OptimizeEmbeddingsFromDifferentModels) {
   // Run optimize to delete document 1, and check that the index is
   // updated correctly.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{0, kInvalidDocumentId},
       /*new_last_added_document_id=*/0));
-  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                        /*model_signature=*/"model1"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model2"),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -938,29 +1245,36 @@ TEST_F(EmbeddingIndexTest,
   embedding_index_->set_last_added_document_id(1);
 
   // Before optimize
-  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                        /*model_signature=*/"model1"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model2"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/1),
                                /*location=*/2))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(0.1, 0.2, -0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 1);
 
   // Run optimize to delete document 0, and check that the index is
   // updated correctly.
   ICING_ASSERT_OK(embedding_index_->Optimize(
+      document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{kInvalidDocumentId, 0},
       /*new_last_added_document_id=*/0));
-  EXPECT_THAT(GetHits(/*dimension=*/2, /*model_signature=*/"model1"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/2,
+                                        /*model_signature=*/"model1"),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model2"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model2"),
               IsOkAndHolds(ElementsAre(
                   EmbeddingHit(BasicHit(/*section_id=*/1, /*document_id=*/0),
                                /*location=*/0))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(-0.1, -0.2, -0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+              ElementsAre(-0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 

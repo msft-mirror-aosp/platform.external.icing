@@ -359,6 +359,15 @@ DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
           /*needs_qualified_id_join_index_rebuild=*/false,
           /*needs_embedding_index_rebuild=*/true);
     }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION: {
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/true);
+    }
     case IcingSearchEngineFeatureInfoProto::UNKNOWN:
       return DerivedFilesRebuildResult(
           /*needs_document_store_derived_files_rebuild=*/true,
@@ -406,6 +415,11 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   if (options.enable_scorable_properties()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES));
+  }
+  // EmbeddingQuantization feature
+  if (options.enable_embedding_quantization()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
   }
 }
 

@@ -40,9 +40,6 @@ constexpr float GetMaximumErrorForQuantization(float float_min,
 TEST(QuantizerTest, CreateFailure) {
   EXPECT_THAT(Quantizer::Create(/*float_min=*/1.0f, /*float_max=*/0.0f),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  EXPECT_THAT(Quantizer::Create(/*float_min=*/0.0f, /*float_max=*/0.0f),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(QuantizerTest, QuantizeAndDequantize) {
@@ -144,6 +141,28 @@ TEST(QuantizerTest, QuantizeAndDequantizeEqualRange) {
   EXPECT_EQ(quantizer.Quantize(300.0f), 255);
   EXPECT_EQ(quantizer.Quantize(std::numeric_limits<float>::lowest()), 0);
   EXPECT_EQ(quantizer.Quantize(std::numeric_limits<float>::max()), 255);
+}
+
+TEST(QuantizerTest, QuantizeAndDequantizeWithMinEqualToMax) {
+  float constant_values[] = {0.0f, 1.0f, -1.0f, 5.0f, -5.0f, 100.0f, -100.0f};
+  for (float constant_value : constant_values) {
+    ICING_ASSERT_OK_AND_ASSIGN(Quantizer quantizer,
+                               Quantizer::Create(/*float_min=*/constant_value,
+                                                 /*float_max=*/constant_value));
+
+    // All values should be quantized to 0.
+    for (float float_value = constant_value - 5;
+         float_value <= constant_value + 5; ++float_value) {
+      EXPECT_EQ(quantizer.Quantize(float_value), 0);
+    }
+
+    // All quantized values should be dequantized to the constant value.
+    for (int quantized_value = 0;
+         quantized_value <= std::numeric_limits<uint8_t>::max();
+         ++quantized_value) {
+      EXPECT_FLOAT_EQ(quantizer.Dequantize(quantized_value), constant_value);
+    }
+  }
 }
 
 }  // namespace

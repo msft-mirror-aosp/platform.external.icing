@@ -20,15 +20,26 @@ namespace lib {
 
 class FeatureFlags {
  public:
-  explicit FeatureFlags(bool enable_scorable_properties)
-      : enable_scorable_properties_(enable_scorable_properties) {}
+  explicit FeatureFlags(bool enable_scorable_properties,
+                        bool enable_embedding_quantization)
+      : enable_scorable_properties_(enable_scorable_properties),
+        enable_embedding_quantization_(enable_embedding_quantization) {}
 
   bool enable_scorable_properties() const {
     return enable_scorable_properties_;
   }
 
+  bool enable_embedding_quantization() const {
+    return enable_embedding_quantization_;
+  }
+
  private:
   bool enable_scorable_properties_;
+
+  // Whether to enable quantization for embedding vectors. If false, all
+  // embedding vectors will not be quantized. Otherwise, quantization will be
+  // controlled by the quantization type specified in the schema.
+  bool enable_embedding_quantization_;
 };
 
 }  // namespace lib

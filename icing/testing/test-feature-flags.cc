@@ -20,7 +20,8 @@ namespace icing {
 namespace lib {
 
 FeatureFlags GetTestFeatureFlags() {
-  return FeatureFlags(/*enable_scorable_properties=*/true);
+  return FeatureFlags(/*enable_scorable_properties=*/true,
+                      /*enable_embedding_quantization=*/true);
 }
 
 }  // namespace lib
