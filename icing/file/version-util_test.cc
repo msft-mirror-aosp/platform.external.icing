@@ -771,6 +771,52 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_embedding_index_rebuild=*/true)),
 
         // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                               FEATURE_EMBEDDING_QUANTIZATION}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                               FEATURE_EMBEDDING_QUANTIZATION}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
+
+        // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
         // - Current version = 4
         // - Current enabled features = {}
@@ -801,6 +847,51 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                                FEATURE_EMBEDDING_QUANTIZATION}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                                FEATURE_EMBEDDING_QUANTIZATION}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
                 /*needs_document_store_derived_files_rebuild=*/false,
@@ -974,6 +1065,20 @@ TEST(VersionUtilTest,
                   /*needs_embedding_index_rebuild=*/true)));
 }
 
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureEmbeddingQuantization) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildResult(
+          IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION),
+      Eq(DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/true)));
+}
+
 class VersionUtilFeatureProtoTest
     : public ::testing::TestWithParam<
           IcingSearchEngineFeatureInfoProto::FlaggedFeatureType> {};
@@ -1007,7 +1112,8 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         IcingSearchEngineFeatureInfoProto::UNKNOWN,
         IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR,
-        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
 
 }  // namespace
 

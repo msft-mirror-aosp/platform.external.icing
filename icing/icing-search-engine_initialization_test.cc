@@ -245,6 +245,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_use_new_qualified_id_join_index(true);
+  icing_options.set_enable_embedding_index(true);
+  icing_options.set_enable_embedding_quantization(true);
   return icing_options;
 }
 
@@ -5548,8 +5550,7 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<EmbeddingIndex> embedding_index,
         EmbeddingIndex::Create(filesystem(), GetEmbeddingIndexDir(),
-                               &fake_clock, document_store.get(),
-                               schema_store.get()));
+                               &fake_clock, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<TermIndexingHandler> term_indexing_handler,
@@ -6231,10 +6232,10 @@ TEST_F(IcingSearchEngineInitializationTest, TurnOffEnableSchemaDatabaseFlag) {
   EXPECT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
 }
 
-class IcingSearchEngineInitializationChangeEnableEmbeddingIndexFlagTest
+class IcingSearchEngineInitializationChangeEmbeddingFlagTest
     : public IcingSearchEngineInitializationTest,
       public ::testing::WithParamInterface<std::vector<bool>> {};
-TEST_P(IcingSearchEngineInitializationChangeEnableEmbeddingIndexFlagTest,
+TEST_P(IcingSearchEngineInitializationChangeEmbeddingFlagTest,
        ChangeEnableEmbeddingIndexFlagTest) {
   std::vector<bool> enable_embedding_index_flags = GetParam();
 
@@ -6331,9 +6332,161 @@ TEST_P(IcingSearchEngineInitializationChangeEnableEmbeddingIndexFlagTest,
   }
 }
 
+TEST_P(IcingSearchEngineInitializationChangeEmbeddingFlagTest,
+       ChangeEnableEmbeddingQuantizationFlagTest) {
+  std::vector<bool> enable_embedding_quantization_flags = GetParam();
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("embeddingUnquantized")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_LINEAR_SEARCH,
+                              EmbeddingIndexingConfig::QuantizationType::NONE)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("embeddingQuantized")
+                                   .SetDataTypeVector(
+                                       EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                       EmbeddingIndexingConfig::
+                                           QuantizationType::QUANTIZE_8_BIT)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // If quantization is enabled, this vector will be quantized to {0, 1, 255}.
+  PropertyProto::VectorProto vector = CreateVector("my_model", {0, 1.45, 255});
+  // Create two documents with different quantization types. If quantization is
+  // enabled, then only document2's embedding will be quantized. Otherwise, both
+  // will be unquantized.
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty("embeddingUnquantized", vector)
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "uri2")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(1)
+                                .AddVectorProperty("embeddingQuantized", vector)
+                                .Build();
+
+  // Create icing with a document that has an embedding.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(true);
+    options.set_enable_embedding_quantization(
+        enable_embedding_quantization_flags[0]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  }
+
+  // Create icing multiple times with different enable_embedding_index flags.
+  for (int i = 1; i < enable_embedding_quantization_flags.size(); ++i) {
+    bool flag_changed = enable_embedding_quantization_flags[i] !=
+                        enable_embedding_quantization_flags[i - 1];
+
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/embedding_index_dir")))
+        .Times(flag_changed ? 1 : 0);
+
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(true);
+    options.set_enable_embedding_quantization(
+        enable_embedding_quantization_flags[i]);
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
+                                : InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Write an embedding query that always matches all the documents. We will
+    // check quantization by checking the scores.
+    //
+    // This query will assign a dot product score that is equal to the sum of
+    // all dimensions of the matched embedding. As a result, if quantization is
+    // enabled, the score will be 0 + 1 + 255 = 256. Otherwise, the score will
+    // be 0 + 1.45 + 255 = 256.45.
+    SearchSpecProto search_spec;
+    search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+    *search_spec.add_embedding_query_vectors() =
+        CreateVector("my_model", {1, 1, 1});
+    search_spec.set_embedding_query_metric_type(
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+    ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+    scoring_spec.set_rank_by(
+        ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+    // Set the advanced scoring expression to a constant so that the documents
+    // will be returned according to their order they were added.
+    scoring_spec.set_advanced_scoring_expression("0");
+    // Set the additional advanced scoring expression to check the embedding
+    // scores.
+    scoring_spec.add_additional_advanced_scoring_expressions(
+        "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+
+    SearchResultProto results = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    EXPECT_THAT(results.results(), SizeIs(2));
+
+    constexpr float eps = 0.0001f;
+    constexpr float unquantized_score = 256.45f;
+    constexpr float quantized_score = 256.0f;
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
+    if (enable_embedding_quantization_flags[i]) {
+      // When quantization is enabled, only the embedding that is configured
+      // with quantization is quantized. So only document2's embedding is
+      // quantized.
+      EXPECT_NEAR(results.results(0).additional_scores(0), quantized_score,
+                  eps);
+    } else {
+      // When quantization is disabled, all embeddings are unquantized.
+      EXPECT_NEAR(results.results(0).additional_scores(0), unquantized_score,
+                  eps);
+    }
+    // document1's embedding is always unquantized, since it is not configured
+    // to be quantized.
+    EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
+    EXPECT_NEAR(results.results(1).additional_scores(0), unquantized_score,
+                eps);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
-    IcingSearchEngineInitializationChangeEnableEmbeddingIndexFlagTest,
-    IcingSearchEngineInitializationChangeEnableEmbeddingIndexFlagTest,
+    IcingSearchEngineInitializationChangeEmbeddingFlagTest,
+    IcingSearchEngineInitializationChangeEmbeddingFlagTest,
     testing::Values(std::vector<bool>{false, true, false, true, false, true},
                     std::vector<bool>{true, false, true, false, true, false},
                     std::vector<bool>{false, true, true, true, false, true},

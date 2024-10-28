@@ -14,26 +14,22 @@
 
 #include "icing/index/embedding-indexing-handler.h"
 
-#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/absl_ports/canonical_errors.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -52,7 +48,6 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/icu-data-file-helper.h"
-#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -63,41 +58,51 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::FloatNear;
 using ::testing::IsEmpty;
 using ::testing::IsTrue;
+using ::testing::Pointwise;
 
 // Indexable properties (section) and section id. Section id is determined by
 // the lexicographical order of indexable property paths.
 // Schema type with indexable properties: FakeType
 // Section id = 0: "body"
 // Section id = 1: "bodyEmbedding"
-// Section id = 2: "title"
-// Section id = 3: "titleEmbedding"
+// Section id = 2: "quantizedEmbedding"
+// Section id = 3: "title"
+// Section id = 4: "titleEmbedding"
 static constexpr std::string_view kFakeType = "FakeType";
 static constexpr std::string_view kPropertyBody = "body";
 static constexpr std::string_view kPropertyBodyEmbedding = "bodyEmbedding";
+static constexpr std::string_view kPropertyQuantizedEmbedding =
+    "quantizedEmbedding";
 static constexpr std::string_view kPropertyTitle = "title";
 static constexpr std::string_view kPropertyTitleEmbedding = "titleEmbedding";
 static constexpr std::string_view kPropertyNonIndexableEmbedding =
     "nonIndexableEmbedding";
 
 static constexpr SectionId kSectionIdBodyEmbedding = 1;
-static constexpr SectionId kSectionIdTitleEmbedding = 3;
+static constexpr SectionId kSectionIdQuantizedEmbedding = 2;
+static constexpr SectionId kSectionIdTitleEmbedding = 4;
 
 // Schema type with nested indexable properties: FakeCollectionType
 // Section id = 0: "collection.body"
 // Section id = 1: "collection.bodyEmbedding"
-// Section id = 2: "collection.title"
-// Section id = 3: "collection.titleEmbedding"
-// Section id = 4: "fullDocEmbedding"
+// Section id = 2: "collection.quantizedEmbedding"
+// Section id = 3: "collection.title"
+// Section id = 4: "collection.titleEmbedding"
+// Section id = 5: "fullDocEmbedding"
 static constexpr std::string_view kFakeCollectionType = "FakeCollectionType";
 static constexpr std::string_view kPropertyCollection = "collection";
 static constexpr std::string_view kPropertyFullDocEmbedding =
     "fullDocEmbedding";
 
 static constexpr SectionId kSectionIdNestedBodyEmbedding = 1;
-static constexpr SectionId kSectionIdNestedTitleEmbedding = 3;
-static constexpr SectionId kSectionIdFullDocEmbedding = 4;
+static constexpr SectionId kSectionIdNestedQuantizedEmbedding = 2;
+static constexpr SectionId kSectionIdNestedTitleEmbedding = 4;
+static constexpr SectionId kSectionIdFullDocEmbedding = 5;
+
+constexpr float kEpsQuantized = 0.01f;
 
 class EmbeddingIndexingHandlerTest : public ::testing::Test {
  protected:
@@ -158,6 +163,14 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
                                 EmbeddingIndexingConfig::EmbeddingIndexingType::
                                     LINEAR_SEARCH)
                             .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPropertyQuantizedEmbedding)
+                            .SetDataTypeVector(
+                                EmbeddingIndexingConfig::EmbeddingIndexingType::
+                                    LINEAR_SEARCH,
+                                QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                            .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyNonIndexableEmbedding)
                                      .SetDataType(TYPE_VECTOR)
@@ -199,8 +212,7 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_working_path_,
-                               &fake_clock_, document_store_.get(),
-                               schema_store_.get()));
+                               &fake_clock_, feature_flags_.get()));
   }
 
   void TearDown() override {
@@ -210,43 +222,6 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
     embedding_index_.reset();
 
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
-  }
-
-  libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetHits(
-      uint32_t dimension, std::string_view model_signature) {
-    std::vector<EmbeddingHit> hits;
-
-    libtextclassifier3::StatusOr<
-        std::unique_ptr<PostingListEmbeddingHitAccessor>>
-        pl_accessor_or =
-            embedding_index_->GetAccessor(dimension, model_signature);
-    std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor;
-    if (pl_accessor_or.ok()) {
-      pl_accessor = std::move(pl_accessor_or).ValueOrDie();
-    } else if (absl_ports::IsNotFound(pl_accessor_or.status())) {
-      return hits;
-    } else {
-      return std::move(pl_accessor_or).status();
-    }
-
-    while (true) {
-      ICING_ASSIGN_OR_RETURN(std::vector<EmbeddingHit> batch,
-                             pl_accessor->GetNextHitsBatch());
-      if (batch.empty()) {
-        return hits;
-      }
-      hits.insert(hits.end(), batch.begin(), batch.end());
-    }
-  }
-
-  std::vector<float> GetRawEmbeddingData() {
-    auto data_or = embedding_index_->GetRawEmbeddingData();
-    if (!data_or.ok()) {
-      return std::vector<float>();
-    }
-    return std::vector<float>(
-        data_or.ValueOrDie(),
-        data_or.ValueOrDie() + embedding_index_->GetTotalVectorSize());
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
@@ -289,6 +264,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyBodyEmbedding),
                              CreateVector("model", {0.4, 0.5, 0.6}),
                              CreateVector("model", {0.7, 0.8, 0.9}))
+          .AddVectorProperty(std::string(kPropertyQuantizedEmbedding),
+                             CreateVector("model", {0.1, 0.2, 0.3}),
+                             CreateVector("model", {0.4, 0.5, 0.6}))
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
@@ -314,17 +292,41 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
       IsOk());
 
   // Check index
-  EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
-      IsOkAndHolds(ElementsAre(
-          EmbeddingHit(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
-                       /*location=*/0),
-          EmbeddingHit(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
-                       /*location=*/3),
-          EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
-                       /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EmbeddingHit hit1(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
+                    /*location=*/0);
+  EmbeddingHit hit2(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
+                    /*location=*/3);
+  EmbeddingHit hit3(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
+                    /*location=*/6);
+  // Quantized embeddings are stored in a different location from unquantized
+  // embeddings, so the location starts from 0 again.
+  EmbeddingHit quantized_hit1(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/0);
+  EmbeddingHit quantized_hit2(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/3 + sizeof(Quantizer));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit1, hit2, quantized_hit1,
+                                       quantized_hit2, hit3)));
+  // Check unquantized embedding data
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
+  // Check quantized embedding data
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(6 + 2 * sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit1,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit2,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.4, 0.5, 0.6})));
+
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
@@ -366,9 +368,10 @@ TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
       IsOk());
 
   // Check that the embedding index is empty.
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
@@ -389,6 +392,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
                   .AddVectorProperty(std::string(kPropertyBodyEmbedding),
                                      CreateVector("model", {0.4, 0.5, 0.6}),
                                      CreateVector("model", {0.7, 0.8, 0.9}))
+                  .AddVectorProperty(std::string(kPropertyQuantizedEmbedding),
+                                     CreateVector("model", {0.1, 0.2, 0.3}),
+                                     CreateVector("model", {0.4, 0.5, 0.6}))
                   .AddVectorProperty(
                       std::string(kPropertyNonIndexableEmbedding),
                       CreateVector("model", {1.1, 1.2, 1.3}))
@@ -418,22 +424,44 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
       IsOk());
 
   // Check index
+  EmbeddingHit hit1(BasicHit(kSectionIdNestedBodyEmbedding, /*document_id=*/0),
+                    /*location=*/0);
+  EmbeddingHit hit2(BasicHit(kSectionIdNestedBodyEmbedding, /*document_id=*/0),
+                    /*location=*/3);
+  EmbeddingHit hit3(BasicHit(kSectionIdNestedTitleEmbedding, /*document_id=*/0),
+                    /*location=*/6);
+  EmbeddingHit hit4(BasicHit(kSectionIdFullDocEmbedding, /*document_id=*/0),
+                    /*location=*/9);
+  // Quantized embeddings are stored in a different location from unquantized
+  // embeddings, so the location starts from 0 again.
+  EmbeddingHit quantized_hit1(
+      BasicHit(kSectionIdNestedQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/0);
+  EmbeddingHit quantized_hit2(
+      BasicHit(kSectionIdNestedQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/3 + sizeof(Quantizer));
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
+              IsOkAndHolds(ElementsAre(hit1, hit2, quantized_hit1,
+                                       quantized_hit2, hit3, hit4)));
+  // Check unquantized embedding data
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
-      IsOkAndHolds(ElementsAre(
-          EmbeddingHit(
-              BasicHit(kSectionIdNestedBodyEmbedding, /*document_id=*/0),
-              /*location=*/0),
-          EmbeddingHit(
-              BasicHit(kSectionIdNestedBodyEmbedding, /*document_id=*/0),
-              /*location=*/3),
-          EmbeddingHit(
-              BasicHit(kSectionIdNestedTitleEmbedding, /*document_id=*/0),
-              /*location=*/6),
-          EmbeddingHit(BasicHit(kSectionIdFullDocEmbedding, /*document_id=*/0),
-                       /*location=*/9))));
-  EXPECT_THAT(GetRawEmbeddingData(), ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
-                                                 0.1, 0.2, 0.3, 2.1, 2.2, 2.3));
+      GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+      ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3, 2.1, 2.2, 2.3));
+  // Check quantized embedding data
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+              Eq(6 + 2 * sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit1,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
+                                                     quantized_hit2,
+                                                     /*dimension=*/3),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.4, 0.5, 0.6})));
+
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
@@ -478,10 +506,11 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_THAT(embedding_index_->last_added_document_id(),
               Eq(kCurrentDocumentId));
   // Check that the embedding index should be empty
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
 
   // Recovery mode should get the same result.
   EXPECT_THAT(
@@ -491,10 +520,11 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_THAT(embedding_index_->last_added_document_id(),
               Eq(kCurrentDocumentId));
   // Check that the embedding index should be empty
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
@@ -539,10 +569,11 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 
   // Check that the embedding index should be empty
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
 
   // Handling document with document_id < last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -556,10 +587,11 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id + 1));
 
   // Check that the embedding index should be empty
-  EXPECT_THAT(GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                        /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingData(), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
@@ -624,7 +656,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   // Check index
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(
           EmbeddingHit(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
                        /*location=*/0),
@@ -632,7 +665,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/3),
           EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
                        /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 
   // Handle document with document_id == last_added_document_id in recovery
@@ -649,7 +682,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   // Check index
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(
           EmbeddingHit(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
                        /*location=*/0),
@@ -657,7 +691,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/3),
           EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
                        /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 
   // Handle document with document_id < last_added_document_id in recovery mode.
@@ -673,7 +707,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   // Check index
   EXPECT_THAT(
-      GetHits(/*dimension=*/3, /*model_signature=*/"model"),
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                /*model_signature=*/"model"),
       IsOkAndHolds(ElementsAre(
           EmbeddingHit(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
                        /*location=*/0),
@@ -681,7 +716,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/3),
           EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
                        /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingData(),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 }
 

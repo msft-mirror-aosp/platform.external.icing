@@ -226,7 +226,7 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
-                               document_store_.get(), schema_store_.get()));
+                               feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/1000));

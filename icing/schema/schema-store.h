@@ -49,6 +49,7 @@
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -442,6 +443,19 @@ class SchemaStore {
   //   NOT_FOUND if the type config name of document not found
   libtextclassifier3::StatusOr<JoinablePropertyGroup> ExtractJoinableProperties(
       const DocumentProto& document) const;
+
+  // Returns the quantization type for the given schema_type_id and section_id.
+  //
+  // Returns:
+  //   - The quantization type on success.
+  //   - INVALID_ARGUMENT_ERROR if schema_type_id or section_id is invalid.
+  //   - Any error from schema store.
+  libtextclassifier3::StatusOr<EmbeddingIndexingConfig::QuantizationType::Code>
+  GetQuantizationType(SchemaTypeId schema_type_id, SectionId section_id) const {
+    ICING_ASSIGN_OR_RETURN(const SectionMetadata* section_metadata,
+                           GetSectionMetadata(schema_type_id, section_id));
+    return section_metadata->quantization_type;
+  }
 
   // Syncs all the data changes to disk.
   //

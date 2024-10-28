@@ -136,6 +136,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_schema_database(true);
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_scorable_properties(true);
+  icing_options.set_enable_embedding_quantization(true);
   return icing_options;
 }
 
@@ -7642,6 +7643,124 @@ TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
   EXPECT_THAT(results.results(1).additional_scores(0), DoubleNear(0, kEps));
   EXPECT_THAT(results.results(1).additional_scores(1),
               DoubleNear(0 + 0.5, kEps));
+}
+
+TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
+  constexpr float eps = 0.0001f;
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embeddingQuantized")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  // If quantization is enabled, this vector will be quantized to {0, 1, 255}.
+  PropertyProto::VectorProto vector1 = CreateVector("my_model", {0, 1.45, 255});
+  // If quantization is enabled, this vector will be quantized to {0, -2, -255}.
+  PropertyProto::VectorProto vector2 =
+      CreateVector("my_model", {0, -2.15, -255});
+
+  DocumentProto document_with_original_embedding =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding", vector1, vector2)
+          .Build();
+  DocumentProto document_with_quantized_embedding =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty("embeddingQuantized", vector1, vector2)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_with_original_embedding).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_with_quantized_embedding).status(),
+              ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  // Add an embedding query with semantic scores:
+  // - [0 + 1.45 + 255 = 256.45, 0 - 2.15 - 255 = -257.15] for
+  //   document_with_original_embedding
+  // - [0 + 1 + 255 = 256, 0 - 2 - 255 = -257] for
+  //   document_with_quantized_embedding
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+
+  // All embeddings should be matched for the range of [-1000, 1000].
+  search_spec.set_query(
+      "semanticSearch(getEmbeddingParameter(0), -1000, 1000)");
+  scoring_spec.set_advanced_scoring_expression(
+      "len(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  scoring_spec.add_additional_advanced_scoring_expressions(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  // Check results for document_with_quantized_embedding.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_with_quantized_embedding));
+  EXPECT_THAT(results.results(0).score(), 2);
+  EXPECT_THAT(results.results(0).additional_scores(0),
+              DoubleNear(256 + (-257), eps));
+  // Check results for document_with_original_embedding.
+  EXPECT_THAT(results.results(1).document(),
+              EqualsProto(document_with_original_embedding));
+  EXPECT_THAT(results.results(1).score(), 2);
+  EXPECT_THAT(results.results(1).additional_scores(0),
+              DoubleNear(256.45 + (-257.15), eps));
+
+  // Only one embedding (with score of 256.45, or 256 if quantized) should be
+  // matched for the range of [0, 1000].
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0), 0, 1000)");
+  scoring_spec.set_advanced_scoring_expression(
+      "len(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  scoring_spec.add_additional_advanced_scoring_expressions(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  // Check results for document_with_quantized_embedding.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_with_quantized_embedding));
+  EXPECT_THAT(results.results(0).score(), 1);
+  EXPECT_THAT(results.results(0).additional_scores(0), DoubleNear(256, eps));
+  // Check results for document_with_original_embedding.
+  EXPECT_THAT(results.results(1).document(),
+              EqualsProto(document_with_original_embedding));
+  EXPECT_THAT(results.results(1).score(), 1);
+  EXPECT_THAT(results.results(1).additional_scores(0), DoubleNear(256.45, eps));
 }
 
 TEST_F(IcingSearchEngineSearchTest,

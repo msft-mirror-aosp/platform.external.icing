@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -40,13 +41,21 @@ class Quantizer {
   //     float_max.
   static libtextclassifier3::StatusOr<Quantizer> Create(float float_min,
                                                         float float_max) {
-    if (float_min >= float_max) {
+    if (float_min > float_max) {
       return absl_ports::InvalidArgumentError(
-          "float_min must be less than float_max.");
+          "float_min must be less than or equal to float_max.");
     }
-    float scale_factor =
-        static_cast<float>(kMaxQuantizedValue) / (float_max - float_min);
+    float scale_factor = 0.0;
+    if (float_max - float_min > kEpsilon) {  // Not equal.
+      scale_factor =
+          static_cast<float>(kMaxQuantizedValue) / (float_max - float_min);
+    }
     return Quantizer(float_min, scale_factor);
+  }
+
+  // Creates a new Quantizer instance from the serialized data.
+  explicit Quantizer(const char* data) {
+    memcpy(this, data, sizeof(Quantizer));
   }
 
   uint8_t Quantize(float value) const {
@@ -59,14 +68,18 @@ class Quantizer {
   }
 
   float Dequantize(uint8_t quantized) const {
+    if (scale_factor_ == 0.0) {
+      return float_min_;
+    }
     return (quantized / scale_factor_) + float_min_;
   }
 
  private:
   static constexpr uint8_t kMaxQuantizedValue =
       std::numeric_limits<uint8_t>::max();
+  static constexpr float kEpsilon = 1e-6;
 
-  Quantizer(float float_min, float scale_factor)
+  explicit Quantizer(float float_min, float scale_factor)
       : float_min_(float_min), scale_factor_(scale_factor) {}
   float float_min_;
   float scale_factor_;

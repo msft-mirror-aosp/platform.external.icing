@@ -510,7 +510,8 @@ IcingSearchEngine::IcingSearchEngine(
     std::unique_ptr<const IcingFilesystem> icing_filesystem,
     std::unique_ptr<Clock> clock, std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
-      feature_flags_(options_.enable_scorable_properties()),
+      feature_flags_(options_.enable_scorable_properties(),
+                     options_.enable_embedding_quantization()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -830,8 +831,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     ICING_ASSIGN_OR_RETURN(
         embedding_index_,
         EmbeddingIndex::Create(filesystem_.get(), embedding_index_dir,
-                               clock_.get(), document_store_.get(),
-                               schema_store_.get()));
+                               clock_.get(), &feature_flags_));
 
     std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     IndexRestorationResult restore_result = RestoreIndexIfNeeded();
@@ -1117,9 +1117,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   const std::string embedding_dir =
       MakeEmbeddingIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause embedding_index_recovery_cause;
-  auto embedding_index_or =
-      EmbeddingIndex::Create(filesystem_.get(), embedding_dir, clock_.get(),
-                             document_store_.get(), schema_store_.get());
+  auto embedding_index_or = EmbeddingIndex::Create(
+      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
   if (!embedding_index_or.ok()) {
     ICING_RETURN_IF_ERROR(EmbeddingIndex::Discard(*filesystem_, embedding_dir));
 
@@ -1129,7 +1128,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     ICING_ASSIGN_OR_RETURN(
         embedding_index_,
         EmbeddingIndex::Create(filesystem_.get(), embedding_dir, clock_.get(),
-                               document_store_.get(), schema_store_.get()));
+                               &feature_flags_));
   } else {
     // Embedding index was created fine.
     embedding_index_ = std::move(embedding_index_or).ValueOrDie();
@@ -1927,7 +1926,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     }
 
     libtextclassifier3::Status embedding_index_optimize_status =
-        embedding_index_->Optimize(optimize_result.document_id_old_to_new,
+        embedding_index_->Optimize(document_store_.get(), schema_store_.get(),
+                                   optimize_result.document_id_old_to_new,
                                    document_store_->last_added_document_id());
     if (!embedding_index_optimize_status.ok()) {
       ICING_LOG(WARNING) << "Failed to optimize embedding index. Error: "

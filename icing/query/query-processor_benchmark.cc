@@ -179,7 +179,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             document_store.get(), schema_store.get()));
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -317,7 +317,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             document_store.get(), schema_store.get()));
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -473,7 +473,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             document_store.get(), schema_store.get()));
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -614,7 +614,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             document_store.get(), schema_store.get()));
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
