@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -381,6 +382,22 @@ class DocumentStore {
   //   False                    if the given document doesn't exist.
   std::optional<DocumentFilterData> GetAliveDocumentFilterData(
       DocumentId document_id, int64_t current_time_ms) const;
+
+  // Gets the SchemaTypeId of a document.
+  //
+  // Returns:
+  //   SchemaTypeId on success
+  //   kInvalidSchemaTypeId if the document is deleted or expired.
+  SchemaTypeId GetSchemaTypeId(DocumentId document_id,
+                               int64_t current_time_ms) const {
+    std::optional<DocumentFilterData> document_filter_data_optional =
+        GetAliveDocumentFilterData(document_id, current_time_ms);
+    if (document_filter_data_optional) {
+      return document_filter_data_optional.value().schema_type_id();
+    } else {
+      return kInvalidSchemaTypeId;
+    }
+  }
 
   // Gets the usage scores of a document.
   //

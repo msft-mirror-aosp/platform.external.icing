@@ -51,6 +51,11 @@ message IcingSearchEngineFeatureInfoProto {
     //
     // This feature covers the scorable properties feature.
     FEATURE_SCORABLE_PROPERTIES = 3;
+
+    // Feature for flag IcingSearchEngineOptions::enable_embedding_quantization.
+    //
+    // This feature covers whether to enable quantization for embedding vectors.
+    FEATURE_EMBEDDING_QUANTIZATION = 4;
   }
 
   // Whether the feature requires the document store to be rebuilt.
@@ -87,7 +92,7 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 22
+// Next tag: 23
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -229,6 +234,12 @@ message IcingSearchEngineOptions {
   // Feature flag guarding the new scorable properties feature.
   // TODO - b/357105837: Remove this flag once the feature is fully rolled out.
   optional bool enable_scorable_properties = 21;
+
+  // Whether to enable quantization for embedding vectors.
+  // If set to false, all embedding vectors will not be quantized. Otherwise,
+  // quantization will be controlled by the quantization type specified in the
+  // schema.
+  optional bool enable_embedding_quantization = 22;
 
   reserved 2;
 }

@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/destructible-directory.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
@@ -34,9 +35,12 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
@@ -75,6 +79,11 @@ std::string GetEmbeddingVectorsFilePath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/embedding_vectors");
 }
 
+std::string GetQuantizedEmbeddingVectorsFilePath(
+    std::string_view working_path) {
+  return absl_ports::StrCat(working_path, "/quantized_embedding_vectors");
+}
+
 // An injective function that maps the ordered pair (dimension, model_signature)
 // to a string, which is used to form a key for embedding_posting_list_mapper_.
 std::string GetPostingListKey(uint32_t dimension,
@@ -97,23 +106,30 @@ std::string GetPostingListKey(uint32_t dimension,
 }
 
 std::string GetPostingListKey(const PropertyProto::VectorProto& vector) {
-  return GetPostingListKey(vector.values_size(), vector.model_signature());
+  return GetPostingListKey(vector.values().size(), vector.model_signature());
+}
+
+libtextclassifier3::StatusOr<Quantizer> CreateQuantizer(
+    const PropertyProto::VectorProto& vector) {
+  if (vector.values().empty()) {
+    return absl_ports::InvalidArgumentError("Vector dimension is 0");
+  }
+  auto minmax_pair =
+      std::minmax_element(vector.values().begin(), vector.values().end());
+  return Quantizer::Create(*minmax_pair.first, *minmax_pair.second);
 }
 
 }  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>>
 EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
-                       const Clock* clock, const DocumentStore* document_store,
-                       const SchemaStore* schema_store) {
+                       const Clock* clock, const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
-  ICING_RETURN_ERROR_IF_NULL(document_store);
-  ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  std::unique_ptr<EmbeddingIndex> index = std::unique_ptr<EmbeddingIndex>(
-      new EmbeddingIndex(*filesystem, std::move(working_path), clock,
-                         document_store, schema_store));
+  std::unique_ptr<EmbeddingIndex> index =
+      std::unique_ptr<EmbeddingIndex>(new EmbeddingIndex(
+          *filesystem, std::move(working_path), clock, feature_flags));
   ICING_RETURN_IF_ERROR(index->Initialize());
   return index;
 }
@@ -140,6 +156,12 @@ libtextclassifier3::Status EmbeddingIndex::CreateStorageDataIfNonEmpty() {
       embedding_vectors_,
       FileBackedVector<float>::Create(
           filesystem_, GetEmbeddingVectorsFilePath(working_path_),
+          MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+
+  ICING_ASSIGN_OR_RETURN(
+      quantized_embedding_vectors_,
+      FileBackedVector<char>::Create(
+          filesystem_, GetQuantizedEmbeddingVectorsFilePath(working_path_),
           MemoryMappedFile::READ_WRITE_AUTO_SYNC));
 
   return libtextclassifier3::Status::OK;
@@ -202,6 +224,7 @@ libtextclassifier3::Status EmbeddingIndex::Clear() {
   flash_index_storage_.reset();
   embedding_posting_list_mapper_.reset();
   embedding_vectors_.reset();
+  quantized_embedding_vectors_.reset();
   if (filesystem_.DirectoryExists(working_path_.c_str())) {
     ICING_RETURN_IF_ERROR(Discard(filesystem_, working_path_));
   }
@@ -227,31 +250,56 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
       posting_list_id);
 }
 
+libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::AppendEmbeddingVector(
+    const PropertyProto::VectorProto& vector,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type) {
+  uint32_t dimension = vector.values().size();
+  uint32_t location;
+  if (!feature_flags_->enable_embedding_quantization() ||
+      quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    location = embedding_vectors_->num_elements();
+    ICING_ASSIGN_OR_RETURN(
+        FileBackedVector<float>::MutableArrayView mutable_arr,
+        embedding_vectors_->Allocate(dimension));
+    mutable_arr.SetArray(/*idx=*/0, vector.values().data(), dimension);
+  } else {
+    ICING_ASSIGN_OR_RETURN(Quantizer quantizer, CreateQuantizer(vector));
+    // Quantize the vector
+    std::vector<uint8_t> quantized_values;
+    quantized_values.reserve(vector.values().size());
+    for (float value : vector.values()) {
+      quantized_values.push_back(quantizer.Quantize(value));
+    }
+
+    // Store the quantizer and the quantized vector
+    location = quantized_embedding_vectors_->num_elements();
+    ICING_ASSIGN_OR_RETURN(
+        FileBackedVector<char>::MutableArrayView mutable_arr,
+        quantized_embedding_vectors_->Allocate(sizeof(Quantizer) + dimension));
+    mutable_arr.SetArray(/*idx=*/0, reinterpret_cast<char*>(&quantizer),
+                         sizeof(Quantizer));
+    mutable_arr.SetArray(/*idx=*/sizeof(Quantizer),
+                         reinterpret_cast<char*>(quantized_values.data()),
+                         dimension);
+  }
+  return location;
+}
+
 libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
     const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type) {
-  if (quantization_type != EmbeddingIndexingConfig::QuantizationType::NONE) {
-    return absl_ports::UnimplementedError(
-        "Quantization is not implemented yet");
-  }
-  if (vector.values_size() == 0) {
+  if (vector.values().empty()) {
     return absl_ports::InvalidArgumentError("Vector dimension is 0");
   }
   ICING_RETURN_IF_ERROR(MarkIndexNonEmpty());
 
-  uint32_t location = embedding_vectors_->num_elements();
-  uint32_t dimension = vector.values_size();
   std::string key = GetPostingListKey(vector);
+  ICING_ASSIGN_OR_RETURN(uint32_t location,
+                         AppendEmbeddingVector(vector, quantization_type));
 
   // Buffer the embedding hit.
   pending_embedding_hits_.push_back(
       {std::move(key), EmbeddingHit(basic_hit, location)});
-
-  // Put vector
-  ICING_ASSIGN_OR_RETURN(FileBackedVector<float>::MutableArrayView mutable_arr,
-                         embedding_vectors_->Allocate(dimension));
-  mutable_arr.SetArray(/*idx=*/0, vector.values().data(), dimension);
-
   return libtextclassifier3::Status::OK;
 }
 
@@ -317,13 +365,45 @@ libtextclassifier3::Status EmbeddingIndex::CommitBufferToIndex() {
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::TransferEmbeddingVector(
+    const EmbeddingHit& old_hit, uint32_t dimension,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    EmbeddingIndex* new_index) const {
+  uint32_t new_location;
+  if (!feature_flags_->enable_embedding_quantization() ||
+      quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    ICING_ASSIGN_OR_RETURN(const float* old_vector,
+                           GetEmbeddingVector(old_hit, dimension));
+    new_location = new_index->embedding_vectors_->num_elements();
+
+    // Copy the embedding vector of the hit to the new index.
+    ICING_ASSIGN_OR_RETURN(
+        FileBackedVector<float>::MutableArrayView mutable_arr,
+        new_index->embedding_vectors_->Allocate(dimension));
+    mutable_arr.SetArray(/*idx=*/0, old_vector, dimension);
+  } else {
+    ICING_ASSIGN_OR_RETURN(const char* old_data,
+                           GetQuantizedEmbeddingVector(old_hit, dimension));
+    new_location = new_index->quantized_embedding_vectors_->num_elements();
+
+    // Copy the embedding vector of the hit to the new index.
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<char>::MutableArrayView mutable_arr,
+                           new_index->quantized_embedding_vectors_->Allocate(
+                               sizeof(Quantizer) + dimension));
+    mutable_arr.SetArray(/*idx=*/0, old_data, sizeof(Quantizer) + dimension);
+  }
+  return new_location;
+}
+
 libtextclassifier3::Status EmbeddingIndex::TransferIndex(
+    const DocumentStore& document_store, const SchemaStore& schema_store,
     const std::vector<DocumentId>& document_id_old_to_new,
     EmbeddingIndex* new_index) const {
   if (is_empty()) {
     return absl_ports::FailedPreconditionError("EmbeddingIndex is empty");
   }
 
+  const int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   std::unique_ptr<KeyMapper<PostingListIdentifier>::Iterator> itr =
       embedding_posting_list_mapper_->GetIterator();
   while (itr->Advance()) {
@@ -344,6 +424,8 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
         PostingListEmbeddingHitAccessor::CreateFromExisting(
             flash_index_storage_.get(), posting_list_hit_serializer_.get(),
             /*existing_posting_list_id=*/itr->GetValue()));
+    DocumentId last_new_document_id = kInvalidDocumentId;
+    SchemaTypeId schema_type_id = kInvalidSchemaTypeId;
     while (true) {
       ICING_ASSIGN_OR_RETURN(std::vector<EmbeddingHit> batch,
                              old_pl_accessor->GetNextHitsBatch());
@@ -354,8 +436,6 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
         // Safety checks to add robustness to the codebase, so to make sure
         // that we never access invalid memory, in case that hit from the
         // posting list is corrupted.
-        ICING_ASSIGN_OR_RETURN(const float* old_vector,
-                               GetEmbeddingVector(old_hit, dimension));
         if (old_hit.basic_hit().document_id() < 0 ||
             old_hit.basic_hit().document_id() >=
                 document_id_old_to_new.size()) {
@@ -364,23 +444,36 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
               "too small, or the index may have been corrupted.");
         }
 
-        // Construct transferred hit
+        // Construct transferred hit and add the embedding vector to the new
+        // index.
         DocumentId new_document_id =
             document_id_old_to_new[old_hit.basic_hit().document_id()];
         if (new_document_id == kInvalidDocumentId) {
           continue;
         }
+        if (new_document_id != last_new_document_id) {
+          schema_type_id =
+              document_store.GetSchemaTypeId(new_document_id, current_time_ms);
+        }
+        last_new_document_id = new_document_id;
+        if (schema_type_id == kInvalidSchemaTypeId) {
+          // This should not happen, since document store is optimized first,
+          // so that new_document_id here should be alive.
+          continue;
+        }
+        ICING_ASSIGN_OR_RETURN(
+            EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+            schema_store.GetQuantizationType(schema_type_id,
+                                             old_hit.basic_hit().section_id()));
         ICING_RETURN_IF_ERROR(new_index->MarkIndexNonEmpty());
-        uint32_t new_location = new_index->embedding_vectors_->num_elements();
+
+        ICING_ASSIGN_OR_RETURN(
+            uint32_t new_location,
+            TransferEmbeddingVector(old_hit, dimension, quantization_type,
+                                    new_index));
         new_hits.push_back(EmbeddingHit(
             BasicHit(old_hit.basic_hit().section_id(), new_document_id),
             new_location));
-
-        // Copy the embedding vector of the hit to the new index.
-        ICING_ASSIGN_OR_RETURN(
-            FileBackedVector<float>::MutableArrayView mutable_arr,
-            new_index->embedding_vectors_->Allocate(dimension));
-        mutable_arr.SetArray(/*idx=*/0, old_vector, dimension);
       }
     }
     // No hit needs to be added to the new index.
@@ -409,8 +502,11 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
 }
 
 libtextclassifier3::Status EmbeddingIndex::Optimize(
+    const DocumentStore* document_store, const SchemaStore* schema_store,
     const std::vector<DocumentId>& document_id_old_to_new,
     DocumentId new_last_added_document_id) {
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
   if (is_empty()) {
     info().last_added_document_id = new_last_added_document_id;
     return libtextclassifier3::Status::OK;
@@ -439,9 +535,10 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<EmbeddingIndex> new_index,
         EmbeddingIndex::Create(&filesystem_, temporary_index_dir.dir(), &clock_,
-                               &document_store_, &schema_store_));
-    ICING_RETURN_IF_ERROR(
-        TransferIndex(document_id_old_to_new, new_index.get()));
+                               feature_flags_));
+    ICING_RETURN_IF_ERROR(TransferIndex(*document_store, *schema_store,
+                                        document_id_old_to_new,
+                                        new_index.get()));
     new_index->set_last_added_document_id(new_last_added_document_id);
     ICING_RETURN_IF_ERROR(new_index->PersistToDisk());
   }
@@ -451,6 +548,7 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   flash_index_storage_.reset();
   embedding_posting_list_mapper_.reset();
   embedding_vectors_.reset();
+  quantized_embedding_vectors_.reset();
 
   if (!filesystem_.SwapFiles(temporary_index_dir.dir().c_str(),
                              working_path_.c_str())) {
@@ -461,6 +559,32 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   // Reinitialize the index.
   is_initialized_ = false;
   return Initialize();
+}
+
+libtextclassifier3::StatusOr<float> EmbeddingIndex::ScoreEmbeddingHit(
+    const EmbeddingScorer& scorer, const PropertyProto::VectorProto& query,
+    const EmbeddingHit& hit,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type) const {
+  int dimension = query.values().size();
+  float semantic_score;
+  if (!feature_flags_->enable_embedding_quantization() ||
+      quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    ICING_ASSIGN_OR_RETURN(const float* vector,
+                           GetEmbeddingVector(hit, dimension));
+    semantic_score = scorer.Score(dimension,
+                                  /*v1=*/query.values().data(),
+                                  /*v2=*/vector);
+  } else {
+    ICING_ASSIGN_OR_RETURN(const char* data,
+                           GetQuantizedEmbeddingVector(hit, dimension));
+    Quantizer quantizer(data);
+    const uint8_t* quantized_vector =
+        reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
+    semantic_score = scorer.Score(dimension,
+                                  /*v1=*/query.values().data(),
+                                  /*v2=*/quantized_vector, quantizer);
+  }
+  return semantic_score;
 }
 
 libtextclassifier3::Status EmbeddingIndex::PersistMetadataToDisk() {
@@ -476,6 +600,7 @@ libtextclassifier3::Status EmbeddingIndex::PersistStoragesToDisk() {
   }
   ICING_RETURN_IF_ERROR(embedding_posting_list_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(embedding_vectors_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(quantized_embedding_vectors_->PersistToDisk());
   return libtextclassifier3::Status::OK;
 }
 
@@ -487,8 +612,11 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::UpdateStoragesChecksum() {
                          embedding_posting_list_mapper_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_vectors_crc,
                          embedding_vectors_->UpdateChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 quantized_embedding_vectors_crc,
+                         quantized_embedding_vectors_->UpdateChecksum());
   return Crc32(embedding_posting_list_mapper_crc.Get() ^
-               embedding_vectors_crc.Get());
+               embedding_vectors_crc.Get() ^
+               quantized_embedding_vectors_crc.Get());
 }
 
 libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetStoragesChecksum()
@@ -499,8 +627,11 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetStoragesChecksum()
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
                          embedding_posting_list_mapper_->GetChecksum());
   Crc32 embedding_vectors_crc = embedding_vectors_->GetChecksum();
+  Crc32 quantized_embedding_vectors_crc =
+      quantized_embedding_vectors_->GetChecksum();
   return Crc32(embedding_posting_list_mapper_crc.Get() ^
-               embedding_vectors_crc.Get());
+               embedding_vectors_crc.Get() ^
+               quantized_embedding_vectors_crc.Get());
 }
 
 }  // namespace lib
