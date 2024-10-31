@@ -54,7 +54,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           &feature_flags,
           /*force_recovery_and_revalidate_documents=*/false,
           /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           /*initialize_stats=*/nullptr)
           .ValueOrDie()
           .document_store;

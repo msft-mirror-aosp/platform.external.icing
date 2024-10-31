@@ -92,7 +92,7 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 23
+// Next tag: 24
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -240,6 +240,12 @@ message IcingSearchEngineOptions {
   // quantization will be controlled by the quantization type specified in the
   // schema.
   optional bool enable_embedding_quantization = 22;
+
+  // Level of blob_info_file_log store compression in blob store ,
+  // NO_COMPRESSION = 0, BEST_SPEED = 1, BEST_COMPRESSION = 9
+  // Valid values: [0, 9]
+  // Optional.
+  optional int32 blob_store_compression_level = 23 [default = 3];
 
   reserved 2;
 }

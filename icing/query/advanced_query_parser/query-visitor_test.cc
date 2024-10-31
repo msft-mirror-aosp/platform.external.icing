@@ -208,7 +208,7 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 

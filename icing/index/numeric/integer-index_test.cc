@@ -98,7 +98,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
@@ -173,7 +173,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return std::move(doc_store_optimize_result.document_id_old_to_new);

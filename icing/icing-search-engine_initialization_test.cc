@@ -247,6 +247,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_use_new_qualified_id_join_index(true);
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_embedding_quantization(true);
+  icing_options.set_enable_blob_store(true);
   return icing_options;
 }
 
@@ -1097,7 +1098,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
         BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
-                          /*orphan_blob_time_to_live_ms=*/0));
+                          /*orphan_blob_time_to_live_ms=*/0,
+                          PortableFileBackedProtoLog<
+                              BlobInfoProto>::kDefaultCompressionLevel));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -1108,7 +1111,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
@@ -5508,7 +5511,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
         BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
-                          /*orphan_blob_time_to_live_ms=*/0));
+                          /*orphan_blob_time_to_live_ms=*/0,
+                          PortableFileBackedProtoLog<
+                              BlobInfoProto>::kDefaultCompressionLevel));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -5519,7 +5524,7 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);

@@ -761,7 +761,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     }
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                              options_.blob_store_compression_level()));
     }
     ICING_ASSIGN_OR_RETURN(
         bool document_store_derived_files_regenerated,
@@ -782,7 +783,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // unused.
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                              options_.blob_store_compression_level()));
     }
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
@@ -860,7 +862,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   } else if (version_state_change != version_util::StateChange::kCompatible) {
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                              options_.blob_store_compression_level()));
     }
     ICING_ASSIGN_OR_RETURN(bool document_store_derived_files_regenerated,
                            InitializeDocumentStore(
@@ -887,7 +890,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   } else {
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms()));
+          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                              options_.blob_store_compression_level()));
     }
     ICING_ASSIGN_OR_RETURN(
         bool document_store_derived_files_regenerated,
@@ -984,7 +988,7 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
-    int32_t orphan_blob_time_to_live_ms) {
+    int32_t orphan_blob_time_to_live_ms, int32_t blob_store_compression_level) {
   std::string blob_dir = MakeBlobDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(blob_dir.c_str())) {
@@ -995,7 +999,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
   ICING_ASSIGN_OR_RETURN(
       auto blob_store_or,
       BlobStore::Create(filesystem_.get(), blob_dir, clock_.get(),
-                        orphan_blob_time_to_live_ms));
+                        orphan_blob_time_to_live_ms,
+                        blob_store_compression_level));
   blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
   return libtextclassifier3::Status::OK;
 }
@@ -2104,21 +2109,21 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   *result.mutable_storage_info()->mutable_index_storage_info() =
       index_->GetStorageInfo();
   if (blob_store_ != nullptr) {
-    auto package_blob_storage_infos_or = blob_store_->GetStorageInfo();
-    if (!package_blob_storage_infos_or.ok()) {
+    auto namespace_blob_storage_infos_or = blob_store_->GetStorageInfo();
+    if (!namespace_blob_storage_infos_or.ok()) {
       result.mutable_status()->set_code(StatusProto::INTERNAL);
       result.mutable_status()->set_message(
-          package_blob_storage_infos_or.status().error_message());
+          namespace_blob_storage_infos_or.status().error_message());
       return result;
     }
-    std::vector<PackageBlobStorageInfoProto> package_blob_storage_infos =
-        std::move(package_blob_storage_infos_or).ValueOrDie();
+    std::vector<NamespaceBlobStorageInfoProto> namespace_blob_storage_infos =
+        std::move(namespace_blob_storage_infos_or).ValueOrDie();
 
-    for (PackageBlobStorageInfoProto& package_blob_storage_info :
-         package_blob_storage_infos) {
+    for (NamespaceBlobStorageInfoProto& namespace_blob_storage_info :
+         namespace_blob_storage_infos) {
       *result.mutable_storage_info()
-           ->mutable_package_blob_storage_info()
-           ->Add() = std::move(package_blob_storage_info);
+           ->mutable_namespace_blob_storage_info()
+           ->Add() = std::move(namespace_blob_storage_info);
     }
   }
   // TODO(b/259744228): add stats for integer index
@@ -2172,8 +2177,8 @@ libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
     PersistType::Code persist_type) {
   if (blob_store_ != nullptr) {
     // For all valid PersistTypes, we persist the ground truth. The ground truth
-    // in the schema_store is always persisted immediately after changes are
-    // applied. So there is nothing to do if persist_type is LITE.
+    // in the blob_store is a proto log file, which is need to be called when
+    // persist_type is LITE.
     ICING_RETURN_IF_ERROR(blob_store_->PersistToDisk());
   }
   ICING_RETURN_IF_ERROR(document_store_->PersistToDisk(persist_type));
@@ -2643,7 +2648,7 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
 }
 
 BlobProto IcingSearchEngine::OpenWriteBlob(
-    std::string_view package_name, PropertyProto::BlobHandleProto blob_handle) {
+    const PropertyProto::BlobHandleProto& blob_handle) {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
 
@@ -2661,13 +2666,8 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
     return blob_proto;
   }
 
-  if (package_name.empty()) {
-    status->set_code(StatusProto::INVALID_ARGUMENT);
-    status->set_message("Package name is empty!");
-    return blob_proto;
-  }
-
-  auto write_fd_or = blob_store_->OpenWrite(package_name, blob_handle);
+  libtextclassifier3::StatusOr<int> write_fd_or =
+      blob_store_->OpenWrite(blob_handle);
   if (!write_fd_or.ok()) {
     TransformStatus(write_fd_or.status(), status);
     return blob_proto;
@@ -2678,7 +2678,7 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
 }
 
 BlobProto IcingSearchEngine::OpenReadBlob(
-    PropertyProto::BlobHandleProto blob_handle) {
+    const PropertyProto::BlobHandleProto& blob_handle) {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
   absl_ports::shared_lock l(&mutex_);
@@ -2707,7 +2707,7 @@ BlobProto IcingSearchEngine::OpenReadBlob(
 }
 
 BlobProto IcingSearchEngine::CommitBlob(
-    std::string_view package_name, PropertyProto::BlobHandleProto blob_handle) {
+    const PropertyProto::BlobHandleProto& blob_handle) {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);
@@ -2724,7 +2724,7 @@ BlobProto IcingSearchEngine::CommitBlob(
     return blob_proto;
   }
 
-  auto commit_result_or = blob_store_->CommitBlob(package_name, blob_handle);
+  auto commit_result_or = blob_store_->CommitBlob(blob_handle);
   if (!commit_result_or.ok()) {
     TransformStatus(commit_result_or, status);
     return blob_proto;
