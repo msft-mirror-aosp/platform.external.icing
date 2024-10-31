@@ -198,7 +198,7 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToAlmostFull(
   // in the padded area and put new hit at the special position 1.
   // Calling ValueOrDie is safe here because 1 < kNumSpecialData.
   Hit cur = GetSpecialHit(posting_list_used, /*index=*/1).ValueOrDie();
-  if (cur < hit || cur == hit) {
+  if (!(hit < cur)) {
     return absl_ports::InvalidArgumentError(
         "Hit being prepended must be strictly less than the most recent Hit");
   }
@@ -293,7 +293,7 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToNotFull(
   // Term-frequency is not used for hit comparison so it's ok to pass in the
   // default term-frequency here.
   Hit cur(cur_value, cur_flags, Hit::kDefaultTermFrequency);
-  if (cur < hit || cur == hit) {
+  if (!(hit < cur)) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Hit (value=%d, flags=%d) being prepended must be strictly less than "
         "the most recent Hit (value=%d, flags=%d)",
