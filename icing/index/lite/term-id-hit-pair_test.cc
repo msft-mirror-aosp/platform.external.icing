@@ -23,6 +23,7 @@
 #include "icing/index/hit/hit.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {
@@ -55,19 +56,19 @@ TEST(TermIdHitPairTest, Accessors) {
 
   TermIdHitPair term_id_hit_pair_1(kSomeTermId, hit1);
   EXPECT_THAT(term_id_hit_pair_1.term_id(), Eq(kSomeTermId));
-  EXPECT_THAT(term_id_hit_pair_1.hit(), Eq(hit1));
+  EXPECT_THAT(term_id_hit_pair_1.hit(), EqualsHit(hit1));
 
   TermIdHitPair term_id_hit_pair_2(kSomeLargerTermId, hit2);
   EXPECT_THAT(term_id_hit_pair_2.term_id(), Eq(kSomeLargerTermId));
-  EXPECT_THAT(term_id_hit_pair_2.hit(), Eq(hit2));
+  EXPECT_THAT(term_id_hit_pair_2.hit(), EqualsHit(hit2));
 
   TermIdHitPair term_id_hit_pair_3(kSomeTermId, invalid_hit);
   EXPECT_THAT(term_id_hit_pair_3.term_id(), Eq(kSomeTermId));
-  EXPECT_THAT(term_id_hit_pair_3.hit(), Eq(invalid_hit));
+  EXPECT_THAT(term_id_hit_pair_3.hit(), EqualsHit(invalid_hit));
 
   TermIdHitPair term_id_hit_pair_4(kSomeTermId, hit4);
   EXPECT_THAT(term_id_hit_pair_4.term_id(), Eq(kSomeTermId));
-  EXPECT_THAT(term_id_hit_pair_4.hit(), Eq(hit4));
+  EXPECT_THAT(term_id_hit_pair_4.hit(), EqualsHit(hit4));
 }
 
 TEST(TermIdHitPairTest, Comparison) {
