@@ -66,8 +66,7 @@ libtextclassifier3::StatusOr<VersionInfo> ReadV1VersionInfo(
     // Real error.
     return std::move(existing_flash_index_magic).status();
   }
-  if (existing_flash_index_magic.ValueOrDie() ==
-      kVersionZeroFlashIndexMagic) {
+  if (existing_flash_index_magic.ValueOrDie() == kVersionZeroFlashIndexMagic) {
     existing_version_info.version = 0;
     if (existing_version_info.max_version == -1) {
       existing_version_info.max_version = 0;
@@ -318,6 +317,10 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
       }
       case 3: {
         // version 3 -> version 4 upgrade, no need to rebuild
+        break;
+      }
+      case 4: {
+        // version 4 -> version 5 upgrade, no need to rebuild
         break;
       }
       default:

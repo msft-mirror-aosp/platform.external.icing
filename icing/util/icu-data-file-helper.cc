@@ -22,9 +22,10 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/filesystem.h"
+#ifdef CUSTOM_ICU_DAT_FILE
 #include "unicode/udata.h"
 #include "unicode/utypes.h"
-
+#endif  // CUSTOM_ICU_DAT_FILE
 namespace icing {
 namespace lib {
 

@@ -253,12 +253,10 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
 // TODO(b/273591938): Change this API back to the pre-registered API.
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
-    JNIEnv* env, jclass clazz, jobject object, jstring package_name,
-    jbyteArray blob_handle_bytes) {
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
-  icing::lib::ScopedUtfChars scoped_package_name_chars(env, package_name);
   icing::lib::PropertyProto::BlobHandleProto blob_handle;
   if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
     ICING_LOG(icing::lib::ERROR)
@@ -266,10 +264,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
     return nullptr;
   }
 
-  std::string_view package_name_view(scoped_package_name_chars.c_str(),
-                                     scoped_package_name_chars.size());
-  icing::lib::BlobProto blob_result_proto =
-      icing->OpenWriteBlob(scoped_package_name_chars.c_str(), blob_handle);
+  icing::lib::BlobProto blob_result_proto = icing->OpenWriteBlob(blob_handle);
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
@@ -294,12 +289,10 @@ jbyteArray nativeOpenReadBlob(
 // TODO(b/273591938): Change this API back to the pre-registered API.
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngineImpl_nativeCommitBlob(
-    JNIEnv* env, jclass clazz, jobject object, jstring package_name,
-    jbyteArray blob_handle_bytes) {
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
-  icing::lib::ScopedUtfChars scoped_package_name_chars(env, package_name);
   icing::lib::PropertyProto::BlobHandleProto blob_handle;
   if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
     ICING_LOG(icing::lib::ERROR)
@@ -307,10 +300,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeCommitBlob(
     return nullptr;
   }
 
-  std::string_view package_name_view(scoped_package_name_chars.c_str(),
-                                     scoped_package_name_chars.size());
-  icing::lib::BlobProto blob_result_proto =
-      icing->CommitBlob(package_name_view, blob_handle);
+  icing::lib::BlobProto blob_result_proto = icing->CommitBlob(blob_handle);
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }

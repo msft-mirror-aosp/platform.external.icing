@@ -37,9 +37,8 @@ namespace version_util {
 //   (There were no M-2023-10, M-2023-12).
 // - Version 3: M-2024-02. Schema is compatible with v1 and v2.
 // - Version 4: Android V base. Schema is compatible with v1, v2 and v3.
-//
-// TODO: b/337913932 - Bump to 5 when rolling out database field to AppSearch
-inline static constexpr int32_t kVersion = 4;
+// - Version 5: M-2025-02. Schema is compatible with v1, v2, v3 and v4.
+inline static constexpr int32_t kVersion = 5;
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;

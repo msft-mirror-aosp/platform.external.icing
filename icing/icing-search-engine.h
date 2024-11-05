@@ -375,8 +375,7 @@ class IcingSearchEngine {
   //   InvalidArgumentError on invalid blob handle
   //   PermissionDeniedError on blob is committed
   //   INTERNAL_ERROR on IO error
-  BlobProto OpenWriteBlob(std::string_view package_name,
-                          PropertyProto::BlobHandleProto blob_handle);
+  BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets or creates a file for read only purpose for the given blob handle.
   // The blob must be committed by calling commitBlob otherwise it is not
@@ -386,7 +385,7 @@ class IcingSearchEngine {
   //   File descriptor on success
   //   InvalidArgumentError on invalid blob handle
   //   NotFoundError on blob is not found or is not committed
-  BlobProto OpenReadBlob(PropertyProto::BlobHandleProto blob_handle);
+  BlobProto OpenReadBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Commits the given blob, the blob is open to write via openWrite.
   // Before the blob is committed, it is not visible to any reader via openRead.
@@ -398,8 +397,7 @@ class IcingSearchEngine {
   //   False on the blob is already committed.
   //   InvalidArgumentError on invalid blob handle or digest is mismatch with
   //     file content NotFoundError on blob is not found.
-  BlobProto CommitBlob(std::string_view package_name,
-                       PropertyProto::BlobHandleProto blob_handle);
+  BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
@@ -630,7 +628,7 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   libtextclassifier3::Status InitializeBlobStore(
-      int32_t orphan_blob_time_to_live_ms)
+      int32_t orphan_blob_time_to_live_ms, int32_t compression_level)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer

@@ -278,7 +278,7 @@ class DocumentStoreTest
         filesystem, base_dir, clock, schema_store, feature_flags_.get(),
         /*force_recovery_and_revalidate_documents=*/false,
         GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-        PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+        PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
         /*initialize_stats=*/nullptr);
   }
 
@@ -4228,7 +4228,7 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
           feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -4454,7 +4454,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -4691,7 +4691,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -4891,7 +4891,7 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
           feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -5133,7 +5133,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
@@ -5174,7 +5174,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
             GetParam().pre_mapping_fbv,
             /*use_persistent_hash_map=*/switch_key_mapper_flag,
             PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
+                DocumentWrapper>::kDefaultCompressionLevel,
             &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::IO_ERROR));
@@ -5218,7 +5218,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
@@ -5256,7 +5256,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
@@ -5297,7 +5297,7 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
           feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           /*initialize_stats=*/nullptr));
 
   std::unique_ptr<DocumentStore> doc_store =
