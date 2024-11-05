@@ -164,9 +164,9 @@ message IndexStorageInfoProto {
 }
 
 // Next tag: 4
-message PackageBlobStorageInfoProto {
+message NamespaceBlobStorageInfoProto {
   // The package name of who own the blobs.
-  optional string package_name = 1;
+  optional string namespace = 1;
 
   // Total size of blobs storage of this package in bytes.
   optional int64 blob_size = 2;
@@ -191,7 +191,7 @@ message StorageInfoProto {
   optional IndexStorageInfoProto index_storage_info = 4;
 
   // Storage information of the BlobStore.
-  repeated PackageBlobStorageInfoProto package_blob_storage_info = 5;
+  repeated NamespaceBlobStorageInfoProto namespace_blob_storage_info = 5;
 }
 
 // Next tag: 3

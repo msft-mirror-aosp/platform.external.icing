@@ -134,12 +134,12 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeVector) {
 
 TEST(PropertyUtilTest, ExtractPropertyValuesTypeBlobHandle) {
   PropertyProto::BlobHandleProto blob_handle1;
-  blob_handle1.set_label("label1");
+  blob_handle1.set_namespace_("namespace1");
   std::vector<unsigned char> bytes1(32);
   std::string digestString1 = std::string(bytes1.begin(), bytes1.end());
   blob_handle1.set_digest(digestString1);
   PropertyProto::BlobHandleProto blob_handle2;
-  blob_handle2.set_label("label2");
+  blob_handle2.set_namespace_("namespace2");
   std::vector<unsigned char> bytes2(32);
   std::string digestString2 = std::string(bytes2.begin(), bytes2.end());
   blob_handle2.set_digest(digestString2);

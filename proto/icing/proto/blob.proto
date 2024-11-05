@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/document.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -37,4 +38,21 @@ message BlobProto {
 
   // The file decriptor of the blob file from Icing.
   optional int32 file_descriptor = 2;
+}
+
+// BlobInfo holds information about a blob. It is used to store in the blob
+// info proto log file.
+// Next tag: 4
+message BlobInfoProto {
+  // The blob handle that represents the blob.
+  optional PropertyProto.BlobHandleProto blob_handle = 1;
+
+  // The creation time of the blob. This is used to determine when to delete
+  // the orphaned blobs.
+  // We are using creation_time_ms to be file name of the blob, so this field
+  // is unique for each blob.
+  optional int64 creation_time_ms = 2;
+
+  // Whether the blob is committed and ready to be read.
+  optional bool is_committed = 3;
 }

@@ -168,10 +168,9 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
-  public BlobProto openWriteBlob(
-      @NonNull String packageName, PropertyProto.BlobHandleProto blobHandle) {
+  public BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
-        icingSearchEngineImpl.openWriteBlob(packageName, blobHandle.toByteArray()));
+        icingSearchEngineImpl.openWriteBlob(blobHandle.toByteArray()));
   }
 
   @NonNull
@@ -183,10 +182,9 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
-  public BlobProto commitBlob(
-      @NonNull String packageName, PropertyProto.BlobHandleProto blobHandle) {
+  public BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
-        icingSearchEngineImpl.commitBlob(packageName, blobHandle.toByteArray()));
+        icingSearchEngineImpl.commitBlob(blobHandle.toByteArray()));
   }
 
   @NonNull

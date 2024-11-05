@@ -528,7 +528,7 @@ TEST_F(IcingSearchEnginePutTest, PutAndGetDocumentWithBlobHandle) {
 
   PropertyProto::BlobHandleProto blob_handle;
   blob_handle.set_digest(std::string(32, ' '));
-  blob_handle.set_label("label");
+  blob_handle.set_namespace_("namespace");
 
   DocumentProto document =
       DocumentBuilder()
@@ -570,7 +570,7 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentWithInvalidBlobHandle) {
 
   PropertyProto::BlobHandleProto blob_handle;
   blob_handle.set_digest("invalid digest");
-  blob_handle.set_label("label");
+  blob_handle.set_namespace_("namespace");
 
   DocumentProto document =
       DocumentBuilder()

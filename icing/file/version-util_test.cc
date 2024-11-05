@@ -525,7 +525,55 @@ INSTANTIATE_TEST_SUITE_P(
         VersionUtilStateChangeTestParam(
             /*existing_version_info_in=*/VersionInfo(3, 4),
             /*curr_version_in=*/2,
-            /*expected_state_change_in=*/StateChange::kRollBack)));
+            /*expected_state_change_in=*/StateChange::kRollBack),
+
+        // - version 3, max_version 3
+        // - Current version = 4
+        // - Result: upgrade
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(3, 3),
+            /*curr_version_in=*/4,
+            /*expected_state_change_in=*/StateChange::kUpgrade),
+
+        // - version 4, max_version 4
+        // - Current version = 3
+        // - Result: rollback
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(4, 4),
+            /*curr_version_in=*/3,
+            /*expected_state_change_in=*/StateChange::kRollBack),
+
+        // - version 4, max_version 5
+        // - Current version = 4
+        // - Result: compatible
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(4, 5),
+            /*curr_version_in=*/4,
+            /*expected_state_change_in=*/StateChange::kCompatible),
+
+        // - version 3, max_version 4
+        // - Current version = 5
+        // - Result: rollforward
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(3, 4),
+            /*curr_version_in=*/5,
+            /*expected_state_change_in=*/StateChange::kRollForward),
+
+        // - version 3, max_version 3
+        // - Current version = 5
+        // - Result: upgrade
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(3, 3),
+            /*curr_version_in=*/5,
+            /*expected_state_change_in=*/StateChange::kUpgrade),
+
+        // - version 4, max_version 5
+        // - Current version = 5
+        // - Result: rollforward
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(4, 5),
+            /*curr_version_in=*/5,
+            /*expected_state_change_in=*/StateChange::kRollForward)));
 
 struct VersionUtilDerivedFilesRebuildTestParam {
   int32_t existing_version;
@@ -682,6 +730,25 @@ INSTANTIATE_TEST_SUITE_P(
         VersionUtilDerivedFilesRebuildTestParam(
             /*existing_version_in=*/4, /*max_version_in=*/4,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: 4 -> 5 upgrade -- don't rebuild anything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
@@ -920,7 +987,27 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/true,
                 /*needs_qualified_id_join_index_rebuild=*/true,
-                /*needs_embedding_index_rebuild=*/true))));
+                /*needs_embedding_index_rebuild=*/true)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
+        //
+        // - Result: rebuild term index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/true,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
   EXPECT_THAT(
@@ -953,6 +1040,10 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesVersionZeroRollForward) {
   // (2 -> 0), 0 -> 1
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 2), /*curr_version=*/1),
               IsTrue());
+
+  // (5 -> 0), 0 -> 5
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 5), /*curr_version=*/5),
+              IsTrue());
 }
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollBack) {
@@ -967,6 +1058,10 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollBack) {
   // (3 -> 2), 2 -> 1
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(2, 3), /*curr_version=*/1),
               IsTrue());
+
+  // (5 -> 4), 4 -> 3
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(4, 5), /*curr_version=*/3),
+              IsTrue());
 }
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollForward) {
@@ -980,6 +1075,10 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollForward) {
 
   // (3 -> 1), 1 -> 2
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(1, 3), /*curr_version=*/2),
+              IsTrue());
+
+  // (5 -> 4), 4 -> 5
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(4, 5), /*curr_version=*/5),
               IsTrue());
 }
 
@@ -1023,6 +1122,27 @@ TEST(VersionUtilTest, Upgrade) {
   // kVersionOne -> kVersionFour.
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
                                         /*curr_version=*/kVersionFour),
+              IsFalse());
+
+  // kVersionFour -> kVersionFive.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionFour, kVersionFour),
+                                        /*curr_version=*/kVersionFive),
+              IsFalse());
+
+  // kVersionThree -> kVersionFive.
+  EXPECT_THAT(
+      ShouldRebuildDerivedFiles(VersionInfo(kVersionThree, kVersionThree),
+                                /*curr_version=*/kVersionFive),
+      IsFalse());
+
+  // kVersionTwo -> kVersionFour
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionTwo, kVersionTwo),
+                                        /*curr_version=*/kVersionFive),
+              IsFalse());
+
+  // kVersionOne -> kVersionFour.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
+                                        /*curr_version=*/kVersionFive),
               IsFalse());
 }
 

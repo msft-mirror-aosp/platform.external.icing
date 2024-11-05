@@ -156,9 +156,9 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @NonNull
-  public byte[] openWriteBlob(@NonNull String packageName, @NonNull byte[] blobHandleBytes) {
+  public byte[] openWriteBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
-    return nativeOpenWriteBlob(this, packageName, blobHandleBytes);
+    return nativeOpenWriteBlob(this, blobHandleBytes);
   }
 
   @NonNull
@@ -168,9 +168,9 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @NonNull
-  public byte[] commitBlob(@NonNull String packageName, @NonNull byte[] blobHandleBytes) {
+  public byte[] commitBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
-    return nativeCommitBlob(this, packageName, blobHandleBytes);
+    return nativeCommitBlob(this, blobHandleBytes);
   }
 
   @Nullable
@@ -307,13 +307,13 @@ public class IcingSearchEngineImpl implements Closeable {
       IcingSearchEngineImpl instance, long nextPageToken);
 
   private static native byte[] nativeOpenWriteBlob(
-      IcingSearchEngineImpl instance, String packageName, byte[] blobHandleBytes);
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeOpenReadBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeCommitBlob(
-      IcingSearchEngineImpl instance, String packageName, byte[] blobHandleBytes);
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);

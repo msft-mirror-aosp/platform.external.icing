@@ -51,6 +51,7 @@
 #include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/scorable_property_manager.h"
+#include "icing/store/blob-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
@@ -67,7 +68,6 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
-#include "icing/util/encode-util.h"
 #include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/scorable_property_set.h"
@@ -275,8 +275,7 @@ void RemoveAliveBlobHandles(
     if (content_or.ok()) {
       for (const PropertyProto::BlobHandleProto& blob_handle :
            content_or.ValueOrDie()) {
-        dead_blob_handles.erase(encode_util::EncodeStringToCString(
-            blob_handle.digest() + blob_handle.label()));
+        dead_blob_handles.erase(BlobStore::BuildBlobHandleStr(blob_handle));
       }
     }
   }
