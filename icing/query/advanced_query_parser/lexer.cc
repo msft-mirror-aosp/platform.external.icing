@@ -15,6 +15,7 @@
 #include "icing/query/advanced_query_parser/lexer.h"
 
 #include <string>
+#include <utility>
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
@@ -246,7 +247,7 @@ bool Lexer::ConsumeText() {
 }
 
 libtextclassifier3::StatusOr<std::vector<Lexer::LexerToken>>
-Lexer::ExtractTokens() {
+Lexer::ExtractTokens() && {
   while (current_char_ != '\0') {
     // Clear out any non-text before matching a Text.
     while (ConsumeNonText()) {
@@ -263,7 +264,7 @@ Lexer::ExtractTokens() {
                            std::to_string(kMaxNumTokens), ", but got ",
                            std::to_string(tokens_.size()), " tokens."));
   }
-  return tokens_;
+  return std::move(tokens_);
 }
 
 }  // namespace lib
