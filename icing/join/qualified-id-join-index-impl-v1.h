@@ -34,7 +34,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -51,7 +51,7 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
     int32_t magic;
     DocumentId last_added_document_id;
 
-    Crc32 ComputeChecksum() const {
+    Crc32 GetChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
@@ -110,73 +110,33 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
   ~QualifiedIdJoinIndexImplV1() override;
 
   // v2 only API. Returns UNIMPLEMENTED_ERROR.
-  libtextclassifier3::Status Put(SchemaTypeId schema_type_id,
-                                 JoinablePropertyId joinable_property_id,
-                                 DocumentId document_id,
-                                 std::vector<NamespaceFingerprintIdentifier>&&
-                                     ref_namespace_fingerprint_ids) override {
-    return absl_ports::UnimplementedError("This API is not supported in V2");
+  libtextclassifier3::Status Put(
+      SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
+      DocumentId document_id,
+      std::vector<NamespaceIdFingerprint>&& ref_namespace_id_uri_fingerprints)
+      override {
+    return absl_ports::UnimplementedError("This API is not supported in V1");
   }
 
   // v2 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::StatusOr<std::unique_ptr<JoinDataIteratorBase>>
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const override {
-    return absl_ports::UnimplementedError("This API is not supported in V2");
+    return absl_ports::UnimplementedError("This API is not supported in V1");
   }
 
-  // Puts a new data into index: DocJoinInfo (DocumentId, JoinablePropertyId)
-  // references to ref_qualified_id_str (the identifier of another document).
-  //
-  // REQUIRES: ref_qualified_id_str contains no '\0'.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
-  //   - Any KeyMapper errors
   libtextclassifier3::Status Put(
       const DocJoinInfo& doc_join_info,
       std::string_view ref_qualified_id_str) override;
 
-  // Gets the referenced document's qualified id string by DocJoinInfo.
-  //
-  // Returns:
-  //   - A qualified id string referenced by the given DocJoinInfo (DocumentId,
-  //     JoinablePropertyId) on success
-  //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
-  //   - NOT_FOUND_ERROR if doc_join_info doesn't exist
-  //   - Any KeyMapper errors
   libtextclassifier3::StatusOr<std::string_view> Get(
       const DocJoinInfo& doc_join_info) const override;
 
-  // Reduces internal file sizes by reclaiming space and ids of deleted
-  // documents. Qualified id type joinable index will convert all entries to the
-  // new document ids.
-  //
-  // - document_id_old_to_new: a map for converting old document id to new
-  //   document id.
-  // - namespace_id_old_to_new: a map for converting old namespace id to new
-  //   namespace id. It is unused in this implementation since we store raw
-  //   qualified id string (which contains raw namespace string).
-  // - new_last_added_document_id: will be used to update the last added
-  //                               document id in the qualified id type joinable
-  //                               index.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error. This could potentially leave the index in
-  //     an invalid state and the caller should handle it properly (e.g. discard
-  //     and rebuild)
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) override;
 
-  // Clears all data and set last_added_document_id to kInvalidDocumentId.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status Clear() override;
 
   bool is_v2() const override { return false; }
@@ -237,33 +197,19 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
       const std::vector<DocumentId>& document_id_old_to_new,
       QualifiedIdJoinIndexImplV1* new_index) const;
 
-  // Flushes contents of metadata file.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
+  libtextclassifier3::Status PersistMetadataToDisk() override;
 
-  // Flushes contents of all storages to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
+  libtextclassifier3::Status PersistStoragesToDisk() override;
 
-  // Computes and returns Info checksum.
-  //
-  // Returns:
-  //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
+  libtextclassifier3::Status WriteMetadata() override;
 
-  // Computes and returns all storages checksum.
-  //
-  // Returns:
-  //   - Crc of all storages on success
-  //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override;
+  libtextclassifier3::Status InternalWriteMetadata(const ScopedFd& sfd);
+
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override;
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_buffer_.get() +
@@ -286,10 +232,11 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
   }
 
   void SetInfoDirty() { is_info_dirty_ = true; }
+
   // When storage is dirty, we have to set info dirty as well. So just expose
   // SetDirty to set both.
   void SetDirty() {
-    is_info_dirty_ = true;
+    SetInfoDirty();
     is_storage_dirty_ = true;
   }
 

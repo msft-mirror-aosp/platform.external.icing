@@ -14,19 +14,23 @@
 
 #include "icing/scoring/advanced_scoring/scoring-visitor.h"
 
+#include <cstdlib>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 
 namespace icing {
 namespace lib {
 
-void ScoringVisitor::VisitFunctionName(const FunctionNameNode* node) {
-  pending_error_ = absl_ports::InternalError(
-      "FunctionNameNode should be handled in VisitFunction!");
-}
-
 void ScoringVisitor::VisitString(const StringNode* node) {
-  pending_error_ =
-      absl_ports::InvalidArgumentError("Scoring does not support String!");
+  stack_.push_back(StringExpression::Create(node->value()));
 }
 
 void ScoringVisitor::VisitText(const TextNode* node) {
@@ -88,7 +92,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     }
     args.push_back(pop_stack());
   }
-  const std::string& function_name = node->function_name()->value();
+  const std::string& function_name = node->function_name();
   libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> expression =
       absl_ports::InvalidArgumentError(
           absl_ports::StrCat("Unknown function: ", function_name));
@@ -108,7 +112,8 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
              ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
     // childrenRankingSignals function
     expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
-        std::move(args), join_children_fetcher_);
+        std::move(args), document_store_, join_children_fetcher_,
+        current_time_ms_);
   } else if (function_name ==
              PropertyWeightsFunctionScoreExpression::kFunctionName) {
     // propertyWeights function
@@ -120,6 +125,35 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     expression = MathFunctionScoreExpression::Create(
         MathFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
+  } else if (ListOperationFunctionScoreExpression::kFunctionNames.find(
+                 function_name) !=
+             ListOperationFunctionScoreExpression::kFunctionNames.end()) {
+    // List operation functions
+    expression = ListOperationFunctionScoreExpression::Create(
+        ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
+        std::move(args));
+  } else if (function_name ==
+             GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
+    // getEmbeddingParameter function
+    expression =
+        GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));
+  } else if (function_name ==
+             MatchedSemanticScoresFunctionScoreExpression::kFunctionName) {
+    // matchedSemanticScores function
+    expression = MatchedSemanticScoresFunctionScoreExpression::Create(
+        std::move(args), default_semantic_metric_type_,
+        &embedding_query_results_);
+  } else if (function_name ==
+             GetScorablePropertyFunctionScoreExpression::kFunctionName) {
+    if (feature_flags_.enable_scorable_properties()) {
+      // getScorableProperty function
+      expression = GetScorablePropertyFunctionScoreExpression::Create(
+          std::move(args), &document_store_, &schema_store_,
+          schema_type_alias_map_, current_time_ms_);
+    } else {
+      expression = absl_ports::InvalidArgumentError(
+          "getScorableProperty function is not enabled.");
+    }
   }
 
   if (!expression.ok()) {

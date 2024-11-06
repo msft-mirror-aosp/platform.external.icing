@@ -17,13 +17,17 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
-#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {

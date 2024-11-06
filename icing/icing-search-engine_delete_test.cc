@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,6 +24,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -48,10 +47,10 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -98,7 +97,7 @@ class IcingSearchEngineDeleteTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }

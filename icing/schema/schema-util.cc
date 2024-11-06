@@ -15,7 +15,7 @@
 #include "icing/schema/schema-util.h"
 
 #include <algorithm>
-#include <cstdint>
+#include <cctype>
 #include <queue>
 #include <string>
 #include <string_view>
@@ -25,10 +25,12 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/util/logging.h"
@@ -39,18 +41,57 @@ namespace lib {
 
 namespace {
 
+bool AreStringIndexingConfigsEqual(const StringIndexingConfig& old_config,
+                                   const StringIndexingConfig& new_config) {
+  return old_config.term_match_type() == new_config.term_match_type() &&
+         old_config.tokenizer_type() == new_config.tokenizer_type();
+}
+
+bool AreDocumentIndexingConfigsEqual(const DocumentIndexingConfig& old_config,
+                                     const DocumentIndexingConfig& new_config) {
+  return old_config.index_nested_properties() ==
+         new_config.index_nested_properties();
+}
+
+bool AreIntegerIndexingConfigsEqual(const IntegerIndexingConfig& old_config,
+                                    const IntegerIndexingConfig& new_config) {
+  return old_config.numeric_match_type() == new_config.numeric_match_type();
+}
+
+bool AreJoinableConfigsEqual(const JoinableConfig& old_config,
+                             const JoinableConfig& new_config) {
+  return old_config.value_type() == new_config.value_type() &&
+         old_config.propagate_delete() == new_config.propagate_delete();
+}
+
+bool AreEmbeddingIndexingConfigsEqual(
+    const EmbeddingIndexingConfig& old_config,
+    const EmbeddingIndexingConfig& new_config) {
+  return old_config.embedding_indexing_type() ==
+             new_config.embedding_indexing_type() &&
+         old_config.quantization_type() == new_config.quantization_type();
+}
+
 bool ArePropertiesEqual(const PropertyConfigProto& old_property,
                         const PropertyConfigProto& new_property) {
   return old_property.property_name() == new_property.property_name() &&
          old_property.data_type() == new_property.data_type() &&
          old_property.schema_type() == new_property.schema_type() &&
          old_property.cardinality() == new_property.cardinality() &&
-         old_property.string_indexing_config().term_match_type() ==
-             new_property.string_indexing_config().term_match_type() &&
-         old_property.string_indexing_config().tokenizer_type() ==
-             new_property.string_indexing_config().tokenizer_type() &&
-         old_property.document_indexing_config().index_nested_properties() ==
-             new_property.document_indexing_config().index_nested_properties();
+         old_property.scorable_type() == new_property.scorable_type() &&
+         AreStringIndexingConfigsEqual(old_property.string_indexing_config(),
+                                       new_property.string_indexing_config()) &&
+         AreDocumentIndexingConfigsEqual(
+             old_property.document_indexing_config(),
+             new_property.document_indexing_config()) &&
+         AreIntegerIndexingConfigsEqual(
+             old_property.integer_indexing_config(),
+             new_property.integer_indexing_config()) &&
+         AreJoinableConfigsEqual(old_property.joinable_config(),
+                                 new_property.joinable_config()) &&
+         AreEmbeddingIndexingConfigsEqual(
+             old_property.embedding_indexing_config(),
+             new_property.embedding_indexing_config());
 }
 
 bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
@@ -113,6 +154,13 @@ bool IsIntegerNumericMatchTypeCompatible(
     const IntegerIndexingConfig& old_indexed,
     const IntegerIndexingConfig& new_indexed) {
   return old_indexed.numeric_match_type() == new_indexed.numeric_match_type();
+}
+
+bool IsEmbeddingIndexingCompatible(const EmbeddingIndexingConfig& old_indexed,
+                                   const EmbeddingIndexingConfig& new_indexed) {
+  return old_indexed.embedding_indexing_type() ==
+             new_indexed.embedding_indexing_type() &&
+         old_indexed.quantization_type() == new_indexed.quantization_type();
 }
 
 bool IsDocumentIndexingCompatible(const DocumentIndexingConfig& old_indexed,
@@ -199,6 +247,90 @@ bool IsSubset(const std::unordered_set<T>& set1,
     }
   }
   return true;
+}
+
+// Builds a map of {schema_type -> set of scorable property names}
+std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
+BuildTypeToScorablePropertyNamesMap(
+    const SchemaUtil::TypeConfigMap& type_config_map) {
+  std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
+      type_to_scorable_property_names_map;
+  for (const auto& [schema_type, schema_type_config] : type_config_map) {
+    for (const PropertyConfigProto& property_config :
+         schema_type_config.properties()) {
+      if (property_config.scorable_type() ==
+          PropertyConfigProto::ScorableType::ENABLED) {
+        type_to_scorable_property_names_map[schema_type].insert(
+            property_config.property_name());
+      }
+    }
+  }
+  return type_to_scorable_property_names_map;
+}
+
+// Finds the schema types that have inconsistent scorable properties, which will
+// be added in place in the `schema_delta`.
+void FindScorablePropertyInconsistentTypes(
+    const SchemaUtil::TypeConfigMap& old_type_config_map,
+    const SchemaUtil::TypeConfigMap& new_type_config_map,
+    const SchemaUtil::DependentMap& new_schema_dependent_map,
+    SchemaUtil::SchemaDelta* schema_delta) {
+  std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
+      new_type_to_scorable_property_names_map =
+          BuildTypeToScorablePropertyNamesMap(new_type_config_map);
+  std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
+      old_type_to_scorable_property_names_map =
+          BuildTypeToScorablePropertyNamesMap(old_type_config_map);
+  for (const auto& [schema_type, _] : old_type_config_map) {
+    if (new_type_config_map.find(schema_type) == new_type_config_map.end()) {
+      // The type has been deleted in the new schema.
+      continue;
+    }
+    auto old_schema_type_property_names_iter =
+        old_type_to_scorable_property_names_map.find(schema_type);
+    auto new_schema_type_property_names_iter =
+        new_type_to_scorable_property_names_map.find(schema_type);
+    bool has_scorable_properties_in_old_schema =
+        old_schema_type_property_names_iter !=
+        old_type_to_scorable_property_names_map.end();
+    bool has_scorable_properties_in_new_schema =
+        new_schema_type_property_names_iter !=
+        new_type_to_scorable_property_names_map.end();
+    if (has_scorable_properties_in_old_schema &&
+        !has_scorable_properties_in_new_schema) {
+      schema_delta->schema_types_scorable_property_inconsistent.insert(
+          schema_type);
+    } else if (!has_scorable_properties_in_old_schema &&
+               has_scorable_properties_in_new_schema) {
+      schema_delta->schema_types_scorable_property_inconsistent.insert(
+          schema_type);
+    } else if (has_scorable_properties_in_old_schema &&
+               has_scorable_properties_in_new_schema) {
+      // The sets of scorable properties from the old and new schema are
+      // different.
+      if (old_schema_type_property_names_iter->second !=
+          new_schema_type_property_names_iter->second) {
+        schema_delta->schema_types_scorable_property_inconsistent.insert(
+            schema_type);
+      }
+    }
+  }
+
+  // Now, look up the DependentMap of the new schema config and find the parent
+  // types that depend on the currently discovered inconsistent types.
+  std::vector<std::string_view> parent_types;
+  for (const std::string& schema_type :
+       schema_delta->schema_types_scorable_property_inconsistent) {
+    auto parent_type_maps_iter = new_schema_dependent_map.find(schema_type);
+    if (parent_type_maps_iter == new_schema_dependent_map.end()) {
+      continue;
+    }
+    for (const auto& [parent_type, _] : parent_type_maps_iter->second) {
+      parent_types.push_back(parent_type);
+    }
+  }
+  schema_delta->schema_types_scorable_property_inconsistent.insert(
+      parent_types.begin(), parent_types.end());
 }
 
 }  // namespace
@@ -556,7 +688,8 @@ SchemaUtil::BuildTransitiveInheritanceGraph(const SchemaProto& schema) {
 }
 
 libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
-    const SchemaProto& schema, bool allow_circular_schema_definitions) {
+    const SchemaProto& schema, const FeatureFlags& feature_flags,
+    bool allow_circular_schema_definitions) {
   // 1. Build the dependent map. This will detect any cycles, non-existent or
   // duplicate types in the schema.
   ICING_ASSIGN_OR_RETURN(
@@ -614,6 +747,10 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
 
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
                                                 schema_type, property_name));
+      if (feature_flags.enable_scorable_properties()) {
+        ICING_RETURN_IF_ERROR(
+            ValidateScorableType(schema_type, property_config));
+      }
 
       if (data_type == PropertyConfigProto::DataType::STRING) {
         ICING_RETURN_IF_ERROR(ValidateStringIndexingConfig(
@@ -738,6 +875,42 @@ libtextclassifier3::Status SchemaUtil::ValidateCardinality(
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::Status SchemaUtil::ValidateScorableType(
+    std::string_view schema_type,
+    const PropertyConfigProto& property_config_proto) {
+  if (property_config_proto.data_type() ==
+      PropertyConfigProto::DataType::DOCUMENT) {
+    if (property_config_proto.scorable_type() !=
+        PropertyConfigProto::ScorableType::UNKNOWN) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Field 'scorable_type' shouldn't be explicitly set for data type "
+          "DOCUMENT. It is considered scorable if any of its or its "
+          "dependency's property is scorable."));
+    }
+  }
+
+  if (property_config_proto.scorable_type() ==
+          PropertyConfigProto::ScorableType::DISABLED ||
+      property_config_proto.scorable_type() ==
+          PropertyConfigProto::ScorableType::UNKNOWN) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  switch (property_config_proto.data_type()) {
+    case PropertyConfigProto::DataType::INT64:
+    case PropertyConfigProto::DataType::DOUBLE:
+    case PropertyConfigProto::DataType::BOOLEAN:
+      return libtextclassifier3::Status::OK;
+    default:
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Field 'scorable_type' cannot be enabled for data type '",
+          PropertyConfigProto::DataType::Code_Name(
+              property_config_proto.data_type()),
+          "' for schema property '", schema_type, ".",
+          property_config_proto.property_name(), "'"));
+  }
+}
+
 libtextclassifier3::Status SchemaUtil::ValidateStringIndexingConfig(
     const StringIndexingConfig& config,
     PropertyConfigProto::DataType::Code data_type, std::string_view schema_type,
@@ -824,10 +997,15 @@ libtextclassifier3::Status SchemaUtil::ValidateDocumentIndexingConfig(
              !property_config.document_indexing_config()
                   .indexable_nested_properties_list()
                   .empty();
+    case PropertyConfigProto::DataType::VECTOR:
+      return property_config.embedding_indexing_config()
+                 .embedding_indexing_type() !=
+             EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
     case PropertyConfigProto::DataType::UNKNOWN:
     case PropertyConfigProto::DataType::DOUBLE:
     case PropertyConfigProto::DataType::BOOLEAN:
     case PropertyConfigProto::DataType::BYTES:
+    case PropertyConfigProto::DataType::BLOB_HANDLE:
       return false;
   }
 }
@@ -975,12 +1153,19 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
 
 const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     const SchemaProto& old_schema, const SchemaProto& new_schema,
-    const DependentMap& new_schema_dependent_map) {
+    const DependentMap& new_schema_dependent_map,
+    const FeatureFlags& feature_flags) {
   SchemaDelta schema_delta;
 
   TypeConfigMap old_type_config_map, new_type_config_map;
   BuildTypeConfigMap(old_schema, &old_type_config_map);
   BuildTypeConfigMap(new_schema, &new_type_config_map);
+
+  if (feature_flags.enable_scorable_properties()) {
+    FindScorablePropertyInconsistentTypes(
+        old_type_config_map, new_type_config_map, new_schema_dependent_map,
+        &schema_delta);
+  }
 
   // Iterate through and check each field of the old schema
   for (const auto& old_type_config : old_schema.types()) {
@@ -1087,7 +1272,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
               new_property_config->integer_indexing_config()) ||
           !IsDocumentIndexingCompatible(
               old_property_config.document_indexing_config(),
-              new_property_config->document_indexing_config())) {
+              new_property_config->document_indexing_config()) ||
+          !IsEmbeddingIndexingCompatible(
+              old_property_config.embedding_indexing_config(),
+              new_property_config->embedding_indexing_config())) {
         is_index_incompatible = true;
       }
 

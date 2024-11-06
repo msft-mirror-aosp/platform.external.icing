@@ -52,10 +52,10 @@
 #include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -100,7 +100,7 @@ class IcingSearchEngineOptimizeTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -778,8 +778,6 @@ TEST_F(IcingSearchEngineOptimizeTest, SearchShouldWorkAfterOptimization) {
 
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
@@ -1193,8 +1191,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
   // Verify numeric (integer) search
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto search_result_google::protobuf =
@@ -1319,8 +1315,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
@@ -1441,8 +1435,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
   SearchSpecProto search_spec2;
   search_spec2.set_query("indexableInteger == 123");
-  search_spec2.set_search_type(
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
