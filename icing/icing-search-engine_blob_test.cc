@@ -29,6 +29,7 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -44,7 +45,8 @@ static constexpr int64_t kBlobInfoTTLMs = 7 * 24 * 60 * 60 * 1000;  // 1 Week
 
 namespace {
 
-using ::testing::Eq;
+using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::UnorderedElementsAre;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -68,6 +70,7 @@ std::string GetTestBaseBlobStoreDir() {
 class IcingSearchEngineBlobTest : public testing::Test {
  protected:
   void SetUp() override {
+    filesystem_.DeleteDirectoryRecursively(GetTestBaseDir().c_str());
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
 
@@ -134,8 +137,8 @@ DocumentProto CreateBlobDocument(std::string name_space, std::string uri,
 
 TEST_F(IcingSearchEngineBlobTest, InvalidBlobHandle) {
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("blob");
   blob_handle.set_digest("invalid");
+  blob_handle.set_namespace_("namespaceA");
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -160,10 +163,10 @@ TEST_F(IcingSearchEngineBlobTest, BlobStoreDisabled) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("blob");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
   EXPECT_THAT(write_blob_proto.status(),
@@ -181,10 +184,10 @@ TEST_F(IcingSearchEngineBlobTest, WriteAndReadBlob) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
@@ -216,10 +219,10 @@ TEST_F(IcingSearchEngineBlobTest, WriteAndReadBlobByDocument) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
@@ -266,11 +269,11 @@ TEST_F(IcingSearchEngineBlobTest, CommitDigestMisMatch) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("blob1");
 
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
@@ -292,11 +295,11 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithoutPersistToDisk) {
   EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("blob1");
 
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing1.OpenWriteBlob(blob_handle);
   ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
@@ -325,11 +328,11 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskFull) {
   ASSERT_THAT(icing1.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("blob1");
 
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing1.OpenWriteBlob(blob_handle);
   ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
@@ -367,11 +370,11 @@ TEST_F(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskLite) {
   ASSERT_THAT(icing1.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("blob1");
 
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
   blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto write_blob_proto = icing1.OpenWriteBlob(blob_handle);
   ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
@@ -424,11 +427,10 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   int32_t file_count = file_names.size();
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
-  std::string digestString = std::string(digest.begin(), digest.end());
-  blob_handle.set_digest(std::move(digestString));
+  blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
@@ -441,6 +443,7 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
                                           excludes, /*recursive=*/false,
                                           &file_names));
+  // The blob file is created.
   ASSERT_THAT(file_names.size(), file_count + 1);
 
   BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
@@ -477,11 +480,6 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
   EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
-  file_names = std::vector<std::string>();
-  ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
-                                          excludes, /*recursive=*/false,
-                                          &file_names));
-  ASSERT_THAT(file_names.size(), file_count);
 }
 
 TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {
@@ -498,11 +496,12 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {
 
   // write two blobs but not commit
   PropertyProto::BlobHandleProto blob_handle1;
-  blob_handle1.set_label("label1");
   std::vector<unsigned char> data1 = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest1 = CalculateDigest(data1);
-  std::string digestString1 = std::string(digest1.begin(), digest1.end());
-  blob_handle1.set_digest(std::move(digestString1));
+  std::string digest_string1 = std::string(digest1.begin(), digest1.end());
+  blob_handle1.set_digest(std::move(digest_string1));
+  blob_handle1.set_namespace_("namespaceA");
+
   BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle1);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
   {
@@ -512,11 +511,10 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {
   }
 
   PropertyProto::BlobHandleProto blob_handle2;
-  blob_handle2.set_label("label2");
   std::vector<unsigned char> data2 = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest2 = CalculateDigest(data2);
-  std::string digestString2 = std::string(digest2.begin(), digest2.end());
-  blob_handle2.set_digest(std::move(digestString2));
+  blob_handle2.set_digest(std::string(digest2.begin(), digest2.end()));
+  blob_handle2.set_namespace_("namespaceA");
   writeBlobProto = icing.OpenWriteBlob(blob_handle2);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
   {
@@ -555,11 +553,10 @@ TEST_F(IcingSearchEngineBlobTest, ReferenceCount) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
-  std::string digestString = std::string(digest.begin(), digest.end());
-  blob_handle.set_digest(std::move(digestString));
+  blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
@@ -638,11 +635,10 @@ TEST_F(IcingSearchEngineBlobTest, ReferenceCountNestedDocument) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
-  std::string digestString = std::string(digest.begin(), digest.end());
-  blob_handle.set_digest(std::move(digestString));
+  blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
@@ -750,11 +746,10 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleReferenceDocument) {
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
-  std::string digestString = std::string(digest.begin(), digest.end());
-  blob_handle.set_digest(std::move(digestString));
+  blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
@@ -853,11 +848,11 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   int32_t file_count = file_names.size();
 
   PropertyProto::BlobHandleProto blob_handle1;
-  blob_handle1.set_label("label1");
   std::vector<unsigned char> data1 = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest1 = CalculateDigest(data1);
-  std::string digestString1 = std::string(digest1.begin(), digest1.end());
-  blob_handle1.set_digest(std::move(digestString1));
+  std::string digest_string1 = std::string(digest1.begin(), digest1.end());
+  blob_handle1.set_digest(std::move(digest_string1));
+  blob_handle1.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto1 = icing.OpenWriteBlob(blob_handle1);
   ASSERT_THAT(writeBlobProto1.status(), ProtoIsOk());
@@ -871,11 +866,10 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle2;
-  blob_handle2.set_label("label2");
   std::vector<unsigned char> data2 = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest2 = CalculateDigest(data2);
-  std::string digestString2 = std::string(digest2.begin(), digest2.end());
-  blob_handle2.set_digest(std::move(digestString2));
+  blob_handle2.set_digest(std::string(digest2.begin(), digest2.end()));
+  blob_handle2.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto2 = icing.OpenWriteBlob(blob_handle2);
   ASSERT_THAT(writeBlobProto2.status(), ProtoIsOk());
@@ -889,11 +883,10 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   ASSERT_THAT(commitBlobProto2.status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle3;
-  blob_handle3.set_label("label3");
   std::vector<unsigned char> data3 = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest3 = CalculateDigest(data3);
-  std::string digestString3 = std::string(digest3.begin(), digest3.end());
-  blob_handle3.set_digest(std::move(digestString3));
+  blob_handle3.set_digest(std::string(digest3.begin(), digest3.end()));
+  blob_handle3.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto3 = icing.OpenWriteBlob(blob_handle3);
   ASSERT_THAT(writeBlobProto3.status(), ProtoIsOk());
@@ -910,8 +903,9 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
                                           excludes, /*recursive=*/false,
                                           &file_names));
+  // 3 more blob files are created.
   ASSERT_THAT(file_names.size(), file_count + 3);
-
+  file_count = file_names.size();
   // Set schema and put 3 documents that contains the blob handle
   ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
   ASSERT_THAT(
@@ -958,7 +952,10 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
                                           excludes, /*recursive=*/false,
                                           &file_names));
-  ASSERT_THAT(file_names.size(), file_count + 1);
+
+  // 2 blob files are removed, but namespace files.temp is generated.
+  ASSERT_THAT(file_names.size(), file_count - 2 + 1);
+  file_count = file_names.size();
 
   // remove the last reference document, now the all blobs become orphan.
   ASSERT_THAT(icing2.Delete("namespace", "doc3").status(), ProtoIsOk());
@@ -970,7 +967,8 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeMultipleBlobHandles) {
   ASSERT_TRUE(filesystem()->ListDirectory(GetTestBaseBlobStoreDir().c_str(),
                                           excludes, /*recursive=*/false,
                                           &file_names));
-  ASSERT_THAT(file_names.size(), file_count);
+  // the last blob file is removed.
+  ASSERT_THAT(file_names.size(), file_count - 1);
 }
 
 TEST_F(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
@@ -990,11 +988,10 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
   ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
 
   PropertyProto::BlobHandleProto blob_handle;
-  blob_handle.set_label("label");
   std::vector<unsigned char> data = GenerateRandomBytes(24);
   std::array<uint8_t, 32> digest = CalculateDigest(data);
-  std::string digestString = std::string(digest.begin(), digest.end());
-  blob_handle.set_digest(std::move(digestString));
+  blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  blob_handle.set_namespace_("namespaceA");
 
   BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
   ASSERT_THAT(writeBlobProto.status(), ProtoIsOk());
@@ -1031,6 +1028,128 @@ TEST_F(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
   std::string expected_data = std::string(data.begin(), data.end());
   std::string actual_data = std::string(buf.get(), buf.get() + size);
   EXPECT_EQ(expected_data, actual_data);
+}
+
+TEST_F(IcingSearchEngineBlobTest, EmptyNamespace) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  std::vector<unsigned char> data = GenerateRandomBytes(12);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  blob_handle.set_digest(std::string(digest.begin(), digest.end()));
+  BlobProto writeBlobProto = icing.OpenWriteBlob(blob_handle);
+
+  EXPECT_THAT(writeBlobProto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineBlobTest, OptimizeNamespaceUsage) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // insert 3 blobs from 3 different namespaces
+  PropertyProto::BlobHandleProto blob_handle1;
+  std::vector<unsigned char> data1 = GenerateRandomBytes(12);
+  std::array<uint8_t, 32> digest1 = CalculateDigest(data1);
+  blob_handle1.set_digest(std::string(digest1.begin(), digest1.end()));
+  blob_handle1.set_namespace_("namespaceA");
+  BlobProto writeBlobProto1 = icing.OpenWriteBlob(blob_handle1);
+  ASSERT_THAT(writeBlobProto1.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto1.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data1.data(), data1.size()));
+  }
+  BlobProto commitBlobProto = icing.CommitBlob(blob_handle1);
+  ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle2;
+  std::vector<unsigned char> data2 = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest2 = CalculateDigest(data2);
+  blob_handle2.set_digest(std::string(digest2.begin(), digest2.end()));
+  blob_handle2.set_namespace_("namespaceB");
+  BlobProto writeBlobProto2 = icing.OpenWriteBlob(blob_handle2);
+  ASSERT_THAT(writeBlobProto2.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto2.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data2.data(), data2.size()));
+  }
+  BlobProto commitBlobProto2 = icing.CommitBlob(blob_handle2);
+  ASSERT_THAT(commitBlobProto2.status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle3;
+  std::vector<unsigned char> data3 = GenerateRandomBytes(36);
+  std::array<uint8_t, 32> digest3 = CalculateDigest(data3);
+  blob_handle3.set_digest(std::string(digest3.begin(), digest3.end()));
+  blob_handle3.set_namespace_("namespaceC");
+  BlobProto writeBlobProto3 = icing.OpenWriteBlob(blob_handle3);
+  ASSERT_THAT(writeBlobProto3.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(writeBlobProto3.file_descriptor());
+    ASSERT_TRUE(
+        filesystem()->Write(write_fd.get(), data3.data(), data3.size()));
+  }
+  BlobProto commitBlobProto3 = icing.CommitBlob(blob_handle3);
+  ASSERT_THAT(commitBlobProto3.status(), ProtoIsOk());
+
+  // Set schema and put a documents that contains the blob handle2 only
+  ASSERT_THAT(icing.SetSchema(CreateBlobSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing.Put(CreateBlobDocument("namespace", "doc", blob_handle2)).status(),
+      ProtoIsOk());
+
+  // persist blob to disk
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // Verify namespace usage
+  StorageInfoResultProto storage_info_result = icing.GetStorageInfo();
+  EXPECT_THAT(storage_info_result.status(), ProtoIsOk());
+  NamespaceBlobStorageInfoProto namespace_info_a;
+  namespace_info_a.set_namespace_("namespaceA");
+  namespace_info_a.set_blob_size(12);
+  namespace_info_a.set_num_blobs(1);
+  NamespaceBlobStorageInfoProto namespace_info_b;
+  namespace_info_b.set_namespace_("namespaceB");
+  namespace_info_b.set_blob_size(24);
+  namespace_info_b.set_num_blobs(1);
+  NamespaceBlobStorageInfoProto namespace_info_c;
+  namespace_info_c.set_namespace_("namespaceC");
+  namespace_info_c.set_blob_size(36);
+  namespace_info_c.set_num_blobs(1);
+  EXPECT_THAT(storage_info_result.storage_info().namespace_blob_storage_info(),
+              UnorderedElementsAre(EqualsProto(namespace_info_a),
+                                   EqualsProto(namespace_info_b),
+                                   EqualsProto(namespace_info_c)));
+
+  // create second icing in 8 days later
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetSystemTimeMilliseconds(1000 + 8 * 24 * 60 * 60 *
+                                                    1000);  // pass 8 days
+  TestIcingSearchEngine icing2(GetDefaultIcingOptions(),
+                               std::make_unique<Filesystem>(),
+                               std::make_unique<IcingFilesystem>(),
+                               std::move(fake_clock2), GetTestJniCache());
+  ASSERT_THAT(icing2.Initialize().status(), ProtoIsOk());
+
+  // After optimize, blobs of namespaceA and namespaceC are removed.
+  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+
+  storage_info_result = icing2.GetStorageInfo();
+  EXPECT_THAT(storage_info_result.status(), ProtoIsOk());
+  EXPECT_THAT(storage_info_result.storage_info().namespace_blob_storage_info(),
+              UnorderedElementsAre(EqualsProto(namespace_info_b)));
 }
 
 }  // namespace
