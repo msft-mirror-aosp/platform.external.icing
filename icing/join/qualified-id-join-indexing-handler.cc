@@ -34,7 +34,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 #include "icing/util/logging.h"
@@ -96,8 +96,8 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
     for (const JoinableProperty<std::string_view>& qualified_id_property :
          tokenized_document.qualified_id_join_properties()) {
       // Parse all qualified id strings and convert them to
-      // NamespaceFingerprintIdentifier.
-      std::vector<NamespaceFingerprintIdentifier> ref_doc_ns_fingerprint_ids;
+      // NamespaceIdFingerprint.
+      std::vector<NamespaceIdFingerprint> ref_doc_nsid_uri_fingerprints;
       for (std::string_view ref_qualified_id_str :
            qualified_id_property.values) {
         // Attempt to parse qualified id string to make sure the format is
@@ -119,15 +119,15 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
         NamespaceId ref_namespace_id =
             std::move(ref_namespace_id_or).ValueOrDie();
 
-        ref_doc_ns_fingerprint_ids.push_back(NamespaceFingerprintIdentifier(
-            ref_namespace_id, ref_qualified_id.uri()));
+        ref_doc_nsid_uri_fingerprints.push_back(
+            NamespaceIdFingerprint(ref_namespace_id, ref_qualified_id.uri()));
       }
 
       // Batch add all join data of this (schema_type_id, joinable_property_id)
       // into to the index.
       libtextclassifier3::Status status = qualified_id_join_index_.Put(
           filter_data->schema_type_id(), qualified_id_property.metadata.id,
-          document_id, std::move(ref_doc_ns_fingerprint_ids));
+          document_id, std::move(ref_doc_nsid_uri_fingerprints));
       if (!status.ok()) {
         ICING_LOG(WARNING)
             << "Failed to add data into qualified id join index v2 due to: "

@@ -37,6 +37,7 @@
 #include "icing/proto/status.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
 
@@ -103,6 +104,26 @@ MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
          actual.num_leaf_advance_calls_no_index ==
              num_leaf_advance_calls_no_index &&
          actual.num_blocks_inspected == num_blocks_inspected;
+}
+
+// Used to match a DocumentAssociatedScoreData
+MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
+           creation_timestamp_ms, length_in_tokens,
+           has_valid_scorable_property_cache_index, "") {
+  bool expected_has_valid_scorable_property_cache_index =
+      arg.scorable_property_cache_index() != -1;
+  return arg.corpus_id() == corpus_id &&
+         arg.document_score() == document_score &&
+         arg.creation_timestamp_ms() == creation_timestamp_ms &&
+         arg.length_in_tokens() == length_in_tokens &&
+         expected_has_valid_scorable_property_cache_index ==
+             has_valid_scorable_property_cache_index;
+}
+
+// Used to match a ScorablePropertyManager::ScorablePropertyInfo
+MATCHER_P2(EqualsScorablePropertyInfo, property_path, data_type, "") {
+  const ScorablePropertyManager::ScorablePropertyInfo& actual = arg;
+  return actual.property_path == property_path && actual.data_type == data_type;
 }
 
 struct ExtractTermFrequenciesResult {
@@ -459,7 +480,13 @@ MATCHER_P3(EqualsSectionMetadata, expected_id, expected_property_path,
                  .term_match_type() &&
          actual.numeric_match_type ==
              expected_property_config_proto.integer_indexing_config()
-                 .numeric_match_type();
+                 .numeric_match_type() &&
+         actual.embedding_indexing_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .embedding_indexing_type() &&
+         actual.quantization_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .quantization_type();
 }
 
 MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,

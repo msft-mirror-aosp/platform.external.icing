@@ -150,7 +150,6 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
   }
 
-  @NonNull
   public void invalidateNextPageToken(long nextPageToken) {
     throwIfClosed();
     nativeInvalidateNextPageToken(this, nextPageToken);

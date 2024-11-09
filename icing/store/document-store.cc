@@ -27,19 +27,21 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file-backed-proto-log.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
@@ -48,6 +50,8 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
+#include "icing/store/blob-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
@@ -56,7 +60,7 @@
 #include "icing/store/document-log-creator.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/store/usage-store.h"
@@ -64,9 +68,9 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
-#include "icing/util/encode-util.h"
 #include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
+#include "icing/util/scorable_property_set.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
@@ -77,10 +81,12 @@ namespace {
 
 // Used in DocumentId mapper to mark a document as deleted
 constexpr int64_t kDocDeletedFlag = -1;
+constexpr int32_t kInvalidScorablePropertyCacheIndex = -1;
 constexpr char kDocumentIdMapperFilename[] = "document_id_mapper";
 constexpr char kUriHashMapperWorkingPath[] = "uri_mapper";
 constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
+constexpr char kScorablePropertyCacheFilename[] = "scorable_property_cache";
 constexpr char kCorpusScoreCache[] = "corpus_score_cache";
 constexpr char kFilterCacheFilename[] = "filter_cache";
 constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
@@ -124,6 +130,10 @@ std::string MakeDocumentIdMapperFilename(const std::string& base_dir) {
 
 std::string MakeScoreCacheFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kScoreCacheFilename);
+}
+
+std::string MakeScorablePropertyCacheFilename(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kScorablePropertyCacheFilename);
 }
 
 std::string MakeCorpusScoreCache(const std::string& base_dir) {
@@ -265,9 +275,7 @@ void RemoveAliveBlobHandles(
     if (content_or.ok()) {
       for (const PropertyProto::BlobHandleProto& blob_handle :
            content_or.ValueOrDie()) {
-        dead_blob_handles.erase(
-            encode_util::EncodeStringToCString(blob_handle.digest()) +
-            blob_handle.label());
+        dead_blob_handles.erase(BlobStore::BuildBlobHandleStr(blob_handle));
       }
     }
   }
@@ -275,35 +283,19 @@ void RemoveAliveBlobHandles(
 
 }  // namespace
 
-std::string DocumentStore::MakeFingerprint(
-    NamespaceId namespace_id, std::string_view namespace_,
-    std::string_view uri_or_schema) const {
-  if (!namespace_id_fingerprint_) {
-    // Using a 64-bit fingerprint to represent the key could lead to collisions.
-    // But, even with 200K unique keys, the probability of collision is about
-    // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
-    uint64_t fprint = tc3farmhash::Fingerprint64(
-        absl_ports::StrCat(namespace_, uri_or_schema));
-    return fingerprint_util::GetFingerprintString(fprint);
-  } else {
-    return NamespaceFingerprintIdentifier(namespace_id, uri_or_schema)
-        .EncodeToCString();
-  }
-}
-
 DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
                              const SchemaStore* schema_store,
-                             bool namespace_id_fingerprint,
+                             const FeatureFlags* feature_flags,
                              bool pre_mapping_fbv, bool use_persistent_hash_map,
                              int32_t compression_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
+      feature_flags_(*feature_flags),
       schema_store_(schema_store),
       document_validator_(schema_store),
-      namespace_id_fingerprint_(namespace_id_fingerprint),
       pre_mapping_fbv_(pre_mapping_fbv),
       use_persistent_hash_map_(use_persistent_hash_map),
       compression_level_(compression_level) {}
@@ -333,16 +325,18 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
-    bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
-    bool pre_mapping_fbv, bool use_persistent_hash_map,
-    int32_t compression_level, InitializeStatsProto* initialize_stats) {
+    const FeatureFlags* feature_flags,
+    bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
+    bool use_persistent_hash_map, int32_t compression_level,
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
-      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint,
-      pre_mapping_fbv, use_persistent_hash_map, compression_level));
+      filesystem, base_dir, clock, schema_store, feature_flags, pre_mapping_fbv,
+      use_persistent_hash_map, compression_level));
   ICING_ASSIGN_OR_RETURN(
       InitializeResult initialize_result,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -394,6 +388,11 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
   // Corpus associated score cache
   ICING_RETURN_IF_ERROR(FileBackedVector<CorpusAssociatedScoreData>::Delete(
       *filesystem, MakeCorpusScoreCache(base_dir)));
+
+  // Scorable Property Cache
+  ICING_RETURN_IF_ERROR(
+      MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>::Delete(
+          *filesystem, MakeScorablePropertyCacheFilename(base_dir)));
 
   return libtextclassifier3::Status::OK;
 }
@@ -502,8 +501,7 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic !=
-      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_)) {
+  if (header.magic != DocumentStore::Header::kMagic) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
@@ -535,6 +533,11 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
                          FileBackedVector<DocumentAssociatedScoreData>::Create(
                              *filesystem_, MakeScoreCacheFilename(base_dir_),
                              MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+
+  ICING_ASSIGN_OR_RETURN(
+      scorable_property_cache_,
+      MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>::Create(
+          *filesystem_, MakeScorablePropertyCacheFilename(base_dir_)));
 
   ICING_ASSIGN_OR_RETURN(filter_cache_,
                          FileBackedVector<DocumentFilterData>::Create(
@@ -585,6 +588,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
   ICING_RETURN_IF_ERROR(ResetDocumentKeyMapper());
   ICING_RETURN_IF_ERROR(ResetDocumentIdMapper());
   ICING_RETURN_IF_ERROR(ResetDocumentAssociatedScoreCache());
+  ICING_RETURN_IF_ERROR(ResetScorablePropertyCache());
   ICING_RETURN_IF_ERROR(ResetFilterCache());
   ICING_RETURN_IF_ERROR(ResetNamespaceMapper());
   ICING_RETURN_IF_ERROR(ResetCorpusMapper());
@@ -646,10 +650,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
 
     // Updates key mapper and document_id mapper with the new document
     DocumentId new_document_id = document_id_mapper_->num_elements();
+    NamespaceIdFingerprint new_doc_nsid_uri_fingerprint(
+        namespace_id, document_wrapper.document().uri());
     ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
-                        document_wrapper.document().uri()),
-        new_document_id));
+        new_doc_nsid_uri_fingerprint.EncodeToCString(), new_document_id));
     ICING_RETURN_IF_ERROR(
         document_id_mapper_->Set(new_document_id, iterator.GetOffset()));
 
@@ -673,26 +677,36 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
     }
 
     // Update corpus maps
-    std::string corpus =
-        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
-                        document_wrapper.document().schema());
-    ICING_ASSIGN_OR_RETURN(
-        CorpusId corpusId,
-        corpus_mapper_->GetOrPut(corpus, corpus_mapper_->num_keys()));
+    NamespaceIdFingerprint corpus_nsid_schema_fingerprint(
+        namespace_id, document_wrapper.document().schema());
+    ICING_ASSIGN_OR_RETURN(CorpusId corpus_id,
+                           corpus_mapper_->GetOrPut(
+                               corpus_nsid_schema_fingerprint.EncodeToCString(),
+                               corpus_mapper_->num_keys()));
 
     ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
-                           GetCorpusAssociatedScoreDataToUpdate(corpusId));
+                           GetCorpusAssociatedScoreDataToUpdate(corpus_id));
     scoring_data.AddDocument(
         document_wrapper.document().internal_fields().length_in_tokens());
 
     ICING_RETURN_IF_ERROR(
-        UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
+        UpdateCorpusAssociatedScoreCache(corpus_id, scoring_data));
+
+    int32_t scorable_property_cache_index = kInvalidScorablePropertyCacheIndex;
+    // Swallow the error when schema_type_id is not found, and skip updating the
+    // scorable property cache.
+    if (schema_type_id != -1) {
+      ICING_ASSIGN_OR_RETURN(scorable_property_cache_index,
+                             UpdateScorablePropertyCache(
+                                 document_wrapper.document(), schema_type_id));
+    }
 
     ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
         new_document_id,
         DocumentAssociatedScoreData(
-            corpusId, document_wrapper.document().score(),
+            corpus_id, document_wrapper.document().score(),
             document_wrapper.document().creation_timestamp_ms(),
+            scorable_property_cache_index,
             document_wrapper.document().internal_fields().length_in_tokens())));
 
     int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
@@ -700,8 +714,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
         document_wrapper.document().ttl_ms());
 
     ICING_RETURN_IF_ERROR(UpdateFilterCache(
-        new_document_id, DocumentFilterData(namespace_id, schema_type_id,
-                                            expiration_timestamp_ms)));
+        new_document_id,
+        DocumentFilterData(namespace_id,
+                           new_doc_nsid_uri_fingerprint.fingerprint(),
+                           schema_type_id, expiration_timestamp_ms)));
     iterator_status = iterator.Advance();
   }
 
@@ -794,6 +810,18 @@ libtextclassifier3::Status DocumentStore::ResetDocumentAssociatedScoreCache() {
                          FileBackedVector<DocumentAssociatedScoreData>::Create(
                              *filesystem_, MakeScoreCacheFilename(base_dir_),
                              MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status DocumentStore::ResetScorablePropertyCache() {
+  scorable_property_cache_.reset();
+  ICING_RETURN_IF_ERROR(
+      MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>::Delete(
+          *filesystem_, MakeScorablePropertyCacheFilename(base_dir_)));
+  ICING_ASSIGN_OR_RETURN(
+      scorable_property_cache_,
+      MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>::Create(
+          *filesystem_, MakeScorablePropertyCacheFilename(base_dir_)));
   return libtextclassifier3::Status::OK;
 }
 
@@ -908,6 +936,14 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::GetChecksum() const {
   }
   Crc32 score_cache_checksum = std::move(checksum_or).ValueOrDie();
 
+  checksum_or = scorable_property_cache_->GetChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of scorable property cache";
+    return checksum_or.status();
+  }
+  Crc32 scorable_property_cache_checksum = std::move(checksum_or).ValueOrDie();
+
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   checksum_or = filter_cache_->GetChecksum();
@@ -957,6 +993,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::GetChecksum() const {
   total_checksum.Append(std::to_string(document_key_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(document_id_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(score_cache_checksum.Get()));
+  total_checksum.Append(std::to_string(scorable_property_cache_checksum.Get()));
   total_checksum.Append(std::to_string(filter_cache_checksum.Get()));
   total_checksum.Append(std::to_string(namespace_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(corpus_mapper_checksum.Get()));
@@ -1007,6 +1044,14 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
   }
   Crc32 score_cache_checksum = std::move(checksum_or).ValueOrDie();
 
+  checksum_or = scorable_property_cache_->UpdateChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of scorable property cache";
+    return checksum_or.status();
+  }
+  Crc32 scorable_property_cache_checksum = std::move(checksum_or).ValueOrDie();
+
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   checksum_or = filter_cache_->UpdateChecksum();
@@ -1056,6 +1101,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
   total_checksum.Append(std::to_string(document_key_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(document_id_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(score_cache_checksum.Get()));
+  total_checksum.Append(std::to_string(scorable_property_cache_checksum.Get()));
   total_checksum.Append(std::to_string(filter_cache_checksum.Get()));
   total_checksum.Append(std::to_string(namespace_mapper_checksum.Get()));
   total_checksum.Append(std::to_string(corpus_mapper_checksum.Get()));
@@ -1063,8 +1109,7 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::UpdateChecksum() {
 
   // Write the header
   DocumentStore::Header header;
-  header.magic =
-      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
+  header.magic = DocumentStore::Header::kMagic;
   header.checksum = total_checksum.Get();
 
   // This should overwrite the header.
@@ -1121,8 +1166,8 @@ DocumentStore::InternalPut(DocumentProto&& document,
   // Update ground truth first
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto offset_or =
-      document_log_->WriteProto(CreateDocumentWrapper(std::move(document)));
+  DocumentWrapper document_wrapper = CreateDocumentWrapper(std::move(document));
+  auto offset_or = document_log_->WriteProto(document_wrapper);
   if (!offset_or.ok()) {
     ICING_LOG(ERROR) << offset_or.status().error_message()
                      << "Failed to write document";
@@ -1152,35 +1197,43 @@ DocumentStore::InternalPut(DocumentProto&& document,
       NamespaceId namespace_id,
       namespace_mapper_->GetOrPut(name_space, namespace_mapper_->num_keys()));
 
+  NamespaceIdFingerprint new_doc_nsid_uri_fingerprint(namespace_id, uri);
+
   // Updates key mapper and document_id mapper
   ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-      MakeFingerprint(namespace_id, name_space, uri), new_document_id));
+      new_doc_nsid_uri_fingerprint.EncodeToCString(), new_document_id));
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
 
   // Update corpus maps
-  ICING_ASSIGN_OR_RETURN(CorpusId corpusId,
-                         corpus_mapper_->GetOrPut(
-                             MakeFingerprint(namespace_id, name_space, schema),
-                             corpus_mapper_->num_keys()));
+  NamespaceIdFingerprint corpus_nsid_schema_fingerprint(namespace_id, schema);
+  ICING_ASSIGN_OR_RETURN(
+      CorpusId corpus_id,
+      corpus_mapper_->GetOrPut(corpus_nsid_schema_fingerprint.EncodeToCString(),
+                               corpus_mapper_->num_keys()));
 
   ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
-                         GetCorpusAssociatedScoreDataToUpdate(corpusId));
+                         GetCorpusAssociatedScoreDataToUpdate(corpus_id));
   scoring_data.AddDocument(length_in_tokens);
 
   ICING_RETURN_IF_ERROR(
-      UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
-
-  ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
-      new_document_id,
-      DocumentAssociatedScoreData(corpusId, document_score,
-                                  creation_timestamp_ms, length_in_tokens)));
+      UpdateCorpusAssociatedScoreCache(corpus_id, scoring_data));
 
   ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                          schema_store_->GetSchemaTypeId(schema));
+  ICING_ASSIGN_OR_RETURN(
+      int scorable_property_cache_index,
+      UpdateScorablePropertyCache(document_wrapper.document(), schema_type_id));
+
+  ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
+      new_document_id, DocumentAssociatedScoreData(
+                           corpus_id, document_score, creation_timestamp_ms,
+                           scorable_property_cache_index, length_in_tokens)));
 
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
-      new_document_id, DocumentFilterData(namespace_id, schema_type_id,
-                                          expiration_timestamp_ms)));
+      new_document_id,
+      DocumentFilterData(namespace_id,
+                         new_doc_nsid_uri_fingerprint.fingerprint(),
+                         schema_type_id, expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
     put_result.was_replacement = true;
@@ -1288,14 +1341,58 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
   return std::move(*document_wrapper.mutable_document());
 }
 
+std::unique_ptr<ScorablePropertySet> DocumentStore::GetScorablePropertySet(
+    DocumentId document_id, int64_t current_time_ms) const {
+  if (!feature_flags_.enable_scorable_properties()) {
+    return nullptr;
+  }
+
+  // Get scorable property cache index from the score_cache_
+  libtextclassifier3::StatusOr<const DocumentAssociatedScoreData*>
+      score_data_or = score_cache_->Get(document_id);
+  if (!score_data_or.ok()) {
+    return nullptr;
+  }
+  if (score_data_or.ValueOrDie()->scorable_property_cache_index() ==
+      kInvalidScorablePropertyCacheIndex) {
+    return nullptr;
+  }
+
+  // Get ScorablePropertySetProto.
+  libtextclassifier3::StatusOr<ScorablePropertySetProto>
+      scorable_property_set_proto_or = scorable_property_cache_->Read(
+          score_data_or.ValueOrDie()->scorable_property_cache_index());
+  if (!scorable_property_set_proto_or.ok()) {
+    return nullptr;
+  }
+
+  // Get schema type id.
+  auto document_filter_data_optional =
+      GetAliveDocumentFilterData(document_id, current_time_ms);
+  if (!document_filter_data_optional) {
+    return nullptr;
+  }
+
+  libtextclassifier3::StatusOr<std::unique_ptr<ScorablePropertySet>>
+      scorable_property_set_or = ScorablePropertySet::Create(
+          std::move(scorable_property_set_proto_or.ValueOrDie()),
+          document_filter_data_optional.value().schema_type_id(),
+          schema_store_);
+  if (!scorable_property_set_or.ok()) {
+    return nullptr;
+  }
+  return std::move(scorable_property_set_or.ValueOrDie());
+}
+
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
     const std::string_view name_space, const std::string_view uri) const {
   auto namespace_id_or = namespace_mapper_->Get(name_space);
   libtextclassifier3::Status status = namespace_id_or.status();
   if (status.ok()) {
     NamespaceId namespace_id = namespace_id_or.ValueOrDie();
-    auto document_id_or = document_key_mapper_->Get(
-        MakeFingerprint(namespace_id, name_space, uri));
+    NamespaceIdFingerprint doc_nsid_uri_fingerprint(namespace_id, uri);
+    auto document_id_or =
+        document_key_mapper_->Get(doc_nsid_uri_fingerprint.EncodeToCString());
     status = document_id_or.status();
     if (status.ok()) {
       // Guaranteed to have a DocumentId now
@@ -1308,16 +1405,9 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
-    const NamespaceFingerprintIdentifier& namespace_fingerprint_identifier)
-    const {
-  if (!namespace_id_fingerprint_) {
-    return absl_ports::FailedPreconditionError(
-        "Cannot lookup document id by namespace id + fingerprint without "
-        "enabling it on uri_mapper");
-  }
-
+    const NamespaceIdFingerprint& doc_namespace_id_uri_fingerprint) const {
   auto document_id_or = document_key_mapper_->Get(
-      namespace_fingerprint_identifier.EncodeToCString());
+      doc_namespace_id_uri_fingerprint.EncodeToCString());
   if (document_id_or.ok()) {
     return document_id_or.ValueOrDie();
   }
@@ -1451,7 +1541,8 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
     const std::string_view name_space, const std::string_view schema) const {
   ICING_ASSIGN_OR_RETURN(NamespaceId namespace_id,
                          namespace_mapper_->Get(name_space));
-  return corpus_mapper_->Get(MakeFingerprint(namespace_id, name_space, schema));
+  NamespaceIdFingerprint corpus_nsid_schema_fp(namespace_id, schema);
+  return corpus_mapper_->Get(corpus_nsid_schema_fp.EncodeToCString());
 }
 
 libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
@@ -1699,6 +1790,7 @@ libtextclassifier3::Status DocumentStore::PersistToDisk(
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(scorable_property_cache_->PersistToDisk());
   ICING_RETURN_IF_ERROR(filter_cache_->PersistToDisk());
   ICING_RETURN_IF_ERROR(namespace_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(usage_store_->PersistToDisk());
@@ -1725,6 +1817,8 @@ DocumentStorageInfoProto DocumentStore::GetMemberStorageInfo() const {
       GetValueOrDefault(document_id_mapper_->GetDiskUsage(), -1));
   storage_info.set_score_cache_size(
       GetValueOrDefault(score_cache_->GetDiskUsage(), -1));
+  storage_info.set_scorable_property_cache_size(
+      GetValueOrDefault(scorable_property_cache_->GetDiskUsage(), -1));
   storage_info.set_filter_cache_size(
       GetValueOrDefault(filter_cache_->GetDiskUsage(), -1));
   storage_info.set_namespace_id_mapper_size(
@@ -1983,11 +2077,11 @@ DocumentStore::OptimizeInto(
 
   ICING_ASSIGN_OR_RETURN(
       auto doc_store_create_result,
-      DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            namespace_id_fingerprint_, pre_mapping_fbv_,
-                            use_persistent_hash_map_, compression_level_,
-                            /*initialize_stats=*/nullptr));
+      DocumentStore::Create(
+          filesystem_, new_directory, &clock_, schema_store_, &feature_flags_,
+          /*force_recovery_and_revalidate_documents=*/false, pre_mapping_fbv_,
+          use_persistent_hash_map_, compression_level_,
+          /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
 
@@ -2164,6 +2258,8 @@ DocumentStore::GetOptimizeInfo() const {
                          document_id_mapper_->GetElementsFileSize());
   ICING_ASSIGN_OR_RETURN(const int64_t score_cache_file_size,
                          score_cache_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t scorable_property_cache_file_size,
+                         scorable_property_cache_->GetElementsFileSize());
   ICING_ASSIGN_OR_RETURN(const int64_t filter_cache_file_size,
                          filter_cache_->GetElementsFileSize());
   ICING_ASSIGN_OR_RETURN(const int64_t corpus_score_cache_file_size,
@@ -2186,6 +2282,7 @@ DocumentStore::GetOptimizeInfo() const {
 
   int64_t total_size = document_log_file_size + document_key_mapper_size +
                        document_id_mapper_file_size + score_cache_file_size +
+                       scorable_property_cache_file_size +
                        filter_cache_file_size + corpus_score_cache_file_size +
                        usage_store_file_size;
 
@@ -2219,15 +2316,20 @@ libtextclassifier3::Status DocumentStore::ClearDerivedData(
 
   // Resets the score cache entry
   ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
-      document_id, DocumentAssociatedScoreData(kInvalidCorpusId,
-                                               /*document_score=*/-1,
-                                               /*creation_timestamp_ms=*/-1,
-                                               /*length_in_tokens=*/0)));
+      document_id,
+      DocumentAssociatedScoreData(
+          kInvalidCorpusId,
+          /*document_score=*/-1,
+          /*creation_timestamp_ms=*/-1,
+          /*scorable_property_cache_index=*/kInvalidScorablePropertyCacheIndex,
+          /*length_in_tokens=*/0)));
 
   // Resets the filter cache entry
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
-      document_id, DocumentFilterData(kInvalidNamespaceId, kInvalidSchemaTypeId,
-                                      /*expiration_timestamp_ms=*/-1)));
+      document_id,
+      DocumentFilterData(kInvalidNamespaceId, /*uri_fingerprint=*/0,
+                         kInvalidSchemaTypeId,
+                         /*expiration_timestamp_ms=*/-1)));
 
   // Clears the usage scores.
   return usage_store_->DeleteUsageScores(document_id);
@@ -2294,6 +2396,29 @@ DocumentStore::GetDebugInfo(int verbosity) const {
     *debug_info.mutable_corpus_info() = std::move(corpus_info);
   }
   return debug_info;
+}
+
+libtextclassifier3::StatusOr<int> DocumentStore::UpdateScorablePropertyCache(
+    const DocumentProto& document, SchemaTypeId schema_type_id) {
+  if (!feature_flags_.enable_scorable_properties()) {
+    return kInvalidScorablePropertyCacheIndex;
+  }
+  ICING_ASSIGN_OR_RETURN(
+      const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*
+          ordered_scorable_property_info,
+      schema_store_->GetOrderedScorablePropertyInfo(schema_type_id));
+  if (ordered_scorable_property_info == nullptr ||
+      ordered_scorable_property_info->empty()) {
+    // No scorable property defined under the schema config of the
+    // schema_type_id.
+    return kInvalidScorablePropertyCacheIndex;
+  }
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<ScorablePropertySet> scorable_property_set,
+      ScorablePropertySet::Create(document, schema_type_id, schema_store_));
+
+  return scorable_property_cache_->Write(
+      scorable_property_set->GetScorablePropertySetProto());
 }
 
 }  // namespace lib
