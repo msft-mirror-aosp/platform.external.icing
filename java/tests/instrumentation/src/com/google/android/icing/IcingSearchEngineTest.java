@@ -313,8 +313,8 @@ public final class IcingSearchEngineTest {
     byte[] digest = calculateDigest(data);
     PropertyProto.BlobHandleProto blobHandle =
         PropertyProto.BlobHandleProto.newBuilder()
-            .setLabel("label")
             .setDigest(ByteString.copyFrom(digest))
+            .setNamespace("namespace")
             .build();
 
     // 2 Act: write the blob and read it back.
