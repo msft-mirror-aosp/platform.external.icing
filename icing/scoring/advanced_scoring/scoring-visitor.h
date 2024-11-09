@@ -23,6 +23,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -47,6 +48,8 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
                           Bm25fCalculator* bm25f_calculator,
                           const JoinChildrenFetcher* join_children_fetcher,
                           const EmbeddingQueryResults* embedding_query_results,
+                          const SchemaTypeAliasMap* schema_type_alias_map,
+                          const FeatureFlags* feature_flags,
                           int64_t current_time_ms)
       : default_score_(default_score),
         default_semantic_metric_type_(default_semantic_metric_type),
@@ -56,6 +59,8 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
         bm25f_calculator_(*bm25f_calculator),
         join_children_fetcher_(join_children_fetcher),
         embedding_query_results_(*embedding_query_results),
+        schema_type_alias_map_(*schema_type_alias_map),
+        feature_flags_(*feature_flags),
         current_time_ms_(current_time_ms) {}
 
   void VisitString(const StringNode* node) override;
@@ -111,6 +116,8 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   // A non-null join_children_fetcher_ indicates scoring in a join.
   const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
   const EmbeddingQueryResults& embedding_query_results_;
+  const SchemaTypeAliasMap& schema_type_alias_map_;
+  const FeatureFlags& feature_flags_;  // Does not own.
 
   libtextclassifier3::Status pending_error_;
   std::vector<std::unique_ptr<ScoreExpression>> stack_;

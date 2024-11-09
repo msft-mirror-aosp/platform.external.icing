@@ -105,12 +105,15 @@ message PropertyProto {
   repeated VectorProto vector_values = 8;
 
   // Holds a blob handle field of the property.
-  // Next tag: 3
+  // Next tag: 4
   message BlobHandleProto {
     // The sha-256 hashed digest for a blob.
     optional bytes digest = 1;
-    // The label of the blob.
-    optional string label = 2;
+
+    // The namespace of the blob.
+    optional string namespace = 3;
+
+    reserved 2;
   }
   repeated BlobHandleProto blob_handle_values = 9;
 }

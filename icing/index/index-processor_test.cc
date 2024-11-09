@@ -29,6 +29,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/data-indexing-handler.h"
@@ -58,15 +59,16 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/crc32.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -154,10 +156,11 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
 class IndexProcessorTest : public Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -203,8 +206,8 @@ class IndexProcessorTest : public Test {
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -286,14 +289,14 @@ class IndexProcessorTest : public Test {
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -336,6 +339,7 @@ class IndexProcessorTest : public Test {
 
   std::unique_ptr<IcingMockFilesystem> mock_icing_filesystem_;
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   FakeClock fake_clock_;

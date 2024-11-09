@@ -17,11 +17,11 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/test-data.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -33,7 +33,7 @@ class IcuNormalizerTest : public testing::Test {
   void SetUp() override {
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
+        icu_data_file_helper::SetUpIcuDataFile(
             GetTestFilePath("icing/icu.dat")));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
