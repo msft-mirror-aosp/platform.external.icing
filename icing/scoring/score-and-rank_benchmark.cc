@@ -25,6 +25,7 @@
 #include "testing/base/public/benchmark.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
@@ -42,6 +43,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 
@@ -96,17 +98,18 @@ DocumentProto CreateEmailDocument(int id, int document_score,
 
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store) {
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
   return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store,
+      filesystem, base_dir, clock, schema_store, &feature_flags,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/true,
-      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
 
 void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -119,14 +122,14 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -144,7 +147,7 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store.get(), schema_store.get(),
           clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
-          &empty_embedding_query_results));
+          &empty_embedding_query_results, &feature_flags));
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
 
@@ -217,6 +220,7 @@ BENCHMARK(BM_ScoreAndRankDocumentHitsByDocumentScore)
     ->ArgPair(10000, 20000);
 
 void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -229,14 +233,14 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -255,7 +259,7 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store.get(), schema_store.get(),
           clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
-          &empty_embedding_query_results));
+          &empty_embedding_query_results, &feature_flags));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -330,6 +334,7 @@ BENCHMARK(BM_ScoreAndRankDocumentHitsByCreationTime)
     ->ArgPair(10000, 20000);
 
 void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -342,14 +347,14 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -367,7 +372,7 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store.get(), schema_store.get(),
           clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
-          &empty_embedding_query_results));
+          &empty_embedding_query_results, &feature_flags));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -437,6 +442,7 @@ BENCHMARK(BM_ScoreAndRankDocumentHitsNoScoring)
     ->ArgPair(10000, 20000);
 
 void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -449,14 +455,14 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem, document_store_dir, &clock,
-                          schema_store.get()));
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -474,7 +480,7 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
           SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
           document_store.get(), schema_store.get(),
           clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
-          &empty_embedding_query_results));
+          &empty_embedding_query_results, &feature_flags));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);

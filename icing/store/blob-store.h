@@ -16,17 +16,18 @@
 #define ICING_STORE_BLOB_STORE_H_
 
 #include <cstdint>
-#include <memory>
 #include <string>
-#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
-#include "icing/store/key-mapper.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/util/clock.h"
 
 namespace icing {
@@ -47,25 +48,10 @@ namespace lib {
 // The BlobStore is not thread-safe.
 class BlobStore {
  public:
-  // BlobInfo holds information about a blob. This struct will be stored as the
-  // value in the dynamic trie key mapper, so it must be packed to avoid
-  // padding (which potentially causes use-of-uninitialized-value errors).
-  struct BlobInfo {
-    // The creation time of the blob. This is used to determine when to delete
-    // the orphaned blobs.
-    // We are using creation_time_ms to be file name of the blob, so this field
-    // is unique for each blob.
-    int64_t creation_time_ms;
-    bool is_committed;
-
-    // The param needed for dynamic trie, we shouldn't call this constructor
-    // directly.
-    BlobInfo() : BlobInfo(/*creation_time_ms=*/-1, /*is_committed=*/false) {}
-
-    BlobInfo(int64_t creation_time_ms, bool is_committed)
-        : creation_time_ms(creation_time_ms), is_committed(is_committed) {}
-  } __attribute__((packed));
-  static_assert(sizeof(BlobInfo) == 9, "Invalid BlobInfo size");
+  // Builds a string representation of a blob handle.
+  // The string is used as the key in the key mapper.
+  static std::string BuildBlobHandleStr(
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   // Factory function to create a BlobStore instance. The base directory is
   // used to persist blobs. If a blob store was previously created with
@@ -79,7 +65,7 @@ class BlobStore {
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::StatusOr<BlobStore> Create(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
-      int64_t orphan_blob_time_to_live_ms);
+      int64_t orphan_blob_time_to_live_ms, int32_t compression_level);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
@@ -140,28 +126,58 @@ class BlobStore {
   libtextclassifier3::Status Optimize(
       const std::unordered_set<std::string>& dead_blob_handles);
 
- private:
-  explicit BlobStore(const Filesystem* filesystem, std::string base_dir,
-                     const Clock* clock, int64_t orphan_blob_time_to_live_ms,
-                     std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
-                     std::unordered_set<std::string> known_file_names)
+  // Calculates the StorageInfo for the Blob Store.
+  //
+  // Returns:
+  //   Vector of NamespaceBlobStorageInfoProto contains size of each namespace.
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>
+  GetStorageInfo() const;
+  
+private:
+  explicit BlobStore(
+      const Filesystem* filesystem, std::string base_dir, const Clock* clock,
+      int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
+      std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> blob_info_log,
+      std::unordered_map<std::string, int32_t> blob_handle_to_offset,
+      std::unordered_set<std::string> known_file_names)
       : filesystem_(*filesystem),
         base_dir_(std::move(base_dir)),
         clock_(*clock),
         orphan_blob_time_to_live_ms_(orphan_blob_time_to_live_ms),
-        blob_info_mapper_(std::move(blob_info_mapper)),
+        compression_level_(compression_level),
+        blob_info_log_(std::move(blob_info_log)),
+        blob_handle_to_offset_(std::move(blob_handle_to_offset)),
         known_file_names_(std::move(known_file_names)) {}
 
-  libtextclassifier3::StatusOr<BlobStore::BlobInfo> GetOrCreateBlobInfo(
-      const std::string& blob_handle_str);
+  libtextclassifier3::StatusOr<BlobInfoProto> GetOrCreateBlobInfo(
+      const std::string& blob_handle_str,
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   const Filesystem& filesystem_;
   std::string base_dir_;
   const Clock& clock_;
   int64_t orphan_blob_time_to_live_ms_;
+  int32_t compression_level_;
 
-  std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper_;
+  // The ground truth blob info log file, which is used to read/write/erase
+  // BlobInfoProto.
+  std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> blob_info_log_;
+
+  // The map for BlobHandle string to the offset of BlobInfoProto in the
+  // BlobInfoProto log file.
+  // The keys are the Encoded CString from BlobHandleProto.
+  std::unordered_map<std::string, int32_t> blob_handle_to_offset_;
+
+  // The map to tracking sent file descriptors for write.
+  // The key is the pending blob handle CString which is constructed of
+  // digest, namespace, and label.
+  // The value is the set of file descriptors for write.
+  std::unordered_map<std::string, int> file_descriptors_for_write_;
+
+  // The set of used file names to store blobs in the blob store.
   std::unordered_set<std::string> known_file_names_;
+
   bool has_mutated_ = false;
 };
 

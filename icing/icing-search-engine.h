@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
@@ -174,6 +175,21 @@ class IcingSearchEngine {
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet.
   //   INTERNAL_ERROR on IO error
   GetSchemaResultProto GetSchema() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Get Icing's current copy of the schema for the given database.
+  //
+  // NOTE: This is an expensive operation. It is recommended to call GetSchema()
+  // instead if you do not need to filter the schema by database, or if you're
+  // retrieving the only database in the schema.
+  //
+  // Returns:
+  //   SchemaProto on success
+  //   NOT_FOUND if a schema has not been set yet, or if the database is not
+  //     present in the schema
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet.
+  //   INTERNAL_ERROR on IO error
+  GetSchemaResultProto GetSchema(std::string_view database)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Get Icing's copy of the SchemaTypeConfigProto of name schema_type
   //
@@ -359,7 +375,7 @@ class IcingSearchEngine {
   //   InvalidArgumentError on invalid blob handle
   //   PermissionDeniedError on blob is committed
   //   INTERNAL_ERROR on IO error
-  BlobProto OpenWriteBlob(PropertyProto::BlobHandleProto blob_handle);
+  BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets or creates a file for read only purpose for the given blob handle.
   // The blob must be committed by calling commitBlob otherwise it is not
@@ -369,7 +385,7 @@ class IcingSearchEngine {
   //   File descriptor on success
   //   InvalidArgumentError on invalid blob handle
   //   NotFoundError on blob is not found or is not committed
-  BlobProto OpenReadBlob(PropertyProto::BlobHandleProto blob_handle);
+  BlobProto OpenReadBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Commits the given blob, the blob is open to write via openWrite.
   // Before the blob is committed, it is not visible to any reader via openRead.
@@ -381,7 +397,7 @@ class IcingSearchEngine {
   //   False on the blob is already committed.
   //   InvalidArgumentError on invalid blob handle or digest is mismatch with
   //     file content NotFoundError on blob is not found.
-  BlobProto CommitBlob(PropertyProto::BlobHandleProto blob_handle);
+  BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
@@ -477,6 +493,7 @@ class IcingSearchEngine {
 
  private:
   const IcingSearchEngineOptions options_;
+  const FeatureFlags feature_flags_;
   const std::unique_ptr<const Filesystem> filesystem_;
   const std::unique_ptr<const IcingFilesystem> icing_filesystem_;
   bool initialized_ ICING_GUARDED_BY(mutex_) = false;
@@ -611,7 +628,7 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   libtextclassifier3::Status InitializeBlobStore(
-      int32_t orphan_blob_time_to_live_ms)
+      int32_t orphan_blob_time_to_live_ms, int32_t compression_level)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer

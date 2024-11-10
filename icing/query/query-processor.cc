@@ -26,8 +26,11 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
+#include "icing/index/iterator/doc-hit-info-iterator-and.h"
+#include "icing/index/iterator/doc-hit-info-iterator-by-uri.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
@@ -110,6 +113,22 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     }
   }
 
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  if (search_spec.document_uri_filters_size() > 0) {
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<DocHitInfoIteratorByUri> uri_iterator,
+        DocHitInfoIteratorByUri::Create(&document_store_, search_spec));
+    iterators.push_back(std::move(uri_iterator));
+  }
+  if (results.root_iterator != nullptr) {
+    iterators.push_back(std::move(results.root_iterator));
+  }
+  if (iterators.empty()) {
+    iterators.push_back(std::make_unique<DocHitInfoIteratorAllDocumentId>(
+        document_store_.last_added_document_id()));
+  }
+  results.root_iterator = CreateAndIterator(std::move(iterators));
+
   DocHitInfoIteratorFilter::Options options =
       GetFilterOptions(search_spec, document_store_, schema_store_);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
@@ -147,10 +166,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
   }
 
   if (tree_root == nullptr) {
-    QueryResults results;
-    results.root_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
-        document_store_.last_added_document_id());
-    return results;
+    return QueryResults{/*root_iterator=*/nullptr};
   }
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Tokenizer> plain_tokenizer,

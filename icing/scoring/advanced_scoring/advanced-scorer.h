@@ -24,6 +24,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -51,7 +52,8 @@ class AdvancedScorer : public Scorer {
           default_semantic_metric_type,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
-      const EmbeddingQueryResults* embedding_query_results);
+      const EmbeddingQueryResults* embedding_query_results,
+      const FeatureFlags* feature_flags);
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator* query_it) override {
@@ -82,16 +84,19 @@ class AdvancedScorer : public Scorer {
   bool is_constant() const { return score_expression_->is_constant(); }
 
  private:
-  explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,
-                          std::vector<std::unique_ptr<ScoreExpression>>
-                              additional_score_expressions,
-                          std::unique_ptr<SectionWeights> section_weights,
-                          std::unique_ptr<Bm25fCalculator> bm25f_calculator,
-                          double default_score)
+  explicit AdvancedScorer(
+      std::unique_ptr<ScoreExpression> score_expression,
+      std::vector<std::unique_ptr<ScoreExpression>>
+          additional_score_expressions,
+      std::unique_ptr<SectionWeights> section_weights,
+      std::unique_ptr<Bm25fCalculator> bm25f_calculator,
+      std::unique_ptr<SchemaTypeAliasMap> alias_schema_type_map,
+      double default_score)
       : score_expression_(std::move(score_expression)),
         additional_score_expressions_(std::move(additional_score_expressions)),
         section_weights_(std::move(section_weights)),
         bm25f_calculator_(std::move(bm25f_calculator)),
+        alias_schema_type_map_(std::move(alias_schema_type_map)),
         default_score_(default_score) {
     if (is_constant()) {
       ICING_LOG(WARNING)
@@ -118,6 +123,7 @@ class AdvancedScorer : public Scorer {
   std::vector<std::unique_ptr<ScoreExpression>> additional_score_expressions_;
   std::unique_ptr<SectionWeights> section_weights_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
+  std::unique_ptr<SchemaTypeAliasMap> alias_schema_type_map_;
   double default_score_;
 };
 

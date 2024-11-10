@@ -161,7 +161,6 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
         icingSearchEngineImpl.getNextPage(nextPageToken));
   }
 
-  @NonNull
   @Override
   public void invalidateNextPageToken(long nextPageToken) {
     icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);

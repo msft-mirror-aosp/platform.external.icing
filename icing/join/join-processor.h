@@ -26,6 +26,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {

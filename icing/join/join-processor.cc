@@ -38,7 +38,7 @@
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -142,10 +142,10 @@ JoinProcessor::GetChildrenFetcher(
           // index and grouped_child_scored_doc_hits. Convert its join info to
           // referenced parent document ids and bucketize ScoredDocumentHits by
           // it (putting into parent_to_child_docs_map).
-          const NamespaceFingerprintIdentifier& ref_ns_id =
+          const NamespaceIdFingerprint& ref_doc_nsid_uri_fingerprint =
               join_index_iter->GetCurrent().join_info();
           libtextclassifier3::StatusOr<DocumentId> ref_parent_doc_id_or =
-              doc_store_->GetDocumentId(ref_ns_id);
+              doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint);
           if (ref_parent_doc_id_or.ok()) {
             parent_to_child_docs_map[std::move(ref_parent_doc_id_or)
                                          .ValueOrDie()]
@@ -223,23 +223,26 @@ JoinProcessor::Join(
 
 libtextclassifier3::StatusOr<DocumentId>
 JoinProcessor::FetchReferencedQualifiedId(
-    const DocumentId& document_id, const std::string& property_path) const {
-  std::optional<DocumentFilterData> filter_data =
-      doc_store_->GetAliveDocumentFilterData(document_id, current_time_ms_);
-  if (!filter_data) {
+    const DocumentId& child_document_id,
+    const std::string& property_path) const {
+  std::optional<DocumentFilterData> child_filter_data =
+      doc_store_->GetAliveDocumentFilterData(child_document_id,
+                                             current_time_ms_);
+  if (!child_filter_data) {
     return kInvalidDocumentId;
   }
 
-  ICING_ASSIGN_OR_RETURN(const JoinablePropertyMetadata* metadata,
-                         schema_store_->GetJoinablePropertyMetadata(
-                             filter_data->schema_type_id(), property_path));
+  ICING_ASSIGN_OR_RETURN(
+      const JoinablePropertyMetadata* metadata,
+      schema_store_->GetJoinablePropertyMetadata(
+          child_filter_data->schema_type_id(), property_path));
   if (metadata == nullptr ||
       metadata->value_type != JoinableConfig::ValueType::QUALIFIED_ID) {
     // Currently we only support qualified id.
     return kInvalidDocumentId;
   }
 
-  DocJoinInfo info(document_id, metadata->id);
+  DocJoinInfo info(child_document_id, metadata->id);
   libtextclassifier3::StatusOr<std::string_view> ref_qualified_id_str_or =
       qualified_id_join_index_->Get(info);
   if (!ref_qualified_id_str_or.ok()) {

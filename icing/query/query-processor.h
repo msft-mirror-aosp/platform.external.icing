@@ -82,12 +82,14 @@ class QueryProcessor {
                           const DocumentStore* document_store,
                           const SchemaStore* schema_store, const Clock* clock);
 
-  // Parse the query into a one DocHitInfoIterator that represents the root of a
-  // query tree in our new Advanced Query Language.
+  // Parse the query into a QueryResults object, which holds a
+  // DocHitInfoIterator that represents the root of a query tree in our new
+  // Advanced Query Language.
   //
   // Returns:
   //   On success,
-  //     - One iterator that represents the entire query
+  //     - A QueryResults instance. If the query is empty, the
+  //       DocHitInfoIterator that it holds will be nullptr.
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   libtextclassifier3::StatusOr<QueryResults> ParseAdvancedQuery(
       const SearchSpecProto& search_spec,

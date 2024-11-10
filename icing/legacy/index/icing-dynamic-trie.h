@@ -284,6 +284,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // Number of keys in trie.
   uint32_t size() const;
 
+  bool empty() const;
+
   // Collecting stats.
   void CollectStats(Stats *stats) const;
 
@@ -615,6 +617,15 @@ class IcingDynamicTrie : public IIcingStorage {
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
+  //
+  // REQUIRES: node is valid.
+  //   - Since we only invalidate Next to remove the edge from the trie and Node
+  //     is not invalidated after deletion, the caller should ensure that it
+  //     traverses correctly to a valid node according to the trie structure.
+  //     Calling this function with an invalid node is undefined behavior since
+  //     it could traverse into a deleted subtree, or invalid memory addresses.
+  //   - This also means storage_->empty() should be checked before calling this
+  //     function with the root node.
   void CollectStatsRecursive(const Node &node, Stats *stats,
                              uint32_t depth = 0) const;
 

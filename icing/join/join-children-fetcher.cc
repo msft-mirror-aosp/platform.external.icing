@@ -14,8 +14,13 @@
 
 #include "icing/join/join-children-fetcher.h"
 
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {

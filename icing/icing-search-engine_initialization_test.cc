@@ -28,6 +28,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -36,6 +37,8 @@
 #include "icing/file/version-util.h"
 #include "icing/icing-search-engine.h"
 #include "icing/index/data-indexing-handler.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/embedding-indexing-handler.h"
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/index/integer-section-indexing-handler.h"
@@ -77,18 +80,20 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -162,6 +167,8 @@ std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
 class IcingSearchEngineInitializationTest : public testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       // If we've specified using the reverse-JNI method for segmentation (i.e.
       // not ICU), then we won't have the ICU data file included to set up.
@@ -172,7 +179,7 @@ class IcingSearchEngineInitializationTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
 
@@ -197,6 +204,7 @@ class IcingSearchEngineInitializationTest : public testing::Test {
 
   const IcingFilesystem* icing_filesystem() const { return &icing_filesystem_; }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
@@ -220,6 +228,10 @@ std::string GetQualifiedIdJoinIndexDir() {
   return GetTestBaseDir() + "/qualified_id_join_index_dir";
 }
 
+std::string GetEmbeddingIndexDir() {
+  return GetTestBaseDir() + "/embedding_index_dir";
+}
+
 std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 
 std::string GetBlobDir() { return GetTestBaseDir() + "/blob_dir"; }
@@ -233,6 +245,9 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_use_new_qualified_id_join_index(true);
+  icing_options.set_enable_embedding_index(true);
+  icing_options.set_enable_embedding_quantization(true);
+  icing_options.set_enable_blob_store(true);
   return icing_options;
 }
 
@@ -919,7 +934,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
     ICING_EXPECT_OK(schema_store->SetSchema(
         new_schema, /*ignore_errors_and_delete_documents=*/false,
         /*allow_circular_schema_definitions=*/false));
@@ -1076,24 +1092,26 @@ TEST_F(IcingSearchEngineInitializationTest,
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
         BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
-                          /*orphan_blob_time_to_live_ms=*/0));
+                          /*orphan_blob_time_to_live_ms=*/0,
+                          PortableFileBackedProtoLog<
+                              BlobInfoProto>::kDefaultCompressionLevel));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(),
+                              schema_store.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
@@ -1328,7 +1346,8 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptedDocumentStore) {
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
 
     // Manually corrupt one of the derived files of DocumentStore without
     // updating checksum in DocumentStore header.
@@ -3922,9 +3941,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     qualified_id_join_index->set_last_added_document_id(0);
     ICING_ASSERT_OK(qualified_id_join_index->Put(
         /*schema_type_id=*/0, /*joinable_property_id=*/0, /*document_id=*/0,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                        /*target_str=*/"uri")}));
+        /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/0, /*target_str=*/"uri")}));
   }
 
   // 3. Create the index again. This should trigger index restoration.
@@ -4098,9 +4116,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK(qualified_id_join_index->Put(
         /*schema_type_id=*/1, /*joinable_property_id=*/0,
         /*document_id=*/original_last_added_doc_id + 1,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                        /*target_str=*/"person")}));
+        /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/0, /*target_str=*/"person")}));
   }
 
   // 3. Create the index again. This should trigger index restoration.
@@ -4904,7 +4921,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
     ICING_EXPECT_OK(schema_store->SetSchema(
         new_schema, /*ignore_errors_and_delete_documents=*/false,
         /*allow_circular_schema_definitions=*/false));
@@ -5427,6 +5445,11 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                                         .SetName("senderQualifiedId")
                                         .SetDataTypeJoinableString(
                                             JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -5451,6 +5474,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
           .AddStringProperty("body", "correct message")
           .AddInt64Property("indexableInteger", 123)
           .AddStringProperty("senderQualifiedId", "namespace#person/1")
+          .AddVectorProperty(
+              "embedding", CreateVector("my_model", {0.1, 0.2, 0.3, 0.4, 0.5}))
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
@@ -5480,24 +5505,26 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
         BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
-                          /*orphan_blob_time_to_live_ms=*/0));
+                          /*orphan_blob_time_to_live_ms=*/0,
+                          PortableFileBackedProtoLog<
+                              BlobInfoProto>::kDefaultCompressionLevel));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(),
+                              schema_store.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
@@ -5526,6 +5553,11 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                                            /*pre_mapping_fbv=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<EmbeddingIndex> embedding_index,
+        EmbeddingIndex::Create(filesystem(), GetEmbeddingIndexDir(),
+                               &fake_clock, feature_flags_.get()));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<TermIndexingHandler> term_indexing_handler,
         TermIndexingHandler::Create(
             &fake_clock, normalizer_.get(), index.get(),
@@ -5539,10 +5571,15 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             qualified_id_join_indexing_handler,
         QualifiedIdJoinIndexingHandler::Create(
             &fake_clock, document_store.get(), qualified_id_join_index.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<EmbeddingIndexingHandler> embedding_indexing_handler,
+        EmbeddingIndexingHandler::Create(&fake_clock, embedding_index.get(),
+                                         /*enable_embedding_index=*/true));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(term_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
     handlers.push_back(std::move(qualified_id_join_indexing_handler));
+    handlers.push_back(std::move(embedding_indexing_handler));
     IndexProcessor index_processor(std::move(handlers), &fake_clock);
 
     DocumentProto incorrect_message =
@@ -5552,6 +5589,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             .AddStringProperty("body", "wrong message")
             .AddInt64Property("indexableInteger", 456)
             .AddStringProperty("senderQualifiedId", "namespace#person/2")
+            .AddVectorProperty(
+                "embedding",
+                CreateVector("my_model", {-0.1, -0.2, -0.3, -0.4, -0.5}))
             .SetCreationTimestampMs(kDefaultCreationTimestampMs)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -5604,6 +5644,7 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
   //  - term index
   //  - numeric index
   //  - qualified id join index
+  //  - embedding index
   InitializeStatsProto::RecoveryCause expected_recovery_cause =
       GetParam().existing_version_info.version != version_util::kVersion
           ? InitializeStatsProto::VERSION_CHANGED
@@ -5622,6 +5663,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
   EXPECT_THAT(initialize_result.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(expected_recovery_cause));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(expected_recovery_cause));
 
   // Manually check version file
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -5698,6 +5742,22 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
       search_spec3, ScoringSpecProto::default_instance(), result_spec3);
   EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_join_search_result_proto));
+
+  // Verify embedding search
+  SearchSpecProto search_spec4;
+  search_spec4.set_query("semanticSearch(getEmbeddingParameter(0), 0)");
+  *search_spec4.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1, 1, 1});
+  search_spec4.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec4.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+
+  SearchResultProto search_result_proto4 =
+      icing.Search(search_spec4, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto4, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -5912,6 +5972,899 @@ INSTANTIATE_TEST_SUITE_P(
     IcingSearchEngineInitializationChangePropertyExistenceHitsFlagTest,
     testing::Values(std::make_tuple(false, false), std::make_tuple(false, true),
                     std::make_tuple(true, false), std::make_tuple(true, true)));
+
+TEST_F(IcingSearchEngineInitializationTest, TurnOnEnableSchemaDatabaseFlag) {
+  // Create a schema with two databases.
+  SchemaTypeConfigProto db1_email =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/email")
+          .SetDatabase("db1")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db1Subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaTypeConfigProto db2_email =
+      SchemaTypeConfigBuilder()
+          .SetType("db2/email")
+          .SetDatabase("db2")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db2Subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db2Id")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto combined_schema =
+      SchemaBuilder().AddType(db1_email).AddType(db2_email).Build();
+  SchemaProto db1_schema = SchemaBuilder().AddType(db1_email).Build();
+  SchemaProto db2_schema = SchemaBuilder().AddType(db2_email).Build();
+
+  // Create documents for the two databases.
+  DocumentProto db1_email_doc =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("db1/email")
+          .AddStringProperty("db1Subject", "subject")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto db2_email_doc =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("db2/email")
+          .AddStringProperty("db2Subject", "subject")
+          .AddInt64Property("db2Id", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_schema_database(false);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(combined_schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  // Create a new IcingSearchEngine and initialize it.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_schema_database(true);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchResultProto db1_email_search_result_proto;
+  db1_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *db1_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db1_email_doc;
+
+  SearchResultProto db2_email_search_result_proto;
+  db2_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *db2_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db2_email_doc;
+
+  SearchResultProto all_email_search_result_proto;
+  all_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db2_email_doc;
+  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db1_email_doc;
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("db1Subject:subject");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        db1_email_search_result_proto));
+
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("subject");
+  search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        all_email_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec3;
+  search_spec3.set_query("db2Id == 123");
+  search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto search_result_proto3 =
+      icing.Search(search_spec3, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
+                                        db2_email_search_result_proto));
+
+  // Verify GetSchema
+  GetSchemaResultProto expected_get_schema_result_proto;
+  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_schema_result_proto.mutable_schema() = combined_schema;
+  EXPECT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
+
+  GetSchemaResultProto expected_get_schema_result_proto_db1;
+  expected_get_schema_result_proto_db1.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
+  EXPECT_THAT(icing.GetSchema("db1"),
+              EqualsProto(expected_get_schema_result_proto_db1));
+
+  GetSchemaResultProto expected_get_schema_result_proto_db2;
+  expected_get_schema_result_proto_db2.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
+  EXPECT_THAT(icing.GetSchema("db2"),
+              EqualsProto(expected_get_schema_result_proto_db2));
+}
+
+TEST_F(IcingSearchEngineInitializationTest, TurnOffEnableSchemaDatabaseFlag) {
+  // Create a schema with two databases.
+  SchemaTypeConfigProto db1_email =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/email")
+          .SetDatabase("db1")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db1Subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaTypeConfigProto db2_email =
+      SchemaTypeConfigBuilder()
+          .SetType("db2/email")
+          .SetDatabase("db2")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db2Subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db2Id")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto combined_schema =
+      SchemaBuilder().AddType(db1_email).AddType(db2_email).Build();
+  SchemaProto db1_schema = SchemaBuilder().AddType(db1_email).Build();
+  SchemaProto db2_schema = SchemaBuilder().AddType(db2_email).Build();
+
+  // Create documents for the two databases.
+  DocumentProto db1_email_doc =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("db1/email")
+          .AddStringProperty("db1Subject", "subject")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto db2_email_doc =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("db2/email")
+          .AddStringProperty("db2Subject", "subject")
+          .AddInt64Property("db2Id", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_schema_database(true);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Setting a schema with types from multiple databases is not allowed once
+    // schema database is enabled.
+    ASSERT_THAT(icing.SetSchema(combined_schema).status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+
+    ASSERT_THAT(icing.SetSchema(db1_schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(db2_schema).status(), ProtoIsOk());
+
+    ASSERT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  // Create a new IcingSearchEngine and initialize it.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_schema_database(false);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchResultProto db1_email_search_result_proto;
+  db1_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *db1_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db1_email_doc;
+
+  SearchResultProto db2_email_search_result_proto;
+  db2_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *db2_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db2_email_doc;
+
+  SearchResultProto all_email_search_result_proto;
+  all_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db2_email_doc;
+  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db1_email_doc;
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("db1Subject:subject");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        db1_email_search_result_proto));
+
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("subject");
+  search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        all_email_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec3;
+  search_spec3.set_query("db2Id == 123");
+  search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto search_result_proto3 =
+      icing.Search(search_spec3, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
+                                        db2_email_search_result_proto));
+
+  // Verify GetSchema
+  GetSchemaResultProto expected_get_schema_result_proto;
+  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_schema_result_proto.mutable_schema() = combined_schema;
+  EXPECT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
+}
+
+class IcingSearchEngineInitializationChangeEmbeddingFlagTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<std::vector<bool>> {};
+TEST_P(IcingSearchEngineInitializationChangeEmbeddingFlagTest,
+       ChangeEnableEmbeddingIndexFlagTest) {
+  std::vector<bool> enable_embedding_index_flags = GetParam();
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Create a document with an embedding.
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "uri")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty(
+              "embedding", CreateVector("my_model", {0.1, 0.2, 0.3, 0.4, 0.5}))
+          .Build();
+
+  // Create icing with a document that has an embedding.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(enable_embedding_index_flags[0]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // Create icing multiple times with different enable_embedding_index flags.
+  for (int i = 1; i < enable_embedding_index_flags.size(); ++i) {
+    bool flag_changed =
+        enable_embedding_index_flags[i] != enable_embedding_index_flags[i - 1];
+
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/embedding_index_dir")))
+        .Times(flag_changed ? 1 : 0);
+
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(enable_embedding_index_flags[i]);
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
+                                : InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Write a embedding query that should match the document if the embedding
+    // index is enabled.
+    SearchSpecProto search_spec;
+    search_spec.set_query("semanticSearch(getEmbeddingParameter(0), 0)");
+    *search_spec.add_embedding_query_vectors() =
+        CreateVector("my_model", {1, 1, 1, 1, 1});
+    search_spec.set_embedding_query_metric_type(
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+
+    SearchResultProto results =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    // The document should be returned if the embedding index is enabled.
+    if (enable_embedding_index_flags[i]) {
+      EXPECT_THAT(results.results(), SizeIs(1));
+      EXPECT_THAT(results.results(0).document(), EqualsProto(document));
+    } else {
+      EXPECT_THAT(results.results(), IsEmpty());
+    }
+  }
+}
+
+TEST_P(IcingSearchEngineInitializationChangeEmbeddingFlagTest,
+       ChangeEnableEmbeddingQuantizationFlagTest) {
+  std::vector<bool> enable_embedding_quantization_flags = GetParam();
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("embeddingUnquantized")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_LINEAR_SEARCH,
+                              EmbeddingIndexingConfig::QuantizationType::NONE)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("embeddingQuantized")
+                                   .SetDataTypeVector(
+                                       EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                       EmbeddingIndexingConfig::
+                                           QuantizationType::QUANTIZE_8_BIT)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // If quantization is enabled, this vector will be quantized to {0, 1, 255}.
+  PropertyProto::VectorProto vector = CreateVector("my_model", {0, 1.45, 255});
+  // Create two documents with different quantization types. If quantization is
+  // enabled, then only document2's embedding will be quantized. Otherwise, both
+  // will be unquantized.
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty("embeddingUnquantized", vector)
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "uri2")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(1)
+                                .AddVectorProperty("embeddingQuantized", vector)
+                                .Build();
+
+  // Create icing with a document that has an embedding.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(true);
+    options.set_enable_embedding_quantization(
+        enable_embedding_quantization_flags[0]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  }
+
+  // Create icing multiple times with different enable_embedding_index flags.
+  for (int i = 1; i < enable_embedding_quantization_flags.size(); ++i) {
+    bool flag_changed = enable_embedding_quantization_flags[i] !=
+                        enable_embedding_quantization_flags[i - 1];
+
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/embedding_index_dir")))
+        .Times(flag_changed ? 1 : 0);
+
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(true);
+    options.set_enable_embedding_quantization(
+        enable_embedding_quantization_flags[i]);
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
+                                : InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Write an embedding query that always matches all the documents. We will
+    // check quantization by checking the scores.
+    //
+    // This query will assign a dot product score that is equal to the sum of
+    // all dimensions of the matched embedding. As a result, if quantization is
+    // enabled, the score will be 0 + 1 + 255 = 256. Otherwise, the score will
+    // be 0 + 1.45 + 255 = 256.45.
+    SearchSpecProto search_spec;
+    search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+    *search_spec.add_embedding_query_vectors() =
+        CreateVector("my_model", {1, 1, 1});
+    search_spec.set_embedding_query_metric_type(
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+    ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+    scoring_spec.set_rank_by(
+        ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+    // Set the advanced scoring expression to a constant so that the documents
+    // will be returned according to their order they were added.
+    scoring_spec.set_advanced_scoring_expression("0");
+    // Set the additional advanced scoring expression to check the embedding
+    // scores.
+    scoring_spec.add_additional_advanced_scoring_expressions(
+        "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+
+    SearchResultProto results = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    EXPECT_THAT(results.results(), SizeIs(2));
+
+    constexpr float eps = 0.0001f;
+    constexpr float unquantized_score = 256.45f;
+    constexpr float quantized_score = 256.0f;
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
+    if (enable_embedding_quantization_flags[i]) {
+      // When quantization is enabled, only the embedding that is configured
+      // with quantization is quantized. So only document2's embedding is
+      // quantized.
+      EXPECT_NEAR(results.results(0).additional_scores(0), quantized_score,
+                  eps);
+    } else {
+      // When quantization is disabled, all embeddings are unquantized.
+      EXPECT_NEAR(results.results(0).additional_scores(0), unquantized_score,
+                  eps);
+    }
+    // document1's embedding is always unquantized, since it is not configured
+    // to be quantized.
+    EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
+    EXPECT_NEAR(results.results(1).additional_scores(0), unquantized_score,
+                eps);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationChangeEmbeddingFlagTest,
+    IcingSearchEngineInitializationChangeEmbeddingFlagTest,
+    testing::Values(std::vector<bool>{false, true, false, true, false, true},
+                    std::vector<bool>{true, false, true, false, true, false},
+                    std::vector<bool>{false, true, true, true, false, true},
+                    std::vector<bool>{true, false, false, false, true, false},
+                    std::vector<bool>{true, true, true, true},
+                    std::vector<bool>{false, false, false, false}));
+
+class IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<std::vector<bool>> {};
+TEST_P(IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
+       ChangeEnableScorablePropertiesFlagTest) {
+  std::vector<bool> enable_scorable_properties_flags = GetParam();
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Create a document with an embedding.
+  int scorable_prop_value = 10;
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "uri")
+                               .SetSchema("Message")
+                               .SetCreationTimestampMs(1)
+                               .AddStringProperty("body", "foo bar")
+                               .AddInt64Property("score", scorable_prop_value)
+                               .Build();
+
+  // Create icing with a document that has a scorable property.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_scorable_properties(
+        enable_scorable_properties_flags.at(0));
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // Create icing multiple times with different enable_embedding_index flags.
+  for (int i = 1; i < enable_scorable_properties_flags.size(); ++i) {
+    bool flag_changed = enable_scorable_properties_flags[i] !=
+                        enable_scorable_properties_flags[i - 1];
+
+    // Ensure that the document store derived files are rebuilt if the flag is
+    // changed.
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_scorable_properties(enable_scorable_properties_flags[i]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Ensure that the embedding index is rebuilt if the flag is changed.
+    EXPECT_THAT(
+        initialize_result.initialize_stats().document_store_recovery_cause(),
+        Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
+                        : InitializeStatsProto::NONE));
+    // If the document store was recovered, then the qualified id join index
+    // should have been regenerated with cause DEPENDENCIES_CHANGED.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(flag_changed ? InitializeStatsProto::DEPENDENCIES_CHANGED
+                                : InitializeStatsProto::NONE));
+    // None of the indices should have been affected.
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Write normal query that should retrieve the document.
+    SearchSpecProto search_spec;
+    search_spec.set_query("bar");
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+
+    ScoringSpecProto scoring_spec;
+    scoring_spec.set_rank_by(
+        ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+    scoring_spec.set_advanced_scoring_expression("this.creationTimestamp()");
+    SearchResultProto results = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    EXPECT_THAT(results.results(), SizeIs(1));
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document));
+    EXPECT_THAT(results.results(0).score(), Eq(1));
+
+    // Now write a query that tries to access the scorable property.
+    scoring_spec.set_advanced_scoring_expression(
+        "this.creationTimestamp() + sum(getScorableProperty(\"Message\", "
+        "\"score\"))");
+    SchemaTypeAliasMapProto* alias_map_proto =
+        scoring_spec.add_schema_type_alias_map_protos();
+    alias_map_proto->set_alias_schema_type("Message");
+    alias_map_proto->mutable_schema_types()->Add("Message");
+
+    results = icing.Search(search_spec, scoring_spec,
+                           ResultSpecProto::default_instance());
+    if (options.enable_scorable_properties()) {
+      EXPECT_THAT(results.status(), ProtoIsOk());
+      EXPECT_THAT(results.results(), SizeIs(1));
+      EXPECT_THAT(results.results(0).document(), EqualsProto(document));
+      EXPECT_THAT(results.results(0).score(), Eq(1 + scorable_prop_value));
+    } else {
+      EXPECT_THAT(results.status(),
+                  ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+    }
+
+    // Reindex the doc with a new scorable property value, regardless of whether
+    // scorable properties are enabled. This way we can confirm that Initialize
+    // is actually rebuilding the scorable property cache with new values.
+    scorable_prop_value += 10;
+    document = DocumentBuilder(document)
+                   .ClearProperties()
+                   .AddStringProperty("body", "foo bar")
+                   .AddInt64Property("score", scorable_prop_value)
+                   .Build();
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
+    IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
+    testing::Values(std::vector<bool>{false, true, false, true, false, true},
+                    std::vector<bool>{true, false, true, false, true, false},
+                    std::vector<bool>{false, true, true, true, false, true},
+                    std::vector<bool>{true, false, false, false, true, false},
+                    std::vector<bool>{true, true, true, true},
+                    std::vector<bool>{false, false, false, false}));
+
+class IcingSearchEngineInitializationSchemaDatabaseMigrationTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<std::tuple<int32_t, bool, bool>> {};
+
+TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
+       InitializeWithSchemaDatabaseMigration) {
+  int32_t existing_version = std::get<0>(GetParam());
+  version_util::VersionInfo existing_version_info(existing_version,
+                                                  existing_version);
+  bool perform_schema_database_migration_if_required = std::get<1>(GetParam());
+  bool enable_schema_database = std::get<2>(GetParam());
+
+  SchemaProto schema_no_database =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("db1Subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db2/email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("db2Subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("db2Id")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto db1_email_doc =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("db1/email")
+          .AddStringProperty("db1Subject", "subject")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto db2_email_doc =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("db2/email")
+          .AddStringProperty("db2Subject", "subject")
+          .AddInt64Property("db2Id", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {  // Initialize IcingSearchEngine, set schema and put documents
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+    EXPECT_THAT(icing.SetSchema(schema_no_database).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  {
+    // Manually rewrite existing data's version files
+    ICING_ASSERT_OK(
+        version_util::DiscardVersionFiles(*filesystem(), GetVersionFileDir()));
+
+    ICING_ASSERT_OK(version_util::WriteV1Version(
+        *filesystem(), GetVersionFileDir(), existing_version_info));
+
+    if (existing_version_info.version >= version_util::kFirstV2Version) {
+      IcingSearchEngineVersionProto version_proto;
+      version_proto.set_version(existing_version_info.version);
+      version_proto.set_max_version(existing_version_info.max_version);
+      version_util::WriteV2Version(
+          *filesystem(), GetVersionFileDir(),
+          std::make_unique<IcingSearchEngineVersionProto>(
+              std::move(version_proto)));
+    }
+  }
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_schema_database(enable_schema_database);
+  options.set_perform_schema_database_migration_if_required(
+      perform_schema_database_migration_if_required);
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+
+  SearchResultProto db1_email_search_result_proto;
+  db1_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *db1_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db1_email_doc;
+
+  SearchResultProto db2_email_search_result_proto;
+  db2_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *db2_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db2_email_doc;
+
+  SearchResultProto all_email_search_result_proto;
+  all_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db2_email_doc;
+  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
+      db1_email_doc;
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("db1Subject:subject");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        db1_email_search_result_proto));
+
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("subject");
+  search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        all_email_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec3;
+  search_spec3.set_query("db2Id == 123");
+  search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto search_result_proto3 =
+      icing.Search(search_spec3, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
+                                        db2_email_search_result_proto));
+
+  bool schema_migrated =
+      version_util::SchemaDatabaseMigrationRequired(existing_version_info) &&
+      enable_schema_database && perform_schema_database_migration_if_required;
+
+  // Verify GetSchema
+  if (!schema_migrated) {
+    GetSchemaResultProto expected_get_schema_result_proto;
+    expected_get_schema_result_proto.mutable_status()->set_code(
+        StatusProto::OK);
+    *expected_get_schema_result_proto.mutable_schema() = schema_no_database;
+    EXPECT_THAT(icing.GetSchema(),
+                EqualsProto(expected_get_schema_result_proto));
+
+    GetSchemaResultProto get_schema_result_proto = icing.GetSchema("db1");
+    EXPECT_THAT(get_schema_result_proto.status(),
+                ProtoStatusIs(StatusProto::NOT_FOUND));
+  } else {
+    SchemaTypeConfigProto db1_email =
+        SchemaTypeConfigBuilder()
+            .SetType("db1/email")
+            .SetDatabase("db1")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("db1Subject")
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaTypeConfigProto db2_email =
+        SchemaTypeConfigBuilder()
+            .SetType("db2/email")
+            .SetDatabase("db2")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("db2Subject")
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("db2Id")
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaProto full_schema_with_database =
+        SchemaBuilder().AddType(db1_email).AddType(db2_email).Build();
+    SchemaProto db1_schema = SchemaBuilder().AddType(db1_email).Build();
+    SchemaProto db2_schema = SchemaBuilder().AddType(db2_email).Build();
+
+    GetSchemaResultProto expected_get_schema_result_proto_full;
+    expected_get_schema_result_proto_full.mutable_status()->set_code(
+        StatusProto::OK);
+    *expected_get_schema_result_proto_full.mutable_schema() =
+        full_schema_with_database;
+    EXPECT_THAT(icing.GetSchema(),
+                EqualsProto(expected_get_schema_result_proto_full));
+
+    GetSchemaResultProto expected_get_schema_result_proto_db1;
+    expected_get_schema_result_proto_db1.mutable_status()->set_code(
+        StatusProto::OK);
+    *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
+    EXPECT_THAT(icing.GetSchema("db1"),
+                EqualsProto(expected_get_schema_result_proto_db1));
+
+    GetSchemaResultProto expected_get_schema_result_proto_db2;
+    expected_get_schema_result_proto_db2.mutable_status()->set_code(
+        StatusProto::OK);
+    *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
+    EXPECT_THAT(icing.GetSchema("db2"),
+                EqualsProto(expected_get_schema_result_proto_db2));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
+    IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
+    testing::Values(
+        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, true, true),
+        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, true, false),
+        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, false, true),
+        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, false, false),
+        std::make_tuple(version_util::kSchemaDatabaseVersion, true, true),
+        std::make_tuple(version_util::kSchemaDatabaseVersion, true, false),
+        std::make_tuple(version_util::kSchemaDatabaseVersion, false, true),
+        std::make_tuple(version_util::kSchemaDatabaseVersion, false, false)));
 
 }  // namespace
 }  // namespace lib

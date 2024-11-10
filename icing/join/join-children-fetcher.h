@@ -15,7 +15,9 @@
 #ifndef ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
 #define ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
 
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"

@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
 #define ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,7 +33,10 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -59,7 +63,9 @@ class DocHitInfoIteratorEmbedding
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
          double score_low, double score_high,
          EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
-         const EmbeddingIndex* embedding_index);
+         const EmbeddingIndex* embedding_index,
+         const DocumentStore* document_store, const SchemaStore* schema_store,
+         int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
 
@@ -92,7 +98,9 @@ class DocHitInfoIteratorEmbedding
       double score_high,
       EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
       const EmbeddingIndex* embedding_index,
-      std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor)
+      std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      int64_t current_time_ms)
       : query_(*query),
         metric_type_(metric_type),
         embedding_scorer_(std::move(embedding_scorer)),
@@ -104,6 +112,10 @@ class DocHitInfoIteratorEmbedding
         cached_embedding_hits_idx_(0),
         current_allowed_sections_mask_(kSectionIdMaskAll),
         no_more_hit_(false),
+        schema_type_id_(kInvalidSchemaTypeId),
+        document_store_(*document_store),
+        schema_store_(*schema_store),
+        current_time_ms_(current_time_ms),
         num_advance_calls_(0) {}
 
   // Advance to the next embedding hit of the current document. If the current
@@ -152,7 +164,11 @@ class DocHitInfoIteratorEmbedding
   int cached_embedding_hits_idx_;
   SectionIdMask current_allowed_sections_mask_;
   bool no_more_hit_;
+  SchemaTypeId schema_type_id_;  // The schema type id for the current document.
 
+  const DocumentStore& document_store_;
+  const SchemaStore& schema_store_;
+  int64_t current_time_ms_;
   int num_advance_calls_;
 };
 

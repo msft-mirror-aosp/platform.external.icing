@@ -34,7 +34,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -110,11 +110,11 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
   ~QualifiedIdJoinIndexImplV1() override;
 
   // v2 only API. Returns UNIMPLEMENTED_ERROR.
-  libtextclassifier3::Status Put(SchemaTypeId schema_type_id,
-                                 JoinablePropertyId joinable_property_id,
-                                 DocumentId document_id,
-                                 std::vector<NamespaceFingerprintIdentifier>&&
-                                     ref_namespace_fingerprint_ids) override {
+  libtextclassifier3::Status Put(
+      SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
+      DocumentId document_id,
+      std::vector<NamespaceIdFingerprint>&& ref_namespace_id_uri_fingerprints)
+      override {
     return absl_ports::UnimplementedError("This API is not supported in V1");
   }
 

@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 14
+// Next tag: 15
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -72,6 +72,13 @@ message SearchSpecProto {
   // schema types, separate Search()'s will need to be made. Also note that
   // schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 4;
+
+  // OPTIONAL: Only search for documents under the specified namespaces and
+  // uris. If unset, all documents will be searched.
+  //
+  // All given NamespaceDocumentUriGroup must specify at least one
+  // document_uri. To exclude a namespace, use namespace_filters instead.
+  repeated NamespaceDocumentUriGroup document_uri_filters = 14;
 
   // Timestamp taken just before sending proto across the JNI boundary from java
   // to native side.

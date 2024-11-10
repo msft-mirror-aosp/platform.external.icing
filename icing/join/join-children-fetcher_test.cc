@@ -14,13 +14,18 @@
 
 #include "icing/join/join-children-fetcher.h"
 
+#include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/join/join-processor.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 
 namespace icing {
