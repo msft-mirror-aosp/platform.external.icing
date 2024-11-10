@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -24,12 +25,15 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file-backed-proto-log.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
@@ -43,7 +47,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -52,6 +56,7 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/document-validator.h"
 #include "icing/util/fingerprint-util.h"
+#include "icing/util/scorable_property_set.h"
 
 namespace icing {
 namespace lib {
@@ -60,19 +65,15 @@ namespace lib {
 class DocumentStore {
  public:
   struct Header {
-    static int32_t GetCurrentMagic(bool namespace_id_fingerprint) {
-      return namespace_id_fingerprint ? kNewMagic : kOldMagic;
-    }
+    // Previously used magic numbers, please avoid reusing those:
+    // [0x1b99c8b0, 0x3e005b5e]
+    static constexpr int32_t kMagic = 0x8a32cd1f;
 
     // Holds the magic as a quick sanity check against file corruption.
     int32_t magic;
 
     // Checksum of the DocumentStore's sub-component's checksums.
     uint32_t checksum;
-
-   private:
-    static constexpr int32_t kOldMagic = 0x746f7265;
-    static constexpr int32_t kNewMagic = 0x1b99c8b0;
   };
 
   struct OptimizeInfo {
@@ -147,8 +148,8 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
-      bool force_recovery_and_revalidate_documents,
-      bool namespace_id_fingerprint, bool pre_mapping_fbv,
+      const FeatureFlags* feature_flags,
+      bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
       InitializeStatsProto* initialize_stats);
 
@@ -225,6 +226,19 @@ class DocumentStore {
   libtextclassifier3::StatusOr<DocumentProto> Get(
       DocumentId document_id, bool clear_internal_fields = true) const;
 
+  // Returns the ScorablePropertySet of the document specified by the
+  // DocumentId.
+  //
+  // Returns:
+  //   - ScorablePropertySet on success
+  //   - nullptr when the ScorablePropertySet fails to be created, it could be
+  //     due to that:
+  //     - |document_id| is invalid, or
+  //     - no ScorablePropertySetProto is found for the document in the cache
+  //     - internal IO error
+  std::unique_ptr<ScorablePropertySet> GetScorablePropertySet(
+      DocumentId document_id, int64_t current_time_ms) const;
+
   // Returns all namespaces which have at least 1 active document (not deleted
   // or expired). Order of namespaces is undefined.
   std::vector<std::string> GetAllNamespaces() const;
@@ -283,7 +297,7 @@ class DocumentStore {
       std::string_view name_space, std::string_view uri) const;
 
   // Helper method to find a DocumentId that is associated with the given
-  // NamespaceFingerprintIdentifier.
+  // NamespaceIdFingerprint.
   //
   // NOTE: The DocumentId may refer to a invalid document (deleted
   // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
@@ -294,8 +308,7 @@ class DocumentStore {
   //   NOT_FOUND if the key doesn't exist
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
-      const NamespaceFingerprintIdentifier& namespace_fingerprint_identifier)
-      const;
+      const NamespaceIdFingerprint& doc_namespace_id_uri_fingerprint) const;
 
   // Returns the CorpusId associated with the given namespace and schema.
   //
@@ -369,6 +382,22 @@ class DocumentStore {
   //   False                    if the given document doesn't exist.
   std::optional<DocumentFilterData> GetAliveDocumentFilterData(
       DocumentId document_id, int64_t current_time_ms) const;
+
+  // Gets the SchemaTypeId of a document.
+  //
+  // Returns:
+  //   SchemaTypeId on success
+  //   kInvalidSchemaTypeId if the document is deleted or expired.
+  SchemaTypeId GetSchemaTypeId(DocumentId document_id,
+                               int64_t current_time_ms) const {
+    std::optional<DocumentFilterData> document_filter_data_optional =
+        GetAliveDocumentFilterData(document_id, current_time_ms);
+    if (document_filter_data_optional) {
+      return document_filter_data_optional.value().schema_type_id();
+    } else {
+      return kInvalidSchemaTypeId;
+    }
+  }
 
   // Gets the usage scores of a document.
   //
@@ -544,13 +573,14 @@ class DocumentStore {
   explicit DocumentStore(const Filesystem* filesystem,
                          std::string_view base_dir, const Clock* clock,
                          const SchemaStore* schema_store,
-                         bool namespace_id_fingerprint, bool pre_mapping_fbv,
-                         bool use_persistent_hash_map,
+                         const FeatureFlags* feature_flags,
+                         bool pre_mapping_fbv, bool use_persistent_hash_map,
                          int32_t compression_level);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
   const Clock& clock_;
+  const FeatureFlags& feature_flags_;  // Does not own.
 
   // Handles the ground truth schema and all of the derived data off of the
   // schema
@@ -558,10 +588,6 @@ class DocumentStore {
 
   // Used to validate incoming documents
   DocumentValidator document_validator_;
-
-  // Whether to use namespace id or namespace name to build up fingerprint for
-  // document_key_mapper_ and corpus_mapper_.
-  bool namespace_id_fingerprint_;
 
   // Flag indicating whether memory map max possible file size for underlying
   // FileBackedVector before growing the actual file size.
@@ -592,7 +618,13 @@ class DocumentStore {
   //   - Document score
   //   - Document creation timestamp in seconds
   //   - Document length in number of tokens
+  //   - Index of the ScorablePropertySetProto at the scorable_property_cache_
   std::unique_ptr<FileBackedVector<DocumentAssociatedScoreData>> score_cache_;
+
+  // A cache of document scorable properties. The ground truth of the data is
+  // DocumentProto stored in document_log_.
+  std::unique_ptr<MemoryMappedFileBackedProtoLog<ScorablePropertySetProto>>
+      scorable_property_cache_;
 
   // A cache of data, indexed by DocumentId, used to filter documents. Currently
   // contains:
@@ -687,6 +719,12 @@ class DocumentStore {
   //
   // Returns OK or any IO errors.
   libtextclassifier3::Status ResetDocumentAssociatedScoreCache();
+
+  // Resets the unique_ptr to the |scorable_property_cache_|, deletes the
+  // underlying file, and re-creates a new instance of it.
+  //
+  // Returns OK or any IO errors.
+  libtextclassifier3::Status ResetScorablePropertyCache();
 
   // Resets the unique_ptr to the corpus_score_cache, deletes the underlying
   // file, and re-creates a new instance of the corpus_score_cache.
@@ -823,12 +861,19 @@ class DocumentStore {
       google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
   CollectCorpusInfo() const;
 
-  // Build fingerprint for the keys of document_key_mapper_ and corpus_mapper_.
-  // Note that namespace_id_fingerprint_ controls the way that a fingerprint is
-  // built.
-  std::string MakeFingerprint(NamespaceId namespace_id,
-                              std::string_view namespace_,
-                              std::string_view uri_or_schema) const;
+  // Extracts the ScorablePropertySetProto from the |document| and add it to
+  // the |scorable_property_cache_|.
+  //
+  // Returns:
+  //     - Index of the newly inserted ScorablePropertySetProto in the
+  //       |scorable_property_cache_|.
+  //     - kInvalidScorablePropertyCacheIndex if the schema contains no
+  //       scorable properties.
+  //     - INVALID_ARGUMENT if |schema_type_id| is invalid, or the converted
+  //       ScorablePropertySetProto exceeds the size limit of 16MiB.
+  //     - INTERNAL_ERROR on IO error.
+  libtextclassifier3::StatusOr<int> UpdateScorablePropertyCache(
+      const DocumentProto& document, SchemaTypeId schema_type_id);
 };
 
 }  // namespace lib
