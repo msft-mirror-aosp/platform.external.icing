@@ -1007,6 +1007,26 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_term_index_rebuild=*/true,
                 /*needs_integer_index_rebuild=*/false,
                 /*needs_qualified_id_join_index_rebuild=*/false,
+                /*needs_embedding_index_rebuild=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_SCHEMA_DATABASE}
+        //
+        // - Result: no rebuild
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild=*/false,
+                /*needs_schema_store_derived_files_rebuild=*/false,
+                /*needs_term_index_rebuild=*/false,
+                /*needs_integer_index_rebuild=*/false,
+                /*needs_qualified_id_join_index_rebuild=*/false,
                 /*needs_embedding_index_rebuild=*/false))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
@@ -1199,6 +1219,63 @@ TEST(VersionUtilTest,
           /*needs_embedding_index_rebuild=*/true)));
 }
 
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureSchemaDatabase) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild=*/false,
+                  /*needs_schema_store_derived_files_rebuild=*/false,
+                  /*needs_term_index_rebuild=*/false,
+                  /*needs_integer_index_rebuild=*/false,
+                  /*needs_qualified_id_join_index_rebuild=*/false,
+                  /*needs_embedding_index_rebuild=*/false)));
+}
+
+TEST(VersionUtilTest, SchemaDatabaseMigrationRequired) {
+  // Migration is required if the previous version is less than the version at
+  // which the database field is introduced.
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(kSchemaDatabaseVersion - 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion - 1);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  EXPECT_TRUE(SchemaDatabaseMigrationRequired(previous_version_proto));
+
+  // Migration is required if the schema database feature was not enabled in the
+  // previous version.
+  previous_version_proto.set_version(kSchemaDatabaseVersion);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion);
+  previous_version_proto.mutable_enabled_features()->Clear();
+  // Add a feature that is not the schema database feature.
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR);
+  EXPECT_TRUE(SchemaDatabaseMigrationRequired(previous_version_proto));
+
+  previous_version_proto.set_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.mutable_enabled_features()->Clear();
+  EXPECT_TRUE(SchemaDatabaseMigrationRequired(previous_version_proto));
+}
+
+TEST(VersionUtilTest, SchemaDatabaseMigrationNotRequired) {
+  // Migration is not required if previous version is >= the version at which
+  // the schema database is introduced and the schema database feature was
+  // enabled in the previous version.
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(kSchemaDatabaseVersion);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
+
+  previous_version_proto.set_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
+}
+
 class VersionUtilFeatureProtoTest
     : public ::testing::TestWithParam<
           IcingSearchEngineFeatureInfoProto::FlaggedFeatureType> {};
@@ -1232,8 +1309,10 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         IcingSearchEngineFeatureInfoProto::UNKNOWN,
         IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR,
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES,
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
-        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
 
 }  // namespace
 

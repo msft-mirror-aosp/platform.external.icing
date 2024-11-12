@@ -2232,6 +2232,135 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
 }
 
+TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
+
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataType(TYPE_STRING)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Set old schema
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_new_by_name.insert("email");
+  EXPECT_THAT(schema_store->SetSchema(
+                  old_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(old_schema));
+
+  // Set new schema.
+  // The new schema adds "score" as scorable_type ENABLED from type "email".
+  SchemaStore::SetSchemaResult new_expected_result;
+  new_expected_result.success = true;
+  new_expected_result.schema_types_scorable_property_inconsistent_by_id.insert(
+      0);
+  new_expected_result.schema_types_changed_fully_compatible_by_name.insert(
+      "email");
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
+TEST_F(SchemaStoreTest,
+       SetSchemaWithReorderedSchemeTypesAndUpdatedScorablePropertyOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
+
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_DISABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // The new schema updates "score" as scorable_type ENABLED from type "email",
+  // and it also reorders the schema types of "email" and "message".
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
+
+  // Set old schema
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_new_by_name.insert("email");
+  expected_result.schema_types_new_by_name.insert("message");
+  EXPECT_THAT(schema_store->SetSchema(
+                  old_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(old_schema));
+
+  // Set new schema.
+  SchemaStore::SetSchemaResult new_expected_result;
+  new_expected_result.success = true;
+  // Schema type id of "email" is updated to 0.
+  SchemaTypeId email_schema_type_id = 0;
+  new_expected_result.schema_types_scorable_property_inconsistent_by_id.insert(
+      email_schema_type_id);
+  new_expected_result.schema_types_changed_fully_compatible_by_name.insert(
+      "email");
+  new_expected_result.old_schema_type_ids_changed.insert(0);
+  new_expected_result.old_schema_type_ids_changed.insert(1);
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
 TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,

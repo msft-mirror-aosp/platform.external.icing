@@ -958,8 +958,10 @@ SchemaStore::SetSchemaWithDatabaseOverride(
       std::move(schema_delta.schema_types_index_incompatible);
   result.schema_types_join_incompatible_by_name =
       std::move(schema_delta.schema_types_join_incompatible);
+  result.schema_types_scorable_property_inconsistent_by_name =
+      std::move(schema_delta.schema_types_scorable_property_inconsistent);
 
-  for (const auto& schema_type : schema_delta.schema_types_deleted) {
+  for (const std::string& schema_type : schema_delta.schema_types_deleted) {
     // We currently don't support deletions, so mark this as not possible.
     // This will change once we allow force-set schemas.
     result.success = false;
@@ -971,7 +973,8 @@ SchemaStore::SetSchemaWithDatabaseOverride(
     result.schema_types_deleted_by_id.emplace(schema_type_id);
   }
 
-  for (const auto& schema_type : schema_delta.schema_types_incompatible) {
+  for (const std::string& schema_type :
+       schema_delta.schema_types_incompatible) {
     // We currently don't support incompatible schemas, so mark this as
     // not possible. This will change once we allow force-set schemas.
     result.success = false;
@@ -1007,6 +1010,23 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   if (result.success) {
     ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
     has_schema_successfully_set_ = true;
+  }
+
+  // Convert schema types to SchemaTypeIds after the new schema is applied.
+  if (feature_flags_->enable_scorable_properties()) {
+    for (const std::string& schema_type :
+         result.schema_types_scorable_property_inconsistent_by_name) {
+      libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
+          GetSchemaTypeId(schema_type);
+      if (!schema_type_id_or.ok()) {
+        if (absl_ports::IsNotFound(schema_type_id_or.status())) {
+          continue;
+        }
+        return schema_type_id_or.status();
+      }
+      result.schema_types_scorable_property_inconsistent_by_id.insert(
+          schema_type_id_or.ValueOrDie());
+    }
   }
 
   return result;

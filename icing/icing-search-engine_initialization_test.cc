@@ -2721,8 +2721,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
         index->Edit(original_last_added_doc_id + 1, /*section_id=*/0,
-                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                    /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo", TermMatchType::EXACT_ONLY));
     ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
   }
 
@@ -2967,8 +2967,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
         index->Edit(original_last_added_doc_id + 1, /*section_id=*/0,
-                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                    /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo", TermMatchType::EXACT_ONLY));
     ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
   }
 
@@ -3165,18 +3165,17 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Add hits for document 0 and merge.
     ASSERT_THAT(index->last_added_document_id(), kInvalidDocumentId);
     index->set_last_added_document_id(0);
-    Index::Editor editor =
-        index->Edit(/*document_id=*/0, /*section_id=*/0,
-                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+    Index::Editor editor = index->Edit(/*document_id=*/0, /*section_id=*/0,
+                                       /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo", TermMatchType::EXACT_ONLY));
     ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
     ICING_ASSERT_OK(index->Merge());
 
     // Add hits for document 1 and don't merge.
     index->set_last_added_document_id(1);
     editor = index->Edit(/*document_id=*/1, /*section_id=*/0,
-                         TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-    ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                         /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("bar", TermMatchType::EXACT_ONLY));
     ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
   }
 
@@ -3363,16 +3362,16 @@ TEST_F(IcingSearchEngineInitializationTest,
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
         index->Edit(original_last_added_doc_id + 1, /*section_id=*/0,
-                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                    /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo", TermMatchType::EXACT_ONLY));
     ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
     ICING_ASSERT_OK(index->Merge());
 
     // Add hits for document 5 and don't merge.
     index->set_last_added_document_id(original_last_added_doc_id + 2);
     editor = index->Edit(original_last_added_doc_id + 2, /*section_id=*/0,
-                         TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-    ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                         /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("bar", TermMatchType::EXACT_ONLY));
     ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
   }
 
@@ -5973,270 +5972,6 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(std::make_tuple(false, false), std::make_tuple(false, true),
                     std::make_tuple(true, false), std::make_tuple(true, true)));
 
-TEST_F(IcingSearchEngineInitializationTest, TurnOnEnableSchemaDatabaseFlag) {
-  // Create a schema with two databases.
-  SchemaTypeConfigProto db1_email =
-      SchemaTypeConfigBuilder()
-          .SetType("db1/email")
-          .SetDatabase("db1")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("db1Subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .Build();
-  SchemaTypeConfigProto db2_email =
-      SchemaTypeConfigBuilder()
-          .SetType("db2/email")
-          .SetDatabase("db2")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("db2Subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("db2Id")
-                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .Build();
-  SchemaProto combined_schema =
-      SchemaBuilder().AddType(db1_email).AddType(db2_email).Build();
-  SchemaProto db1_schema = SchemaBuilder().AddType(db1_email).Build();
-  SchemaProto db2_schema = SchemaBuilder().AddType(db2_email).Build();
-
-  // Create documents for the two databases.
-  DocumentProto db1_email_doc =
-      DocumentBuilder()
-          .SetKey("namespace", "uri1")
-          .SetSchema("db1/email")
-          .AddStringProperty("db1Subject", "subject")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  DocumentProto db2_email_doc =
-      DocumentBuilder()
-          .SetKey("namespace", "uri3")
-          .SetSchema("db2/email")
-          .AddStringProperty("db2Subject", "subject")
-          .AddInt64Property("db2Id", 123)
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_schema_database(false);
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(combined_schema).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
-  }  // This should shut down IcingSearchEngine and persist anything it needs to
-
-  // Create a new IcingSearchEngine and initialize it.
-  IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_schema_database(true);
-  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                              std::make_unique<IcingFilesystem>(),
-                              std::make_unique<FakeClock>(), GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-  SearchResultProto db1_email_search_result_proto;
-  db1_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *db1_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db1_email_doc;
-
-  SearchResultProto db2_email_search_result_proto;
-  db2_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *db2_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db2_email_doc;
-
-  SearchResultProto all_email_search_result_proto;
-  all_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db2_email_doc;
-  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db1_email_doc;
-
-  // Verify term search
-  SearchSpecProto search_spec1;
-  search_spec1.set_query("db1Subject:subject");
-  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
-  SearchResultProto search_result_proto1 =
-      icing.Search(search_spec1, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
-                                        db1_email_search_result_proto));
-
-  SearchSpecProto search_spec2;
-  search_spec2.set_query("subject");
-  search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
-  SearchResultProto search_result_google::protobuf =
-      icing.Search(search_spec2, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
-                                        all_email_search_result_proto));
-
-  // Verify numeric (integer) search
-  SearchSpecProto search_spec3;
-  search_spec3.set_query("db2Id == 123");
-  search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
-
-  SearchResultProto search_result_proto3 =
-      icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
-                                        db2_email_search_result_proto));
-
-  // Verify GetSchema
-  GetSchemaResultProto expected_get_schema_result_proto;
-  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_get_schema_result_proto.mutable_schema() = combined_schema;
-  EXPECT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
-
-  GetSchemaResultProto expected_get_schema_result_proto_db1;
-  expected_get_schema_result_proto_db1.mutable_status()->set_code(
-      StatusProto::OK);
-  *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
-  EXPECT_THAT(icing.GetSchema("db1"),
-              EqualsProto(expected_get_schema_result_proto_db1));
-
-  GetSchemaResultProto expected_get_schema_result_proto_db2;
-  expected_get_schema_result_proto_db2.mutable_status()->set_code(
-      StatusProto::OK);
-  *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
-  EXPECT_THAT(icing.GetSchema("db2"),
-              EqualsProto(expected_get_schema_result_proto_db2));
-}
-
-TEST_F(IcingSearchEngineInitializationTest, TurnOffEnableSchemaDatabaseFlag) {
-  // Create a schema with two databases.
-  SchemaTypeConfigProto db1_email =
-      SchemaTypeConfigBuilder()
-          .SetType("db1/email")
-          .SetDatabase("db1")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("db1Subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .Build();
-  SchemaTypeConfigProto db2_email =
-      SchemaTypeConfigBuilder()
-          .SetType("db2/email")
-          .SetDatabase("db2")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("db2Subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("db2Id")
-                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .Build();
-  SchemaProto combined_schema =
-      SchemaBuilder().AddType(db1_email).AddType(db2_email).Build();
-  SchemaProto db1_schema = SchemaBuilder().AddType(db1_email).Build();
-  SchemaProto db2_schema = SchemaBuilder().AddType(db2_email).Build();
-
-  // Create documents for the two databases.
-  DocumentProto db1_email_doc =
-      DocumentBuilder()
-          .SetKey("namespace", "uri1")
-          .SetSchema("db1/email")
-          .AddStringProperty("db1Subject", "subject")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  DocumentProto db2_email_doc =
-      DocumentBuilder()
-          .SetKey("namespace", "uri3")
-          .SetSchema("db2/email")
-          .AddStringProperty("db2Subject", "subject")
-          .AddInt64Property("db2Id", 123)
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_schema_database(true);
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-    // Setting a schema with types from multiple databases is not allowed once
-    // schema database is enabled.
-    ASSERT_THAT(icing.SetSchema(combined_schema).status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-
-    ASSERT_THAT(icing.SetSchema(db1_schema).status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(db2_schema).status(), ProtoIsOk());
-
-    ASSERT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
-  }  // This should shut down IcingSearchEngine and persist anything it needs to
-
-  // Create a new IcingSearchEngine and initialize it.
-  IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_schema_database(false);
-  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                              std::make_unique<IcingFilesystem>(),
-                              std::make_unique<FakeClock>(), GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-  SearchResultProto db1_email_search_result_proto;
-  db1_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *db1_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db1_email_doc;
-
-  SearchResultProto db2_email_search_result_proto;
-  db2_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *db2_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db2_email_doc;
-
-  SearchResultProto all_email_search_result_proto;
-  all_email_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db2_email_doc;
-  *all_email_search_result_proto.mutable_results()->Add()->mutable_document() =
-      db1_email_doc;
-
-  // Verify term search
-  SearchSpecProto search_spec1;
-  search_spec1.set_query("db1Subject:subject");
-  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
-  SearchResultProto search_result_proto1 =
-      icing.Search(search_spec1, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
-                                        db1_email_search_result_proto));
-
-  SearchSpecProto search_spec2;
-  search_spec2.set_query("subject");
-  search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
-  SearchResultProto search_result_google::protobuf =
-      icing.Search(search_spec2, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
-                                        all_email_search_result_proto));
-
-  // Verify numeric (integer) search
-  SearchSpecProto search_spec3;
-  search_spec3.set_query("db2Id == 123");
-  search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
-
-  SearchResultProto search_result_proto3 =
-      icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
-                                        db2_email_search_result_proto));
-
-  // Verify GetSchema
-  GetSchemaResultProto expected_get_schema_result_proto;
-  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_get_schema_result_proto.mutable_schema() = combined_schema;
-  EXPECT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
-}
-
 class IcingSearchEngineInitializationChangeEmbeddingFlagTest
     : public IcingSearchEngineInitializationTest,
       public ::testing::WithParamInterface<std::vector<bool>> {};
@@ -6591,6 +6326,8 @@ TEST_P(IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
         std::string(kListFilterQueryLanguageFeature));
 
     ScoringSpecProto scoring_spec;
+    scoring_spec.add_scoring_feature_types_enabled(
+        ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
     scoring_spec.set_rank_by(
         ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
     scoring_spec.set_advanced_scoring_expression("this.creationTimestamp()");
@@ -6652,32 +6389,58 @@ class IcingSearchEngineInitializationSchemaDatabaseMigrationTest
 TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
        InitializeWithSchemaDatabaseMigration) {
   int32_t existing_version = std::get<0>(GetParam());
-  version_util::VersionInfo existing_version_info(existing_version,
-                                                  existing_version);
-  bool perform_schema_database_migration_if_required = std::get<1>(GetParam());
+  bool previous_version_has_schema_database_enabled = std::get<1>(GetParam());
   bool enable_schema_database = std::get<2>(GetParam());
 
-  SchemaProto schema_no_database =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1/email")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("db1Subject")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2/email")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("db2Subject")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("db2Id")
-                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(existing_version);
+  previous_version_proto.set_max_version(existing_version);
+  if (previous_version_has_schema_database_enabled) {
+    previous_version_proto.add_enabled_features()->set_feature_type(
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  }
+
+  SchemaTypeConfigProto db1_email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db1Subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
+  SchemaTypeConfigProto db2_email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db2/email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db2Subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("db2Id")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  if (previous_version_has_schema_database_enabled) {
+    // Populate the database field for the db1/email type.
+    db1_email_type =
+        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+    if (existing_version >= version_util::kSchemaDatabaseVersion) {
+      // Populate the database field for the db2/email type only if previous
+      // version is a post schema-database version.
+      db2_email_type =
+          SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+    }
+    // Otherwise, the database field is not populated for db2/email type. This
+    // is to simulate the following situation:
+    // 1. Icing is initialized on a version>kSchemaDatabaseVersion with schema
+    //    database enabled, and db1/email is set with the database field
+    //    populated.
+    // 2. Icing gets rolled back to pre-schema database version, db2/email is
+    //    set during this time so the database field is not populated.
+  }
+  SchemaProto previous_version_schema =
+      SchemaBuilder().AddType(db1_email_type).AddType(db2_email_type).Build();
 
   DocumentProto db1_email_doc =
       DocumentBuilder()
@@ -6695,40 +6458,45 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  {  // Initialize IcingSearchEngine, set schema and put documents
-    TestIcingSearchEngine icing(
-        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
-        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
-        GetTestJniCache());
+  {  // Initialize IcingSearchEngine
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_schema_database(
+        previous_version_has_schema_database_enabled);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-    EXPECT_THAT(icing.SetSchema(schema_no_database).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
-  }  // This should shut down IcingSearchEngine and persist anything it needs to
-
-  {
-    // Manually rewrite existing data's version files
-    ICING_ASSERT_OK(
-        version_util::DiscardVersionFiles(*filesystem(), GetVersionFileDir()));
-
-    ICING_ASSERT_OK(version_util::WriteV1Version(
-        *filesystem(), GetVersionFileDir(), existing_version_info));
-
-    if (existing_version_info.version >= version_util::kFirstV2Version) {
-      IcingSearchEngineVersionProto version_proto;
-      version_proto.set_version(existing_version_info.version);
-      version_proto.set_max_version(existing_version_info.max_version);
-      version_util::WriteV2Version(
-          *filesystem(), GetVersionFileDir(),
-          std::make_unique<IcingSearchEngineVersionProto>(
-              std::move(version_proto)));
+    // 1. Set schema.
+    if (options.enable_schema_database()) {
+      // Need to set schemas with a single database field at a time.
+      ASSERT_THAT(
+          icing.SetSchema(SchemaBuilder().AddType(db1_email_type).Build())
+              .status(),
+          ProtoIsOk());
+      ASSERT_THAT(
+          icing.SetSchema(SchemaBuilder().AddType(db2_email_type).Build())
+              .status(),
+          ProtoIsOk());
+    } else {
+      ASSERT_THAT(icing.SetSchema(previous_version_schema).status(),
+                  ProtoIsOk());
     }
-  }
+    // 2. Put two documents
+    ASSERT_THAT(icing.Put(db1_email_doc).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(db2_email_doc).status(), ProtoIsOk());
+    // 3. Rewrite version files
+    //    - Only need to rewrite v1 version file to write an older version
+    //      number.
+    //    - FeatureInfo rewritting (v2 version file) is not needed as it should
+    //      be handled by IcingSearchEngine.
+    ICING_ASSERT_OK(version_util::WriteV1Version(
+        *filesystem(), GetVersionFileDir(),
+        version_util::VersionInfo(existing_version, existing_version)));
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_schema_database(enable_schema_database);
-  options.set_perform_schema_database_migration_if_required(
-      perform_schema_database_migration_if_required);
 
   TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),
@@ -6783,51 +6551,20 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
   EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
                                         db2_email_search_result_proto));
 
-  bool schema_migrated =
-      version_util::SchemaDatabaseMigrationRequired(existing_version_info) &&
-      enable_schema_database && perform_schema_database_migration_if_required;
-
   // Verify GetSchema
-  if (!schema_migrated) {
-    GetSchemaResultProto expected_get_schema_result_proto;
-    expected_get_schema_result_proto.mutable_status()->set_code(
-        StatusProto::OK);
-    *expected_get_schema_result_proto.mutable_schema() = schema_no_database;
-    EXPECT_THAT(icing.GetSchema(),
-                EqualsProto(expected_get_schema_result_proto));
-
-    GetSchemaResultProto get_schema_result_proto = icing.GetSchema("db1");
-    EXPECT_THAT(get_schema_result_proto.status(),
-                ProtoStatusIs(StatusProto::NOT_FOUND));
-  } else {
-    SchemaTypeConfigProto db1_email =
-        SchemaTypeConfigBuilder()
-            .SetType("db1/email")
-            .SetDatabase("db1")
-            .AddProperty(
-                PropertyConfigBuilder()
-                    .SetName("db1Subject")
-                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                    .SetCardinality(CARDINALITY_OPTIONAL))
-            .Build();
-    SchemaTypeConfigProto db2_email =
-        SchemaTypeConfigBuilder()
-            .SetType("db2/email")
-            .SetDatabase("db2")
-            .AddProperty(
-                PropertyConfigBuilder()
-                    .SetName("db2Subject")
-                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                    .SetCardinality(CARDINALITY_OPTIONAL))
-            .AddProperty(PropertyConfigBuilder()
-                             .SetName("db2Id")
-                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                             .SetCardinality(CARDINALITY_OPTIONAL))
-            .Build();
-    SchemaProto full_schema_with_database =
-        SchemaBuilder().AddType(db1_email).AddType(db2_email).Build();
-    SchemaProto db1_schema = SchemaBuilder().AddType(db1_email).Build();
-    SchemaProto db2_schema = SchemaBuilder().AddType(db2_email).Build();
+  if (enable_schema_database) {
+    SchemaTypeConfigProto db1_email_type_with_db =
+        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+    SchemaTypeConfigProto db2_email_type_with_db =
+        SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+    SchemaProto full_schema_with_database = SchemaBuilder()
+                                                .AddType(db1_email_type_with_db)
+                                                .AddType(db2_email_type_with_db)
+                                                .Build();
+    SchemaProto db1_schema =
+        SchemaBuilder().AddType(db1_email_type_with_db).Build();
+    SchemaProto db2_schema =
+        SchemaBuilder().AddType(db2_email_type_with_db).Build();
 
     GetSchemaResultProto expected_get_schema_result_proto_full;
     expected_get_schema_result_proto_full.mutable_status()->set_code(
@@ -6850,6 +6587,14 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
     EXPECT_THAT(icing.GetSchema("db2"),
                 EqualsProto(expected_get_schema_result_proto_db2));
+  } else {
+    GetSchemaResultProto expected_get_schema_result_proto;
+    expected_get_schema_result_proto.mutable_status()->set_code(
+        StatusProto::OK);
+    *expected_get_schema_result_proto.mutable_schema() =
+        previous_version_schema;
+    EXPECT_THAT(icing.GetSchema(),
+                EqualsProto(expected_get_schema_result_proto));
   }
 }
 
@@ -6857,14 +6602,45 @@ INSTANTIATE_TEST_SUITE_P(
     IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     testing::Values(
-        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, true, true),
-        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, true, false),
-        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, false, true),
-        std::make_tuple(version_util::kSchemaDatabaseVersion - 1, false, false),
-        std::make_tuple(version_util::kSchemaDatabaseVersion, true, true),
-        std::make_tuple(version_util::kSchemaDatabaseVersion, true, false),
-        std::make_tuple(version_util::kSchemaDatabaseVersion, false, true),
-        std::make_tuple(version_util::kSchemaDatabaseVersion, false, false)));
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion - 1,
+            /*prev_version_schema_database_enabled=*/false,
+            /*enable_schema_database=*/false),
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion - 1,
+            /*prev_version_schema_database_enabled=*/false,
+            /*enable_schema_database=*/true),
+        // The next two cases simulate the following scenario:
+        // 1. Icing is initialized on a version>kSchemaDatabaseVersion for
+        //    sometime, and schemas are set with the database field populated.
+        // 2. Icing gets rolled back to pre-schema database version, so new
+        //    schema types no longer populate the database field.
+        // 3. Icing gets rolled forward to post-schema database version again,
+        //    and we should verify that database migration happens correctly.
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion - 1,
+            /*prev_version_schema_database_enabled=*/true,
+            /*enable_schema_database=*/false),
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion - 1,
+            /*prev_version_schema_database_enabled=*/true,
+            /*enable_schema_database=*/true),
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion,
+            /*prev_version_schema_database_enabled=*/false,
+            /*enable_schema_database=*/false),
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion,
+            /*prev_version_schema_database_enabled=*/false,
+            /*enable_schema_database=*/true),
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion,
+            /*prev_version_schema_database_enabled=*/true,
+            /*enable_schema_database=*/false),
+        std::make_tuple(
+            /*previous_version=*/version_util::kSchemaDatabaseVersion,
+            /*prev_version_schema_database_enabled=*/true,
+            /*enable_schema_database=*/true)));
 
 }  // namespace
 }  // namespace lib

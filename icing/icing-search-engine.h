@@ -373,9 +373,19 @@ class IcingSearchEngine {
   // Returns:
   //   File descriptor on success
   //   InvalidArgumentError on invalid blob handle
-  //   PermissionDeniedError on blob is committed
+  //   AlreadyExistsError on blob is committed
   //   INTERNAL_ERROR on IO error
   BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle);
+
+  // Abandons the pending blob, the blob file and blob handle will be removed
+  // from the blob store.
+  //
+  // Returns:
+  //   InvalidArgumentError on invalid blob handle
+  //   FailedPreconditionError on blob is already committed
+  //   NotFoundError on blob is not found
+  //   InternalError on IO error
+  BlobProto AbandonBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets or creates a file for read only purpose for the given blob handle.
   // The blob must be committed by calling commitBlob otherwise it is not

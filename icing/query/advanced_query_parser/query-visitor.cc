@@ -43,7 +43,6 @@
 #include "icing/index/iterator/doc-hit-info-iterator-property-in-schema.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/section-restrict-data.h"
 #include "icing/index/property-existence-indexing-handler.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/function.h"
@@ -55,10 +54,10 @@
 #include "icing/query/query-features.h"
 #include "icing/query/query-results.h"
 #include "icing/schema/property-util.h"
-#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/status-macros.h"
 
@@ -505,7 +504,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> token_itr,
                          tokenizer_.Tokenize(text_value.term));
-  std::string normalized_term;
+  Normalizer::NormalizedTerm normalized_term;
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   // raw_text is the portion of text_value.raw_term that hasn't yet been
   // matched to any of the tokens that we've processed. escaped_token will
@@ -538,8 +537,9 @@ QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
           raw_token, string_util::FindEscapedToken(raw_text, token.text));
     }
     normalized_term = normalizer_.NormalizeTerm(token.text);
-    QueryTerm term_value{std::move(normalized_term), raw_token,
-                         reached_final_token && text_value.is_prefix_val};
+    bool should_prefix_match = reached_final_token && text_value.is_prefix_val;
+    QueryTerm term_value{std::move(normalized_term.text), raw_token,
+                         should_prefix_match};
     ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
                            CreateTermIterator(std::move(term_value)));
     iterators.push_back(std::move(iterator));

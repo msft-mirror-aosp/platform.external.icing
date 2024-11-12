@@ -61,7 +61,7 @@ class BlobStore {
   //
   // Returns:
   //   A BlobStore on success
-  //   FAILED_PRECONDITION on any null pointer input
+  //   FAILED_PRECONDITION_ERROR on any null pointer input
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::StatusOr<BlobStore> Create(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
@@ -73,10 +73,21 @@ class BlobStore {
   //
   // Returns:
   //   File descriptor (writable) on success
-  //   INVALID_ARGUMENT on invalid blob handle
-  //   ALREADY_EXISTS if the blob has already been committed
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   ALREADY_EXISTS_ERROR if the blob has already been committed
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> OpenWrite(
+      const PropertyProto::BlobHandleProto& blob_handle);
+
+  // Abandons the pending blob, the blob file and blob handle will be removed
+  // from the blob store.
+  //
+  // Returns:
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   FAILED_PRECONDITION_ERROR on blob is already committed
+  //   NOT_FOUND_ERROR on blob is not found
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status AbandonBlob(
       const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets a file for read only purpose for the given blob handle.
@@ -84,8 +95,8 @@ class BlobStore {
   //
   // Returns:
   //   File descriptor (read only) on success
-  //   INVALID_ARGUMENT on invalid blob handle
-  //   NOT_FOUND on blob is not found or is not committed
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   NOT_FOUND_ERROR on blob is not found or is not committed
   libtextclassifier3::StatusOr<int> OpenRead(
       const PropertyProto::BlobHandleProto& blob_handle);
 
@@ -96,10 +107,10 @@ class BlobStore {
   //
   // Returns:
   //   OK on the blob is successfully committed.
-  //   ALREADY_EXISTS on the blob is already committed, this is no op.
-  //   INVALID_ARGUMENT on invalid blob handle or digest is mismatch with
+  //   ALREADY_EXISTS_ERROR on the blob is already committed, this is no op.
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle or digest is mismatch with
   //                        file content.
-  //   NOT_FOUND on blob is not found.
+  //   NOT_FOUND_ERROR on blob is not found.
   libtextclassifier3::Status CommitBlob(
       const PropertyProto::BlobHandleProto& blob_handle);
 
@@ -130,10 +141,10 @@ class BlobStore {
   //
   // Returns:
   //   Vector of NamespaceBlobStorageInfoProto contains size of each namespace.
-  //   INTERNAL on I/O error
+  //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>
   GetStorageInfo() const;
-  
+
 private:
   explicit BlobStore(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,

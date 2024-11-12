@@ -1832,10 +1832,28 @@ TEST_F(AdvancedScorerTest, AdditionalScores) {
               ElementsAre(DoubleNear(4, kEps), DoubleNear(127, kEps)));
 }
 
+TEST_F(AdvancedScorerTest, GetScorablePropertyWithFeatureDisabled) {
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\"))");
+
+  EXPECT_THAT(
+      AdvancedScorer::Create(
+          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_,
+          feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("SCORABLE_PROPERTY_RANKING feature is not enabled.")));
+}
+
 TEST_F(AdvancedScorerTest, GetScorableProperty_WrongParamsNumber) {
   ScoringSpecProto scoring_spec_with_one_param = CreateAdvancedScoringSpec(
       "this.documentScore() + "
       "sum(getScorableProperty(\"email\"))");
+  scoring_spec_with_one_param.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -1851,6 +1869,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WrongParamsNumber) {
   ScoringSpecProto scoring_spec_with_int_param = CreateAdvancedScoringSpec(
       "this.documentScore() + "
       "sum(getScorableProperty(\"email\", 123))");
+  scoring_spec_with_int_param.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -1868,6 +1888,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_ParamsMustBeString) {
   ScoringSpecProto scoring_spec_with_int_param = CreateAdvancedScoringSpec(
       "this.documentScore() + "
       "sum(getScorableProperty(\"email\", 123))");
+  scoring_spec_with_int_param.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -1886,6 +1908,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_SchemaNotExistInSchemaStore) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"non_exist"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1901,6 +1925,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotScorable) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"subject\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"email"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1918,6 +1944,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotExist) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"non_exist\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"email"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1937,6 +1965,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_SomePropertiesNotScorable) {
       "10  * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\")) + "
       "10  * sum(getScorableProperty(\"aliasPerson\", \"non_exist\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1968,6 +1998,8 @@ TEST_F(AdvancedScorerTest,
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2001,6 +2033,8 @@ TEST_F(AdvancedScorerTest,
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2034,6 +2068,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithDoubleList) {
       "this.documentScore() + "
       "max(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + std::max({1.0, 2.0, 3.0});
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2067,6 +2103,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithInt64List) {
       "this.documentScore() + "
       "min(getScorableProperty(\"aliasPerson\", \"contactTimes\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + std::min({10, 20, 30});
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2101,6 +2139,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithBoolean) {
       "this.documentScore() + "
       "100 * avg(getScorableProperty(\"aliasPerson\", \"isStarred\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 100 * 1.0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2140,6 +2180,8 @@ TEST_F(AdvancedScorerTest,
       "10 * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\")) + "
       "10 * max(getScorableProperty(\"aliasPerson\", \"contactTimes\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 100 * 0 + 10 * std::max({1.0, 2.0, 3.0}) +
                           10 * std::max({10, 20, 30});
 
@@ -2180,6 +2222,8 @@ TEST_F(AdvancedScorerTest,
       "10 * sum(getScorableProperty(\"aliasMessage\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
   AddSchemaTypeAliasMap(&scoring_spec, "aliasMessage", {"message"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score =
       100 + 100 * 0 + 10 * std::max({1.0, 2.0, 3.0}) + 10 * 0;
 
@@ -2216,6 +2260,8 @@ TEST_F(AdvancedScorerTest,
       "this.documentScore() + "
       "100 * avg(getScorableProperty(\"aliasPerson\", \"isStarred\")) + "
       "10 * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2250,6 +2296,8 @@ TEST_F(AdvancedScorerTest,
       "\"frequencyScore\"), "
       "5)");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 10 * 5;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2380,6 +2428,8 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
       "10 * max(getScorableProperty(\"aliasEmail\", \"scoreInt64\"))");
   AddSchemaTypeAliasMap(&scoring_spec1, "aliasEmail", {"email"});
   double expected_score1 = 100 + 10 * std::max({1, 2, 3});
+  scoring_spec1.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(scoring_spec1,
@@ -2397,6 +2447,8 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
       "this.documentScore() + "
       "10 * min(getScorableProperty(\"aliasEmail\", \"receiver.age\"))");
   AddSchemaTypeAliasMap(&scoring_spec2, "aliasEmail", {"email"});
+  scoring_spec2.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score2 = 100 + 10 * std::min({30, 35});
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(
@@ -2417,6 +2469,8 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
       "20 * min(getScorableProperty(\"aliasEmail\", \"sender.isStarred\")) + "
       "5 * max(getScorableProperty(\"aliasEmail\", \"receiver.income\"))");
   AddSchemaTypeAliasMap(&scoring_spec3, "aliasEmail", {"email"});
+  scoring_spec3.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score3 =
       100 + 50 * 1 + 10 * std::min({30, 35}) + 20 * 1 +
       5 * std::max({10000, 20000, 30000, 10001, 20001, 30001});
@@ -2438,6 +2492,8 @@ TEST_F(AdvancedScorerTest, SchemaTypeAliasMap_AliasSchemaTypeNotMatched) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -2483,6 +2539,8 @@ TEST_F(AdvancedScorerTest,
       "sum(getScorableProperty(\"message\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "message",
                         {"pkg1/db1/message", "pkg2/db1/message"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(

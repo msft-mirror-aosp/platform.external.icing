@@ -483,6 +483,15 @@ class DocumentStore {
       const SchemaStore* schema_store,
       const SchemaStore::SetSchemaResult& set_schema_result);
 
+  // Re-generates the scorable property cache for documents with the given
+  // schema types.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status RegenerateScorablePropertyCache(
+      const std::unordered_set<SchemaTypeId>& schema_type_ids);
+
   // Reduces internal file sizes by reclaiming space of deleted documents and
   // regenerating derived files.
   //

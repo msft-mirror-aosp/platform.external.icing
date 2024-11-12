@@ -511,7 +511,8 @@ IcingSearchEngine::IcingSearchEngine(
     std::unique_ptr<Clock> clock, std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
       feature_flags_(options_.enable_scorable_properties(),
-                     options_.enable_embedding_quantization()),
+                     options_.enable_embedding_quantization(),
+                     options_.enable_repeated_field_joins()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -693,9 +694,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // Step 1: Perform schema migration if needed. This is a no-op if the schema
   // is fully compatible with the current version.
   bool perform_schema_database_migration =
-      version_util::SchemaDatabaseMigrationRequired(stored_version_info) &&
-      options_.enable_schema_database() &&
-      options_.perform_schema_database_migration_if_required();
+      version_util::SchemaDatabaseMigrationRequired(stored_version_proto) &&
+      options_.enable_schema_database();
   ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
       filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
       version_state_change, version_util::kVersion,
@@ -1309,6 +1309,19 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
           !absl_ports::IsDataLoss(restore_result.status)) {
         TransformStatus(status, result_status);
         return result_proto;
+      }
+    }
+
+    if (feature_flags_.enable_scorable_properties()) {
+      if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
+               .empty()) {
+        status = document_store_->RegenerateScorablePropertyCache(
+            set_schema_result
+                .schema_types_scorable_property_inconsistent_by_id);
+        if (!status.ok()) {
+          TransformStatus(status, result_status);
+          return result_proto;
+        }
       }
     }
 
@@ -2673,6 +2686,34 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
     return blob_proto;
   }
   blob_proto.set_file_descriptor(write_fd_or.ValueOrDie());
+  status->set_code(StatusProto::OK);
+  return blob_proto;
+}
+
+BlobProto IcingSearchEngine::AbandonBlob(
+    const PropertyProto::BlobHandleProto& blob_handle) {
+  BlobProto blob_proto;
+  StatusProto* status = blob_proto.mutable_status();
+
+  absl_ports::unique_lock l(&mutex_);
+  if (blob_store_ == nullptr) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message(
+        "Abandon blob is not supported in this Icing instance!");
+    return blob_proto;
+  }
+
+  if (!initialized_) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("IcingSearchEngine has not been initialized!");
+    return blob_proto;
+  }
+
+  auto abandon_result = blob_store_->AbandonBlob(blob_handle);
+  if (!abandon_result.ok()) {
+    TransformStatus(abandon_result, status);
+    return blob_proto;
+  }
   status->set_code(StatusProto::OK);
   return blob_proto;
 }

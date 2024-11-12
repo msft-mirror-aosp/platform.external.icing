@@ -145,14 +145,19 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         &embedding_query_results_);
   } else if (function_name ==
              GetScorablePropertyFunctionScoreExpression::kFunctionName) {
-    if (feature_flags_.enable_scorable_properties()) {
+    if (!feature_flags_.enable_scorable_properties()) {
+      expression = absl_ports::InvalidArgumentError(
+          "getScorableProperty function is not enabled.");
+    } else if (scoring_feature_types_enabled_.find(
+                   ScoringFeatureType::SCORABLE_PROPERTY_RANKING) ==
+               scoring_feature_types_enabled_.end()) {
+      expression = absl_ports::InvalidArgumentError(
+          "SCORABLE_PROPERTY_RANKING feature is not enabled.");
+    } else {
       // getScorableProperty function
       expression = GetScorablePropertyFunctionScoreExpression::Create(
           std::move(args), &document_store_, &schema_store_,
           schema_type_alias_map_, current_time_ms_);
-    } else {
-      expression = absl_ports::InvalidArgumentError(
-          "getScorableProperty function is not enabled.");
     }
   }
 
