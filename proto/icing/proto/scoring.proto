@@ -25,7 +25,7 @@ option objc_class_prefix = "ICNG";
 // Encapsulates the configurations on how Icing should score and rank the search
 // results.
 // TODO(b/170347684): Change all timestamps to seconds.
-// Next tag: 6
+// Next tag: 7
 message ScoringSpecProto {
   // OPTIONAL: Indicates how the search results will be ranked.
   message RankingStrategy {
@@ -113,6 +113,40 @@ message ScoringSpecProto {
   // To set this field, the ranking strategy must be set to
   // ADVANCED_SCORING_EXPRESSION.
   repeated string additional_advanced_scoring_expressions = 5;
+
+  // OPTIONAL: Specifies the schema type alias map for advanced scoring
+  // expression.
+  //
+  // The alias map must be provided for all alias schema types used in the
+  // getScorableProperty function of the advanced scoring expression. Otherwise,
+  // an error will be returned.
+  //
+  // For example, Icing clients can pass a SchemaTypeAliasMapProto to icing:
+  //   schema_type_alias_for_advanced_scoring {
+  //     alias_schema_type: "person"
+  //     schema_types: "package1$database1/person"
+  //     schema_types: "package2$database1/person"
+  //   }
+  //   schema_type_alias_for_advanced_scoring {
+  //     alias_schema_type: "email"
+  //     schema_types: "package3$database2/email"
+  //     schema_types: "package4$database2/email"
+  //   }
+  //
+  // When Icing processes the advanced scoring expression such as:
+  // "getScorableProperty('person', 'rfsScore')",
+  // Icing will
+  //   1. first look up documents with schema type "person".
+  //   2. if the SchemaTypeAliasMapProto is provided, Icing will also look up
+  //      documents with schema types from:
+  //         - "package1$database1/person"
+  //         - "package2$database1/person"
+  //
+  // TODO(b/357105837): Consider moving this to a higher level proto.
+  // Currently, ScoringSpec from both parent and child queries need to provide
+  // this proto, thus introducing duplicates. We can consider moving this to a
+  // higher level proto and send it to downstreams.
+  repeated SchemaTypeAliasMapProto schema_type_alias_map_protos = 6;
 }
 
 // Next tag: 3
@@ -172,4 +206,14 @@ message PropertyWeight {
   // the property. Negative weights are invalid and will result in an error.
   // By default, a property is given a raw, pre-normalized weight of 1.0.
   optional double weight = 2;
+}
+
+// Proto that maps an alias schema type to a list of Icing schema types.
+//
+// Next tag: 3
+message SchemaTypeAliasMapProto {
+  // Alias schema type provided by Icing clients.
+  optional string alias_schema_type = 1;
+  // Schema types in Icing.
+  repeated string schema_types = 2;
 }
