@@ -14,19 +14,26 @@
 
 #include "icing/scoring/bm25f-calculator.h"
 
+#include <cmath>
 #include <cstdint>
-#include <cstdlib>
+#include <memory>
 #include <string>
-#include <unordered_set>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/section-weights.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -150,6 +157,11 @@ float Bm25fCalculator::GetCorpusIdfWeightForTerm(std::string_view term,
 
   uint32_t num_docs = csdata.num_docs();
   uint32_t nqi = corpus_nqi_map_[corpus_term_info.value];
+  if (nqi > num_docs) {
+    ICING_LOG(ERROR) << "nqi > num_docs when calculating idf for corpus "
+                     << corpus_id << " term " << term;
+    return 0;
+  }
   float idf =
       nqi != 0 ? log(1.0f + (num_docs - nqi + 0.5f) / (nqi + 0.5f)) : 0.0f;
   corpus_idf_map_.insert({corpus_term_info.value, idf});

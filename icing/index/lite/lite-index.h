@@ -96,8 +96,8 @@ class LiteIndex {
   libtextclassifier3::Status PersistToDisk() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns term_id if term found, NOT_FOUND otherwise.
-  libtextclassifier3::StatusOr<uint32_t> GetTermId(
-      const std::string& term) const ICING_LOCKS_EXCLUDED(mutex_);
+  libtextclassifier3::StatusOr<uint32_t> GetTermId(std::string_view term) const
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns an iterator for all terms for which 'prefix' is a prefix.
   class PrefixIterator {
@@ -130,7 +130,7 @@ class LiteIndex {
   //   A value index on success
   //   RESOURCE_EXHAUSTED if lexicon is full or no disk space is available
   libtextclassifier3::StatusOr<uint32_t> InsertTerm(
-      const std::string& term, TermMatchType::Code term_match_type,
+      std::string_view term, TermMatchType::Code term_match_type,
       NamespaceId namespace_id) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Updates term properties by setting hasPrefixHits and namespace id of the

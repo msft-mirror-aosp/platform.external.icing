@@ -56,6 +56,17 @@ MATCHER_P2(EqualsToken, type, text, "") {
   return true;
 }
 
+MATCHER_P(EqualsNormalizedTerm, text, "") {
+  std::string arg_string(arg.text.data(), arg.text.length());
+  if (arg.text != text) {
+    *result_listener << IcingStringUtil::StringPrintf(
+        "(Expected: text=\"%s\". Actual: text=\"%s\")", text,
+        arg_string.c_str());
+    return false;
+  }
+  return true;
+}
+
 // Used to match a DocHitInfo
 MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
   const DocHitInfo& actual = arg;
@@ -309,7 +320,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_index_incompatible_by_name ==
           expected.schema_types_index_incompatible_by_name &&
       actual.schema_types_join_incompatible_by_name ==
-          expected.schema_types_join_incompatible_by_name) {
+          expected.schema_types_join_incompatible_by_name &&
+      actual.schema_types_scorable_property_inconsistent_by_id ==
+          expected.schema_types_scorable_property_inconsistent_by_id) {
     return true;
   }
 

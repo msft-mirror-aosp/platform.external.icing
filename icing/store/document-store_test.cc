@@ -5686,6 +5686,254 @@ TEST_P(DocumentStoreTest, ReadScorablePropertyAfterOptimization) {
       Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
 }
 
+TEST_P(DocumentStoreTest,
+       RegenerateScorablePropertyCacheFlipPropertyToScorableEnabled) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document0));
+  DocumentId document_id = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentAssociatedScoreData score_data,
+      doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_EQ(score_data.scorable_property_cache_index(), -1);
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+
+  // Update the schema to make "income" property scorable.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("income")
+                       .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                       .SetScorableType(SCORABLE_TYPE_ENABLED)
+                       .SetCardinality(CARDINALITY_REPEATED)))
+               .Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
+                             schema_store->GetSchemaTypeId("Person"));
+  ICING_EXPECT_OK(doc_store->RegenerateScorablePropertyCache({schema_type_id}));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      score_data, doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_NE(score_data.scorable_property_cache_index(), -1);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      doc_store->GetScorablePropertySet(
+          document_id, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(
+                  BuildScorablePropertyProtoFromDouble({10000, 20000}))));
+}
+
+TEST_P(DocumentStoreTest,
+       RegenerateScorablePropertyCacheFlipPropertyToScorableDisabled) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document0));
+  DocumentId document_id = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentAssociatedScoreData score_data,
+      doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_NE(score_data.scorable_property_cache_index(), -1);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      doc_store->GetScorablePropertySet(
+          document_id, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(
+                  BuildScorablePropertyProtoFromDouble({10000, 20000}))));
+
+  // Update the schema to make "income" property non-scorable.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("income")
+                       .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                       .SetCardinality(CARDINALITY_REPEATED)))
+               .Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
+                             schema_store->GetSchemaTypeId("Person"));
+  ICING_EXPECT_OK(doc_store->RegenerateScorablePropertyCache({schema_type_id}));
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      score_data, doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_EQ(score_data.scorable_property_cache_index(), -1);
+}
+
+TEST_P(DocumentStoreTest,
+       RegenerateScorablePropertyCacheWithSchemaTypeIdChange) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("score")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "message0")
+                                .SetSchema("Message")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("score", 10, 20)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document0));
+  DocumentId document_id0 = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store->Put(document1));
+  DocumentId document_id1 = put_result.new_document_id;
+
+  // Update the schema by rearranging the schema types. Since SchemaTypeId is
+  // assigned based on order, this should change the SchemaTypeIds.
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("score")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId person_schema_type_id,
+                             schema_store->GetSchemaTypeId("Person"));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId message_schema_type_id,
+                             schema_store->GetSchemaTypeId("Message"));
+  ICING_EXPECT_OK(doc_store->RegenerateScorablePropertyCache(
+      {person_schema_type_id, message_schema_type_id}));
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set0 =
+      doc_store->GetScorablePropertySet(
+          document_id0, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(scorable_property_set0->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(
+                  BuildScorablePropertyProtoFromDouble({10000, 20000}))));
+  std::unique_ptr<ScorablePropertySet> scorable_property_set1 =
+      doc_store->GetScorablePropertySet(
+          document_id1, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set1->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({10, 20}))));
+}
+
 INSTANTIATE_TEST_SUITE_P(
     DocumentStoreTest, DocumentStoreTest,
     testing::Values(

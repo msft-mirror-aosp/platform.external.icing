@@ -231,6 +231,18 @@ class SchemaStore {
     // but invalidated the joinable cache. Represented by the `schema_type`
     // field in the SchemaTypeConfigProto.
     std::unordered_set<std::string> schema_types_join_incompatible_by_name;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but inconsistent with the old schema so that the scorable property cache
+    // needs to be re-generated.
+    std::unordered_set<SchemaTypeId>
+        schema_types_scorable_property_inconsistent_by_id;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but inconsistent with the old schema so that the scorable property cache
+    // needs to be re-generated.
+    std::unordered_set<std::string>
+        schema_types_scorable_property_inconsistent_by_name;
   };
 
   struct ExpandedTypePropertyMask {
