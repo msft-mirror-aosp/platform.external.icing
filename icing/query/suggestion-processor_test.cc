@@ -154,8 +154,8 @@ class SuggestionProcessorTest : public Test {
       DocumentId document_id, SectionId section_id,
       TermMatchType::Code term_match_type, const std::string& token) {
     Index::Editor editor = index_->Edit(document_id, section_id,
-                                        term_match_type, /*namespace_id=*/0);
-    auto status = editor.BufferTerm(token.c_str());
+                                        /*namespace_id=*/0);
+    auto status = editor.BufferTerm(token, term_match_type);
     return status.ok() ? editor.IndexAllBufferedTerms() : status;
   }
 

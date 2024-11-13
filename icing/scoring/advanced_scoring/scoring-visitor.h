@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,7 @@
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
@@ -50,6 +52,8 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
                           const EmbeddingQueryResults* embedding_query_results,
                           const SchemaTypeAliasMap* schema_type_alias_map,
                           const FeatureFlags* feature_flags,
+                          const std::unordered_set<ScoringFeatureType>*
+                              scoring_feature_types_enabled,
                           int64_t current_time_ms)
       : default_score_(default_score),
         default_semantic_metric_type_(default_semantic_metric_type),
@@ -61,6 +65,7 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
         embedding_query_results_(*embedding_query_results),
         schema_type_alias_map_(*schema_type_alias_map),
         feature_flags_(*feature_flags),
+        scoring_feature_types_enabled_(*scoring_feature_types_enabled),
         current_time_ms_(current_time_ms) {}
 
   void VisitString(const StringNode* node) override;
@@ -118,6 +123,7 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   const EmbeddingQueryResults& embedding_query_results_;
   const SchemaTypeAliasMap& schema_type_alias_map_;
   const FeatureFlags& feature_flags_;  // Does not own.
+  const std::unordered_set<ScoringFeatureType>& scoring_feature_types_enabled_;
 
   libtextclassifier3::Status pending_error_;
   std::vector<std::unique_ptr<ScoreExpression>> stack_;
