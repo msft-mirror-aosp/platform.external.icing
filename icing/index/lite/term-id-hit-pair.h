@@ -15,26 +15,23 @@
 #ifndef ICING_INDEX_TERM_ID_HIT_PAIR_H_
 #define ICING_INDEX_TERM_ID_HIT_PAIR_H_
 
+#include <array>
 #include <cstdint>
-#include <limits>
-#include <memory>
-#include <string>
-#include <vector>
 
 #include "icing/index/hit/hit.h"
-#include "icing/util/bit-util.h"
 
 namespace icing {
 namespace lib {
 
 class TermIdHitPair {
  public:
-  // Layout bits: 24 termid + 32 hit value + 8 hit score.
-  using Value = uint64_t;
+  // Layout bits: 24 termid + 32 hit value + 8 hit flags + 8 hit term frequency.
+  using Value = std::array<uint8_t, 9>;
 
   static constexpr int kTermIdBits = 24;
   static constexpr int kHitValueBits = sizeof(Hit::Value) * 8;
-  static constexpr int kHitScoreBits = sizeof(Hit::Score) * 8;
+  static constexpr int kHitFlagsBits = sizeof(Hit::Flags) * 8;
+  static constexpr int kHitTermFrequencyBits = sizeof(Hit::TermFrequency) * 8;
 
   static const Value kInvalidValue;
 
@@ -42,33 +39,53 @@ class TermIdHitPair {
 
   TermIdHitPair(uint32_t term_id, const Hit& hit) {
     static_assert(
-        kTermIdBits + kHitValueBits + kHitScoreBits <= sizeof(Value) * 8,
+        kTermIdBits + kHitValueBits + kHitFlagsBits + kHitTermFrequencyBits <=
+            sizeof(Value) * 8,
         "TermIdHitPairTooBig");
 
-    value_ = 0;
-    // Term id goes into the most significant bits because it takes
-    // precedent in sorts.
-    bit_util::BitfieldSet(term_id, kHitValueBits + kHitScoreBits, kTermIdBits,
-                          &value_);
-    bit_util::BitfieldSet(hit.value(), kHitScoreBits, kHitValueBits, &value_);
-    bit_util::BitfieldSet(hit.score(), 0, kHitScoreBits, &value_);
+    // Set termId. Term id takes 3 bytes and goes into value_[0:2] (most
+    // significant bits) because it takes precedent in sorts.
+    value_[0] = static_cast<uint8_t>((term_id >> 16) & 0xff);
+    value_[1] = static_cast<uint8_t>((term_id >> 8) & 0xff);
+    value_[2] = static_cast<uint8_t>((term_id >> 0) & 0xff);
+
+    // Set hit value. Hit value takes 4 bytes and goes into value_[3:6]
+    value_[3] = static_cast<uint8_t>((hit.value() >> 24) & 0xff);
+    value_[4] = static_cast<uint8_t>((hit.value() >> 16) & 0xff);
+    value_[5] = static_cast<uint8_t>((hit.value() >> 8) & 0xff);
+    value_[6] = static_cast<uint8_t>((hit.value() >> 0) & 0xff);
+
+    // Set flags in value_[7].
+    value_[7] = hit.flags();
+
+    // Set term-frequency in value_[8]
+    value_[8] = hit.term_frequency();
   }
 
   uint32_t term_id() const {
-    return bit_util::BitfieldGet(value_, kHitValueBits + kHitScoreBits,
-                                 kTermIdBits);
+    return (static_cast<uint32_t>(value_[0]) << 16) |
+           (static_cast<uint32_t>(value_[1]) << 8) |
+           (static_cast<uint32_t>(value_[2]) << 0);
   }
 
   Hit hit() const {
-    return Hit(bit_util::BitfieldGet(value_, kHitScoreBits, kHitValueBits),
-               bit_util::BitfieldGet(value_, 0, kHitScoreBits));
+    Hit::Value hit_value = (static_cast<uint32_t>(value_[3]) << 24) |
+                           (static_cast<uint32_t>(value_[4]) << 16) |
+                           (static_cast<uint32_t>(value_[5]) << 8) |
+                           (static_cast<uint32_t>(value_[6]) << 0);
+    Hit::Flags hit_flags = value_[7];
+    Hit::TermFrequency term_frequency = value_[8];
+
+    return Hit(hit_value, hit_flags, term_frequency);
   }
 
-  Value value() const { return value_; }
+  const Value& value() const { return value_; }
 
   bool operator==(const TermIdHitPair& rhs) const {
     return value_ == rhs.value_;
   }
+
+  bool operator<(const TermIdHitPair& rhs) const { return value_ < rhs.value_; }
 
  private:
   Value value_;

@@ -175,9 +175,8 @@ void StrAppendPieces(std::string* dest, std::vector<std::string_view> pieces) {
   for (std::string_view s : pieces) {
     result_size += s.length();
   }
-  // Create result with enough room to fit all operands.
-  std::string result;
-  result.__resize_default_init(result_size);
+  // Resize dest with enough room to fit all operands.
+  dest->__resize_default_init(result_size);
 
   char* out = &(*dest)[old_size];
   for (std::string_view s : pieces) {

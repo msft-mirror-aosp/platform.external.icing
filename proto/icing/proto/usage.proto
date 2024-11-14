@@ -16,15 +16,15 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/status.proto";
+
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
 // Representation of a usage report that is generated from the client and sent
 // to Icing.
 // Next tag: 5
-// LINT.IfChange
 message UsageReport {
   // Namespace of the document.
   optional string document_namespace = 1;
@@ -35,6 +35,7 @@ message UsageReport {
   // Timestamp in milliseconds of when the usage happens.
   optional int64 usage_timestamp_ms = 3;
 
+  // LINT.IfChange
   // Next tag: 3
   enum UsageType {
     // A custom usage type that clients can assign a meaning to. UsageReports of
@@ -48,6 +49,21 @@ message UsageReport {
     // Same as above.
     USAGE_TYPE3 = 2;
   }
+  // LINT.ThenChange(
+  //   //depot/google3/icing/store/usage-store.h:UsageScores,
+  //   //depot/google3/icing/proto/\
+  //     storage.proto:namespace_storage_info_usage_types)
   optional UsageType usage_type = 4;
 }
-// LINT.ThenChange(//depot/google3/icing/store/usage-store.h:UsageScores)
+
+// Result of a call to IcingSearchEngine.ReportUsage
+// Next tag: 2
+message ReportUsageResultProto {
+  // Status code can be one of:
+  //   OK
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  optional StatusProto status = 1;
+}

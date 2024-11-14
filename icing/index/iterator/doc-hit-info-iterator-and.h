@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -40,11 +41,31 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
                                  std::unique_ptr<DocHitInfoIterator> long_it);
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override {
+    return short_->GetCallStats() + long_->GetCallStats();
+  }
 
   std::string ToString() const override;
+
+  void MapChildren(const ChildrenMapper& mapper) override {
+    short_ = mapper(std::move(short_));
+    long_ = mapper(std::move(long_));
+  }
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    short_->PopulateMatchedTermsStats(matched_terms_stats,
+                                      filtering_section_mask);
+    long_->PopulateMatchedTermsStats(matched_terms_stats,
+                                     filtering_section_mask);
+  }
 
  private:
   std::unique_ptr<DocHitInfoIterator> short_;
@@ -61,11 +82,30 @@ class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override;
 
   std::string ToString() const override;
+
+  void MapChildren(const ChildrenMapper& mapper) override {
+    for (int i = 0; i < iterators_.size(); ++i) {
+      iterators_[i] = mapper(std::move(iterators_[i]));
+    }
+  }
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    for (size_t i = 0; i < iterators_.size(); ++i) {
+      iterators_.at(i)->PopulateMatchedTermsStats(matched_terms_stats,
+                                                  filtering_section_mask);
+    }
+  }
 
  private:
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators_;

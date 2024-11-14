@@ -20,6 +20,7 @@
 
 #include <jni.h>
 
+#include <cstdint>
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -140,18 +141,20 @@ class JniHelper {
                                ...);
   static StatusOr<bool> CallBooleanMethod(JNIEnv* env, jobject object,
                                           jmethodID method_id, ...);
-  static StatusOr<int32> CallIntMethod(JNIEnv* env, jobject object,
-                                       jmethodID method_id, ...);
-  static StatusOr<int64> CallLongMethod(JNIEnv* env, jobject object,
-                                        jmethodID method_id, ...);
+  static StatusOr<int32_t> CallIntMethod(JNIEnv* env, jobject object,
+                                         jmethodID method_id, ...);
+  static StatusOr<int64_t> CallLongMethod(JNIEnv* env, jobject object,
+                                          jmethodID method_id, ...);
   static StatusOr<float> CallFloatMethod(JNIEnv* env, jobject object,
                                          jmethodID method_id, ...);
   static StatusOr<double> CallDoubleMethod(JNIEnv* env, jobject object,
                                            jmethodID method_id, ...);
 
   template <class T>
-  static StatusOr<T> CallStaticIntMethod(JNIEnv* env, jclass clazz,
-                                         jmethodID method_id, ...);
+  static StatusOr<T> CallStaticIntMethod(JNIEnv* env,
+                                         bool print_exception_on_error,
+                                         jclass clazz, jmethodID method_id,
+                                         ...);
 };
 
 template <typename T>
@@ -167,14 +170,19 @@ StatusOr<ScopedLocalRef<T>> JniHelper::GetObjectArrayElement(JNIEnv* env,
 }
 
 template <class T>
-StatusOr<T> JniHelper::CallStaticIntMethod(JNIEnv* env, jclass clazz,
-                                           jmethodID method_id, ...) {
+StatusOr<T> JniHelper::CallStaticIntMethod(JNIEnv* env,
+                                           bool print_exception_on_error,
+                                           jclass clazz, jmethodID method_id,
+                                           ...) {
   va_list args;
   va_start(args, method_id);
   jint result = env->CallStaticIntMethodV(clazz, method_id, args);
   va_end(args);
 
-  TC3_NO_EXCEPTION_OR_RETURN;
+  if (JniExceptionCheckAndClear(env, print_exception_on_error)) {
+    return {Status::UNKNOWN};
+  }
+
   return result;
 }
 

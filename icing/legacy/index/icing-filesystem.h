@@ -167,6 +167,22 @@ class IcingFilesystem {
   // position pointer.
   virtual bool Grow(int fd, uint64_t new_size) const;
 
+  // Implementation of Grow that calls Pwrite to directly append zero-filled
+  // byte arrays into the file. Does not change the position pointer.
+  //
+  // This is different from Grow (which uses ftruncate), which doesn't actually
+  // allocate an underlying disk block. Grow has lead to crashes in the past as
+  // there is no effective way to signal that disk block allocation failed, and
+  // we end up trying to access memory-mapped region with unallocated disk
+  // block.
+  //
+  // Using Pwrite forces block allocation and ensures that we can return false
+  // when the disk block is not allocated.
+  //
+  // Note: This method does not change the file size if new_size <= current
+  // file size. Caller should use Truncate for reducing the file size.
+  virtual bool GrowUsingPWrite(int fd, uint64_t new_size) const;
+
   // Writes to a file.  Returns true if all the data was successfully
   // written.  Handles interrupted writes.
   virtual bool Write(int fd, const void *data, size_t data_size) const;
@@ -224,6 +240,11 @@ class IcingFilesystem {
   // Increments to_increment by size if size is valid, or sets to_increment
   // to kBadFileSize if either size or to_increment is kBadFileSize.
   static void IncrementByOrSetInvalid(uint64_t size, uint64_t *to_increment);
+
+  // Return -1 if file_size is invalid. Otherwise, return file_size.
+  static int64_t SanitizeFileSize(int64_t file_size) {
+    return (file_size != kBadFileSize) ? file_size : -1;
+  }
 };
 
 }  // namespace lib
