@@ -8197,6 +8197,8 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithRankingByScorableProperty) {
   scoring_spec_by_income.set_advanced_scoring_expression(
       "this.documentScore() + sum(getScorableProperty(\"Person\", "
       "\"income\"))");
+  scoring_spec_by_income.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   AddSchemaTypeAliasMap(&scoring_spec_by_income, "Person", {"Person"});
 
   int expected_person0_score = 10 + 10000 + 20000;
@@ -8213,6 +8215,52 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithRankingByScorableProperty) {
   EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
               ElementsAre(expected_person1_score, expected_person0_score,
                           expected_person2_score));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithRankingByScorablePropertyWithFeatureDisabled) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+
+  // Ranking by documentScore and income.
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "this.documentScore() + sum(getScorableProperty(\"Person\", "
+      "\"income\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_search_result_proto.mutable_status()->set_message(
+      "SCORABLE_PROPERTY_RANKING feature is not enabled.");
+
+  SearchResultProto actual_results = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -8315,6 +8363,8 @@ TEST_F(IcingSearchEngineSearchTest,
       "5 * sum(getScorableProperty(\"Email\", \"receiver.income\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
   AddSchemaTypeAliasMap(&scoring_spec, "Email", {"Email"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   int expected_score = 5 + (1 + 2 + 3) + (21 + 22) + 5 * (10 + 20 + 11 + 12);
 
   SearchResultProto search_result_proto = icing.Search(
@@ -8367,7 +8417,8 @@ TEST_F(IcingSearchEngineSearchTest,
       "this.documentScore() + sum(getScorableProperty(\"Person\", "
       "\"not_exist\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
-
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(
       StatusProto::INVALID_ARGUMENT);
@@ -8598,6 +8649,8 @@ TEST_F(IcingSearchEngineSearchTest, JoinSearchWithRankingByScorableProperty) {
                         {"CallLogSignalDoc"});
   AddSchemaTypeAliasMap(&child_scoring_spec, "SmsLogSignalDoc",
                         {"SmsLogSignalDoc"});
+  child_scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   JoinSpecProto* join_spec = parent_search_spec.mutable_join_spec();
   join_spec->set_parent_property_expression(
@@ -8625,6 +8678,8 @@ TEST_F(IcingSearchEngineSearchTest, JoinSearchWithRankingByScorableProperty) {
                         {"CallLogSignalDoc"});
   AddSchemaTypeAliasMap(&parent_scoring_spec, "SmsLogSignalDoc",
                         {"SmsLogSignalDoc"});
+  parent_scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   int person_john_expected_score =
       10 + 30 + 20 * /*isStarred=*/1 +
       std::max({100 + 200, 300 + 400, 1000 + 2000});
@@ -8795,6 +8850,8 @@ TEST_F(IcingSearchEngineSearchTest,
       "sum(getScorableProperty(\"Person\", \"income\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "Person",
                         {"pkg1/db1/person", "pkg2/db2/person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   int expected_person0_score = 10000 + 20000;
   int expected_person1_score = 30000 + 40000;
 
@@ -8908,6 +8965,507 @@ TEST_F(IcingSearchEngineSearchTest, InvalidScoringSpecAliasMapFromJoinedQuery) {
       icing.Search(parent_search_spec, parent_scoring_spec,
                    ResultSpecProto::default_instance()),
       EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithScorablePropertyWithUpdatePropertyAsScorable) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "John")
+                                .AddDoubleProperty("income", 20000)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "person1")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "John")
+                                .AddDoubleProperty("income", 10000)
+                                .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(getScorableProperty(\"Person\", \"income\"))");
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_search_result_proto.mutable_status()->set_message(
+      "'income' is not defined as a scorable property under schema type 0");
+
+  SearchResultProto actual_search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(
+      actual_search_result_proto,
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+
+  // Update the schema to set Person.income as a scorable property.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  actual_search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_search_result_proto.status(), ProtoIsOk());
+
+  // Check the search results.
+  EXPECT_THAT(GetUrisFromSearchResults(actual_search_result_proto),
+              ElementsAre("person0", "person1"));
+  EXPECT_THAT(GetScoresFromSearchResults(actual_search_result_proto),
+              ElementsAre(20000, 10000));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithScorablePropertyWithFlipPropertyScorability) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "John")
+                                .AddDoubleProperty("income", 20000)
+                                .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document0).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(getScorableProperty(\"Person\", \"income\"))");
+
+  // Update the schema to set Person.income as not scorable. It would erase the
+  // data the scorable property cache.
+  schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_DISABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_search_result_proto.mutable_status()->set_message(
+      "'income' is not defined as a scorable property under schema type 0");
+  SearchResultProto actual_search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(
+      actual_search_result_proto,
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+
+  // Update the schema to set Person.income as scorable again. It would
+  // re-populate the scorable property cache.
+  schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Check the search results.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(20000));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithScorablePropertyWithAddNewPropertyAsScorable) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(5)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "John")
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "person1")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "John")
+                                .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Update the schema to add Person.income as a scorable property.
+  // It would populate the scorable property cache with the default values.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "this.documentScore() +sum(getScorableProperty(\"Person\", \"income\"))");
+
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Check the search results.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person1", "person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(10, 5));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithScorablePropertyWithReorderScorableProperties) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("age")
+                          .SetDataType(PropertyConfigProto::DataType::INT64)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(5)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "John")
+                                .AddInt64Property("age", 20)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "person1")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("name", "Kevin")
+                                .AddInt64Property("age", 25)
+                                .AddDoubleProperty("income", 30000, 40000)
+                                .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Update the schema change the order of the properties "age" and "income".
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("age")
+                          .SetDataType(PropertyConfigProto::DataType::INT64)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "this.documentScore() + sum(getScorableProperty(\"Person\", \"income\")) "
+      "+ sum(getScorableProperty(\"Person\", \"age\"))");
+  int expected_score0 = 5 + (10000 + 20000) + 20;
+  int expected_score1 = 10 + (30000 + 40000) + 25;
+
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Check the search results.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person1", "person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(expected_score1, expected_score0));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithScorablePropertyWithUpdatePropertyAsScorableInNestedSchema) {
+  SchemaProto schema_proto =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("id")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_DISABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("sender")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("receiver")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "email_id0")
+          .SetSchema("Email")
+          .AddDocumentProperty("receiver",
+                               DocumentBuilder()
+                                   .SetKey("namespace", "receiver0")
+                                   .SetSchema("Person")
+                                   .AddDoubleProperty("income", 10, 20)
+                                   .Build(),
+                               DocumentBuilder()
+                                   .SetKey("namespace", "receiver1")
+                                   .SetSchema("Person")
+                                   .AddDoubleProperty("income", 11, 12)
+                                   .Build())
+          .AddDocumentProperty("sender",
+                               DocumentBuilder()
+                                   .SetKey("namespace", "sender0")
+                                   .SetSchema("Person")
+                                   .AddDoubleProperty("income", 21, 22)
+                                   .Build())
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema_proto).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Update the 'Person' schema by setting Person.income as scorable.
+  // It would trigger the re-generation of the scorable property cache for the
+  // the schema 'Email', as it is a parent schema of 'Person'.
+  schema_proto =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("id")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("sender")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("receiver")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(icing.SetSchema(schema_proto).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  AddSchemaTypeAliasMap(&scoring_spec, "Email", {"Email"});
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(getScorableProperty(\"Email\", \"sender.income\")) + "
+      "sum(getScorableProperty(\"Email\", \"receiver.income\"))");
+  int expected_score = (21 + 22) + (10 + 20 + 11 + 12);
+
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("email_id0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(expected_score));
 }
 
 }  // namespace

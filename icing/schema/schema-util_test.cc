@@ -4456,6 +4456,11 @@ TEST_P(SchemaUtilTest,
 
 TEST_P(SchemaUtilTest,
        ValidateJoinablePropertyShouldNotHaveRepeatedCardinality) {
+  // We need to explicitly override enable_repeated_field_joins to false.
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(/*enable_scorable_properties=*/true,
+                                     /*enable_embedding_quantization=*/true,
+                                     /*enable_repeated_field_joins=*/false);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4507,6 +4512,29 @@ TEST_P(SchemaUtilTest,
                                     /*propagate_delete=*/false)
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
+              IsOk());
+}
+
+TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
+  // We need to explicitly override enable_repeated_field_joins to true.
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(/*enable_scorable_properties=*/true,
+                                     /*enable_embedding_quantization=*/true,
+                                     /*enable_repeated_field_joins=*/true);
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Error if using REPEATED cardinality for joinable property.
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
               IsOk());
 }

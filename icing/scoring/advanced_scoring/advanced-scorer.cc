@@ -27,6 +27,7 @@
 #include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/parser.h"
@@ -54,18 +55,21 @@ GetScoreExpression(std::string_view scoring_expression, double default_score,
                    SectionWeights* section_weights,
                    Bm25fCalculator* bm25f_calculator,
                    const SchemaTypeAliasMap* schema_type_alias_map,
-                   const FeatureFlags* feature_flags) {
+                   const FeatureFlags* feature_flags,
+                   const std::unordered_set<ScoringFeatureType>*
+                       scoring_feature_types_enabled) {
   Lexer lexer(scoring_expression, Lexer::Language::SCORING);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
                          std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> tree_root,
                          parser.ConsumeScoring());
-  ScoringVisitor visitor(default_score, default_semantic_metric_type,
-                         document_store, schema_store, section_weights,
-                         bm25f_calculator, join_children_fetcher,
-                         embedding_query_results, schema_type_alias_map,
-                         feature_flags, current_time_ms);
+  ScoringVisitor visitor(
+      default_score, default_semantic_metric_type, document_store, schema_store,
+      section_weights, bm25f_calculator, join_children_fetcher,
+      embedding_query_results, schema_type_alias_map, feature_flags,
+      scoring_feature_types_enabled, current_time_ms);
+
   tree_root->Accept(&visitor);
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<ScoreExpression> expression,
@@ -88,6 +92,17 @@ std::unique_ptr<SchemaTypeAliasMap> BuildSchemaTypeAliasMap(
                                         alias_map_proto.schema_types().end());
   }
   return schema_type_alias_map;
+}
+
+std::unique_ptr<std::unordered_set<ScoringFeatureType>>
+GetEnabledScoringFeatureTypes(const ScoringSpecProto& scoring_spec) {
+  auto scoring_feature_types_enabled =
+      std::make_unique<std::unordered_set<ScoringFeatureType>>();
+  for (int feature_type : scoring_spec.scoring_feature_types_enabled()) {
+    scoring_feature_types_enabled->insert(
+        static_cast<ScoringFeatureType>(feature_type));
+  }
+  return scoring_feature_types_enabled;
 }
 
 }  // namespace
@@ -114,6 +129,9 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
                                         current_time_ms);
   std::unique_ptr<SchemaTypeAliasMap> schema_type_alias_map =
       BuildSchemaTypeAliasMap(scoring_spec);
+  std::unique_ptr<std::unordered_set<ScoringFeatureType>>
+      scoring_feature_types_enabled =
+          GetEnabledScoringFeatureTypes(scoring_spec);
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<ScoreExpression> score_expression,
@@ -122,7 +140,8 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
                          document_store, schema_store, current_time_ms,
                          join_children_fetcher, embedding_query_results,
                          section_weights.get(), bm25f_calculator.get(),
-                         schema_type_alias_map.get(), feature_flags));
+                         schema_type_alias_map.get(), feature_flags,
+                         scoring_feature_types_enabled.get()));
 
   std::vector<std::unique_ptr<ScoreExpression>> additional_score_expressions;
   additional_score_expressions.reserve(
@@ -136,14 +155,16 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
                            schema_store, current_time_ms, join_children_fetcher,
                            embedding_query_results, section_weights.get(),
                            bm25f_calculator.get(), schema_type_alias_map.get(),
-                           feature_flags));
+                           feature_flags, scoring_feature_types_enabled.get()));
+
     additional_score_expressions.push_back(
         std::move(additional_score_expression));
   }
   return std::unique_ptr<AdvancedScorer>(new AdvancedScorer(
       std::move(score_expression), std::move(additional_score_expressions),
       std::move(section_weights), std::move(bm25f_calculator),
-      std::move(schema_type_alias_map), default_score));
+      std::move(schema_type_alias_map),
+      std::move(scoring_feature_types_enabled), default_score));
 }
 
 }  // namespace lib

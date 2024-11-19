@@ -2059,6 +2059,44 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::Status DocumentStore::RegenerateScorablePropertyCache(
+    const std::unordered_set<SchemaTypeId>& schema_type_ids) {
+  if (schema_type_ids.empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
+  for (DocumentId document_id = 0;
+       document_id < document_id_mapper_->num_elements(); ++document_id) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
+      continue;
+    }
+    // Guaranteed that the document exists now.
+    ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
+                           filter_cache_->Get(document_id));
+    SchemaTypeId schema_type_id = filter_data->schema_type_id();
+    if (schema_type_ids.find(schema_type_id) == schema_type_ids.end()) {
+      continue;
+    }
+
+    ICING_ASSIGN_OR_RETURN(DocumentProto document, Get(document_id));
+    int32_t scorable_property_cache_index = kInvalidScorablePropertyCacheIndex;
+    ICING_ASSIGN_OR_RETURN(
+        scorable_property_cache_index,
+        UpdateScorablePropertyCache(document, schema_type_id));
+
+    // Update the score_cache_ with the new scorable property cache index.
+    ICING_ASSIGN_OR_RETURN(
+        typename FileBackedVector<DocumentAssociatedScoreData>::MutableView
+            doc_score_data_view,
+        score_cache_->GetMutable(document_id));
+    doc_score_data_view.Get().set_scorable_property_cache_index(
+        scorable_property_cache_index);
+  }
+
+  return libtextclassifier3::Status::OK;
+}
+
 // TODO(b/121227117): Implement Optimize()
 libtextclassifier3::Status DocumentStore::Optimize() {
   return libtextclassifier3::Status::OK;

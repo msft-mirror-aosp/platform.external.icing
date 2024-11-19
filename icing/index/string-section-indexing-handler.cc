@@ -16,7 +16,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -59,17 +58,13 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     }
     // TODO(b/152934343): pass real namespace ids in
     Index::Editor editor =
-        index_.Edit(document_id, section.metadata.id,
-                    section.metadata.term_match_type, /*namespace_id=*/0);
+        index_.Edit(document_id, section.metadata.id, /*namespace_id=*/0);
     for (std::string_view token : section.token_sequence) {
       ++num_tokens;
 
       switch (section.metadata.tokenizer) {
         case StringIndexingConfig::TokenizerType::VERBATIM:
-          // data() is safe to use here because a token created from the
-          // VERBATIM tokenizer is the entire string value. The character at
-          // data() + token.length() is guaranteed to be a null char.
-          status = editor.BufferTerm(token.data());
+          status = editor.BufferTerm(token, section.metadata.term_match_type);
           break;
         case StringIndexingConfig::TokenizerType::NONE:
           [[fallthrough]];
@@ -78,8 +73,10 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
         case StringIndexingConfig::TokenizerType::URL:
           [[fallthrough]];
         case StringIndexingConfig::TokenizerType::PLAIN:
-          std::string normalized_term = normalizer_.NormalizeTerm(token);
-          status = editor.BufferTerm(normalized_term.c_str());
+          Normalizer::NormalizedTerm normalized_term =
+              normalizer_.NormalizeTerm(token);
+          status = editor.BufferTerm(normalized_term.text,
+                                     section.metadata.term_match_type);
       }
 
       if (!status.ok()) {
