@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_DOC_JOIN_INFO
-#define ICING_JOIN_DOC_JOIN_INFO
+#ifndef ICING_JOIN_DOCUMENT_JOIN_ID_PAIR_H_
+#define ICING_JOIN_DOCUMENT_JOIN_ID_PAIR_H_
 
 #include <cstdint>
 #include <limits>
@@ -24,16 +24,16 @@
 namespace icing {
 namespace lib {
 
-// DocJoinInfo is composed of document_id and joinable_property_id.
-class DocJoinInfo {
+// DocumentJoinIdPair is composed of document_id and joinable_property_id.
+class DocumentJoinIdPair {
  public:
-  // The datatype used to encode DocJoinInfo information: the document_id and
-  // joinable_property_id.
+  // The datatype used to encode DocumentJoinIdPair information: the document_id
+  // and joinable_property_id.
   using Value = uint32_t;
 
   static_assert(kDocumentIdBits + kJoinablePropertyIdBits <= sizeof(Value) * 8,
                 "Cannot encode document id and joinable property id in "
-                "DocJoinInfo::Value");
+                "DocumentJoinIdPair::Value");
 
   // All bits of kInvalidValue are 1, and it contains:
   // - 0b1 for 4 unused bits.
@@ -44,10 +44,17 @@ class DocJoinInfo {
   //   it doesn't matter what JoinablePropertyId we set for kInvalidValue.
   static constexpr Value kInvalidValue = std::numeric_limits<Value>::max();
 
-  explicit DocJoinInfo(DocumentId document_id,
-                       JoinablePropertyId joinable_property_id);
+  // Default constexpr constructor to construct an invalid DocumentJoinIdPair.
+  constexpr DocumentJoinIdPair() : value_(kInvalidValue) {}
 
-  explicit DocJoinInfo(Value value = kInvalidValue) : value_(value) {}
+  explicit DocumentJoinIdPair(DocumentId document_id,
+                              JoinablePropertyId joinable_property_id);
+
+  explicit DocumentJoinIdPair(Value value) : value_(value) {}
+
+  bool operator==(const DocumentJoinIdPair& other) const {
+    return value_ == other.value_;
+  }
 
   bool is_valid() const { return value_ != kInvalidValue; }
   Value value() const { return value_; }
@@ -58,9 +65,9 @@ class DocJoinInfo {
   // Value bits layout: 4 unused + 22 document_id + 6 joinable_property_id.
   Value value_;
 } __attribute__((packed));
-static_assert(sizeof(DocJoinInfo) == 4, "");
+static_assert(sizeof(DocumentJoinIdPair) == 4, "");
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_DOC_JOIN_INFO
+#endif  // ICING_JOIN_DOCUMENT_JOIN_ID_PAIR_H_

@@ -205,7 +205,7 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
   return file_descriptor;
 }
 
-libtextclassifier3::Status BlobStore::AbandonBlob(
+libtextclassifier3::Status BlobStore::RemoveBlob(
     const PropertyProto::BlobHandleProto& blob_handle) {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
   std::string blob_handle_str = BuildBlobHandleStr(blob_handle);
@@ -219,11 +219,6 @@ libtextclassifier3::Status BlobStore::AbandonBlob(
   int64_t blob_info_offset = blob_info_itr->second;
   ICING_ASSIGN_OR_RETURN(BlobInfoProto blob_info,
                          blob_info_log_->ReadProto(blob_info_offset));
-  if (blob_info.is_committed()) {
-    return absl_ports::FailedPreconditionError(absl_ports::StrCat(
-        "Abandoning the committed blob is not allowed for blob handle: ",
-        blob_handle.digest()));
-  }
 
   std::string file_name =
       MakeBlobFileName(base_dir_, blob_info.creation_time_ms());

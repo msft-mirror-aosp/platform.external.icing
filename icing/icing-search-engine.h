@@ -377,15 +377,16 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on IO error
   BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
-  // Abandons the pending blob, the blob file and blob handle will be removed
-  // from the blob store.
+  // Removes a blob file and blob handle from the blob store.
+  //
+  // This will remove the blob on any state. No matter it's committed or not or
+  // it has reference document links or not.
   //
   // Returns:
   //   InvalidArgumentError on invalid blob handle
-  //   FailedPreconditionError on blob is already committed
   //   NotFoundError on blob is not found
   //   InternalError on IO error
-  BlobProto AbandonBlob(const PropertyProto::BlobHandleProto& blob_handle);
+  BlobProto RemoveBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets or creates a file for read only purpose for the given blob handle.
   // The blob must be committed by calling commitBlob otherwise it is not

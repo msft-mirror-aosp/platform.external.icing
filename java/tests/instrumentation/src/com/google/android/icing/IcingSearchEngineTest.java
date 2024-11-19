@@ -373,7 +373,7 @@ public final class IcingSearchEngineTest {
 
   @Ignore // b/350530146
   @Test
-  public void abandonBlob() throws Exception {
+  public void removeBlob() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
     File tempDir = temporaryFolder.newFolder();
     IcingSearchEngineOptions options =
@@ -408,9 +408,9 @@ public final class IcingSearchEngineTest {
       outputStream.write(data);
     }
 
-    // Abandon the blob.
-    BlobProto abandonBlobProto = icing.abandonBlob(blobHandle);
-    assertStatusOk(abandonBlobProto.getStatus());
+    // Remove the blob.
+    BlobProto removeBlobProto = icing.removeBlob(blobHandle);
+    assertStatusOk(removeBlobProto.getStatus());
 
     // Commit will not found.
     BlobProto commitBlobProto = icing.commitBlob(blobHandle);

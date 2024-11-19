@@ -267,6 +267,18 @@ libtextclassifier3::Status ValidateScoringSpec(
   return libtextclassifier3::Status::OK;
 }
 
+ScoringSpecProto CopyParentSchemaTypeAliasMapToChild(
+    const ScoringSpecProto& parent_scoring_spec,
+    const ScoringSpecProto& child_scoring_spec) {
+  ScoringSpecProto new_child_scoring_spec = std::move(child_scoring_spec);
+  for (const SchemaTypeAliasMapProto& alias_map_proto :
+       parent_scoring_spec.schema_type_alias_map_protos()) {
+    *new_child_scoring_spec.add_schema_type_alias_map_protos() =
+        alias_map_proto;
+  }
+  return new_child_scoring_spec;
+}
+
 bool IsV2QualifiedIdJoinIndexEnabled(const IcingSearchEngineOptions& options) {
   return true;
 }
@@ -1726,7 +1738,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), integer_index_.get(), embedding_index_.get(),
       language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-      schema_store_.get(), clock_.get());
+      schema_store_.get(), /*join_children_fetcher=*/nullptr, clock_.get(),
+      &feature_flags_);
   if (!query_processor_or.ok()) {
     TransformStatus(query_processor_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -2317,16 +2330,23 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     QueryStatsProto::SearchStats* child_search_stats =
         query_stats->mutable_child_search_stats();
 
+    // Build a child scoring spec by copying the parent schema type alias map.
+    // Note that this function will transfer the ownership of data from
+    // search_spec.join_spec().nested_spec().scoring_spec() to the
+    // child_scoring_spec.
+    // Hence, that following functions should NOT access
+    // search_spec.join_spec().nested_spec().scoring_spec() after this function
+    // call, but using child_scoring_spec instead.
+    //
+    // TODO(b/379288742): Avoid making the copy of the parent schema type alias
+    // map.
+    ScoringSpecProto child_scoring_spec = CopyParentSchemaTypeAliasMapToChild(
+        scoring_spec, search_spec.join_spec().nested_spec().scoring_spec());
+
     // Process child query
-    status = ValidateScoringSpec(join_spec.nested_spec().scoring_spec());
-    if (!status.ok()) {
-      TransformStatus(status, result_status);
-      return result_proto;
-    }
     // TODO(b/372541905): Validate the child search spec.
     QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
-        join_spec.nested_spec().search_spec(),
-        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().search_spec(), child_scoring_spec,
         join_spec.nested_spec().result_spec(),
         /*join_children_fetcher=*/nullptr, current_time_ms, child_search_stats);
     if (!nested_query_scoring_results.status.ok()) {
@@ -2352,8 +2372,7 @@ SearchResultProto IcingSearchEngine::InternalSearch(
 
     // Assign child's ResultAdjustmentInfo.
     child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
-        join_spec.nested_spec().search_spec(),
-        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().search_spec(), child_scoring_spec,
         join_spec.nested_spec().result_spec(), schema_store_.get(),
         std::move(nested_query_scoring_results.query_terms));
   }
@@ -2505,7 +2524,8 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), integer_index_.get(), embedding_index_.get(),
       language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-      schema_store_.get(), clock_.get());
+      schema_store_.get(), join_children_fetcher, clock_.get(),
+      &feature_flags_);
   if (!query_processor_or.ok()) {
     search_stats->set_parse_query_latency_ms(
         component_timer->GetElapsedMilliseconds());
@@ -2690,7 +2710,7 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
   return blob_proto;
 }
 
-BlobProto IcingSearchEngine::AbandonBlob(
+BlobProto IcingSearchEngine::RemoveBlob(
     const PropertyProto::BlobHandleProto& blob_handle) {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
@@ -2698,8 +2718,7 @@ BlobProto IcingSearchEngine::AbandonBlob(
   absl_ports::unique_lock l(&mutex_);
   if (blob_store_ == nullptr) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
-    status->set_message(
-        "Abandon blob is not supported in this Icing instance!");
+    status->set_message("Remove blob is not supported in this Icing instance!");
     return blob_proto;
   }
 
@@ -2709,9 +2728,9 @@ BlobProto IcingSearchEngine::AbandonBlob(
     return blob_proto;
   }
 
-  auto abandon_result = blob_store_->AbandonBlob(blob_handle);
-  if (!abandon_result.ok()) {
-    TransformStatus(abandon_result, status);
+  auto remove_result = blob_store_->RemoveBlob(blob_handle);
+  if (!remove_result.ok()) {
+    TransformStatus(remove_result, status);
     return blob_proto;
   }
   status->set_code(StatusProto::OK);
@@ -3326,7 +3345,7 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   auto suggestion_processor_or = SuggestionProcessor::Create(
       index_.get(), integer_index_.get(), embedding_index_.get(),
       language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-      schema_store_.get(), clock_.get());
+      schema_store_.get(), clock_.get(), &feature_flags_);
   if (!suggestion_processor_or.ok()) {
     TransformStatus(suggestion_processor_or.status(), response_status);
     return response;

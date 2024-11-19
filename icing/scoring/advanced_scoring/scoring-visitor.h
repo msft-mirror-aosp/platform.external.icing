@@ -41,6 +41,9 @@ namespace lib {
 
 class ScoringVisitor : public AbstractSyntaxTreeVisitor {
  public:
+  // join_children_fetcher, embedding_query_results, section_weights,
+  // bm25f_calculator, schema_type_alias_map are allowed to be nullptr if the
+  // corresponding scoring expression does not use them.
   explicit ScoringVisitor(double default_score,
                           SearchSpecProto::EmbeddingQueryMetricType::Code
                               default_semantic_metric_type,
@@ -59,11 +62,11 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
         default_semantic_metric_type_(default_semantic_metric_type),
         document_store_(*document_store),
         schema_store_(*schema_store),
-        section_weights_(*section_weights),
-        bm25f_calculator_(*bm25f_calculator),
+        section_weights_(section_weights),
+        bm25f_calculator_(bm25f_calculator),
         join_children_fetcher_(join_children_fetcher),
-        embedding_query_results_(*embedding_query_results),
-        schema_type_alias_map_(*schema_type_alias_map),
+        embedding_query_results_(embedding_query_results),
+        schema_type_alias_map_(schema_type_alias_map),
         feature_flags_(*feature_flags),
         scoring_feature_types_enabled_(*scoring_feature_types_enabled),
         current_time_ms_(current_time_ms) {}
@@ -114,16 +117,20 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   double default_score_;
   const SearchSpecProto::EmbeddingQueryMetricType::Code
       default_semantic_metric_type_;
-  const DocumentStore& document_store_;
-  const SchemaStore& schema_store_;
-  SectionWeights& section_weights_;
-  Bm25fCalculator& bm25f_calculator_;
+  const DocumentStore& document_store_;  // Does not own.
+  const SchemaStore& schema_store_;      // Does not own.
+
+  SectionWeights* section_weights_;    // nullable, does not own.
+  Bm25fCalculator* bm25f_calculator_;  // nullable, does not own.
   // A non-null join_children_fetcher_ indicates scoring in a join.
-  const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
-  const EmbeddingQueryResults& embedding_query_results_;
-  const SchemaTypeAliasMap& schema_type_alias_map_;
+  const JoinChildrenFetcher* join_children_fetcher_;  // nullable, does not own.
+  const EmbeddingQueryResults*
+      embedding_query_results_;                      // nullable, does not own.
+  const SchemaTypeAliasMap* schema_type_alias_map_;  // nullable, does not own.
+
   const FeatureFlags& feature_flags_;  // Does not own.
-  const std::unordered_set<ScoringFeatureType>& scoring_feature_types_enabled_;
+  const std::unordered_set<ScoringFeatureType>&
+      scoring_feature_types_enabled_;  // Does not own.
 
   libtextclassifier3::Status pending_error_;
   std::vector<std::unique_ptr<ScoreExpression>> stack_;

@@ -175,9 +175,9 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
-  public BlobProto abandonBlob(PropertyProto.BlobHandleProto blobHandle) {
+  public BlobProto removeBlob(PropertyProto.BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
-        icingSearchEngineImpl.abandonBlob(blobHandle.toByteArray()));
+        icingSearchEngineImpl.removeBlob(blobHandle.toByteArray()));
   }
 
   @NonNull

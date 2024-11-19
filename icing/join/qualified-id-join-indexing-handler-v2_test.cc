@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-join-indexing-handler.h"
-
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,6 +30,7 @@
 #include "icing/join/document-id-to-join-info.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
 #include "icing/join/qualified-id-join-index.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/join/qualified-id.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -82,7 +81,7 @@ static constexpr std::string_view kNestedType = "NestedType";
 static constexpr std::string_view kPropertyNestedDoc = "nested";
 static constexpr std::string_view kPropertyQualifiedId2 = "qualifiedId2";
 
-class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
+class QualifiedIdJoinIndexingHandlerV2Test : public ::testing::Test {
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -242,7 +241,8 @@ GetJoinData(const QualifiedIdJoinIndexImplV2& index,
   return result;
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest, CreationWithNullPointerShouldFail) {
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
+       CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
       QualifiedIdJoinIndexingHandler::Create(
           /*clock=*/nullptr, doc_store_.get(), qualified_id_join_index_.get()),
@@ -259,7 +259,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, CreationWithNullPointerShouldFail) {
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleJoinableProperty) {
   // Create and put referenced (parent) document. Get its document id and
   // namespace id.
   DocumentProto referenced_document =
@@ -318,7 +318,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
           /*join_info=*/ref_doc_nsid_uri_fingerprint))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleNestedJoinableProperty) {
   // Create and put referenced (parent) document1. Get its document id and
   // namespace id.
   DocumentProto referenced_document1 =
@@ -425,7 +425,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
           /*join_info=*/ref_doc_nsid_uri_fingerprint1))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        HandleShouldSkipInvalidFormatQualifiedId) {
   static constexpr std::string_view kInvalidFormatQualifiedId =
       "invalid_format_qualified_id";
@@ -472,7 +472,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
       IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        HandleShouldSkipNonExistingNamespace) {
   static constexpr std::string_view kUnknownNamespace = "UnknownNamespace";
   // Create and put (child) document which references to a parent qualified id
@@ -515,7 +515,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
       IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleShouldSkipEmptyQualifiedId) {
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleShouldSkipEmptyQualifiedId) {
   // Create and put (child) document without any qualified id. Also tokenize it.
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/1")
@@ -553,7 +553,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleShouldSkipEmptyQualifiedId) {
       IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        HandleInvalidDocumentIdShouldReturnInvalidArgumentError) {
   // Create and put referenced (parent) document. Get its document id and
   // namespace id.
@@ -626,7 +626,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
       IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        HandleOutOfOrderDocumentIdShouldReturnInvalidArgumentError) {
   // Create and put referenced (parent) document. Get its document id and
   // namespace id.
@@ -704,7 +704,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
       IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        HandleRecoveryModeShouldIndexDocsGtLastAddedDocId) {
   // Create and put referenced (parent) document. Get its document id and
   // namespace id.
@@ -763,7 +763,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerTest,
           /*join_info=*/ref_doc_nsid_uri_fingerprint))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        HandleRecoveryModeShouldIgnoreDocsLeLastAddedDocId) {
   // Create and put referenced (parent) document. Get its document id and
   // namespace id.

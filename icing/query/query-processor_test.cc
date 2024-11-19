@@ -158,7 +158,8 @@ class QueryProcessorTest : public ::testing::Test {
         QueryProcessor::Create(
             index_.get(), numeric_index_.get(), embedding_index_.get(),
             language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-            schema_store_.get(), &fake_clock_));
+            schema_store_.get(), /*join_children_fetcher=*/nullptr,
+            &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
@@ -212,52 +213,63 @@ class QueryProcessorTest : public ::testing::Test {
 
 TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
-      QueryProcessor::Create(/*index=*/nullptr, numeric_index_.get(),
-                             embedding_index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+      QueryProcessor::Create(
+          /*index=*/nullptr, numeric_index_.get(), embedding_index_.get(),
+          language_segmenter_.get(), normalizer_.get(), document_store_.get(),
+          schema_store_.get(), /*join_children_fetcher=*/nullptr, &fake_clock_,
+          feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), /*numeric_index_=*/nullptr,
-                             embedding_index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+      QueryProcessor::Create(
+          index_.get(), /*numeric_index_=*/nullptr, embedding_index_.get(),
+          language_segmenter_.get(), normalizer_.get(), document_store_.get(),
+          schema_store_.get(), /*join_children_fetcher=*/nullptr, &fake_clock_,
+          feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                                     /*embedding_index=*/nullptr,
-                                     language_segmenter_.get(),
-                                     normalizer_.get(), document_store_.get(),
-                                     schema_store_.get(), &fake_clock_),
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(),
+                  /*embedding_index=*/nullptr, language_segmenter_.get(),
+                  normalizer_.get(), document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, &fake_clock_,
+                  feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(QueryProcessor::Create(
                   index_.get(), numeric_index_.get(), embedding_index_.get(),
                   /*language_segmenter=*/nullptr, normalizer_.get(),
-                  document_store_.get(), schema_store_.get(), &fake_clock_),
+                  document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, &fake_clock_,
+                  feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              /*normalizer=*/nullptr, document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+                             schema_store_.get(),
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(
-          index_.get(), numeric_index_.get(), embedding_index_.get(),
-          language_segmenter_.get(), normalizer_.get(),
-          /*document_store=*/nullptr, schema_store_.get(), &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                             embedding_index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             /*schema_store=*/nullptr, &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(), embedding_index_.get(),
+                  language_segmenter_.get(), normalizer_.get(),
+                  /*document_store=*/nullptr, schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, &fake_clock_,
+                  feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), /*clock=*/nullptr),
+                             /*schema_store=*/nullptr,
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(), embedding_index_.get(),
+                  language_segmenter_.get(), normalizer_.get(),
+                  document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, /*clock=*/nullptr,
+                  feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
@@ -2978,7 +2990,9 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get(),
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -3041,7 +3055,9 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get(),
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");

@@ -270,7 +270,7 @@ jbyteArray nativeOpenWriteBlob(
 
 // TODO(b/273591938): Change this API back to the pre-registered API.
 JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeAbandonBlob(
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeRemoveBlob(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -278,11 +278,11 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeAbandonBlob(
   icing::lib::PropertyProto::BlobHandleProto blob_handle;
   if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
     ICING_LOG(icing::lib::ERROR)
-        << "Failed to parse BlobHandle in nativeAbandonBlob";
+        << "Failed to parse BlobHandle in nativeRemoveBlob";
     return nullptr;
   }
 
-  icing::lib::BlobProto blob_result_proto = icing->AbandonBlob(blob_handle);
+  icing::lib::BlobProto blob_result_proto = icing->RemoveBlob(blob_handle);
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }

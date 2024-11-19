@@ -68,6 +68,20 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
         doc_store_(*doc_store),
         qualified_id_join_index_(*qualified_id_join_index) {}
 
+  // TODO(b/275121148): deprecate v1, v2 after rollout v3.
+
+  // Helper function to handle indexing for QualfiedIdJoinIndexImplV1.
+  libtextclassifier3::Status HandleV1(
+      const TokenizedDocument& tokenized_document, DocumentId document_id);
+
+  // Helper function to handle indexing for QualfiedIdJoinIndexImplV2.
+  libtextclassifier3::Status HandleV2(
+      const TokenizedDocument& tokenized_document, DocumentId document_id);
+
+  // Helper function to handle indexing for QualfiedIdJoinIndexImplV3.
+  libtextclassifier3::Status HandleV3(
+      const TokenizedDocument& tokenized_document, DocumentId document_id);
+
   const DocumentStore& doc_store_;                 // Does not own.
   QualifiedIdJoinIndex& qualified_id_join_index_;  // Does not own.
 };

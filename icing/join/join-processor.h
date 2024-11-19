@@ -62,6 +62,20 @@ class JoinProcessor {
       const JoinChildrenFetcher& join_children_fetcher);
 
  private:
+  // TODO(b/275121148): deprecate v1, v2 after rollout v3.
+
+  // Helper function to construct JoinChildrenFetcher for
+  // QualfiedIdJoinIndexImplV1.
+  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcherV1(
+      const JoinSpecProto& join_spec,
+      std::vector<ScoredDocumentHit>&& child_scored_document_hits);
+
+  // Helper function to construct JoinChildrenFetcher for
+  // QualfiedIdJoinIndexImplV2.
+  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcherV2(
+      const JoinSpecProto& join_spec,
+      std::vector<ScoredDocumentHit>&& child_scored_document_hits);
+
   // Fetches referenced document id of the given document under the given
   // property path.
   //
