@@ -79,15 +79,16 @@ class BlobStore {
   libtextclassifier3::StatusOr<int> OpenWrite(
       const PropertyProto::BlobHandleProto& blob_handle);
 
-  // Abandons the pending blob, the blob file and blob handle will be removed
-  // from the blob store.
+  // Removes a blob file and blob handle from the blob store.
+  //
+  // This will remove the blob on any state. No matter it's committed or not or
+  // it has reference document links or not.
   //
   // Returns:
   //   INVALID_ARGUMENT_ERROR on invalid blob handle
-  //   FAILED_PRECONDITION_ERROR on blob is already committed
   //   NOT_FOUND_ERROR on blob is not found
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status AbandonBlob(
+  libtextclassifier3::Status RemoveBlob(
       const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets a file for read only purpose for the given blob handle.

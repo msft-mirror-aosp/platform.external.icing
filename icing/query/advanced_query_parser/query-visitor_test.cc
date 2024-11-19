@@ -257,8 +257,10 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
     QueryVisitor query_visitor(
         index_.get(), numeric_index_.get(), embedding_index_.get(),
         document_store_.get(), schema_store_.get(), normalizer_.get(),
-        tokenizer_.get(), search_spec, DocHitInfoIteratorFilter::Options(),
-        /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
+        tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
+        DocHitInfoIteratorFilter::Options(),
+        /*needs_term_frequency_info=*/true, feature_flags_.get(),
+        clock_.GetSystemTimeMilliseconds());
     root_node->Accept(&query_visitor);
     return std::move(query_visitor).ConsumeResults();
   }
@@ -729,8 +731,10 @@ TEST_P(QueryVisitorTest, NeverVisitedReturnsInvalid) {
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), embedding_index_.get(),
       document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), search_spec, DocHitInfoIteratorFilter::Options(),
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+      tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
+      DocHitInfoIteratorFilter::Options(),
+      /*needs_term_frequency_info=*/true, feature_flags_.get(),
+      clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -925,8 +929,10 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), embedding_index_.get(),
       document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), search_spec, DocHitInfoIteratorFilter::Options(),
-      /*needs_term_frequency_info=*/false, clock_.GetSystemTimeMilliseconds());
+      tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
+      DocHitInfoIteratorFilter::Options(),
+      /*needs_term_frequency_info=*/false, feature_flags_.get(),
+      clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -4675,6 +4681,203 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
       Pointee(UnorderedElementsAre(-2)));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+}
+
+TEST_F(QueryVisitorTest,
+       MatchScoreExpressionFunctionWithInvalidRangeReturnsInvalidArgument) {
+  // The expression is invalid, since low > high.
+  EXPECT_THAT(ProcessQuery("matchScoreExpression(\"1 + 1\", 10, -10)"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Floating point values are also checked.
+  EXPECT_THAT(ProcessQuery("matchScoreExpression(\"1 + 1\", 10.2, 10.1)"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // low == high is allowed.
+  EXPECT_THAT(ProcessQuery("matchScoreExpression(\"1 + 1\", 10.1, 10.1)"),
+              IsOk());
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionSimpleLowerBound) {
+  // Create two documents with different document scores.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .Build()));
+
+  // Test that `matchScoreExpression("this.documentScore()", 0)` matches
+  // all documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", 0)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0, kDocumentId1));
+
+  // Test that `matchScoreExpression("this.documentScore()", 2)` matches
+  // document 0 only.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", 2)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0));
+
+  // Test that `matchScoreExpression("this.documentScore()", 5)` matches
+  // no documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", 5)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionSimpleUpperBound) {
+  // Create two documents with different document scores.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .Build()));
+
+  // Test that `matchScoreExpression("this.documentScore()", -100, 100)` matches
+  // all documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery(
+          "matchScoreExpression(\"this.documentScore()\", -100, 100)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0, kDocumentId1));
+
+  // Test that `matchScoreExpression("this.documentScore()", -100, 2)` matches
+  // document 1 only.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", -100, 2)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId1));
+
+  // Test that `matchScoreExpression("this.documentScore()", -100, -1)` matches
+  // no documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", -100, -1)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionComplex) {
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .SetCreationTimestampMs(1)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(2)
+                                           .SetCreationTimestampMs(2)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri2")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .SetCreationTimestampMs(3)
+                                           .Build()));
+
+  // Query with a complex score expression:
+  //   `pow(this.creationTimestamp(), 2) + this.documentScore() - 1`.
+  // The score of each document is:
+  // - document 0: 1 * 1 + 4 - 1 = 4
+  // - document 1: 2 * 2 + 2 - 1 = 5
+  // - document 2: 3 * 3 + 0 - 1 = 8
+  // Therefore, filtering with a range of [4.5, 7] will only match document 1.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery("matchScoreExpression(\"pow(this.creationTimestamp(), 2) + "
+                   "this.documentScore() - 1\", 4.5, 7)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId1));
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionWithEvaluationErrors) {
+  // Create two documents with different document scores.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .Build()));
+
+  // Test that documents with evaluation errors will be filtered out.
+  // Specifically, document1 will be filtered out because its document score is
+  // 0, and the expression `1 / 0` is an error.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery(
+          "matchScoreExpression(\"1 / this.documentScore()\", -10000, 10000)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0));
 }
 
 INSTANTIATE_TEST_SUITE_P(QueryVisitorTest, QueryVisitorTest,
