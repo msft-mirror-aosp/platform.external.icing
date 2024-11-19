@@ -100,8 +100,8 @@ public interface IcingSearchEngineInterface extends Closeable {
   /** Gets a file descriptor to write blob data. */
   BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);
 
-  /** Abandons a pending blob. */
-  BlobProto abandonBlob(PropertyProto.BlobHandleProto blobHandle);
+  /** Removes a pending blob. */
+  BlobProto removeBlob(PropertyProto.BlobHandleProto blobHandle);
 
   /** Gets a file descriptor to read blob data. */
   BlobProto openReadBlob(PropertyProto.BlobHandleProto blobHandle);

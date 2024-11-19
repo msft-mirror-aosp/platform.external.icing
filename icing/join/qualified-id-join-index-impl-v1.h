@@ -28,7 +28,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
-#include "icing/join/doc-join-info.h"
+#include "icing/join/document-join-id-pair.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
@@ -41,8 +41,8 @@
 namespace icing {
 namespace lib {
 
-// QualifiedIdJoinIndexImplV1: a class to maintain data mapping DocJoinInfo to
-// joinable qualified ids and delete propagation info.
+// QualifiedIdJoinIndexImplV1: a class to maintain data mapping
+// DocumentJoinIdPair to joinable qualified ids and delete propagation info.
 class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
  public:
   struct Info {
@@ -125,12 +125,25 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
     return absl_ports::UnimplementedError("This API is not supported in V1");
   }
 
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::Status Put(
-      const DocJoinInfo& doc_join_info,
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<DocumentId>&& parent_document_ids) override {
+    return absl_ports::UnimplementedError("This API is not supported in V1");
+  }
+
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
+  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
+      DocumentId parent_document_id) const override {
+    return absl_ports::UnimplementedError("This API is not supported in V1");
+  }
+
+  libtextclassifier3::Status Put(
+      const DocumentJoinIdPair& document_join_id_pair,
       std::string_view ref_qualified_id_str) override;
 
   libtextclassifier3::StatusOr<std::string_view> Get(
-      const DocJoinInfo& doc_join_info) const override;
+      const DocumentJoinIdPair& document_join_id_pair) const override;
 
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
@@ -139,9 +152,13 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
 
   libtextclassifier3::Status Clear() override;
 
-  bool is_v2() const override { return false; }
+  QualifiedIdJoinIndex::Version version() const override {
+    return QualifiedIdJoinIndex::Version::kV1;
+  }
 
-  int32_t size() const override { return doc_join_info_mapper_->num_keys(); }
+  int32_t size() const override {
+    return document_join_id_pair_mapper_->num_keys();
+  }
 
   bool empty() const override { return size() == 0; }
 
@@ -163,12 +180,12 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
   explicit QualifiedIdJoinIndexImplV1(
       const Filesystem& filesystem, std::string&& working_path,
       std::unique_ptr<uint8_t[]> metadata_buffer,
-      std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper,
+      std::unique_ptr<KeyMapper<int32_t>> document_join_id_pair_mapper,
       std::unique_ptr<FileBackedVector<char>> qualified_id_storage,
       bool pre_mapping_fbv, bool use_persistent_hash_map)
       : QualifiedIdJoinIndex(filesystem, std::move(working_path)),
         metadata_buffer_(std::move(metadata_buffer)),
-        doc_join_info_mapper_(std::move(doc_join_info_mapper)),
+        document_join_id_pair_mapper_(std::move(document_join_id_pair_mapper)),
         qualified_id_storage_(std::move(qualified_id_storage)),
         pre_mapping_fbv_(pre_mapping_fbv),
         use_persistent_hash_map_(use_persistent_hash_map),
@@ -246,10 +263,10 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
   // Metadata buffer
   std::unique_ptr<uint8_t[]> metadata_buffer_;
 
-  // Persistent KeyMapper for mapping (encoded) DocJoinInfo (DocumentId,
+  // Persistent KeyMapper for mapping (encoded) DocumentJoinIdPair (DocumentId,
   // JoinablePropertyId) to another referenced document's qualified id string
   // index in qualified_id_storage_.
-  std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper_;
+  std::unique_ptr<KeyMapper<int32_t>> document_join_id_pair_mapper_;
 
   // Storage for qualified id strings.
   std::unique_ptr<FileBackedVector<char>> qualified_id_storage_;

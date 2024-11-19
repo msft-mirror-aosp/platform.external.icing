@@ -147,7 +147,7 @@ class SuggestionProcessorTest : public Test {
         SuggestionProcessor::Create(
             index_.get(), numeric_index_.get(), embedding_index_.get(),
             language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-            schema_store_.get(), &fake_clock_));
+            schema_store_.get(), &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
