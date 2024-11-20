@@ -181,6 +181,39 @@ QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
   return std::vector<DocumentJoinIdPair>(ptr, ptr + array_info->used_length);
 }
 
+libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
+    DocumentId old_document_id, DocumentId new_document_id) {
+  if (!IsDocumentIdValid(old_document_id) ||
+      !IsDocumentIdValid(new_document_id)) {
+    return absl_ports::InvalidArgumentError(
+        "Invalid parent document id to migrate");
+  }
+
+  if (old_document_id >=
+      parent_document_id_to_child_array_info_->num_elements()) {
+    // It means the parent document doesn't have any children at this moment. No
+    // need to migrate.
+    return libtextclassifier3::Status::OK;
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      FileBackedVector<ArrayInfo>::MutableView mutable_old_array_info,
+      parent_document_id_to_child_array_info_->GetMutable(old_document_id));
+  if (!mutable_old_array_info.Get().IsValid()) {
+    // It means the parent document doesn't have any children at this moment. No
+    // need to migrate.
+    return libtextclassifier3::Status::OK;
+  }
+
+  ICING_RETURN_IF_ERROR(
+      ExtendParentDocumentIdToChildArrayInfoIfNecessary(new_document_id));
+  ICING_RETURN_IF_ERROR(parent_document_id_to_child_array_info_->Set(
+      new_document_id, mutable_old_array_info.Get()));
+  mutable_old_array_info.Get() = kInvalidArrayInfo;
+
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
     const std::vector<NamespaceId>& namespace_id_old_to_new,
@@ -431,18 +464,9 @@ QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
     return libtextclassifier3::Status::OK;
   }
 
-  // Step 1: extend parent_document_id_to_child_array_info_ if necessary. Assign
-  //         new parents with invalid ArrayInfo.
-  if (parent_document_id >=
-      parent_document_id_to_child_array_info_->num_elements()) {
-    int32_t num_to_extend =
-        (parent_document_id + 1) -
-        parent_document_id_to_child_array_info_->num_elements();
-    ICING_ASSIGN_OR_RETURN(
-        FileBackedVector<ArrayInfo>::MutableArrayView mutable_arr,
-        parent_document_id_to_child_array_info_->Allocate(num_to_extend));
-    mutable_arr.Fill(/*idx=*/0, /*len=*/num_to_extend, kInvalidArrayInfo);
-  }
+  // Step 1: extend parent_document_id_to_child_array_info_ if necessary.
+  ICING_RETURN_IF_ERROR(
+      ExtendParentDocumentIdToChildArrayInfoIfNecessary(parent_document_id));
 
   // Step 2: get the parent's child DocumentJoinIdPair mutable array (extend if
   //         necessary), append new child_document_join_id_pairs to the array,
@@ -470,6 +494,22 @@ QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
   // Update header.
   info().num_data += child_document_join_id_pairs.size();
 
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status
+QualifiedIdJoinIndexImplV3::ExtendParentDocumentIdToChildArrayInfoIfNecessary(
+    DocumentId parent_document_id) {
+  if (parent_document_id >=
+      parent_document_id_to_child_array_info_->num_elements()) {
+    int32_t num_to_extend =
+        (parent_document_id + 1) -
+        parent_document_id_to_child_array_info_->num_elements();
+    ICING_ASSIGN_OR_RETURN(
+        FileBackedVector<ArrayInfo>::MutableArrayView mutable_arr,
+        parent_document_id_to_child_array_info_->Allocate(num_to_extend));
+    mutable_arr.Fill(/*idx=*/0, /*len=*/num_to_extend, kInvalidArrayInfo);
+  }
   return libtextclassifier3::Status::OK;
 }
 

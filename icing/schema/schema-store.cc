@@ -1151,6 +1151,15 @@ SchemaStore::GetJoinablePropertyMetadata(
       .GetJoinablePropertyMetadata(schema_type_id, property_path);
 }
 
+libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+SchemaStore::GetJoinablePropertyMetadata(
+    SchemaTypeId schema_type_id,
+    JoinablePropertyId joinable_property_id) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return schema_type_manager_->joinable_property_manager()
+      .GetJoinablePropertyMetadata(schema_type_id, joinable_property_id);
+}
+
 libtextclassifier3::StatusOr<JoinablePropertyGroup>
 SchemaStore::ExtractJoinableProperties(const DocumentProto& document) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());

@@ -636,12 +636,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/true,
-                /*needs_schema_store_derived_files_rebuild=*/true,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version -1, max_version 2 (invalid)
         // - Existing enabled features = {}
@@ -655,12 +655,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/true,
-                /*needs_schema_store_derived_files_rebuild=*/true,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 3, max_version 3 (pre v2 version check)
         // - Existing enabled features = {}
@@ -674,12 +674,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 3, max_version 3 (pre v2 version check)
         // - Existing enabled features = {}
@@ -694,12 +694,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 3, max_version 3 (pre v2 version check)
         // - Existing enabled features = {}
@@ -714,12 +714,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -733,12 +733,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -752,12 +752,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 4, max_version 5
         // - Existing enabled features = {}
@@ -771,12 +771,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/true,
-                /*needs_schema_store_derived_files_rebuild=*/true,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 5, max_version 5
         // - Existing enabled features = {}
@@ -790,12 +790,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/true,
-                /*needs_schema_store_derived_files_rebuild=*/true,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -810,12 +810,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -830,12 +830,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {}
@@ -852,12 +852,12 @@ INSTANTIATE_TEST_SUITE_P(
              IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_EMBEDDING_INDEX}
@@ -876,12 +876,12 @@ INSTANTIATE_TEST_SUITE_P(
              IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
@@ -896,12 +896,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_EMBEDDING_INDEX}
@@ -916,12 +916,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_EMBEDDING_INDEX,
@@ -938,12 +938,12 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {FEATURE_EMBEDDING_INDEX,
@@ -961,12 +961,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 4, max_version 4
         // - Existing enabled features = {UNKNOWN}
@@ -982,12 +982,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/true,
-                /*needs_schema_store_derived_files_rebuild=*/true,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/true,
-                /*needs_qualified_id_join_index_rebuild=*/true,
-                /*needs_embedding_index_rebuild=*/true)),
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
 
         // - Existing version 5, max_version 5
         // - Existing enabled features = {}
@@ -1002,12 +1002,12 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/true,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false)),
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
 
         // - Existing version 5, max_version 5
         // - Existing enabled features = {}
@@ -1022,12 +1022,56 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
-                /*needs_document_store_derived_files_rebuild=*/false,
-                /*needs_schema_store_derived_files_rebuild=*/false,
-                /*needs_term_index_rebuild=*/false,
-                /*needs_integer_index_rebuild=*/false,
-                /*needs_qualified_id_join_index_rebuild=*/false,
-                /*needs_embedding_index_rebuild=*/false))));
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features =
+        //   {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features =
+        //   {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
   EXPECT_THAT(
@@ -1170,12 +1214,12 @@ TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildResult_unknown) {
   EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
                   IcingSearchEngineFeatureInfoProto::UNKNOWN),
               Eq(DerivedFilesRebuildResult(
-                  /*needs_document_store_derived_files_rebuild=*/true,
-                  /*needs_schema_store_derived_files_rebuild=*/true,
-                  /*needs_term_index_rebuild=*/true,
-                  /*needs_integer_index_rebuild=*/true,
-                  /*needs_qualified_id_join_index_rebuild=*/true,
-                  /*needs_embedding_index_rebuild=*/true)));
+                  /*needs_document_store_derived_files_rebuild_in=*/true,
+                  /*needs_schema_store_derived_files_rebuild_in=*/true,
+                  /*needs_term_index_rebuild_in=*/true,
+                  /*needs_integer_index_rebuild_in=*/true,
+                  /*needs_qualified_id_join_index_rebuild_in=*/true,
+                  /*needs_embedding_index_rebuild_in=*/true)));
 }
 
 TEST(VersionUtilTest,
@@ -1184,12 +1228,12 @@ TEST(VersionUtilTest,
       GetFeatureDerivedFilesRebuildResult(
           IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR),
       Eq(DerivedFilesRebuildResult(
-          /*needs_document_store_derived_files_rebuild=*/false,
-          /*needs_schema_store_derived_files_rebuild=*/false,
-          /*needs_term_index_rebuild=*/true,
-          /*needs_integer_index_rebuild=*/false,
-          /*needs_qualified_id_join_index_rebuild=*/false,
-          /*needs_embedding_index_rebuild=*/false)));
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/true,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/false,
+          /*needs_embedding_index_rebuild_in=*/false)));
 }
 
 TEST(VersionUtilTest,
@@ -1197,12 +1241,12 @@ TEST(VersionUtilTest,
   EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
                   IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX),
               Eq(DerivedFilesRebuildResult(
-                  /*needs_document_store_derived_files_rebuild=*/false,
-                  /*needs_schema_store_derived_files_rebuild=*/false,
-                  /*needs_term_index_rebuild=*/false,
-                  /*needs_integer_index_rebuild=*/false,
-                  /*needs_qualified_id_join_index_rebuild=*/false,
-                  /*needs_embedding_index_rebuild=*/true)));
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/false,
+                  /*needs_embedding_index_rebuild_in=*/true)));
 }
 
 TEST(VersionUtilTest,
@@ -1211,12 +1255,12 @@ TEST(VersionUtilTest,
       GetFeatureDerivedFilesRebuildResult(
           IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION),
       Eq(DerivedFilesRebuildResult(
-          /*needs_document_store_derived_files_rebuild=*/false,
-          /*needs_schema_store_derived_files_rebuild=*/false,
-          /*needs_term_index_rebuild=*/false,
-          /*needs_integer_index_rebuild=*/false,
-          /*needs_qualified_id_join_index_rebuild=*/false,
-          /*needs_embedding_index_rebuild=*/true)));
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/false,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/false,
+          /*needs_embedding_index_rebuild_in=*/true)));
 }
 
 TEST(VersionUtilTest,
@@ -1224,12 +1268,28 @@ TEST(VersionUtilTest,
   EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
                   IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE),
               Eq(DerivedFilesRebuildResult(
-                  /*needs_document_store_derived_files_rebuild=*/false,
-                  /*needs_schema_store_derived_files_rebuild=*/false,
-                  /*needs_term_index_rebuild=*/false,
-                  /*needs_integer_index_rebuild=*/false,
-                  /*needs_qualified_id_join_index_rebuild=*/false,
-                  /*needs_embedding_index_rebuild=*/false)));
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/false,
+                  /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(
+    VersionUtilTest,
+    GetFeatureDerivedFilesRebuildResult_featureQualifiedIdJoinIndexV3AndDeletePropagateFrom) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildResult(
+          IcingSearchEngineFeatureInfoProto::
+              FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM),
+      Eq(DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/false,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/true,
+          /*needs_embedding_index_rebuild_in=*/false)));
 }
 
 TEST(VersionUtilTest, SchemaDatabaseMigrationRequired) {
@@ -1312,7 +1372,9 @@ INSTANTIATE_TEST_SUITE_P(
         IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES,
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
-        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE,
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM));
 
 }  // namespace
 

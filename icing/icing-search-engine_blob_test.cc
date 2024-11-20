@@ -66,9 +66,9 @@ class TestIcingSearchEngine : public IcingSearchEngine {
 
 std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
 
-std::string GetTestBlobFileDir() {
-  return GetTestTempDir() + "/icing/blob_dir/blob_files";
-}
+std::string GetTestBlobDir() { return GetTestTempDir() + "/icing/blob_dir"; }
+
+std::string GetTestBlobFileDir() { return GetTestBlobDir() + "/blob_files"; }
 
 // This test is meant to cover all tests relating to IcingSearchEngine::Delete*.
 class IcingSearchEngineBlobTest : public testing::Test {
@@ -547,10 +547,18 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   std::string actual_data = std::string(buf.get(), buf.get() + size);
   EXPECT_EQ(expected_data, actual_data);
 
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(
+      filesystem()->ListDirectory(GetTestBlobDir().c_str(), &file_names));
+  int32_t cur_file_count = file_names.size();
   // Optimize remove the expired orphan blob.
-  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.Optimize().status(), ProtoIsOk());
   EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(
+      filesystem()->ListDirectory(GetTestBlobDir().c_str(), &file_names));
+  EXPECT_THAT(file_names, SizeIs(cur_file_count));
 }
 
 TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {

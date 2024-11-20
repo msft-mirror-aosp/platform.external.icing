@@ -15,19 +15,25 @@
 #include "icing/join/join-processor.h"
 
 #include <algorithm>
+#include <deque>
 #include <memory>
 #include <optional>
+#include <queue>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/join/aggregation-scorer.h"
 #include "icing/join/document-join-id-pair.h"
+#include "icing/join/join-children-fetcher-impl-deprecated.h"
+#include "icing/join/join-children-fetcher-impl-v3.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id.h"
@@ -39,12 +45,13 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id-fingerprint.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<JoinChildrenFetcher>
+libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
 JoinProcessor::GetChildrenFetcher(
     const JoinSpecProto& join_spec,
     std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
@@ -63,12 +70,13 @@ JoinProcessor::GetChildrenFetcher(
       return GetChildrenFetcherV2(join_spec,
                                   std::move(child_scored_document_hits));
     case QualifiedIdJoinIndex::Version::kV3:
-      return absl_ports::UnimplementedError(
-          "JoinProcessor does not support version v3 yet.");
+      return JoinChildrenFetcherImplV3::Create(
+          join_spec, schema_store_, doc_store_, qualified_id_join_index_,
+          current_time_ms_, std::move(child_scored_document_hits));
   }
 }
 
-libtextclassifier3::StatusOr<JoinChildrenFetcher>
+libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
 JoinProcessor::GetChildrenFetcherV1(
     const JoinSpecProto& join_spec,
     std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
@@ -98,10 +106,11 @@ JoinProcessor::GetChildrenFetcherV1(
 
     map_joinable_qualified_id[ref_doc_id].push_back(child);
   }
-  return JoinChildrenFetcher(join_spec, std::move(map_joinable_qualified_id));
+  return JoinChildrenFetcherImplDeprecated::Create(
+      join_spec, std::move(map_joinable_qualified_id));
 }
 
-libtextclassifier3::StatusOr<JoinChildrenFetcher>
+libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
 JoinProcessor::GetChildrenFetcherV2(
     const JoinSpecProto& join_spec,
     std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
@@ -206,7 +215,8 @@ JoinProcessor::GetChildrenFetcherV2(
               bucketized_child_scored_hits.end(), score_comparator);
   }
 
-  return JoinChildrenFetcher(join_spec, std::move(parent_to_child_docs_map));
+  return JoinChildrenFetcherImplDeprecated::Create(
+      join_spec, std::move(parent_to_child_docs_map));
 }
 
 libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
@@ -234,6 +244,81 @@ JoinProcessor::Join(
   }
 
   return joined_scored_document_hits;
+}
+
+libtextclassifier3::StatusOr<std::unordered_set<DocumentId>>
+JoinProcessor::GetPropagatedChildDocumentsToDelete(
+    const std::unordered_set<DocumentId>& deleted_document_ids) {
+  // Sanity check: join index should be V3.
+  if (qualified_id_join_index_->version() !=
+      QualifiedIdJoinIndex::Version::kV3) {
+    return absl_ports::UnimplementedError(
+        "QualifiedIdJoinIndex version must be V3 to support delete "
+        "propagation.");
+  }
+
+  // BFS traverse to find all child documents to propagate delete.
+  std::queue<DocumentId> que(
+      std::deque(deleted_document_ids.begin(), deleted_document_ids.end()));
+  std::unordered_set<DocumentId> child_documents_to_delete;
+  while (!que.empty()) {
+    DocumentId doc_id_to_expand = que.front();
+    que.pop();
+
+    ICING_ASSIGN_OR_RETURN(std::vector<DocumentJoinIdPair> child_join_id_pairs,
+                           qualified_id_join_index_->Get(doc_id_to_expand));
+    for (const DocumentJoinIdPair& child_join_id_pair : child_join_id_pairs) {
+      if (child_documents_to_delete.find(child_join_id_pair.document_id()) !=
+              child_documents_to_delete.end() ||
+          deleted_document_ids.find(child_join_id_pair.document_id()) !=
+              deleted_document_ids.end()) {
+        // Already added into the set to delete or already deleted (happens only
+        // when there is a cycle back to the deleted or traversed document in
+        // the join relation). Skip it.
+        continue;
+      }
+
+      // Get DocumentFilterData of the child document to look up its schema type
+      // id.
+      // - Skip if the child document has been deleted, since delete propagation
+      //   should've been done to all its children when deleting it previously.
+      // - Otherwise, we have to handle this child document and propagate delete
+      //   to the grandchildren, even if it is expired.
+      std::optional<DocumentFilterData> child_filter_data =
+          doc_store_->GetNonDeletedDocumentFilterData(
+              child_join_id_pair.document_id());
+      if (!child_filter_data) {
+        // The child document has been deleted. Skip.
+        continue;
+      }
+
+      libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+          metadata_or = schema_store_->GetJoinablePropertyMetadata(
+              child_filter_data->schema_type_id(),
+              child_join_id_pair.joinable_property_id());
+      if (!metadata_or.ok() || metadata_or.ValueOrDie() == nullptr) {
+        // This shouldn't happen because we've validated it during indexing and
+        // only put valid DocumentJoinIdPair into qualified id join index.
+        // Log and skip it.
+        ICING_LOG(ERROR) << "Failed to get metadata for schema type id "
+                         << child_filter_data->schema_type_id()
+                         << ", joinable property id "
+                         << static_cast<int>(
+                                child_join_id_pair.joinable_property_id());
+        continue;
+      }
+      const JoinablePropertyMetadata* metadata = metadata_or.ValueOrDie();
+
+      if (metadata->value_type == JoinableConfig::ValueType::QUALIFIED_ID &&
+          metadata->delete_propagation_type ==
+              JoinableConfig::DeletePropagationType::PROPAGATE_FROM) {
+        child_documents_to_delete.insert(child_join_id_pair.document_id());
+        que.push(child_join_id_pair.document_id());
+      }
+    }
+  }
+
+  return child_documents_to_delete;
 }
 
 libtextclassifier3::StatusOr<DocumentId>

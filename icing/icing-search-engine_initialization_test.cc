@@ -47,8 +47,9 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/term-indexing-handler.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/document-join-id-pair.h"
 #include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-join-index-impl-v2.h"
+#include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -112,6 +113,7 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Matcher;
 using ::testing::Ne;
+using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
 
@@ -244,10 +246,11 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
-  icing_options.set_use_new_qualified_id_join_index(true);
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_embedding_quantization(true);
   icing_options.set_enable_blob_store(true);
+  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
+      true);
   return icing_options;
 }
 
@@ -1142,8 +1145,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                     EndsWith("/qualified_id_join_index_dir")))
       .Times(0);
-  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                    HasSubstr("/qualified_id_join_index_dir/")))
+  EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+  EXPECT_CALL(*mock_filesystem,
+              DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
       .Times(0);
 
   TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
@@ -1244,14 +1248,12 @@ TEST_F(IcingSearchEngineInitializationTest,
 
 TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptedDocumentStore) {
   // Test the following scenario: some document store derived files are
-  // corrupted. IcingSearchEngine should be able to recover the document store,
-  // and since NamespaceIds were reassigned, we should rebuild qualified id join
-  // index as well. Several additional behaviors are also tested:
+  // corrupted. IcingSearchEngine should be able to recover the document store.
+  // Several additional behaviors are also tested:
   // - Index directory handling:
   //   - Term index directory should be unaffected.
   //   - Integer index directory should be unaffected.
-  //   - Should discard the entire qualified id join index directory and start
-  //     it from scratch.
+  //   - Qualified id join index directory should be unaffected.
   // - Truncate indices:
   //   - "TruncateTo()" for term index shouldn't take effect.
   //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
@@ -1386,14 +1388,15 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptedDocumentStore) {
   EXPECT_CALL(*mock_filesystem,
               DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
       .Times(0);
-  // Ensure qualified id join index directory should be discarded once, and
+  // Ensure qualified id join index directory should never be discarded, and
   // Clear() should never be called (i.e. storage sub directory
   // "*/qualified_id_join_index_dir/*" should never be discarded).
   EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                     EndsWith("/qualified_id_join_index_dir")))
-      .Times(1);
-  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                    HasSubstr("/qualified_id_join_index_dir/")))
+      .Times(0);
+  EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+  EXPECT_CALL(*mock_filesystem,
+              DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
       .Times(0);
 
   TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
@@ -1407,16 +1410,15 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptedDocumentStore) {
   EXPECT_THAT(
       initialize_result.initialize_stats().document_store_recovery_cause(),
       Eq(InitializeStatsProto::IO_ERROR));
-  // Term, integer index should be unaffected.
+  // Term, integer index and qualified id join index should be unaffected.
   EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
               Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result.initialize_stats().integer_index_restoration_cause(),
       Eq(InitializeStatsProto::NONE));
-  // Qualified id join index should be rebuilt.
   EXPECT_THAT(initialize_result.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
-              Eq(InitializeStatsProto::DEPENDENCIES_CHANGED));
+              Eq(InitializeStatsProto::NONE));
 
   // Verify join search: join a query for `name:person` with a child query for
   // `body:message` based on the child's `senderQualifiedId` field. message2
@@ -1577,8 +1579,9 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIndex) {
   EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                     EndsWith("/qualified_id_join_index_dir")))
       .Times(0);
-  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                    HasSubstr("/qualified_id_join_index_dir/")))
+  EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+  EXPECT_CALL(*mock_filesystem,
+              DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
       .Times(0);
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
@@ -1723,8 +1726,9 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIntegerIndex) {
   EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                     EndsWith("/qualified_id_join_index_dir")))
       .Times(0);
-  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                    HasSubstr("/qualified_id_join_index_dir/")))
+  EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+  EXPECT_CALL(*mock_filesystem,
+              DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
       .Times(0);
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
@@ -1810,9 +1814,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     static constexpr int32_t kNewIntegerIndexBucketSplitThreshold = 1000;
@@ -1991,8 +1995,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                     EndsWith("/qualified_id_join_index_dir")))
       .Times(1);
-  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
-                                    HasSubstr("/qualified_id_join_index_dir/")))
+  EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+  EXPECT_CALL(*mock_filesystem,
+              DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
       .Times(0);
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
@@ -2140,9 +2145,9 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     TestIcingSearchEngine icing(
@@ -2334,9 +2339,9 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIntegerIndex) {
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     TestIcingSearchEngine icing(
@@ -2530,9 +2535,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     TestIcingSearchEngine icing(
@@ -2752,9 +2757,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
@@ -2998,9 +3003,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
@@ -3205,9 +3210,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(AtLeast(1));
 
     TestIcingSearchEngine icing(
@@ -3402,9 +3407,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     TestIcingSearchEngine icing(
@@ -3597,9 +3602,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(AtLeast(1));
 
     TestIcingSearchEngine icing(
@@ -3776,9 +3781,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
                                       EndsWith("/qualified_id_join_index_dir")))
         .Times(0);
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(0);
 
     TestIcingSearchEngine icing(
@@ -3931,17 +3936,15 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
-        QualifiedIdJoinIndexImplV2::Create(filesystem,
-                                           GetQualifiedIdJoinIndexDir(),
-                                           /*pre_mapping_fbv=*/false));
+        QualifiedIdJoinIndexImplV3::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), *feature_flags_));
     // Add data for document 0.
     ASSERT_THAT(qualified_id_join_index->last_added_document_id(),
                 kInvalidDocumentId);
     qualified_id_join_index->set_last_added_document_id(0);
     ICING_ASSERT_OK(qualified_id_join_index->Put(
-        /*schema_type_id=*/0, /*joinable_property_id=*/0, /*document_id=*/0,
-        /*ref_namespace_id_uri_fingerprints=*/
-        {NamespaceIdFingerprint(/*namespace_id=*/0, /*target_str=*/"uri")}));
+        DocumentJoinIdPair(/*document_id=*/0, /*joinable_property_id=*/0),
+        /*parent_document_ids=*/std::vector<DocumentId>{0}));
   }
 
   // 3. Create the index again. This should trigger index restoration.
@@ -3970,9 +3973,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Clear() should be called to truncate qualified id join index and thus
     // underlying storage sub directory (path_expr =
     // "*/qualified_id_join_index_dir/*") should be discarded.
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(AtLeast(1));
 
     TestIcingSearchEngine icing(
@@ -4002,14 +4005,11 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
-        QualifiedIdJoinIndexImplV2::Create(filesystem,
-                                           GetQualifiedIdJoinIndexDir(),
-                                           /*pre_mapping_fbv=*/false));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        auto iterator, qualified_id_join_index->GetIterator(
-                           /*schema_type_id=*/0, /*joinable_property_id=*/0));
-    EXPECT_THAT(iterator->Advance(),
-                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+        QualifiedIdJoinIndexImplV3::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), *feature_flags_));
+    EXPECT_THAT(qualified_id_join_index, Pointee(IsEmpty()));
+    EXPECT_THAT(qualified_id_join_index->Get(/*parent_document_id=*/0),
+                IsOkAndHolds(IsEmpty()));
   }
 }
 
@@ -4104,19 +4104,16 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
-        QualifiedIdJoinIndexImplV2::Create(filesystem,
-                                           GetQualifiedIdJoinIndexDir(),
-                                           /*pre_mapping_fbv=*/false));
+        QualifiedIdJoinIndexImplV3::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), *feature_flags_));
     // Add data for document 4.
     DocumentId original_last_added_doc_id =
         qualified_id_join_index->last_added_document_id();
     qualified_id_join_index->set_last_added_document_id(
         original_last_added_doc_id + 1);
     ICING_ASSERT_OK(qualified_id_join_index->Put(
-        /*schema_type_id=*/1, /*joinable_property_id=*/0,
-        /*document_id=*/original_last_added_doc_id + 1,
-        /*ref_namespace_id_uri_fingerprints=*/
-        {NamespaceIdFingerprint(/*namespace_id=*/0, /*target_str=*/"person")}));
+        DocumentJoinIdPair(/*document_id=*/4, /*joinable_property_id=*/0),
+        /*parent_document_ids=*/std::vector<DocumentId>{0}));
   }
 
   // 3. Create the index again. This should trigger index restoration.
@@ -4145,9 +4142,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Clear() should be called to truncate qualified id join index and thus
     // underlying storage sub directory (path_expr =
     // "*/qualified_id_join_index_dir/*") should be discarded.
-    EXPECT_CALL(
-        *mock_filesystem,
-        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+    EXPECT_CALL(*mock_filesystem, DeleteFile(_)).WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteFile(HasSubstr("/qualified_id_join_index_dir/")))
         .Times(AtLeast(1));
 
     TestIcingSearchEngine icing(
@@ -4525,9 +4522,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Document store rewinds to previous checkpoint and all derived files were
     // regenerated.
     // - Last stored doc id will be consistent with last added document ids in
-    //   term/integer indices, so there will be no index restoration.
-    // - Qualified id join index depends on document store derived files and
-    //   since they were regenerated, we should rebuild qualified id join index.
+    //   term/integer/join indices, so there will be no index restoration.
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
@@ -4536,10 +4531,10 @@ TEST_F(IcingSearchEngineInitializationTest,
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::DEPENDENCIES_CHANGED));
+                Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
-                Eq(10));
+                Eq(0));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
@@ -5192,12 +5187,11 @@ TEST_F(IcingSearchEngineInitializationTest,
   auto mock_filesystem = std::make_unique<MockFilesystem>();
   EXPECT_CALL(*mock_filesystem, PRead(A<const char*>(), _, _, _))
       .WillRepeatedly(DoDefault());
-  // This fails QualifiedIdJoinIndexImplV2::Create() once.
-  EXPECT_CALL(
-      *mock_filesystem,
-      PRead(Matcher<const char*>(Eq(qualified_id_join_index_metadata_file)), _,
-            _, _))
-      .WillOnce(Return(false))
+  // This fails QualifiedIdJoinIndexImplV3::Create() once.
+  EXPECT_CALL(*mock_filesystem, OpenForWrite(_)).WillRepeatedly(DoDefault());
+  EXPECT_CALL(*mock_filesystem, OpenForWrite(Matcher<const char*>(
+                                    Eq(qualified_id_join_index_metadata_file))))
+      .WillOnce(Return(-1))
       .WillRepeatedly(DoDefault());
 
   auto fake_clock = std::make_unique<FakeClock>();
@@ -5292,10 +5286,10 @@ TEST_F(IcingSearchEngineInitializationTest,
               Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
-              Eq(InitializeStatsProto::DEPENDENCIES_CHANGED));
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
-      Eq(10));
+      Eq(0));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().schema_store_recovery_cause(),
       Eq(InitializeStatsProto::NONE));
@@ -5547,9 +5541,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
-        QualifiedIdJoinIndexImplV2::Create(*filesystem(),
-                                           GetQualifiedIdJoinIndexDir(),
-                                           /*pre_mapping_fbv=*/false));
+        QualifiedIdJoinIndexImplV3::Create(
+            *filesystem(), GetQualifiedIdJoinIndexDir(), *feature_flags_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<EmbeddingIndex> embedding_index,
@@ -5597,7 +5590,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
         TokenizedDocument tokenized_document,
         TokenizedDocument::Create(schema_store.get(), lang_segmenter_.get(),
                                   std::move(incorrect_message)));
-    ICING_ASSERT_OK(index_processor.IndexDocument(tokenized_document, doc_id));
+    ICING_ASSERT_OK(index_processor.IndexDocument(tokenized_document, doc_id,
+                                                  put_result.old_document_id));
 
     // Rewrite existing data's version files
     ICING_ASSERT_OK(
@@ -6282,7 +6276,8 @@ TEST_P(IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
     ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // Create icing multiple times with different enable_embedding_index flags.
+  // Create icing multiple times with different enable_scorable_properties
+  // flags.
   for (int i = 1; i < enable_scorable_properties_flags.size(); ++i) {
     bool flag_changed = enable_scorable_properties_flags[i] !=
                         enable_scorable_properties_flags[i - 1];
@@ -6297,23 +6292,26 @@ TEST_P(IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
                                 GetTestJniCache());
     InitializeResultProto initialize_result = icing.Initialize();
     ASSERT_THAT(initialize_result.status(), ProtoIsOk());
-    // Ensure that the embedding index is rebuilt if the flag is changed.
+
+    // Document store recovery cause should be FEATURE_FLAG_CHANGED if the flag
+    // is changed.
     EXPECT_THAT(
         initialize_result.initialize_stats().document_store_recovery_cause(),
         Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
                         : InitializeStatsProto::NONE));
-    // If the document store was recovered, then the qualified id join index
-    // should have been regenerated with cause DEPENDENCIES_CHANGED.
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(flag_changed ? InitializeStatsProto::DEPENDENCIES_CHANGED
-                                : InitializeStatsProto::NONE));
-    // None of the indices should have been affected.
+
+    // Schema store and all indices should be unaffected.
+    EXPECT_THAT(
+        initialize_result.initialize_stats().schema_store_recovery_cause(),
+        Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(
         initialize_result.initialize_stats().integer_index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result.initialize_stats()
                     .embedding_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
@@ -6641,6 +6639,157 @@ INSTANTIATE_TEST_SUITE_P(
             /*previous_version=*/version_util::kSchemaDatabaseVersion,
             /*prev_version_schema_database_enabled=*/true,
             /*enable_schema_database=*/true)));
+
+class IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<std::vector<bool>> {};
+TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
+       ChangeEnableJoinIndexV3FlagTest) {
+  std::vector<bool> enable_join_index_v3_flags = GetParam();
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("namespace", "person")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto message =
+      DocumentBuilder()
+          .SetKey("namespace", "message/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
+        enable_join_index_v3_flags.at(0));
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message).status(), ProtoIsOk());
+  }
+
+  // Create icing multiple times with different
+  // enable_qualified_id_join_index_v3_and_propagate_delete flags.
+  for (int i = 1; i < enable_join_index_v3_flags.size(); ++i) {
+    bool flag_changed =
+        enable_join_index_v3_flags[i] != enable_join_index_v3_flags[i - 1];
+
+    // Ensure that the qualified id join index is rebuilt if the flag is
+    // changed.
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
+        enable_join_index_v3_flags[i]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+
+    // Qualified id join index recovery cause should be FEATURE_FLAG_CHANGED if
+    // flag is changed.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
+                                : InitializeStatsProto::NONE));
+
+    // Schema store, document store and all other indices should be unaffected.
+    EXPECT_THAT(
+        initialize_result.initialize_stats().schema_store_recovery_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().document_store_recovery_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Prepare join search spec to join a query for `name:person` with a child
+    // query for `body:message` based on the child's `senderQualifiedId` field.
+    //
+    // No matter what the flag value is, the join API should always return the
+    // expected result.
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    search_spec.set_query("name:person");
+    JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+    join_spec->set_parent_property_expression(
+        std::string(JoinProcessor::kQualifiedIdExpr));
+    join_spec->set_child_property_expression("senderQualifiedId");
+    join_spec->set_aggregation_scoring_strategy(
+        JoinSpecProto::AggregationScoringStrategy::COUNT);
+    JoinSpecProto::NestedSpecProto* nested_spec =
+        join_spec->mutable_nested_spec();
+    SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+    nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+    nested_search_spec->set_query("body:message");
+    *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+    *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+    ResultSpecProto result_spec = ResultSpecProto::default_instance();
+    result_spec.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto expected_search_result_proto;
+    expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+    SearchResultProto::ResultProto* result_proto =
+        expected_search_result_proto.mutable_results()->Add();
+    *result_proto->mutable_document() = person;
+    *result_proto->mutable_joined_results()->Add()->mutable_document() =
+        message;
+
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                         expected_search_result_proto));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
+    IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
+    testing::Values(std::vector<bool>{false, true, false, true, false, true},
+                    std::vector<bool>{true, false, true, false, true, false},
+                    std::vector<bool>{false, true, true, true, false, true},
+                    std::vector<bool>{true, false, false, false, true, false},
+                    std::vector<bool>{true, true, true, true},
+                    std::vector<bool>{false, false, false, false}));
 
 }  // namespace
 }  // namespace lib

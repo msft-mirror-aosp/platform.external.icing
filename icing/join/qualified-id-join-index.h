@@ -142,6 +142,16 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
       DocumentId parent_document_id) const = 0;
 
+  // Migrates existing join data for a parent document from old_document_id to
+  // new_document_id if necessary.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if any document id is invalid
+  //   - Any errors, depending on the implementation
+  virtual libtextclassifier3::Status MigrateParent(
+      DocumentId old_document_id, DocumentId new_document_id) = 0;
+
   // Reduces internal file sizes by reclaiming space and ids of deleted
   // documents. Qualified id type joinable index will convert all entries to the
   // new document ids.

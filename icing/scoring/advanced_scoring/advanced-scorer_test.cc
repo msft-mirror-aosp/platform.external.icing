@@ -34,7 +34,7 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
-#include "icing/join/join-children-fetcher.h"
+#include "icing/join/join-children-fetcher-impl-deprecated.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -724,7 +724,10 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
   map_joinable_qualified_id[document_id_1].push_back(fake_child1);
   map_joinable_qualified_id[document_id_1].push_back(fake_child2);
   map_joinable_qualified_id[document_id_2].push_back(fake_child3);
-  JoinChildrenFetcher fetcher(join_spec, std::move(map_joinable_qualified_id));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<JoinChildrenFetcherImplDeprecated> fetcher,
+      JoinChildrenFetcherImplDeprecated::Create(
+          join_spec, std::move(map_joinable_qualified_id)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
@@ -732,7 +735,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
           CreateAdvancedScoringSpec("len(this.childrenRankingSignals())"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+          fetcher.get(), &empty_embedding_query_results_,
+          feature_flags_.get()));
   // document_id_1 has two children.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(2));
   // document_id_2 has one child.
@@ -746,7 +750,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
           CreateAdvancedScoringSpec("sum(this.childrenRankingSignals())"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+          fetcher.get(), &empty_embedding_query_results_,
+          feature_flags_.get()));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3));
   // document_id_2 has one child with score 4.
@@ -760,7 +765,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
           CreateAdvancedScoringSpec("avg(this.childrenRankingSignals())"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+          fetcher.get(), &empty_embedding_query_results_,
+          feature_flags_.get()));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
   // document_id_2 has one child with score 4.
@@ -771,15 +777,15 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
               Eq(default_score));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(
-          CreateAdvancedScoringSpec(
-              // Equivalent to "avg(this.childrenRankingSignals())"
-              "sum(this.childrenRankingSignals()) / "
-              "len(this.childrenRankingSignals())"),
-          default_score, kDefaultSemanticMetricType, document_store_.get(),
-          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+      scorer, AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec(
+                      // Equivalent to "avg(this.childrenRankingSignals())"
+                      "sum(this.childrenRankingSignals()) / "
+                      "len(this.childrenRankingSignals())"),
+                  default_score, kDefaultSemanticMetricType,
+                  document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds(), fetcher.get(),
+                  &empty_embedding_query_results_, feature_flags_.get()));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
   // document_id_2 has one child with score 4.
@@ -986,14 +992,20 @@ TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
 
   // The root expression can only be of double type, but here it is of list
   // type.
-  JoinChildrenFetcher fake_fetcher(JoinSpecProto::default_instance(),
-                                   /*map_joinable_qualified_id=*/{});
+  JoinSpecProto join_spec;
+  join_spec.set_parent_property_expression("this.qualifiedId()");
+  join_spec.set_child_property_expression("sender");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<JoinChildrenFetcherImplDeprecated> fetcher,
+      JoinChildrenFetcherImplDeprecated::Create(
+          join_spec,
+          /*map_joinable_qualified_id=*/{}));
   EXPECT_THAT(
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.childrenRankingSignals()"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fake_fetcher, &empty_embedding_query_results_, feature_flags_.get()),
+          fetcher.get(), &empty_embedding_query_results_, feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 

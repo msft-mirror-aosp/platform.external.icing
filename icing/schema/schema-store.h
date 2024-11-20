@@ -441,6 +441,17 @@ class SchemaStore {
   GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
                               const std::string& property_path) const;
 
+  // Returns the JoinablePropertyMetadata associated with joinable_property_id
+  // that's in the SchemaTypeId.
+  //
+  // Returns:
+  //   Valid pointer to JoinablePropertyMetadata on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   INVALID_ARGUMENT if schema type id or joinable property id is invalid
+  libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+  GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
+                              JoinablePropertyId joinable_property_id) const;
+
   // Extracts all joinable property contents of different types from the given
   // document and group them by joinable value type.
   // - Joinable properties are sorted by joinable property id in ascending

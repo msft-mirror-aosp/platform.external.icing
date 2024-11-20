@@ -145,6 +145,13 @@ class QualifiedIdJoinIndexImplV1 : public QualifiedIdJoinIndex {
   libtextclassifier3::StatusOr<std::string_view> Get(
       const DocumentJoinIdPair& document_join_id_pair) const override;
 
+  // No-op since v1 stores parent information in raw qualified id string format
+  // and does not require parent migration.
+  libtextclassifier3::Status MigrateParent(
+      DocumentId old_document_id, DocumentId new_document_id) override {
+    return libtextclassifier3::Status::OK;
+  }
+
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,

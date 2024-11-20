@@ -61,7 +61,8 @@ bool AreIntegerIndexingConfigsEqual(const IntegerIndexingConfig& old_config,
 bool AreJoinableConfigsEqual(const JoinableConfig& old_config,
                              const JoinableConfig& new_config) {
   return old_config.value_type() == new_config.value_type() &&
-         old_config.propagate_delete() == new_config.propagate_delete();
+         old_config.delete_propagation_type() ==
+             new_config.delete_propagation_type();
 }
 
 bool AreEmbeddingIndexingConfigsEqual(
@@ -955,7 +956,8 @@ libtextclassifier3::Status SchemaUtil::ValidateJoinableConfig(
     }
   }
 
-  if (config.propagate_delete() &&
+  if (config.delete_propagation_type() !=
+          JoinableConfig::DeletePropagationType::NONE &&
       config.value_type() != JoinableConfig::ValueType::QUALIFIED_ID) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("Field 'property_name' '", property_name,

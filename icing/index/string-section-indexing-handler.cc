@@ -46,6 +46,7 @@ StringSectionIndexingHandler::Create(const Normalizer* normalizer,
 
 libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
+    DocumentId /*old_document_id*/ _,
     PutDocumentStatsProto* put_document_stats) {
   uint32_t num_tokens = 0;
   libtextclassifier3::Status status;
