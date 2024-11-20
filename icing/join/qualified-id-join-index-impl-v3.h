@@ -162,6 +162,20 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
       DocumentId parent_document_id) const override;
 
+  // Migrates existing join data for a parent document from old_document_id to
+  // new_document_id.
+  //
+  // Note: when updating a document, we have to migrate the document's join data
+  // if it is used as a parent document. For its child join data, it will be
+  // tokenized and indexed separately, so no migration is needed.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if any document id is invalid
+  //   - Any FileBackedVector errors
+  libtextclassifier3::Status MigrateParent(DocumentId old_document_id,
+                                           DocumentId new_document_id) override;
+
   // v1 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::Status Put(
       const DocumentJoinIdPair& document_join_id_pair,
@@ -271,6 +285,15 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   libtextclassifier3::Status AppendChildDocumentJoinIdPairsForParent(
       DocumentId parent_document_id,
       std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs);
+
+  // Extends the parent document id to child array info if necessary, according
+  // to the new parent document id.
+  //
+  // Returns:
+  //   - OK on success
+  //   - Any FileBackedVector errors
+  libtextclassifier3::Status ExtendParentDocumentIdToChildArrayInfoIfNecessary(
+      DocumentId parent_document_id);
 
   // Gets the DocumentJoinIdPair mutable array and extends it if necessary to
   // fit num_to_add new elements in the future for the caller. If extended:

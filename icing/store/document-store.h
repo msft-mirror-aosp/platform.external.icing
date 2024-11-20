@@ -183,16 +183,20 @@ class DocumentStore {
   //
   //  Returns:
   //   - On success, a PutResult with the DocumentId of the newly added document
-  //     and a bool indicating whether this is a new document or a replacement
-  //     of an existing document.
+  //     and the old DocumentId before replacement. If this is a new document,
+  //     then old DocumentId will be kInvalidDocumentId.
   //   - RESOURCE_EXHAUSTED if exceeds maximum number of allowed documents
   //   - FAILED_PRECONDITION if schema hasn't been set yet
   //   - NOT_FOUND if the schema_type or a property config of the document
   //     doesn't exist in schema
   //   - INTERNAL_ERROR on IO error
   struct PutResult {
+    DocumentId old_document_id = kInvalidDocumentId;
     DocumentId new_document_id = kInvalidDocumentId;
-    bool was_replacement = false;
+
+    bool was_replacement() const {
+      return old_document_id != kInvalidDocumentId;
+    }
   };
   libtextclassifier3::StatusOr<PutResult> Put(
       const DocumentProto& document, int32_t num_tokens = 0,
@@ -372,8 +376,8 @@ class DocumentStore {
   libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
   GetCorpusAssociatedScoreData(CorpusId corpus_id) const;
 
-  // Gets the document filter data if a document exists. Otherwise, will get a
-  // false optional.
+  // Gets the document filter data if a document exists and is not expired.
+  // Otherwise, will get a false optional.
   //
   // Existence means it hasn't been deleted and it hasn't expired yet.
   //
@@ -382,6 +386,16 @@ class DocumentStore {
   //   False                    if the given document doesn't exist.
   std::optional<DocumentFilterData> GetAliveDocumentFilterData(
       DocumentId document_id, int64_t current_time_ms) const;
+
+  // Gets the document filter data if a document has not been deleted. If the
+  // document is expired but not deleted, will still return a valid document
+  // filter data. Otherwise, will get a false optional.
+  //
+  // Returns:
+  //   True:DocumentFilterData  if the given document exists.
+  //   False                    if the given document has been deleted.
+  std::optional<DocumentFilterData> GetNonDeletedDocumentFilterData(
+      DocumentId document_id) const;
 
   // Gets the SchemaTypeId of a document.
   //

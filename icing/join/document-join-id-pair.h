@@ -15,7 +15,9 @@
 #ifndef ICING_JOIN_DOCUMENT_JOIN_ID_PAIR_H_
 #define ICING_JOIN_DOCUMENT_JOIN_ID_PAIR_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 
 #include "icing/schema/joinable-property.h"
@@ -30,6 +32,13 @@ class DocumentJoinIdPair {
   // The datatype used to encode DocumentJoinIdPair information: the document_id
   // and joinable_property_id.
   using Value = uint32_t;
+
+  struct Hasher {
+    std::size_t operator()(
+        const DocumentJoinIdPair& document_join_id_pair) const {
+      return std::hash<Value>()(document_join_id_pair.value());
+    }
+  };
 
   static_assert(kDocumentIdBits + kJoinablePropertyIdBits <= sizeof(Value) * 8,
                 "Cannot encode document id and joinable property id in "

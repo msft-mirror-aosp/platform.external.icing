@@ -71,9 +71,14 @@ class BlobStore {
   // To mark the blob is completed written, CommitBlob must be called. Once
   // CommitBlob is called, the blob is sealed and rewrite is not allowed.
   //
+  // It is the user's responsibility to close the file descriptor after writing
+  // is done and should operate on the file descriptor after commit or remove
+  // it.
+  //
   // Returns:
   //   File descriptor (writable) on success
   //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   FAILED_PRECONDITION_ERROR on blob is already opened for write
   //   ALREADY_EXISTS_ERROR if the blob has already been committed
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> OpenWrite(
@@ -93,6 +98,8 @@ class BlobStore {
 
   // Gets a file for read only purpose for the given blob handle.
   // Will only succeed for blobs that were committed by calling CommitBlob.
+  //
+  // It is the user's responsibility to close the file descriptor after reading.
   //
   // Returns:
   //   File descriptor (read only) on success
@@ -180,12 +187,6 @@ private:
   // BlobInfoProto log file.
   // The keys are the Encoded CString from BlobHandleProto.
   std::unordered_map<std::string, int32_t> blob_handle_to_offset_;
-
-  // The map to tracking sent file descriptors for write.
-  // The key is the pending blob handle CString which is constructed of
-  // digest, namespace, and label.
-  // The value is the set of file descriptors for write.
-  std::unordered_map<std::string, int> file_descriptors_for_write_;
 
   // The set of used file names to store blobs in the blob store.
   std::unordered_set<std::string> known_file_names_;

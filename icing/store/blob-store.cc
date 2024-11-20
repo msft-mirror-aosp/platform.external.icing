@@ -179,13 +179,6 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
           "Rewriting the committed blob is not allowed for blob handle: ",
           blob_handle.digest()));
     }
-    auto fd_itr = file_descriptors_for_write_.find(blob_handle_str);
-    if (fd_itr != file_descriptors_for_write_.end()) {
-      if (fcntl(fd_itr->second, F_GETFD) != -1 || errno != EBADF) {
-        // The file descriptor is still valid, return it.
-        return fd_itr->second;
-      }
-    }
   }
 
   // Create a new blob info and blob file.
@@ -199,9 +192,6 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to open blob file for handle: ", blob_handle.digest()));
   }
-  // Add the file descriptor for write to the file descriptors set under
-  // pending_blob_handle_str.
-  file_descriptors_for_write_[blob_handle_str] = file_descriptor;
   return file_descriptor;
 }
 
@@ -227,11 +217,6 @@ libtextclassifier3::Status BlobStore::RemoveBlob(
         "Failed to abandon blob file for handle: ", blob_handle.digest()));
   }
   ICING_RETURN_IF_ERROR(blob_info_log_->EraseProto(blob_info_offset));
-  auto fd_itr = file_descriptors_for_write_.find(blob_handle_str);
-  if (fd_itr != file_descriptors_for_write_.end()) {
-    close(fd_itr->second);
-    file_descriptors_for_write_.erase(fd_itr);
-  }
   blob_handle_to_offset_.erase(blob_info_itr);
 
   has_mutated_ = true;
@@ -329,11 +314,6 @@ libtextclassifier3::Status BlobStore::CommitBlob(
   // cached pending blob info back if the digest is valid.
 
   ICING_RETURN_IF_ERROR(blob_info_log_->EraseProto(pending_blob_info_offset));
-  auto fd_itr = file_descriptors_for_write_.find(blob_handle_str);
-  if (fd_itr != file_descriptors_for_write_.end()) {
-    close(fd_itr->second);
-    file_descriptors_for_write_.erase(fd_itr);
-  }
 
   if (digest.length() != hash.size() ||
       digest.compare(0, digest.length(),
@@ -435,6 +415,10 @@ libtextclassifier3::Status BlobStore::Optimize(
   // Create the temp blob info log file.
   std::string temp_blob_info_proto_file_name =
       absl_ports::StrCat(MakeBlobInfoProtoLogFileName(base_dir_), "_temp");
+  if (!filesystem_.DeleteFile(temp_blob_info_proto_file_name.c_str())) {
+    return absl_ports::InternalError(
+        "Unable to delete temp file to prepare to build new blob proto file.");
+  }
 
   ICING_ASSIGN_OR_RETURN(PortableFileBackedProtoLog<BlobInfoProto>::CreateResult
                              temp_log_create_result,
@@ -489,6 +473,10 @@ libtextclassifier3::Status BlobStore::Optimize(
     return absl_ports::InternalError(
         "Unable to apply new blob store due to failed swap!");
   }
+
+  // Delete the temp file, don't need to throw error if it fails, it will be
+  // deleted in the next run.
+  filesystem_.DeleteFile(temp_blob_info_proto_file_name.c_str());
 
   ICING_ASSIGN_OR_RETURN(
       PortableFileBackedProtoLog<BlobInfoProto>::CreateResult log_create_result,

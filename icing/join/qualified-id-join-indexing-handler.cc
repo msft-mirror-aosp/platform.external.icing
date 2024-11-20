@@ -60,7 +60,8 @@ QualifiedIdJoinIndexingHandler::Create(
 
 libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
+    DocumentId old_document_id, bool recovery_mode,
+    PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (!IsDocumentIdValid(document_id)) {
@@ -89,7 +90,8 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
       ICING_RETURN_IF_ERROR(HandleV2(tokenized_document, document_id));
       break;
     case QualifiedIdJoinIndex::Version::kV3:
-      ICING_RETURN_IF_ERROR(HandleV3(tokenized_document, document_id));
+      ICING_RETURN_IF_ERROR(
+          HandleV3(tokenized_document, document_id, old_document_id));
       break;
   }
 
@@ -191,7 +193,18 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV2(
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV3(
-    const TokenizedDocument& tokenized_document, DocumentId document_id) {
+    const TokenizedDocument& tokenized_document, DocumentId document_id,
+    DocumentId old_document_id) {
+  // (Parent perspective)
+  // When replacement, if there were any existing child documents joining to it,
+  // then we need to migrate the old document id to the new document id.
+  if (IsDocumentIdValid(old_document_id)) {
+    ICING_RETURN_IF_ERROR(
+        qualified_id_join_index_.MigrateParent(old_document_id, document_id));
+  }
+
+  // (Child perspective)
+  // Add child join data.
   for (const JoinableProperty<std::string_view>& qualified_id_property :
        tokenized_document.qualified_id_join_properties()) {
     if (qualified_id_property.values.empty()) {

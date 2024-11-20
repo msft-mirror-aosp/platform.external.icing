@@ -81,6 +81,7 @@ PropertyExistenceIndexingHandler::Create(const Clock* clock, Index* index) {
 
 libtextclassifier3::Status PropertyExistenceIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
+    DocumentId /*old_document_id*/ _,
     PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 

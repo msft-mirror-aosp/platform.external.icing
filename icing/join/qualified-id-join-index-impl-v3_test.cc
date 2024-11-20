@@ -989,6 +989,42 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
+TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  DocumentId parent_doc_id1 = 1;
+  DocumentId parent_doc_id2 = 1024;
+
+  // Add 6 children with their parents to the index.
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair1,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair2,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+
+  // Sanity check.
+  ASSERT_THAT(index, Pointee(SizeIs(2)));
+  ASSERT_THAT(
+      index->Get(parent_doc_id1),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+  ASSERT_THAT(index->Get(parent_doc_id2), IsOkAndHolds(IsEmpty()));
+
+  // Migrate parent document id 1 to 1024.
+  EXPECT_THAT(index->MigrateParent(parent_doc_id1, parent_doc_id2), IsOk());
+  EXPECT_THAT(index->Get(parent_doc_id1), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      index->Get(parent_doc_id2),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+}
+
 TEST_F(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(

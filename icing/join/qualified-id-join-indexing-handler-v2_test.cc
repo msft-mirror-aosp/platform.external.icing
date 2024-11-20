@@ -302,8 +302,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleJoinableProperty) {
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
                                              qualified_id_join_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle().
@@ -395,8 +395,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleNestedJoinableProperty) {
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
                                              qualified_id_join_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle().
@@ -457,8 +457,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
                                              qualified_id_join_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle(). Index data
@@ -501,8 +501,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
                                              qualified_id_join_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle().
@@ -538,8 +538,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleShouldSkipEmptyQualifiedId) {
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
                                              qualified_id_join_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle(). Index data
@@ -600,6 +600,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   // Handling document with kInvalidDocumentId should cause a failure.
   EXPECT_THAT(
       handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*old_document_id=*/kInvalidDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify the state of qualified_id_join_index_ after Handle(). Both index
@@ -615,7 +616,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   // Recovery mode should get the same result.
   EXPECT_THAT(
       handler->Handle(tokenized_document, kInvalidDocumentId,
-                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+                      /*old_document_id=*/kInvalidDocumentId,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(ref_doc_id));
@@ -672,8 +674,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   qualified_id_join_index_->set_last_added_document_id(doc_id);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(), Eq(doc_id));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify the state of qualified_id_join_index_ after Handle(). Both index
   // data and last_added_document_id should remain unchanged.
@@ -690,8 +692,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(doc_id + 1));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify the state of qualified_id_join_index_ after Handle(). Both index
   // data and last_added_document_id should remain unchanged.
@@ -751,8 +753,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(doc_id - 1));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/true,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
       IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(), Eq(doc_id));
   EXPECT_THAT(
@@ -811,8 +813,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   qualified_id_join_index_->set_last_added_document_id(doc_id);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(), Eq(doc_id));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/true,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
       IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(), Eq(doc_id));
   // (kFakeType, kPropertyQualifiedId) should contain nothing.
@@ -828,8 +830,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(doc_id + 1));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, /*recovery_mode=*/true,
-                      /*put_document_stats=*/nullptr),
+      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
       IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(doc_id + 1));

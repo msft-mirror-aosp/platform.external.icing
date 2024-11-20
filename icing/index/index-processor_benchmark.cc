@@ -263,10 +263,12 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
@@ -341,10 +343,12 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
@@ -419,10 +423,12 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
@@ -496,10 +502,12 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
