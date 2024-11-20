@@ -16,10 +16,13 @@
 #define ICING_JOIN_JOIN_PROCESSOR_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/qualified-id-join-index.h"
@@ -45,14 +48,15 @@ class JoinProcessor {
         qualified_id_join_index_(qualified_id_join_index),
         current_time_ms_(current_time_ms) {}
 
-  // Get a JoinChildrenFetcher used to fetch all children documents by a parent
+  // Gets a JoinChildrenFetcher used to fetch all children documents by a parent
   // document id.
   //
   // Returns:
-  //   A JoinChildrenFetcher instance on success.
+  //   std::unique_ptr<JoinChildrenFetcher> instance on success.
   //   UNIMPLEMENTED_ERROR if the join type specified by join_spec is not
   //   supported.
-  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcher(
+  libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+  GetChildrenFetcher(
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& child_scored_document_hits);
 
@@ -61,18 +65,34 @@ class JoinProcessor {
       std::vector<ScoredDocumentHit>&& parent_scored_document_hits,
       const JoinChildrenFetcher& join_children_fetcher);
 
+  // Gets all child documents to delete, propagated from the given deleted
+  // documents.
+  //
+  // Returns:
+  //   - On success, a set of child document ids to delete.
+  //   - Any other errors.
+  libtextclassifier3::StatusOr<std::unordered_set<DocumentId>>
+  GetPropagatedChildDocumentsToDelete(
+      const std::unordered_set<DocumentId>& deleted_document_ids);
+
  private:
   // TODO(b/275121148): deprecate v1, v2 after rollout v3.
 
   // Helper function to construct JoinChildrenFetcher for
   // QualfiedIdJoinIndexImplV1.
-  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcherV1(
+  //
+  // Note: JoinChildrenFetcherImplDeprecated will be returned.
+  libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+  GetChildrenFetcherV1(
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& child_scored_document_hits);
 
   // Helper function to construct JoinChildrenFetcher for
   // QualfiedIdJoinIndexImplV2.
-  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcherV2(
+  //
+  // Note: JoinChildrenFetcherImplDeprecated will be returned.
+  libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+  GetChildrenFetcherV2(
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& child_scored_document_hits);
 

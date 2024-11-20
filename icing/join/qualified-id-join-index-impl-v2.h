@@ -186,6 +186,13 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const override;
 
+  // No-op since v2 stores parent information in (namespace_id,
+  // fingerprint(uri)) format and does not require parent migration.
+  libtextclassifier3::Status MigrateParent(
+      DocumentId old_document_id, DocumentId new_document_id) override {
+    return libtextclassifier3::Status::OK;
+  }
+
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,

@@ -49,6 +49,14 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
   // Handles the joinable qualified id data indexing process: add data into the
   // qualified id join index.
   //
+  // old_document_id:
+  // - It is only used in QualifiedIdJoinIndexImplV3: if we update a parent
+  //   document, then the existing join data for the parent document should be
+  //   migrated from old_document_id to (new) document_id.
+  // - For other join index versions, since we store (namespace id,
+  //   fingerprint(uri)) or the raw qualified id string for the parent, there is
+  //   no need to migrate.
+  //
   /// Returns:
   //   - OK on success.
   //   - INVALID_ARGUMENT_ERROR if document_id is invalid OR document_id is less
@@ -58,7 +66,8 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
   //   - Any QualifiedIdJoinIndex errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
+      DocumentId old_document_id, bool recovery_mode,
+      PutDocumentStatsProto* put_document_stats) override;
 
  private:
   explicit QualifiedIdJoinIndexingHandler(
@@ -80,7 +89,8 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
 
   // Helper function to handle indexing for QualfiedIdJoinIndexImplV3.
   libtextclassifier3::Status HandleV3(
-      const TokenizedDocument& tokenized_document, DocumentId document_id);
+      const TokenizedDocument& tokenized_document, DocumentId document_id,
+      DocumentId old_document_id);
 
   const DocumentStore& doc_store_;                 // Does not own.
   QualifiedIdJoinIndex& qualified_id_join_index_;  // Does not own.

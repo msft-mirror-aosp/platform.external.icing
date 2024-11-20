@@ -81,6 +81,7 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Ne;
 using ::testing::Not;
 using ::testing::Pointee;
 using ::testing::Return;
@@ -341,11 +342,13 @@ TEST_P(DocumentStoreTest, PutAndGetInSameNamespaceOk) {
   // Both documents have namespace of "icing"
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(test_document1_));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(test_document2_));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->Get(document_id1),
@@ -376,11 +379,13 @@ TEST_P(DocumentStoreTest, PutAndGetAcrossNamespacesOk) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(foo_document));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(DocumentProto(bar_document)));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->Get(document_id1),
@@ -405,12 +410,14 @@ TEST_P(DocumentStoreTest, PutSameKey) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(document1));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(document2));
   DocumentId document_id2 = put_result2.new_document_id;
-  EXPECT_TRUE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(document_id1));
+  EXPECT_TRUE(put_result2.was_replacement());
   EXPECT_THAT(document_id1, Not(document_id2));
   // document2 overrides document1, so document_id1 becomes invalid
   EXPECT_THAT(doc_store->Get(document_id1),
@@ -423,8 +430,9 @@ TEST_P(DocumentStoreTest, PutSameKey) {
   document3.set_uri("another/uri/1");
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              doc_store->Put(document3));
-  EXPECT_FALSE(put_result3.was_replacement);
-  EXPECT_THAT(put_result3.new_document_id, Not(document_id1));
+  EXPECT_THAT(put_result3.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_THAT(put_result3.new_document_id, Ne(document_id1));
+  EXPECT_FALSE(put_result3.was_replacement());
 }
 
 TEST_P(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
@@ -437,11 +445,13 @@ TEST_P(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(test_document1_));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(test_document2_));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(
@@ -533,7 +543,8 @@ TEST_P(DocumentStoreTest, GetInvalidDocumentId) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(test_document1_));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   DocumentId invalid_document_id_negative = -1;
@@ -823,7 +834,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                                        .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result1,
                              document_store->Put(email_document_1));
-  EXPECT_FALSE(email_put_result1.was_replacement);
+  EXPECT_THAT(email_put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result1.was_replacement());
   DocumentId email_1_document_id = email_put_result1.new_document_id;
 
   DocumentProto email_document_2 = DocumentBuilder()
@@ -833,7 +845,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                                        .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result2,
                              document_store->Put(email_document_2));
-  EXPECT_FALSE(email_put_result2.was_replacement);
+  EXPECT_THAT(email_put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result2.was_replacement());
   DocumentId email_2_document_id = email_put_result2.new_document_id;
 
   DocumentProto message_document = DocumentBuilder()
@@ -843,7 +856,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                                        .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
-  EXPECT_FALSE(message_put_result.was_replacement);
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
   DocumentId message_document_id = message_put_result.new_document_id;
 
   DocumentProto person_document = DocumentBuilder()
@@ -853,7 +867,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                                       .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult person_put_result,
                              document_store->Put(person_document));
-  EXPECT_FALSE(person_put_result.was_replacement);
+  EXPECT_THAT(person_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(person_put_result.was_replacement());
   DocumentId person_document_id = person_put_result.new_document_id;
 
   // Delete the "email" type and ensure that it works across both
@@ -973,11 +988,13 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                                document_store->Put(email_document));
-    EXPECT_FALSE(email_put_result.was_replacement);
+    EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(email_put_result.was_replacement());
     email_document_id = email_put_result.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                                document_store->Put(message_document));
-    EXPECT_FALSE(message_put_result.was_replacement);
+    EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(message_put_result.was_replacement());
     message_document_id = message_put_result.new_document_id;
     // Delete "email". "message" documents should still be retrievable.
     DocumentStore::DeleteByGroupResult group_result =
@@ -1071,11 +1088,13 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                                document_store->Put(email_document));
-    EXPECT_FALSE(email_put_result.was_replacement);
+    EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(email_put_result.was_replacement());
     email_document_id = email_put_result.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                                document_store->Put(message_document));
-    EXPECT_FALSE(message_put_result.was_replacement);
+    EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(message_put_result.was_replacement());
     message_document_id = message_put_result.new_document_id;
 
     // Delete "email". "message" documents should still be retrievable.
@@ -1513,12 +1532,14 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result2.was_replacement);
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
     document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
@@ -1637,12 +1658,14 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result2.was_replacement);
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
     document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
@@ -1781,12 +1804,14 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result2.was_replacement);
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
     document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
@@ -1913,12 +1938,14 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
-    EXPECT_FALSE(put_result2.was_replacement);
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
     document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
@@ -2068,7 +2095,8 @@ TEST_P(DocumentStoreTest, MaxDocumentId) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(DocumentProto(test_document1_)));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
@@ -2079,7 +2107,8 @@ TEST_P(DocumentStoreTest, MaxDocumentId) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(DocumentProto(test_document2_)));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id2));
 }
@@ -2332,12 +2361,14 @@ TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
       doc_store->Put(DocumentProto(document1), /*num_tokens=*/5));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
       doc_store->Put(DocumentProto(document2), /*num_tokens=*/7));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(
@@ -2382,12 +2413,14 @@ TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
       doc_store->Put(DocumentProto(document1), /*num_tokens=*/5));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
       doc_store->Put(DocumentProto(document2), /*num_tokens=*/7));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(
@@ -2438,7 +2471,8 @@ TEST_P(DocumentStoreTest, DeleteClearsFilterCache) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(DocumentProto(test_document1_)));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
@@ -2469,7 +2503,8 @@ TEST_P(DocumentStoreTest, DeleteClearsScoreCache) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
       doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
@@ -2524,7 +2559,8 @@ TEST_P(DocumentStoreTest, DeleteShouldPreventUsageScores) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(DocumentProto(test_document1_)));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   // Report usage with type 1.
@@ -2575,7 +2611,8 @@ TEST_P(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(document));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   // Some arbitrary time before the document's creation time (10) + ttl (100)
@@ -2626,7 +2663,8 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(document));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
@@ -2656,7 +2694,8 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(document));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
@@ -2690,7 +2729,8 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(document));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
@@ -2728,7 +2768,8 @@ TEST_P(DocumentStoreTest, CreationTimestampShouldBePopulated) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
       doc_store->Put(document_without_creation_timestamp));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentProto document_with_creation_timestamp,
@@ -2762,11 +2803,13 @@ TEST_P(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(document1));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(document2));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id1),
@@ -2942,7 +2985,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult email_put_result,
         document_store->Put(DocumentProto(email_document)));
-    EXPECT_FALSE(email_put_result.was_replacement);
+    EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(email_put_result.was_replacement());
     email_document_id = email_put_result.new_document_id;
     EXPECT_THAT(document_store->Get(email_document_id),
                 IsOkAndHolds(EqualsProto(email_document)));
@@ -2960,7 +3004,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult message_put_result,
         document_store->Put(DocumentProto(message_document)));
-    EXPECT_FALSE(message_put_result.was_replacement);
+    EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(message_put_result.was_replacement());
     message_document_id = message_put_result.new_document_id;
     EXPECT_THAT(document_store->Get(message_document_id),
                 IsOkAndHolds(EqualsProto(message_document)));
@@ -3086,7 +3131,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result,
       document_store->Put(DocumentProto(email_document)));
-  EXPECT_FALSE(email_put_result.was_replacement);
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
   DocumentId email_document_id = email_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
@@ -3099,7 +3145,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult message_put_result,
       document_store->Put(DocumentProto(message_document)));
-  EXPECT_FALSE(message_put_result.was_replacement);
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
   DocumentId message_document_id = message_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
@@ -3199,7 +3246,9 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_without_subject_put_result,
       document_store->Put(DocumentProto(email_without_subject)));
-  EXPECT_FALSE(email_without_subject_put_result.was_replacement);
+  EXPECT_THAT(email_without_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_without_subject_put_result.was_replacement());
   DocumentId email_without_subject_document_id =
       email_without_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
@@ -3208,7 +3257,9 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_with_subject_put_result,
       document_store->Put(DocumentProto(email_with_subject)));
-  EXPECT_FALSE(email_with_subject_put_result.was_replacement);
+  EXPECT_THAT(email_with_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_with_subject_put_result.was_replacement());
   DocumentId email_with_subject_document_id =
       email_with_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_with_subject_document_id),
@@ -3280,14 +3331,16 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                              document_store->Put(email_document));
-  EXPECT_FALSE(email_put_result.was_replacement);
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
   DocumentId email_document_id = email_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
-  EXPECT_FALSE(message_put_result.was_replacement);
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
   DocumentId message_document_id = message_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
@@ -3360,7 +3413,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                              document_store->Put(email_document));
-  EXPECT_FALSE(email_put_result.was_replacement);
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
   DocumentId email_document_id = email_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
@@ -3372,7 +3426,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
-  EXPECT_FALSE(message_put_result.was_replacement);
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
   DocumentId message_document_id = message_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
@@ -3475,7 +3530,9 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_without_subject_put_result,
       document_store->Put(email_without_subject));
-  EXPECT_FALSE(email_without_subject_put_result.was_replacement);
+  EXPECT_THAT(email_without_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_without_subject_put_result.was_replacement());
   DocumentId email_without_subject_document_id =
       email_without_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
@@ -3484,7 +3541,9 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_with_subject_put_result,
       document_store->Put(email_with_subject));
-  EXPECT_FALSE(email_with_subject_put_result.was_replacement);
+  EXPECT_THAT(email_with_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_with_subject_put_result.was_replacement());
   DocumentId email_with_subject_document_id =
       email_with_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_with_subject_document_id),
@@ -3559,14 +3618,16 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                              document_store->Put(email_document));
-  EXPECT_FALSE(email_put_result.was_replacement);
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
   DocumentId email_document_id = email_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
-  EXPECT_FALSE(message_put_result.was_replacement);
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
   DocumentId message_document_id = message_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
@@ -3730,7 +3791,8 @@ TEST_P(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store->Put(test_document1_));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id = put_result1.new_document_id;
 
   // Report usage with type 1 and time 1.
@@ -3824,7 +3886,8 @@ TEST_P(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store->Put(test_document1_));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id = put_result1.new_document_id;
 
   // Report usage with type 1.
@@ -3879,7 +3942,8 @@ TEST_P(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                                document_store->Put(test_document1_));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id = put_result1.new_document_id;
 
     // Report usage with type 1.
@@ -3926,7 +3990,8 @@ TEST_P(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                                document_store->Put(test_document1_));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id = put_result1.new_document_id;
 
     // Report usage with type 1.
@@ -3981,7 +4046,8 @@ TEST_P(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store->Put(test_document1_));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id = put_result1.new_document_id;
 
   // Report usage with type 1.
@@ -4001,7 +4067,8 @@ TEST_P(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   // Update the document.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store->Put(test_document1_));
-  EXPECT_TRUE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(document_id));
+  EXPECT_TRUE(put_result2.was_replacement());
   DocumentId updated_document_id = put_result2.new_document_id;
   // We should get a different document id.
   ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
@@ -4024,11 +4091,13 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store->Put(test_document1_));
-  EXPECT_FALSE(put_result1.was_replacement);
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store->Put(test_document2_));
-  EXPECT_FALSE(put_result2.was_replacement);
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK(document_store->Delete(
       document_id1, fake_clock_.GetSystemTimeMilliseconds()));
@@ -4084,7 +4153,8 @@ TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                                doc_store->Put(test_document1_));
-    EXPECT_FALSE(put_result.was_replacement);
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
     DocumentId document_id = put_result.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id),
                 IsOkAndHolds(EqualsProto(test_document1_)));
@@ -4139,7 +4209,8 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                                doc_store->Put(test_document1_));
-    EXPECT_FALSE(put_result.was_replacement);
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
     DocumentId document_id = put_result.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id),
                 IsOkAndHolds(EqualsProto(test_document1_)));
@@ -4406,7 +4477,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                                doc_store->Put(doc));
-    EXPECT_FALSE(put_result.was_replacement);
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
     docid = put_result.new_document_id;
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
@@ -4526,7 +4598,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                                doc_store->Put(doc));
-    EXPECT_FALSE(put_result.was_replacement);
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
     docid = put_result.new_document_id;
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
@@ -4647,13 +4720,16 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     DocumentId docid = kInvalidDocumentId;
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_with_body_result,
                                doc_store->Put(docWithBody));
-    EXPECT_FALSE(put_with_body_result.was_replacement);
+    EXPECT_THAT(put_with_body_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_with_body_result.was_replacement());
     docid = put_with_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
     docid = kInvalidDocumentId;
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_without_body_result,
                                doc_store->Put(docWithoutBody));
-    EXPECT_FALSE(put_without_body_result.was_replacement);
+    EXPECT_THAT(put_without_body_result.old_document_id,
+                Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_without_body_result.was_replacement());
     docid = put_without_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
 
@@ -4768,13 +4844,16 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
     DocumentId docid = kInvalidDocumentId;
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_with_body_result,
                                doc_store->Put(docWithBody));
-    EXPECT_FALSE(put_with_body_result.was_replacement);
+    EXPECT_THAT(put_with_body_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_with_body_result.was_replacement());
     docid = put_with_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
     docid = kInvalidDocumentId;
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_without_body_result,
                                doc_store->Put(docWithoutBody));
-    EXPECT_FALSE(put_without_body_result.was_replacement);
+    EXPECT_THAT(put_without_body_result.old_document_id,
+                Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_without_body_result.was_replacement());
     docid = put_without_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
 
@@ -5140,7 +5219,8 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
         std::move(create_result.document_store);
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                                doc_store->Put(test_document1_));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id1 = put_result1.new_document_id;
 
     if (GetParam().use_persistent_hash_map) {
@@ -5225,7 +5305,8 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
         std::move(create_result.document_store);
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                                doc_store->Put(test_document1_));
-    EXPECT_FALSE(put_result1.was_replacement);
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
     document_id1 = put_result1.new_document_id;
 
     if (GetParam().use_persistent_hash_map) {
@@ -5304,7 +5385,8 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
       std::move(create_result.document_store);
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(test_document1_));
-  EXPECT_FALSE(put_result.was_replacement);
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(

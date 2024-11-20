@@ -2182,7 +2182,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
                   .SetName("label")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_REQUIRED));
   SchemaTypeConfigBuilder person =
       SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -2971,7 +2971,7 @@ TEST_F(SchemaStoreTest, IndexableFieldsAreDefined) {
                   .SetName("senderQualifiedId")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/true)
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                   .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("recipients")
@@ -3018,14 +3018,14 @@ TEST_F(SchemaStoreTest, JoinableFieldsAreDefined) {
                            .SetName("tagQualifiedId")
                            .SetDataType(TYPE_STRING)
                            .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                        /*propagate_delete=*/true)
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                            .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("senderQualifiedId")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/true)
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                   .SetCardinality(CARDINALITY_REQUIRED))
           .Build();
 
@@ -3098,7 +3098,7 @@ TEST_F(SchemaStoreTest, NonExistentFieldsAreUndefined) {
                   .SetName("senderQualifiedId")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/true)
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                   .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("timestamp")
@@ -3137,7 +3137,7 @@ TEST_F(SchemaStoreTest, NestedIndexableFieldsAreDefined) {
                            .SetName("tagQualifiedId")
                            .SetDataType(TYPE_STRING)
                            .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                        /*propagate_delete=*/true)
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                            .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(
               PropertyConfigBuilder()
@@ -3196,7 +3196,7 @@ TEST_F(SchemaStoreTest, NestedJoinableFieldsAreDefined) {
                            .SetName("tagQualifiedId")
                            .SetDataType(TYPE_STRING)
                            .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                        /*propagate_delete=*/true)
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                            .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(
               PropertyConfigBuilder()
@@ -3255,7 +3255,7 @@ TEST_F(SchemaStoreTest, NestedNonIndexableFieldsAreDefined) {
                            .SetName("tagQualifiedId")
                            .SetDataType(TYPE_STRING)
                            .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                        /*propagate_delete=*/true)
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                            .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(
               PropertyConfigBuilder()
@@ -3318,7 +3318,7 @@ TEST_F(SchemaStoreTest, NestedNonExistentFieldsAreUndefined) {
                            .SetName("tagQualifiedId")
                            .SetDataType(TYPE_STRING)
                            .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                        /*propagate_delete=*/true)
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                            .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(
               PropertyConfigBuilder()
@@ -3381,7 +3381,7 @@ TEST_F(SchemaStoreTest, IntermediateDocumentPropertiesAreDefined) {
                            .SetName("tagQualifiedId")
                            .SetDataType(TYPE_STRING)
                            .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                        /*propagate_delete=*/true)
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                            .SetCardinality(CARDINALITY_REQUIRED))
           .AddProperty(
               PropertyConfigBuilder()
