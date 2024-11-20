@@ -308,7 +308,7 @@ Crc32 LiteIndex::GetChecksumInternal() const {
 }
 
 libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
-    const std::string& term, TermMatchType::Code term_match_type,
+    std::string_view term, TermMatchType::Code term_match_type,
     NamespaceId namespace_id) {
   absl_ports::unique_lock l(&mutex_);
   uint32_t tvi;
@@ -366,7 +366,7 @@ libtextclassifier3::Status LiteIndex::AddHit(uint32_t term_id, const Hit& hit) {
 }
 
 libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
-    const std::string& term) const {
+    std::string_view term) const {
   absl_ports::shared_lock l(&mutex_);
   char dummy;
   uint32_t tvi;

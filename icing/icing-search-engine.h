@@ -373,9 +373,21 @@ class IcingSearchEngine {
   // Returns:
   //   File descriptor on success
   //   InvalidArgumentError on invalid blob handle
-  //   PermissionDeniedError on blob is committed
+  //   FailedPreconditionError on blob is already opened for write
+  //   AlreadyExistsError on blob is committed
   //   INTERNAL_ERROR on IO error
   BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle);
+
+  // Removes a blob file and blob handle from the blob store.
+  //
+  // This will remove the blob on any state. No matter it's committed or not or
+  // it has reference document links or not.
+  //
+  // Returns:
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError on blob is not found
+  //   InternalError on IO error
+  BlobProto RemoveBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets or creates a file for read only purpose for the given blob handle.
   // The blob must be committed by calling commitBlob otherwise it is not
@@ -700,20 +712,15 @@ class IcingSearchEngine {
       QueryStatsProto::SearchStats* search_stats)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
-  // Many of the internal components rely on other components' derived data.
-  // Check that everything is consistent with each other so that we're not
-  // using outdated derived data in some parts of our system.
-  //
-  // NOTE: this method can be called only at startup time or after
-  // PersistToDisk(), otherwise the check could fail due to any changes that are
-  // not persisted.
+  // Deletes documents propagated from the given deleted document ids via
+  // joinable properties with delete propagation enabled.
   //
   // Returns:
-  //   OK on success
-  //   NOT_FOUND if missing header file
-  //   INTERNAL_ERROR on any IO errors or if header is inconsistent
-  libtextclassifier3::Status CheckConsistency()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  //   Number of propagated documents deleted on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::StatusOr<int> PropagateDelete(
+      const std::unordered_set<DocumentId>& deleted_document_ids,
+      int64_t current_time_ms) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Discards derived data that requires rebuild based on rebuild_result.
   //

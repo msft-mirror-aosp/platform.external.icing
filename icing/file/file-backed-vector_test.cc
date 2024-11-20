@@ -500,6 +500,96 @@ TEST_F(FileBackedVectorTest, MutableArrayViewSetArrayWithZeroLength) {
               ElementsAre(1, 1, 1, 1, 1));
 }
 
+TEST_F(FileBackedVectorTest, MutableArrayViewFill) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+
+  constexpr int kArrayViewOffset = 3;
+  constexpr int kArrayViewLen = 5;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      FileBackedVector<int>::MutableArrayView mutable_arr,
+      vector->GetMutable(kArrayViewOffset, kArrayViewLen));
+
+  mutable_arr.Fill(/*idx=*/0, /*len=*/3, 1234);
+  EXPECT_THAT(Get(vector.get(), kArrayViewOffset, kArrayViewLen),
+              ElementsAre(1234, 1234, 1234, 1, 1));
+
+  mutable_arr.Fill(/*idx=*/2, /*len=*/3, 5678);
+  EXPECT_THAT(Get(vector.get(), kArrayViewOffset, kArrayViewLen),
+              ElementsAre(1234, 1234, 5678, 5678, 5678));
+}
+
+TEST_F(FileBackedVectorTest, MutableArrayViewFillWithZeroLength) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+
+  constexpr int kArrayViewOffset = 3;
+  constexpr int kArrayViewLen = 5;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      FileBackedVector<int>::MutableArrayView mutable_arr,
+      vector->GetMutable(kArrayViewOffset, kArrayViewLen));
+
+  // Zero len should work and change nothing
+  mutable_arr.Fill(/*idx=*/0, /*len=*/0, 1234);
+  EXPECT_THAT(Get(vector.get(), kArrayViewOffset, kArrayViewLen),
+              ElementsAre(1, 1, 1, 1, 1));
+}
+
+TEST_F(FileBackedVectorTest, MutableArrayViewFillShouldSetDirty) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  Insert(vector.get(), /*idx=*/0, std::vector<int>(/*count=*/100, /*value=*/1));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+  EXPECT_THAT(vector->UpdateChecksum(), IsOkAndHolds(Crc32(2494890115U)));
+  EXPECT_THAT(vector->GetChecksum(), Eq(Crc32(2494890115U)));
+
+  std::string_view reconstructed_view(
+      reinterpret_cast<const char*>(vector->array()),
+      vector->num_elements() * sizeof(int));
+
+  constexpr int kArrayViewOffset = 3;
+  constexpr int kArrayViewLen = 5;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      FileBackedVector<int>::MutableArrayView mutable_arr,
+      vector->GetMutable(kArrayViewOffset, kArrayViewLen));
+
+  // Use Fill() to mutate elements
+  // MutableArrayView should set the affected element indices dirty so that
+  // UpdateChecksum() can pick up the change and compute the checksum correctly.
+  // Validate by mapping another array on top.
+  mutable_arr.Fill(/*idx=*/0, /*len=*/3, 1234);
+  ASSERT_THAT(Get(vector.get(), kArrayViewOffset, kArrayViewLen),
+              ElementsAre(1234, 1234, 1234, 1, 1));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, vector->UpdateChecksum());
+  EXPECT_THAT(crc1, Eq(Crc32(reconstructed_view)));
+
+  mutable_arr.Fill(/*idx=*/2, /*len=*/3, 5678);
+  ASSERT_THAT(Get(vector.get(), kArrayViewOffset, kArrayViewLen),
+              ElementsAre(1234, 1234, 5678, 5678, 5678));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, vector->UpdateChecksum());
+  EXPECT_THAT(crc2, Eq(Crc32(reconstructed_view)));
+}
+
 TEST_F(FileBackedVectorTest, MutableArrayViewIndexOperatorShouldSetDirty) {
   // Create an array with some data.
   ICING_ASSERT_OK_AND_ASSIGN(
