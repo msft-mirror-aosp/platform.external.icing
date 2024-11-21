@@ -231,6 +231,18 @@ class SchemaStore {
     // but invalidated the joinable cache. Represented by the `schema_type`
     // field in the SchemaTypeConfigProto.
     std::unordered_set<std::string> schema_types_join_incompatible_by_name;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but inconsistent with the old schema so that the scorable property cache
+    // needs to be re-generated.
+    std::unordered_set<SchemaTypeId>
+        schema_types_scorable_property_inconsistent_by_id;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but inconsistent with the old schema so that the scorable property cache
+    // needs to be re-generated.
+    std::unordered_set<std::string>
+        schema_types_scorable_property_inconsistent_by_name;
   };
 
   struct ExpandedTypePropertyMask {
@@ -428,6 +440,17 @@ class SchemaStore {
   libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
   GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
                               const std::string& property_path) const;
+
+  // Returns the JoinablePropertyMetadata associated with joinable_property_id
+  // that's in the SchemaTypeId.
+  //
+  // Returns:
+  //   Valid pointer to JoinablePropertyMetadata on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   INVALID_ARGUMENT if schema type id or joinable property id is invalid
+  libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+  GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
+                              JoinablePropertyId joinable_property_id) const;
 
   // Extracts all joinable property contents of different types from the given
   // document and group them by joinable value type.

@@ -147,15 +147,15 @@ class SuggestionProcessorTest : public Test {
         SuggestionProcessor::Create(
             index_.get(), numeric_index_.get(), embedding_index_.get(),
             language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-            schema_store_.get(), &fake_clock_));
+            schema_store_.get(), &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
       DocumentId document_id, SectionId section_id,
       TermMatchType::Code term_match_type, const std::string& token) {
     Index::Editor editor = index_->Edit(document_id, section_id,
-                                        term_match_type, /*namespace_id=*/0);
-    auto status = editor.BufferTerm(token.c_str());
+                                        /*namespace_id=*/0);
+    auto status = editor.BufferTerm(token, term_match_type);
     return status.ok() ? editor.IndexAllBufferedTerms() : status;
   }
 

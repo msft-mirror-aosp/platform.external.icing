@@ -622,8 +622,7 @@ ChildrenRankingSignalsFunctionScoreExpression::Create(
   if (join_children_fetcher == nullptr) {
     return absl_ports::InvalidArgumentError(
         "childrenRankingSignals must only be used with join, but "
-        "JoinChildrenFetcher "
-        "is not provided.");
+        "JoinChildrenFetcher is not provided.");
   }
   return std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>(
       new ChildrenRankingSignalsFunctionScoreExpression(

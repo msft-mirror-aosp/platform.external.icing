@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/doc-join-info.h"
-
-#include <cstdint>
+#include "icing/join/document-join-id-pair.h"
 
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-id.h"
@@ -23,8 +21,8 @@
 namespace icing {
 namespace lib {
 
-DocJoinInfo::DocJoinInfo(DocumentId document_id,
-                         JoinablePropertyId joinable_property_id) {
+DocumentJoinIdPair::DocumentJoinIdPair(
+    DocumentId document_id, JoinablePropertyId joinable_property_id) {
   Value temp_value = 0;
   bit_util::BitfieldSet(/*new_value=*/document_id,
                         /*lsb_offset=*/kJoinablePropertyIdBits,
@@ -35,12 +33,12 @@ DocJoinInfo::DocJoinInfo(DocumentId document_id,
   value_ = temp_value;
 }
 
-DocumentId DocJoinInfo::document_id() const {
+DocumentId DocumentJoinIdPair::document_id() const {
   return bit_util::BitfieldGet(value_, /*lsb_offset=*/kJoinablePropertyIdBits,
                                /*len=*/kDocumentIdBits);
 }
 
-JoinablePropertyId DocJoinInfo::joinable_property_id() const {
+JoinablePropertyId DocumentJoinIdPair::joinable_property_id() const {
   return bit_util::BitfieldGet(value_, /*lsb_offset=*/0,
                                /*len=*/kJoinablePropertyIdBits);
 }
