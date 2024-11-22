@@ -70,14 +70,30 @@ struct JoinablePropertyMetadata {
   //   non-string DataType.
   JoinableConfig::ValueType::Code value_type;
 
+  // How to propagate the deletion between the document and the referenced
+  // joinable document.
+  //
+  // JoinableConfig::DeletePropagationType::NONE:
+  //   No propagation.
+  //
+  // JoinableConfig::DeletePropagationType::PROPAGATE_FROM:
+  //   Delete the document when the referenced (parent) document is deleted.
+  //
+  // This is only applicable to joinable properties with value type
+  // JoinableConfig::ValueType::QUALIFIED_ID.
+  JoinableConfig::DeletePropagationType::Code delete_propagation_type;
+
   explicit JoinablePropertyMetadata(
       JoinablePropertyId id_in,
       PropertyConfigProto::DataType::Code data_type_in,
-      JoinableConfig::ValueType::Code value_type_in, std::string&& path_in)
+      JoinableConfig::ValueType::Code value_type_in,
+      JoinableConfig::DeletePropagationType::Code delete_propagation_type_in,
+      std::string&& path_in)
       : path(std::move(path_in)),
         id(id_in),
         data_type(data_type_in),
-        value_type(value_type_in) {}
+        value_type(value_type_in),
+        delete_propagation_type(delete_propagation_type_in) {}
 
   JoinablePropertyMetadata(const JoinablePropertyMetadata& other) = default;
   JoinablePropertyMetadata& operator=(const JoinablePropertyMetadata& other) =
@@ -89,7 +105,8 @@ struct JoinablePropertyMetadata {
 
   bool operator==(const JoinablePropertyMetadata& rhs) const {
     return path == rhs.path && id == rhs.id && data_type == rhs.data_type &&
-           value_type == rhs.value_type;
+           value_type == rhs.value_type &&
+           delete_propagation_type == rhs.delete_propagation_type;
   }
 };
 
@@ -114,6 +131,10 @@ struct JoinableProperty {
 
   JoinableConfig::ValueType::Code value_type() const {
     return metadata.value_type;
+  }
+
+  JoinableConfig::DeletePropagationType::Code delete_propagation_type() const {
+    return metadata.delete_propagation_type;
   }
 };
 

@@ -132,10 +132,11 @@ class CombinedTokenizerTest : public ::testing::Test {
                                                 /*max_term_byte_size=*/1000));
     ICING_ASSERT_OK_AND_ASSIGN(
         query_processor_,
-        QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                               embedding_index_.get(), lang_segmenter_.get(),
-                               normalizer_.get(), document_store_.get(),
-                               schema_store_.get(), &fake_clock_));
+        QueryProcessor::Create(
+            index_.get(), numeric_index_.get(), embedding_index_.get(),
+            lang_segmenter_.get(), normalizer_.get(), document_store_.get(),
+            schema_store_.get(), /*join_children_fetcher=*/nullptr,
+            &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::StatusOr<std::vector<std::string>> GetQueryTerms(
