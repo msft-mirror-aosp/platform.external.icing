@@ -32,6 +32,7 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/destructible-file.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
@@ -50,8 +51,8 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-join-index-impl-v1.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
+#include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -267,25 +268,31 @@ libtextclassifier3::Status ValidateScoringSpec(
   return libtextclassifier3::Status::OK;
 }
 
-bool IsV2QualifiedIdJoinIndexEnabled(const IcingSearchEngineOptions& options) {
-  return true;
+ScoringSpecProto CopyParentSchemaTypeAliasMapToChild(
+    const ScoringSpecProto& parent_scoring_spec,
+    const ScoringSpecProto& child_scoring_spec) {
+  ScoringSpecProto new_child_scoring_spec = std::move(child_scoring_spec);
+  for (const SchemaTypeAliasMapProto& alias_map_proto :
+       parent_scoring_spec.schema_type_alias_map_protos()) {
+    *new_child_scoring_spec.add_schema_type_alias_map_protos() =
+        alias_map_proto;
+  }
+  return new_child_scoring_spec;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
 CreateQualifiedIdJoinIndex(const Filesystem& filesystem,
                            std::string qualified_id_join_index_dir,
-                           const IcingSearchEngineOptions& options) {
-  if (IsV2QualifiedIdJoinIndexEnabled(options)) {
+                           const IcingSearchEngineOptions& options,
+                           const FeatureFlags& feature_flags) {
+  if (options.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
+    return QualifiedIdJoinIndexImplV3::Create(
+        filesystem, std::move(qualified_id_join_index_dir), feature_flags);
+  } else {
     // V2
     return QualifiedIdJoinIndexImplV2::Create(
         filesystem, std::move(qualified_id_join_index_dir),
         options.pre_mapping_fbv());
-  } else {
-    // V1
-    // TODO(b/275121148): deprecate this part after rollout v2.
-    return QualifiedIdJoinIndexImplV1::Create(
-        filesystem, std::move(qualified_id_join_index_dir),
-        options.pre_mapping_fbv(), options.use_persistent_hash_map());
   }
 }
 
@@ -511,7 +518,8 @@ IcingSearchEngine::IcingSearchEngine(
     std::unique_ptr<Clock> clock, std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
       feature_flags_(options_.enable_scorable_properties(),
-                     options_.enable_embedding_quantization()),
+                     options_.enable_embedding_quantization(),
+                     options_.enable_repeated_field_joins()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -693,9 +701,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // Step 1: Perform schema migration if needed. This is a no-op if the schema
   // is fully compatible with the current version.
   bool perform_schema_database_migration =
-      version_util::SchemaDatabaseMigrationRequired(stored_version_info) &&
-      options_.enable_schema_database() &&
-      options_.perform_schema_database_migration_if_required();
+      version_util::SchemaDatabaseMigrationRequired(stored_version_proto) &&
+      options_.enable_schema_database();
   ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
       filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
       version_state_change, version_util::kVersion,
@@ -822,8 +829,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         *filesystem_, qualified_id_join_index_dir));
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
-        CreateQualifiedIdJoinIndex(
-            *filesystem_, std::move(qualified_id_join_index_dir), options_));
+        CreateQualifiedIdJoinIndex(*filesystem_,
+                                   std::move(qualified_id_join_index_dir),
+                                   options_, feature_flags_));
 
     // Discard embedding index directory and instantiate a new one.
     std::string embedding_index_dir =
@@ -1079,7 +1087,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause qualified_id_join_index_recovery_cause;
   if (document_store_derived_files_regenerated &&
-      IsV2QualifiedIdJoinIndexEnabled(options_)) {
+      !options_.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
     // V2 qualified id join index depends on document store derived files, so we
     // have to rebuild it from scratch if
     // document_store_derived_files_regenerated is true.
@@ -1088,14 +1096,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
 
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
-        CreateQualifiedIdJoinIndex(
-            *filesystem_, std::move(qualified_id_join_index_dir), options_));
+        CreateQualifiedIdJoinIndex(*filesystem_,
+                                   std::move(qualified_id_join_index_dir),
+                                   options_, feature_flags_));
 
     qualified_id_join_index_recovery_cause =
         InitializeStatsProto::DEPENDENCIES_CHANGED;
   } else {
     auto qualified_id_join_index_or = CreateQualifiedIdJoinIndex(
-        *filesystem_, qualified_id_join_index_dir, options_);
+        *filesystem_, qualified_id_join_index_dir, options_, feature_flags_);
     if (!qualified_id_join_index_or.ok()) {
       ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
           *filesystem_, qualified_id_join_index_dir));
@@ -1105,8 +1114,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       // Try recreating it from scratch and rebuild everything.
       ICING_ASSIGN_OR_RETURN(
           qualified_id_join_index_,
-          CreateQualifiedIdJoinIndex(
-              *filesystem_, std::move(qualified_id_join_index_dir), options_));
+          CreateQualifiedIdJoinIndex(*filesystem_,
+                                     std::move(qualified_id_join_index_dir),
+                                     options_, feature_flags_));
     } else {
       // Qualified id join index was created fine.
       qualified_id_join_index_ =
@@ -1312,6 +1322,19 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       }
     }
 
+    if (feature_flags_.enable_scorable_properties()) {
+      if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
+               .empty()) {
+        status = document_store_->RegenerateScorablePropertyCache(
+            set_schema_result
+                .schema_types_scorable_property_inconsistent_by_id);
+        if (!status.ok()) {
+          TransformStatus(status, result_status);
+          return result_proto;
+        }
+      }
+    }
+
     result_status->set_code(StatusProto::OK);
   } else {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
@@ -1430,8 +1453,10 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     TransformStatus(put_result_or.status(), result_status);
     return result_proto;
   }
+  DocumentId old_document_id = put_result_or.ValueOrDie().old_document_id;
   DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
-  result_proto.set_was_replacement(put_result_or.ValueOrDie().was_replacement);
+  result_proto.set_was_replacement(
+      put_result_or.ValueOrDie().was_replacement());
 
   auto data_indexing_handlers_or = CreateDataIndexingHandlers();
   if (!data_indexing_handlers_or.ok()) {
@@ -1442,7 +1467,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
       std::move(data_indexing_handlers_or).ValueOrDie(), clock_.get());
 
   auto index_status = index_processor.IndexDocument(
-      tokenized_document, document_id, put_document_stats);
+      tokenized_document, document_id, old_document_id, put_document_stats);
   // Getting an internal error from the index could possibly mean that the index
   // is broken. Try to rebuild them to recover.
   if (absl_ports::IsInternal(index_status)) {
@@ -1583,27 +1608,63 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   DeleteStatsProto* delete_stats = result_proto.mutable_delete_stats();
   delete_stats->set_delete_type(DeleteStatsProto::DeleteType::SINGLE);
 
+  libtextclassifier3::Status status;
+  libtextclassifier3::Status propagate_delete_status;
+  int num_documents_deleted = 0;
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
-  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
-  // that can support error logging.
-  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
-  libtextclassifier3::Status status =
-      document_store_->Delete(name_space, uri, current_time_ms);
+
+  libtextclassifier3::StatusOr<DocumentId> document_id_or =
+      document_store_->GetDocumentId(name_space, uri);
+  if (!document_id_or.ok()) {
+    status = std::move(document_id_or).status();
+  } else {
+    DocumentId document_id = document_id_or.ValueOrDie();
+
+    // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
+    // that can support error logging.
+    int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+    status = document_store_->Delete(document_id, current_time_ms);
+    if (status.ok()) {
+      ++num_documents_deleted;
+    }
+
+    // It is possible that the document has expired and the delete operation
+    // fails with NOT_FOUND_ERROR. In this case, we should still propagate the
+    // delete operation, regardless of the outcome of the delete operation.
+    libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
+        PropagateDelete(/*deleted_document_ids=*/{document_id},
+                        current_time_ms);
+    if (propagated_child_docs_deleted_or.ok()) {
+      num_documents_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+    } else {
+      propagate_delete_status =
+          std::move(propagated_child_docs_deleted_or).status();
+    }
+  }
+  delete_stats->set_num_documents_deleted(num_documents_deleted);
+  delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
+
   if (!status.ok()) {
     LogSeverity::Code severity = ERROR;
     if (absl_ports::IsNotFound(status)) {
       severity = DBG;
     }
     ICING_LOG(severity) << status.error_message()
-                        << "Failed to delete Document. namespace: "
+                        << ". Failed to delete Document. namespace: "
                         << name_space << ", uri: " << uri;
     TransformStatus(status, result_status);
     return result_proto;
   }
 
+  if (!propagate_delete_status.ok()) {
+    ICING_LOG(ERROR) << propagate_delete_status.error_message()
+                     << ". Failed to propagate delete for document. namespace: "
+                     << name_space << ", uri: " << uri;
+    TransformStatus(propagate_delete_status, result_status);
+    return result_proto;
+  }
+
   result_status->set_code(StatusProto::OK);
-  delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
-  delete_stats->set_num_documents_deleted(1);
   return result_proto;
 }
 
@@ -1713,7 +1774,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), integer_index_.get(), embedding_index_.get(),
       language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-      schema_store_.get(), clock_.get());
+      schema_store_.get(), /*join_children_fetcher=*/nullptr, clock_.get(),
+      &feature_flags_);
   if (!query_processor_or.ok()) {
     TransformStatus(query_processor_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -1788,6 +1850,44 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   }
   delete_stats->set_num_documents_deleted(num_deleted);
   return result_proto;
+}
+
+libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
+    const std::unordered_set<DocumentId>& deleted_document_ids,
+    int64_t current_time_ms) {
+  int propagated_child_docs_deleted = 0;
+
+  if (!options_.enable_qualified_id_join_index_v3_and_delete_propagate_from() ||
+      qualified_id_join_index_->version() !=
+          QualifiedIdJoinIndex::Version::kV3) {
+    // No-op if delete propagation is disabled or the join index is not v3.
+    return propagated_child_docs_deleted;
+  }
+
+  // Create join processor to get propagated child documents to delete.
+  JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
+                               qualified_id_join_index_.get(), current_time_ms);
+  ICING_ASSIGN_OR_RETURN(
+      std::unordered_set<DocumentId> child_docs_to_delete,
+      join_processor.GetPropagatedChildDocumentsToDelete(deleted_document_ids));
+
+  // Delete all propagated child documents.
+  for (DocumentId child_doc_id : child_docs_to_delete) {
+    auto status = document_store_->Delete(child_doc_id, current_time_ms);
+    if (!status.ok()) {
+      if (absl_ports::IsNotFound(status)) {
+        // The child document has already been deleted or expired, so skip the
+        // error.
+        continue;
+      }
+
+      // Real error.
+      return status;
+    }
+    ++propagated_child_docs_deleted;
+  }
+
+  return propagated_child_docs_deleted;
 }
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
@@ -2304,16 +2404,23 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     QueryStatsProto::SearchStats* child_search_stats =
         query_stats->mutable_child_search_stats();
 
+    // Build a child scoring spec by copying the parent schema type alias map.
+    // Note that this function will transfer the ownership of data from
+    // search_spec.join_spec().nested_spec().scoring_spec() to the
+    // child_scoring_spec.
+    // Hence, that following functions should NOT access
+    // search_spec.join_spec().nested_spec().scoring_spec() after this function
+    // call, but using child_scoring_spec instead.
+    //
+    // TODO(b/379288742): Avoid making the copy of the parent schema type alias
+    // map.
+    ScoringSpecProto child_scoring_spec = CopyParentSchemaTypeAliasMapToChild(
+        scoring_spec, search_spec.join_spec().nested_spec().scoring_spec());
+
     // Process child query
-    status = ValidateScoringSpec(join_spec.nested_spec().scoring_spec());
-    if (!status.ok()) {
-      TransformStatus(status, result_status);
-      return result_proto;
-    }
     // TODO(b/372541905): Validate the child search spec.
     QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
-        join_spec.nested_spec().search_spec(),
-        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().search_spec(), child_scoring_spec,
         join_spec.nested_spec().result_spec(),
         /*join_children_fetcher=*/nullptr, current_time_ms, child_search_stats);
     if (!nested_query_scoring_results.status.ok()) {
@@ -2324,23 +2431,21 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
                                  qualified_id_join_index_.get(),
                                  current_time_ms);
-    // Building a JoinChildrenFetcher where child documents are grouped by
-    // their joinable values.
-    libtextclassifier3::StatusOr<JoinChildrenFetcher> join_children_fetcher_or =
-        join_processor.GetChildrenFetcher(
+    // Building a JoinChildrenFetcher for looking up child documents by parent
+    // document id.
+    libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+        join_children_fetcher_or = join_processor.GetChildrenFetcher(
             search_spec.join_spec(),
             std::move(nested_query_scoring_results.scored_document_hits));
     if (!join_children_fetcher_or.ok()) {
       TransformStatus(join_children_fetcher_or.status(), result_status);
       return result_proto;
     }
-    join_children_fetcher = std::make_unique<JoinChildrenFetcher>(
-        std::move(join_children_fetcher_or).ValueOrDie());
+    join_children_fetcher = std::move(join_children_fetcher_or).ValueOrDie();
 
     // Assign child's ResultAdjustmentInfo.
     child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
-        join_spec.nested_spec().search_spec(),
-        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().search_spec(), child_scoring_spec,
         join_spec.nested_spec().result_spec(), schema_store_.get(),
         std::move(nested_query_scoring_results.query_terms));
   }
@@ -2492,7 +2597,8 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), integer_index_.get(), embedding_index_.get(),
       language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-      schema_store_.get(), clock_.get());
+      schema_store_.get(), join_children_fetcher, clock_.get(),
+      &feature_flags_);
   if (!query_processor_or.ok()) {
     search_stats->set_parse_query_latency_ms(
         component_timer->GetElapsedMilliseconds());
@@ -2673,6 +2779,33 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
     return blob_proto;
   }
   blob_proto.set_file_descriptor(write_fd_or.ValueOrDie());
+  status->set_code(StatusProto::OK);
+  return blob_proto;
+}
+
+BlobProto IcingSearchEngine::RemoveBlob(
+    const PropertyProto::BlobHandleProto& blob_handle) {
+  BlobProto blob_proto;
+  StatusProto* status = blob_proto.mutable_status();
+
+  absl_ports::unique_lock l(&mutex_);
+  if (blob_store_ == nullptr) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("Remove blob is not supported in this Icing instance!");
+    return blob_proto;
+  }
+
+  if (!initialized_) {
+    status->set_code(StatusProto::FAILED_PRECONDITION);
+    status->set_message("IcingSearchEngine has not been initialized!");
+    return blob_proto;
+  }
+
+  auto remove_result = blob_store_->RemoveBlob(blob_handle);
+  if (!remove_result.ok()) {
+    TransformStatus(remove_result, status);
+    return blob_proto;
+  }
   status->set_code(StatusProto::OK);
   return blob_proto;
 }
@@ -2942,8 +3075,11 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     TokenizedDocument tokenized_document(
         std::move(tokenized_document_or).ValueOrDie());
 
+    // No valid old_document_id should be used here since we're in recovery mode
+    // and there is no "existing document replacement/update".
     libtextclassifier3::Status status =
-        index_processor.IndexDocument(tokenized_document, document_id);
+        index_processor.IndexDocument(tokenized_document, document_id,
+                                      /*old_document_id=*/kInvalidDocumentId);
     if (!status.ok()) {
       if (!absl_ports::IsDataLoss(status)) {
         // Real error. Stop recovering and pass it up.
@@ -3285,7 +3421,7 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   auto suggestion_processor_or = SuggestionProcessor::Create(
       index_.get(), integer_index_.get(), embedding_index_.get(),
       language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-      schema_store_.get(), clock_.get());
+      schema_store_.get(), clock_.get(), &feature_flags_);
   if (!suggestion_processor_or.ok()) {
     TransformStatus(suggestion_processor_or.status(), response_status);
     return response;

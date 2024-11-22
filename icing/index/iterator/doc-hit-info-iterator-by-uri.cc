@@ -82,6 +82,10 @@ DocHitInfoIteratorByUri::Create(const DocumentStore* document_store,
   // iterators.
   std::sort(target_document_ids.begin(), target_document_ids.end(),
             std::greater<DocumentId>());
+  // Deduplicate the document ids.
+  auto last_itr =
+      std::unique(target_document_ids.begin(), target_document_ids.end());
+  target_document_ids.erase(last_itr, target_document_ids.end());
 
   return std::unique_ptr<DocHitInfoIteratorByUri>(
       new DocHitInfoIteratorByUri(std::move(target_document_ids)));
