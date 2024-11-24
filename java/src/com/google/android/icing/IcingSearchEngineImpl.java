@@ -162,6 +162,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @NonNull
+  public byte[] removeBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeRemoveBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
   public byte[] openReadBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
     return nativeOpenReadBlob(this, blobHandleBytes);
@@ -307,6 +313,9 @@ public class IcingSearchEngineImpl implements Closeable {
       IcingSearchEngineImpl instance, long nextPageToken);
 
   private static native byte[] nativeOpenWriteBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeRemoveBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeOpenReadBlob(

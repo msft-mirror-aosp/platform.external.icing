@@ -3644,11 +3644,11 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  // Configure new schema with propagate_delete == true
+  // Configure new schema with delete propagation type PROPAGATE_FROM
   SchemaProto new_schema_with_optional =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -3656,7 +3656,7 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/true)
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -4432,7 +4432,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_INT64)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -4447,7 +4447,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
@@ -4456,6 +4456,11 @@ TEST_P(SchemaUtilTest,
 
 TEST_P(SchemaUtilTest,
        ValidateJoinablePropertyShouldNotHaveRepeatedCardinality) {
+  // We need to explicitly override enable_repeated_field_joins to false.
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(/*enable_scorable_properties=*/true,
+                                     /*enable_embedding_quantization=*/true,
+                                     /*enable_repeated_field_joins=*/false);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4463,7 +4468,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
 
@@ -4478,7 +4483,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_OPTIONAL)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
@@ -4491,7 +4496,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
@@ -4504,9 +4509,32 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
+              IsOk());
+}
+
+TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
+  // We need to explicitly override enable_repeated_field_joins to true.
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(/*enable_scorable_properties=*/true,
+                                     /*enable_embedding_quantization=*/true,
+                                     /*enable_repeated_field_joins=*/true);
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               DELETE_PROPAGATION_TYPE_NONE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Error if using REPEATED cardinality for joinable property.
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
               IsOk());
 }
@@ -4520,7 +4548,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                               /*propagate_delete=*/true)
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -4537,7 +4565,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/true)
+                                    DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
@@ -4550,7 +4578,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_, GetParam()),
@@ -4569,7 +4597,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4596,7 +4624,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_OPTIONAL)))
                .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
                    PropertyConfigBuilder()
@@ -4628,7 +4656,7 @@ TEST_P(
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("B")
@@ -4643,7 +4671,7 @@ TEST_P(
                                .SetName("Bar")
                                .SetDataType(TYPE_STRING)
                                .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                            /*propagate_delete=*/false)
+                                            DELETE_PROPAGATION_TYPE_NONE)
                                .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
               PropertyConfigBuilder()
@@ -4675,7 +4703,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("B")
@@ -4709,7 +4737,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("B")
@@ -4749,7 +4777,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4798,7 +4826,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4846,7 +4874,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4894,7 +4922,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4942,7 +4970,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()

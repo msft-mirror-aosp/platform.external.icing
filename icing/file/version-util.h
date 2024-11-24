@@ -250,13 +250,12 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
                                int32_t curr_version = kVersion);
 
 // Returns whether the schema database migration is required.
-inline bool SchemaDatabaseMigrationRequired(
-    const VersionInfo& existing_version_info) {
-  // Schema database migration is required whenever the existing version is less
-  // than the version at which the database field is introduced to the schema
-  // proto.
-  return existing_version_info.version < kSchemaDatabaseVersion;
-}
+//
+// This is true if the previous version is less than the version at which the
+// database field is introduced, or if the schema database feature was
+// not enabled in the previous version.
+bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto);
 
 // Returns the derived files rebuilds required for a given feature.
 DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(

@@ -68,6 +68,11 @@ class DocumentAssociatedScoreData {
     return scorable_property_cache_index_;
   }
 
+  void set_scorable_property_cache_index(
+      int32_t scorable_property_cache_index) {
+    scorable_property_cache_index_ = scorable_property_cache_index;
+  }
+
  private:
   int64_t creation_timestamp_ms_;
   CorpusId corpus_id_;
