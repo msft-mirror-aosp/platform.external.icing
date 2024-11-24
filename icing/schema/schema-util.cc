@@ -61,7 +61,8 @@ bool AreIntegerIndexingConfigsEqual(const IntegerIndexingConfig& old_config,
 bool AreJoinableConfigsEqual(const JoinableConfig& old_config,
                              const JoinableConfig& new_config) {
   return old_config.value_type() == new_config.value_type() &&
-         old_config.propagate_delete() == new_config.propagate_delete();
+         old_config.delete_propagation_type() ==
+             new_config.delete_propagation_type();
 }
 
 bool AreEmbeddingIndexingConfigsEqual(
@@ -758,9 +759,10 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
             property_name));
       }
 
-      ICING_RETURN_IF_ERROR(ValidateJoinableConfig(
-          property_config.joinable_config(), data_type,
-          property_config.cardinality(), schema_type, property_name));
+      ICING_RETURN_IF_ERROR(
+          ValidateJoinableConfig(property_config.joinable_config(), data_type,
+                                 property_config.cardinality(), schema_type,
+                                 property_name, feature_flags));
       if (property_config.joinable_config().value_type() !=
           JoinableConfig::ValueType::NONE) {
         schema_types_with_joinable_property.insert(schema_type);
@@ -937,7 +939,8 @@ libtextclassifier3::Status SchemaUtil::ValidateStringIndexingConfig(
 libtextclassifier3::Status SchemaUtil::ValidateJoinableConfig(
     const JoinableConfig& config, PropertyConfigProto::DataType::Code data_type,
     PropertyConfigProto::Cardinality::Code cardinality,
-    std::string_view schema_type, std::string_view property_name) {
+    std::string_view schema_type, std::string_view property_name,
+    const FeatureFlags& feature_flags) {
   if (config.value_type() == JoinableConfig::ValueType::QUALIFIED_ID) {
     if (data_type != PropertyConfigProto::DataType::STRING) {
       return absl_ports::InvalidArgumentError(
@@ -945,14 +948,16 @@ libtextclassifier3::Status SchemaUtil::ValidateJoinableConfig(
                              "' is required to have STRING data type"));
     }
 
-    if (cardinality == PropertyConfigProto::Cardinality::REPEATED) {
+    if (!feature_flags.enable_repeated_field_joins() &&
+        cardinality == PropertyConfigProto::Cardinality::REPEATED) {
       return absl_ports::InvalidArgumentError(
           absl_ports::StrCat("Qualified id joinable property '", property_name,
                              "' cannot have REPEATED cardinality"));
     }
   }
 
-  if (config.propagate_delete() &&
+  if (config.delete_propagation_type() !=
+          JoinableConfig::DeletePropagationType::NONE &&
       config.value_type() != JoinableConfig::ValueType::QUALIFIED_ID) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("Field 'property_name' '", property_name,
