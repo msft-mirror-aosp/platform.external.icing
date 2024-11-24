@@ -93,6 +93,12 @@ constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_QUALIFIED_ID =
     JoinableConfig::ValueType::QUALIFIED_ID;
 
+constexpr JoinableConfig::DeletePropagationType::Code
+    DELETE_PROPAGATION_TYPE_NONE = JoinableConfig::DeletePropagationType::NONE;
+constexpr JoinableConfig::DeletePropagationType::Code
+    DELETE_PROPAGATION_TYPE_PROPAGATE_FROM =
+        JoinableConfig::DeletePropagationType::PROPAGATE_FROM;
+
 constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_ENABLED =
     PropertyConfigProto::ScorableType::ENABLED;
 constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_DISABLED =
@@ -128,12 +134,12 @@ class PropertyConfigBuilder {
 
   PropertyConfigBuilder& SetDataTypeJoinableString(
       JoinableConfig::ValueType::Code join_value_type,
-      TermMatchType::Code match_type = TERM_MATCH_UNKNOWN,
-      StringIndexingConfig::TokenizerType::Code tokenizer = TOKENIZER_NONE) {
+      JoinableConfig::DeletePropagationType::Code delete_propagation_type =
+          DELETE_PROPAGATION_TYPE_NONE) {
     property_.set_data_type(PropertyConfigProto::DataType::STRING);
     property_.mutable_joinable_config()->set_value_type(join_value_type);
-    property_.mutable_string_indexing_config()->set_term_match_type(match_type);
-    property_.mutable_string_indexing_config()->set_tokenizer_type(tokenizer);
+    property_.mutable_joinable_config()->set_delete_propagation_type(
+        delete_propagation_type);
     return *this;
   }
 
@@ -185,9 +191,11 @@ class PropertyConfigBuilder {
   }
 
   PropertyConfigBuilder& SetJoinable(
-      JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
+      JoinableConfig::ValueType::Code join_value_type,
+      JoinableConfig::DeletePropagationType::Code delete_propagation_type) {
     property_.mutable_joinable_config()->set_value_type(join_value_type);
-    property_.mutable_joinable_config()->set_propagate_delete(propagate_delete);
+    property_.mutable_joinable_config()->set_delete_propagation_type(
+        delete_propagation_type);
     return *this;
   }
 

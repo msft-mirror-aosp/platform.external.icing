@@ -34,7 +34,7 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
-#include "icing/join/join-children-fetcher.h"
+#include "icing/join/join-children-fetcher-impl-deprecated.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -724,7 +724,10 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
   map_joinable_qualified_id[document_id_1].push_back(fake_child1);
   map_joinable_qualified_id[document_id_1].push_back(fake_child2);
   map_joinable_qualified_id[document_id_2].push_back(fake_child3);
-  JoinChildrenFetcher fetcher(join_spec, std::move(map_joinable_qualified_id));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<JoinChildrenFetcherImplDeprecated> fetcher,
+      JoinChildrenFetcherImplDeprecated::Create(
+          join_spec, std::move(map_joinable_qualified_id)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
@@ -732,7 +735,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
           CreateAdvancedScoringSpec("len(this.childrenRankingSignals())"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+          fetcher.get(), &empty_embedding_query_results_,
+          feature_flags_.get()));
   // document_id_1 has two children.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(2));
   // document_id_2 has one child.
@@ -746,7 +750,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
           CreateAdvancedScoringSpec("sum(this.childrenRankingSignals())"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+          fetcher.get(), &empty_embedding_query_results_,
+          feature_flags_.get()));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3));
   // document_id_2 has one child with score 4.
@@ -760,7 +765,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
           CreateAdvancedScoringSpec("avg(this.childrenRankingSignals())"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+          fetcher.get(), &empty_embedding_query_results_,
+          feature_flags_.get()));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
   // document_id_2 has one child with score 4.
@@ -771,15 +777,15 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
               Eq(default_score));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(
-          CreateAdvancedScoringSpec(
-              // Equivalent to "avg(this.childrenRankingSignals())"
-              "sum(this.childrenRankingSignals()) / "
-              "len(this.childrenRankingSignals())"),
-          default_score, kDefaultSemanticMetricType, document_store_.get(),
-          schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fetcher, &empty_embedding_query_results_, feature_flags_.get()));
+      scorer, AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec(
+                      // Equivalent to "avg(this.childrenRankingSignals())"
+                      "sum(this.childrenRankingSignals()) / "
+                      "len(this.childrenRankingSignals())"),
+                  default_score, kDefaultSemanticMetricType,
+                  document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds(), fetcher.get(),
+                  &empty_embedding_query_results_, feature_flags_.get()));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
   // document_id_2 has one child with score 4.
@@ -986,14 +992,20 @@ TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
 
   // The root expression can only be of double type, but here it is of list
   // type.
-  JoinChildrenFetcher fake_fetcher(JoinSpecProto::default_instance(),
-                                   /*map_joinable_qualified_id=*/{});
+  JoinSpecProto join_spec;
+  join_spec.set_parent_property_expression("this.qualifiedId()");
+  join_spec.set_child_property_expression("sender");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<JoinChildrenFetcherImplDeprecated> fetcher,
+      JoinChildrenFetcherImplDeprecated::Create(
+          join_spec,
+          /*map_joinable_qualified_id=*/{}));
   EXPECT_THAT(
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.childrenRankingSignals()"),
           default_score, kDefaultSemanticMetricType, document_store_.get(),
           schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-          &fake_fetcher, &empty_embedding_query_results_, feature_flags_.get()),
+          fetcher.get(), &empty_embedding_query_results_, feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1832,10 +1844,28 @@ TEST_F(AdvancedScorerTest, AdditionalScores) {
               ElementsAre(DoubleNear(4, kEps), DoubleNear(127, kEps)));
 }
 
+TEST_F(AdvancedScorerTest, GetScorablePropertyWithFeatureDisabled) {
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"email\"))");
+
+  EXPECT_THAT(
+      AdvancedScorer::Create(
+          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_,
+          feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("SCORABLE_PROPERTY_RANKING feature is not enabled.")));
+}
+
 TEST_F(AdvancedScorerTest, GetScorableProperty_WrongParamsNumber) {
   ScoringSpecProto scoring_spec_with_one_param = CreateAdvancedScoringSpec(
       "this.documentScore() + "
       "sum(getScorableProperty(\"email\"))");
+  scoring_spec_with_one_param.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -1851,6 +1881,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WrongParamsNumber) {
   ScoringSpecProto scoring_spec_with_int_param = CreateAdvancedScoringSpec(
       "this.documentScore() + "
       "sum(getScorableProperty(\"email\", 123))");
+  scoring_spec_with_int_param.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -1868,6 +1900,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_ParamsMustBeString) {
   ScoringSpecProto scoring_spec_with_int_param = CreateAdvancedScoringSpec(
       "this.documentScore() + "
       "sum(getScorableProperty(\"email\", 123))");
+  scoring_spec_with_int_param.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -1886,6 +1920,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_SchemaNotExistInSchemaStore) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"non_exist"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1901,6 +1937,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotScorable) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"subject\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"email"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1918,6 +1956,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotExist) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"non_exist\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"email"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1937,6 +1977,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_SomePropertiesNotScorable) {
       "10  * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\")) + "
       "10  * sum(getScorableProperty(\"aliasPerson\", \"non_exist\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(AdvancedScorer::Create(
                   scoring_spec, /*default_score=*/10,
@@ -1968,6 +2010,8 @@ TEST_F(AdvancedScorerTest,
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2001,6 +2045,8 @@ TEST_F(AdvancedScorerTest,
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2034,6 +2080,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithDoubleList) {
       "this.documentScore() + "
       "max(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + std::max({1.0, 2.0, 3.0});
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2067,6 +2115,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithInt64List) {
       "this.documentScore() + "
       "min(getScorableProperty(\"aliasPerson\", \"contactTimes\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + std::min({10, 20, 30});
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2101,6 +2151,8 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithBoolean) {
       "this.documentScore() + "
       "100 * avg(getScorableProperty(\"aliasPerson\", \"isStarred\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 100 * 1.0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2140,6 +2192,8 @@ TEST_F(AdvancedScorerTest,
       "10 * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\")) + "
       "10 * max(getScorableProperty(\"aliasPerson\", \"contactTimes\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 100 * 0 + 10 * std::max({1.0, 2.0, 3.0}) +
                           10 * std::max({10, 20, 30});
 
@@ -2180,6 +2234,8 @@ TEST_F(AdvancedScorerTest,
       "10 * sum(getScorableProperty(\"aliasMessage\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
   AddSchemaTypeAliasMap(&scoring_spec, "aliasMessage", {"message"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score =
       100 + 100 * 0 + 10 * std::max({1.0, 2.0, 3.0}) + 10 * 0;
 
@@ -2216,6 +2272,8 @@ TEST_F(AdvancedScorerTest,
       "this.documentScore() + "
       "100 * avg(getScorableProperty(\"aliasPerson\", \"isStarred\")) + "
       "10 * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2250,6 +2308,8 @@ TEST_F(AdvancedScorerTest,
       "\"frequencyScore\"), "
       "5)");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score = 100 + 10 * 5;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2380,6 +2440,8 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
       "10 * max(getScorableProperty(\"aliasEmail\", \"scoreInt64\"))");
   AddSchemaTypeAliasMap(&scoring_spec1, "aliasEmail", {"email"});
   double expected_score1 = 100 + 10 * std::max({1, 2, 3});
+  scoring_spec1.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(scoring_spec1,
@@ -2397,6 +2459,8 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
       "this.documentScore() + "
       "10 * min(getScorableProperty(\"aliasEmail\", \"receiver.age\"))");
   AddSchemaTypeAliasMap(&scoring_spec2, "aliasEmail", {"email"});
+  scoring_spec2.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score2 = 100 + 10 * std::min({30, 35});
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(
@@ -2417,6 +2481,8 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
       "20 * min(getScorableProperty(\"aliasEmail\", \"sender.isStarred\")) + "
       "5 * max(getScorableProperty(\"aliasEmail\", \"receiver.income\"))");
   AddSchemaTypeAliasMap(&scoring_spec3, "aliasEmail", {"email"});
+  scoring_spec3.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
   double expected_score3 =
       100 + 50 * 1 + 10 * std::min({30, 35}) + 20 * 1 +
       5 * std::max({10000, 20000, 30000, 10001, 20001, 30001});
@@ -2438,6 +2504,8 @@ TEST_F(AdvancedScorerTest, SchemaTypeAliasMap_AliasSchemaTypeNotMatched) {
       "this.documentScore() + "
       "sum(getScorableProperty(\"aliasEmail\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(
@@ -2483,6 +2551,8 @@ TEST_F(AdvancedScorerTest,
       "sum(getScorableProperty(\"message\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "message",
                         {"pkg1/db1/message", "pkg2/db1/message"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
 
   EXPECT_THAT(
       AdvancedScorer::Create(

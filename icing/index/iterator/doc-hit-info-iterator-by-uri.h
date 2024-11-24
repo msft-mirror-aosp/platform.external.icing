@@ -24,7 +24,6 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/search.pb.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"

@@ -297,6 +297,58 @@ TEST_F(DocHitInfoIteratorByUriTest, MultipleNamespaces) {
   EXPECT_FALSE(iterator->Advance().ok());
 }
 
+TEST_F(DocHitInfoIteratorByUriTest, DuplicatedUriIsOk) {
+  // Put documents
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace", "email/1")
+                                .SetSchema("email")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "email/2")
+                                .SetSchema("email")
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace", "email/3")
+                                .SetSchema("email")
+                                .Build();
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("namespace", "email/4")
+                                .SetSchema("email")
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document1));
+  DocumentId document_id1 = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
+  DocumentId document_id2 = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  DocumentId document_id3 = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document4));
+  DocumentId document_id4 = put_result.new_document_id;
+
+  // Create a search spec with duplicated uri filters. The result document ids
+  // should be de-duplicated.
+  SearchSpecProto search_spec;
+  NamespaceDocumentUriGroup* uris = search_spec.add_document_uri_filters();
+  uris->set_namespace_("namespace");
+  uris->add_document_uris("email/1");
+  uris->add_document_uris("email/2");
+  uris->add_document_uris("email/3");
+  uris->add_document_uris("email/3");
+
+  uris = search_spec.add_document_uri_filters();
+  uris->set_namespace_("namespace");
+  uris->add_document_uris("email/2");
+  uris->add_document_uris("email/4");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIteratorByUri> iterator,
+      DocHitInfoIteratorByUri::Create(document_store_.get(), search_spec));
+  EXPECT_THAT(
+      GetDocumentIds(iterator.get()),
+      ElementsAre(document_id4, document_id3, document_id2, document_id1));
+  EXPECT_FALSE(iterator->Advance().ok());
+}
+
 TEST_F(DocHitInfoIteratorByUriTest, TrimRightMostNodeResultsInError) {
   SearchSpecProto search_spec;
   NamespaceDocumentUriGroup* uris = search_spec.add_document_uri_filters();

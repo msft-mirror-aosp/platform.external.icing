@@ -21,9 +21,11 @@ namespace lib {
 class FeatureFlags {
  public:
   explicit FeatureFlags(bool enable_scorable_properties,
-                        bool enable_embedding_quantization)
+                        bool enable_embedding_quantization,
+                        bool enable_repeated_field_joins)
       : enable_scorable_properties_(enable_scorable_properties),
-        enable_embedding_quantization_(enable_embedding_quantization) {}
+        enable_embedding_quantization_(enable_embedding_quantization),
+        enable_repeated_field_joins_(enable_repeated_field_joins) {}
 
   bool enable_scorable_properties() const {
     return enable_scorable_properties_;
@@ -33,6 +35,10 @@ class FeatureFlags {
     return enable_embedding_quantization_;
   }
 
+  bool enable_repeated_field_joins() const {
+    return enable_repeated_field_joins_;
+  }
+
  private:
   bool enable_scorable_properties_;
 
@@ -40,6 +46,8 @@ class FeatureFlags {
   // embedding vectors will not be quantized. Otherwise, quantization will be
   // controlled by the quantization type specified in the schema.
   bool enable_embedding_quantization_;
+
+  bool enable_repeated_field_joins_;
 };
 
 }  // namespace lib

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/doc-join-info.h"
+#include "icing/join/document-join-id-pair.h"
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -31,59 +31,62 @@ using ::testing::IsTrue;
 static constexpr DocumentId kSomeDocumentId = 24;
 static constexpr JoinablePropertyId kSomeJoinablePropertyId = 5;
 
-TEST(DocJoinInfoTest, Accessors) {
-  DocJoinInfo doc_join_info(kSomeDocumentId, kSomeJoinablePropertyId);
+TEST(DocumentJoinIdPairTest, Accessors) {
+  DocumentJoinIdPair doc_join_info(kSomeDocumentId, kSomeJoinablePropertyId);
   EXPECT_THAT(doc_join_info.document_id(), Eq(kSomeDocumentId));
   EXPECT_THAT(doc_join_info.joinable_property_id(),
               Eq(kSomeJoinablePropertyId));
 }
 
-TEST(DocJoinInfoTest, Invalid) {
-  DocJoinInfo default_invalid;
+TEST(DocumentJoinIdPairTest, Invalid) {
+  DocumentJoinIdPair default_invalid;
   EXPECT_THAT(default_invalid.is_valid(), IsFalse());
 
-  // Also make sure the invalid DocJoinInfo contains an invalid document id.
+  // Also make sure the invalid DocumentJoinIdPair contains an invalid document
+  // id.
   EXPECT_THAT(default_invalid.document_id(), Eq(kInvalidDocumentId));
   EXPECT_THAT(default_invalid.joinable_property_id(),
               Eq(kMaxJoinablePropertyId));
 }
 
-TEST(DocJoinInfoTest, Valid) {
-  DocJoinInfo maximum_document_id_info(kMaxDocumentId, kSomeJoinablePropertyId);
+TEST(DocumentJoinIdPairTest, Valid) {
+  DocumentJoinIdPair maximum_document_id_info(kMaxDocumentId,
+                                              kSomeJoinablePropertyId);
   EXPECT_THAT(maximum_document_id_info.is_valid(), IsTrue());
   EXPECT_THAT(maximum_document_id_info.document_id(), Eq(kMaxDocumentId));
   EXPECT_THAT(maximum_document_id_info.joinable_property_id(),
               Eq(kSomeJoinablePropertyId));
 
-  DocJoinInfo maximum_joinable_property_id_info(kSomeDocumentId,
-                                                kMaxJoinablePropertyId);
+  DocumentJoinIdPair maximum_joinable_property_id_info(kSomeDocumentId,
+                                                       kMaxJoinablePropertyId);
   EXPECT_THAT(maximum_joinable_property_id_info.is_valid(), IsTrue());
   EXPECT_THAT(maximum_joinable_property_id_info.document_id(),
               Eq(kSomeDocumentId));
   EXPECT_THAT(maximum_joinable_property_id_info.joinable_property_id(),
               Eq(kMaxJoinablePropertyId));
 
-  DocJoinInfo minimum_document_id_info(kMinDocumentId, kSomeJoinablePropertyId);
+  DocumentJoinIdPair minimum_document_id_info(kMinDocumentId,
+                                              kSomeJoinablePropertyId);
   EXPECT_THAT(minimum_document_id_info.is_valid(), IsTrue());
   EXPECT_THAT(minimum_document_id_info.document_id(), Eq(kMinDocumentId));
   EXPECT_THAT(minimum_document_id_info.joinable_property_id(),
               Eq(kSomeJoinablePropertyId));
 
-  DocJoinInfo minimum_joinable_property_id_info(kSomeDocumentId,
-                                                kMinJoinablePropertyId);
+  DocumentJoinIdPair minimum_joinable_property_id_info(kSomeDocumentId,
+                                                       kMinJoinablePropertyId);
   EXPECT_THAT(minimum_joinable_property_id_info.is_valid(), IsTrue());
   EXPECT_THAT(minimum_joinable_property_id_info.document_id(),
               Eq(kSomeDocumentId));
   EXPECT_THAT(minimum_joinable_property_id_info.joinable_property_id(),
               Eq(kMinJoinablePropertyId));
 
-  DocJoinInfo all_maximum_info(kMaxDocumentId, kMaxJoinablePropertyId);
+  DocumentJoinIdPair all_maximum_info(kMaxDocumentId, kMaxJoinablePropertyId);
   EXPECT_THAT(all_maximum_info.is_valid(), IsTrue());
   EXPECT_THAT(all_maximum_info.document_id(), Eq(kMaxDocumentId));
   EXPECT_THAT(all_maximum_info.joinable_property_id(),
               Eq(kMaxJoinablePropertyId));
 
-  DocJoinInfo all_minimum_info(kMinDocumentId, kMinJoinablePropertyId);
+  DocumentJoinIdPair all_minimum_info(kMinDocumentId, kMinJoinablePropertyId);
   EXPECT_THAT(all_minimum_info.is_valid(), IsTrue());
   EXPECT_THAT(all_minimum_info.document_id(), Eq(kMinDocumentId));
   EXPECT_THAT(all_minimum_info.joinable_property_id(),

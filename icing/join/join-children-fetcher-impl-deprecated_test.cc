@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/join-children-fetcher.h"
+#include "icing/join/join-children-fetcher-impl-deprecated.h"
 
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/join/join-processor.h"
@@ -36,7 +38,7 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
-TEST(JoinChildrenFetcherTest, FetchQualifiedIdJoinChildren) {
+TEST(JoinChildrenFetcherImplDeprecatedTest, FetchQualifiedIdJoinChildren) {
   JoinSpecProto join_spec;
   join_spec.set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
@@ -52,14 +54,17 @@ TEST(JoinChildrenFetcherTest, FetchQualifiedIdJoinChildren) {
   map_joinable_qualified_id[parent_doc_id].push_back(child1);
   map_joinable_qualified_id[parent_doc_id].push_back(child2);
 
-  JoinChildrenFetcher fetcher(join_spec, std::move(map_joinable_qualified_id));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<JoinChildrenFetcherImplDeprecated> fetcher,
+      JoinChildrenFetcherImplDeprecated::Create(
+          join_spec, std::move(map_joinable_qualified_id)));
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<ScoredDocumentHit> children,
-                             fetcher.GetChildren(parent_doc_id));
+                             fetcher->GetChildren(parent_doc_id));
   EXPECT_THAT(children, ElementsAre(EqualsScoredDocumentHit(child1),
                                     EqualsScoredDocumentHit(child2)));
 }
 
-TEST(JoinChildrenFetcherTest, FetchJoinEmptyChildren) {
+TEST(JoinChildrenFetcherImplDeprecatedTest, FetchJoinEmptyChildren) {
   JoinSpecProto join_spec;
   join_spec.set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
@@ -67,18 +72,23 @@ TEST(JoinChildrenFetcherTest, FetchJoinEmptyChildren) {
 
   DocumentId parent_doc_id = 0;
 
-  JoinChildrenFetcher fetcher(join_spec, /*map_joinable_qualified_id=*/{});
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<JoinChildrenFetcherImplDeprecated> fetcher,
+      JoinChildrenFetcherImplDeprecated::Create(
+          join_spec,
+          /*map_joinable_qualified_id=*/{}));
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<ScoredDocumentHit> children,
-                             fetcher.GetChildren(parent_doc_id));
+                             fetcher->GetChildren(parent_doc_id));
   EXPECT_THAT(children, IsEmpty());
 }
 
-TEST(JoinChildrenFetcherTest, UnsupportedJoin) {
+TEST(JoinChildrenFetcherImplDeprecatedTest, UnsupportedJoin) {
   JoinSpecProto join_spec;
   join_spec.set_parent_property_expression("name");
   join_spec.set_child_property_expression("sender");
-  JoinChildrenFetcher fetcher(join_spec, /*map_joinable_qualified_id=*/{});
-  EXPECT_THAT(fetcher.GetChildren(0),
+
+  EXPECT_THAT(JoinChildrenFetcherImplDeprecated::Create(
+                  join_spec, /*map_joinable_qualified_id=*/{}),
               StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
 }
 

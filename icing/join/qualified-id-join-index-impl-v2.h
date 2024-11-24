@@ -29,8 +29,8 @@
 #include "icing/file/persistent-storage.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
-#include "icing/join/doc-join-info.h"
 #include "icing/join/document-id-to-join-info.h"
+#include "icing/join/document-join-id-pair.h"
 #include "icing/join/posting-list-join-data-accessor.h"
 #include "icing/join/posting-list-join-data-serializer.h"
 #include "icing/join/qualified-id-join-index.h"
@@ -152,14 +152,27 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
 
   // v1 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::Status Put(
-      const DocJoinInfo& doc_join_info,
+      const DocumentJoinIdPair& document_join_id_pair,
       std::string_view ref_qualified_id_str) override {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
   // v1 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::StatusOr<std::string_view> Get(
-      const DocJoinInfo& doc_join_info) const override {
+      const DocumentJoinIdPair& document_join_id_pair) const override {
+    return absl_ports::UnimplementedError("This API is not supported in V2");
+  }
+
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
+  libtextclassifier3::Status Put(
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<DocumentId>&& parent_document_ids) override {
+    return absl_ports::UnimplementedError("This API is not supported in V2");
+  }
+
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
+  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
+      DocumentId parent_document_id) const override {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
@@ -173,6 +186,13 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const override;
 
+  // No-op since v2 stores parent information in (namespace_id,
+  // fingerprint(uri)) format and does not require parent migration.
+  libtextclassifier3::Status MigrateParent(
+      DocumentId old_document_id, DocumentId new_document_id) override {
+    return libtextclassifier3::Status::OK;
+  }
+
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
@@ -180,7 +200,9 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
 
   libtextclassifier3::Status Clear() override;
 
-  bool is_v2() const override { return true; }
+  QualifiedIdJoinIndex::Version version() const override {
+    return QualifiedIdJoinIndex::Version::kV2;
+  }
 
   int32_t size() const override { return info().num_data; }
 

@@ -242,7 +242,7 @@ message EmbeddingIndexingConfig {
 
 // Describes how a property can be used to join this document with another
 // document. See JoinSpecProto (in search.proto) for more details.
-// Next tag: 3
+// Next tag: 4
 message JoinableConfig {
   // OPTIONAL: Indicates what joinable type the content value of this property
   // is.
@@ -262,10 +262,25 @@ message JoinableConfig {
   }
   optional ValueType.Code value_type = 1;
 
-  // If the parent document a child document is joined to is deleted, delete the
-  // child document as well. This will only apply to children joined through
-  // QUALIFIED_ID, other (future) joinable value types won't use it.
-  optional bool propagate_delete = 2 [default = false];
+  // OPTIONAL: Indicates how to propagate the deletion between the document and
+  // the (referenced) joinable document.
+  //
+  // The default value is NONE.
+  //
+  // If delete propagation is enabled (i.e. not NONE), then value_type must be
+  // QUALIFIED_ID.
+  message DeletePropagationType {
+    enum Code {
+      // No delete propagation.
+      NONE = 0;
+
+      // Propagate delete from the referenced document to the doucument.
+      PROPAGATE_FROM = 1;
+    }
+  }
+  optional DeletePropagationType.Code delete_propagation_type = 3;
+
+  reserved 2;
 }
 
 // Describes the schema of a single property of Documents that belong to a

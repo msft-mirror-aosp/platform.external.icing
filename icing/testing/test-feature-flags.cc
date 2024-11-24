@@ -21,7 +21,8 @@ namespace lib {
 
 FeatureFlags GetTestFeatureFlags() {
   return FeatureFlags(/*enable_scorable_properties=*/true,
-                      /*enable_embedding_quantization=*/true);
+                      /*enable_embedding_quantization=*/true,
+                      /*enable_repeated_field_joins=*/true);
 }
 
 }  // namespace lib

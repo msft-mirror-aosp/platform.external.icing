@@ -61,7 +61,7 @@ class BlobStore {
   //
   // Returns:
   //   A BlobStore on success
-  //   FAILED_PRECONDITION on any null pointer input
+  //   FAILED_PRECONDITION_ERROR on any null pointer input
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::StatusOr<BlobStore> Create(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
@@ -71,21 +71,40 @@ class BlobStore {
   // To mark the blob is completed written, CommitBlob must be called. Once
   // CommitBlob is called, the blob is sealed and rewrite is not allowed.
   //
+  // It is the user's responsibility to close the file descriptor after writing
+  // is done and should operate on the file descriptor after commit or remove
+  // it.
+  //
   // Returns:
   //   File descriptor (writable) on success
-  //   INVALID_ARGUMENT on invalid blob handle
-  //   ALREADY_EXISTS if the blob has already been committed
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   FAILED_PRECONDITION_ERROR on blob is already opened for write
+  //   ALREADY_EXISTS_ERROR if the blob has already been committed
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> OpenWrite(
+      const PropertyProto::BlobHandleProto& blob_handle);
+
+  // Removes a blob file and blob handle from the blob store.
+  //
+  // This will remove the blob on any state. No matter it's committed or not or
+  // it has reference document links or not.
+  //
+  // Returns:
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   NOT_FOUND_ERROR on blob is not found
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status RemoveBlob(
       const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets a file for read only purpose for the given blob handle.
   // Will only succeed for blobs that were committed by calling CommitBlob.
   //
+  // It is the user's responsibility to close the file descriptor after reading.
+  //
   // Returns:
   //   File descriptor (read only) on success
-  //   INVALID_ARGUMENT on invalid blob handle
-  //   NOT_FOUND on blob is not found or is not committed
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle
+  //   NOT_FOUND_ERROR on blob is not found or is not committed
   libtextclassifier3::StatusOr<int> OpenRead(
       const PropertyProto::BlobHandleProto& blob_handle);
 
@@ -96,10 +115,10 @@ class BlobStore {
   //
   // Returns:
   //   OK on the blob is successfully committed.
-  //   ALREADY_EXISTS on the blob is already committed, this is no op.
-  //   INVALID_ARGUMENT on invalid blob handle or digest is mismatch with
+  //   ALREADY_EXISTS_ERROR on the blob is already committed, this is no op.
+  //   INVALID_ARGUMENT_ERROR on invalid blob handle or digest is mismatch with
   //                        file content.
-  //   NOT_FOUND on blob is not found.
+  //   NOT_FOUND_ERROR on blob is not found.
   libtextclassifier3::Status CommitBlob(
       const PropertyProto::BlobHandleProto& blob_handle);
 
@@ -130,10 +149,10 @@ class BlobStore {
   //
   // Returns:
   //   Vector of NamespaceBlobStorageInfoProto contains size of each namespace.
-  //   INTERNAL on I/O error
+  //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>
   GetStorageInfo() const;
-  
+
 private:
   explicit BlobStore(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
@@ -168,12 +187,6 @@ private:
   // BlobInfoProto log file.
   // The keys are the Encoded CString from BlobHandleProto.
   std::unordered_map<std::string, int32_t> blob_handle_to_offset_;
-
-  // The map to tracking sent file descriptors for write.
-  // The key is the pending blob handle CString which is constructed of
-  // digest, namespace, and label.
-  // The value is the set of file descriptors for write.
-  std::unordered_map<std::string, int> file_descriptors_for_write_;
 
   // The set of used file names to store blobs in the blob store.
   std::unordered_set<std::string> known_file_names_;

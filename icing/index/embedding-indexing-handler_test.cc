@@ -286,10 +286,10 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
       std::unique_ptr<EmbeddingIndexingHandler> handler,
       EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
                                        /*enable_embedding_index=*/true));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   // Check index
   EmbeddingHit hit1(BasicHit(kSectionIdBodyEmbedding, /*document_id=*/0),
@@ -362,10 +362,10 @@ TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
       std::unique_ptr<EmbeddingIndexingHandler> handler,
       EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
                                        /*enable_embedding_index=*/false));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   // Check that the embedding index is empty.
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
@@ -418,10 +418,10 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
       std::unique_ptr<EmbeddingIndexingHandler> handler,
       EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
                                        /*enable_embedding_index=*/true));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   // Check index
   EmbeddingHit hit1(BasicHit(kSectionIdNestedBodyEmbedding, /*document_id=*/0),
@@ -466,7 +466,7 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
-       HandleInvalidDocumentIdShouldReturnInvalidArgumentError) {
+       HandleInvalidNewDocumentIdShouldReturnInvalidArgumentError) {
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -501,6 +501,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // index data and last_added_document_id should remain unchanged.
   EXPECT_THAT(
       handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*old_document_id=*/kInvalidDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(embedding_index_->last_added_document_id(),
@@ -515,6 +516,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // Recovery mode should get the same result.
   EXPECT_THAT(
       handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*old_document_id=*/kInvalidDocumentId,
                       /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(embedding_index_->last_added_document_id(),
@@ -562,10 +564,10 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // unchanged.
   embedding_index_->set_last_added_document_id(document_id);
   ASSERT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 
   // Check that the embedding index should be empty
@@ -580,10 +582,10 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // unchanged.
   embedding_index_->set_last_added_document_id(document_id + 1);
   ASSERT_THAT(embedding_index_->last_added_document_id(), Eq(document_id + 1));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id + 1));
 
   // Check that the embedding index should be empty
@@ -649,7 +651,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.
   EXPECT_THAT(
-      handler->Handle(tokenized_document1, document_id1, /*recovery_mode=*/true,
+      handler->Handle(tokenized_document1, document_id1,
+                      put_result1.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       IsOk());
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id1));
@@ -675,7 +678,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
   embedding_index_->set_last_added_document_id(document_id2);
   ASSERT_THAT(embedding_index_->last_added_document_id(), Eq(document_id2));
   EXPECT_THAT(
-      handler->Handle(tokenized_document2, document_id2, /*recovery_mode=*/true,
+      handler->Handle(tokenized_document2, document_id2,
+                      put_result2.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       IsOk());
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id2));
@@ -700,7 +704,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
   embedding_index_->set_last_added_document_id(document_id2 + 1);
   ASSERT_THAT(embedding_index_->last_added_document_id(), Eq(document_id2 + 1));
   EXPECT_THAT(
-      handler->Handle(tokenized_document2, document_id2, /*recovery_mode=*/true,
+      handler->Handle(tokenized_document2, document_id2,
+                      put_result2.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       IsOk());
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id2 + 1));

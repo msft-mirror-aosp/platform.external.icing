@@ -371,6 +371,27 @@ DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
           /*needs_qualified_id_join_index_rebuild=*/false,
           /*needs_embedding_index_rebuild=*/true);
     }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE: {
+      // The schema database feature requires schema-store migration, which is
+      // done separately from derived files rebuild.
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::
+        FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM: {
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/false);
+    }
     case IcingSearchEngineFeatureInfoProto::UNKNOWN:
       return DerivedFilesRebuildResult(
           /*needs_document_store_derived_files_rebuild=*/true,
@@ -380,6 +401,22 @@ DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
           /*needs_qualified_id_join_index_rebuild=*/true,
           /*needs_embedding_index_rebuild=*/true);
   }
+}
+
+bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto) {
+  if (prev_version_proto.version() < kSchemaDatabaseVersion) {
+    return true;
+  }
+  for (const auto& feature : prev_version_proto.enabled_features()) {
+    // The schema database feature was enabled in the previous version, so no
+    // need to migrate.
+    if (feature.feature_type() ==
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE) {
+      return false;
+    }
+  }
+  return true;
 }
 
 IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(
@@ -423,6 +460,17 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   if (options.enable_embedding_quantization()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
+  }
+  // SchemaDatabase feature
+  if (options.enable_schema_database()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
+  }
+  // QualifiedIdJoinIndex V3 and delete propagation type PROPAGATE_FROM feature
+  if (options.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM));
   }
 }
 

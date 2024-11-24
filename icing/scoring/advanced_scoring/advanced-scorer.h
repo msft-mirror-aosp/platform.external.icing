@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/bm25f-calculator.h"
@@ -91,12 +93,16 @@ class AdvancedScorer : public Scorer {
       std::unique_ptr<SectionWeights> section_weights,
       std::unique_ptr<Bm25fCalculator> bm25f_calculator,
       std::unique_ptr<SchemaTypeAliasMap> alias_schema_type_map,
+      std::unique_ptr<std::unordered_set<ScoringFeatureType>>
+          scoring_feature_types_enabled,
       double default_score)
       : score_expression_(std::move(score_expression)),
         additional_score_expressions_(std::move(additional_score_expressions)),
         section_weights_(std::move(section_weights)),
         bm25f_calculator_(std::move(bm25f_calculator)),
         alias_schema_type_map_(std::move(alias_schema_type_map)),
+        scoring_feature_types_enabled_(
+            std::move(scoring_feature_types_enabled)),
         default_score_(default_score) {
     if (is_constant()) {
       ICING_LOG(WARNING)
@@ -124,6 +130,8 @@ class AdvancedScorer : public Scorer {
   std::unique_ptr<SectionWeights> section_weights_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   std::unique_ptr<SchemaTypeAliasMap> alias_schema_type_map_;
+  std::unique_ptr<std::unordered_set<ScoringFeatureType>>
+      scoring_feature_types_enabled_;
   double default_score_;
 };
 

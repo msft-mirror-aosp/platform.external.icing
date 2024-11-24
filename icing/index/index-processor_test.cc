@@ -396,8 +396,10 @@ TEST_F(IndexProcessorTest, NoTermMatchTypeContent) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
@@ -412,8 +414,10 @@ TEST_F(IndexProcessorTest, NoValidContent) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
@@ -428,8 +432,10 @@ TEST_F(IndexProcessorTest, OneDoc) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -463,8 +469,10 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   std::string coffeeRepeatedString = "coffee";
@@ -484,8 +492,10 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
       tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId1,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -544,8 +554,10 @@ TEST_F(IndexProcessorTest, DocWithNestedProperty) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -571,8 +583,10 @@ TEST_F(IndexProcessorTest, DocWithRepeatedProperty) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -607,9 +621,11 @@ TEST_F(IndexProcessorTest, HitBufferExhaustedTest) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
-                       testing::HasSubstr("Hit buffer is full!")));
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
+               testing::HasSubstr("Hit buffer is full!")));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
@@ -629,8 +645,10 @@ TEST_F(IndexProcessorTest, LexiconExhaustedTest) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
@@ -665,8 +683,10 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // "good" should have been indexed normally.
@@ -712,8 +732,10 @@ TEST_F(IndexProcessorTest,
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(8));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // Query the lite index. "r" should have 5 matches.
@@ -754,8 +776,10 @@ TEST_F(IndexProcessorTest, NonPrefixedContentPrefixQuery) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   document =
@@ -768,8 +792,10 @@ TEST_F(IndexProcessorTest, NonPrefixedContentPrefixQuery) {
       tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId1,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   // Only document_id 1 should surface in a prefix query for "Rock"
@@ -794,8 +820,10 @@ TEST_F(IndexProcessorTest, TokenNormalization) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   document =
@@ -808,8 +836,10 @@ TEST_F(IndexProcessorTest, TokenNormalization) {
       tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId1,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -837,8 +867,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId1,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   ICING_ASSERT_OK_AND_ASSIGN(int64_t index_element_size,
@@ -859,8 +891,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
       tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify that both index_ and integer_index_ are unchanged.
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
   EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(index_element_size));
@@ -869,8 +903,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
               IsOkAndHolds(integer_index_crc));
 
   // As should indexing a document document_id == last_added_document_id.
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId1,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify that both index_ and integer_index_ are unchanged.
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
   EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(index_element_size));
@@ -913,8 +949,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor.IndexDocument(tokenized_document, kDocumentId1),
-              IsOk());
+  EXPECT_THAT(
+      index_processor.IndexDocument(tokenized_document, kDocumentId1,
+                                    /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   ICING_ASSERT_OK_AND_ASSIGN(int64_t index_element_size,
@@ -936,8 +974,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
       tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor.IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor.IndexDocument(tokenized_document, kDocumentId0,
+                                    /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   // Verify that both index_ and integer_index_ are unchanged.
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
   EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(index_element_size));
@@ -946,8 +986,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
               IsOkAndHolds(integer_index_crc));
 
   // As should indexing a document document_id == last_added_document_id.
-  EXPECT_THAT(index_processor.IndexDocument(tokenized_document, kDocumentId1),
-              IsOk());
+  EXPECT_THAT(
+      index_processor.IndexDocument(tokenized_document, kDocumentId1,
+                                    /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   // Verify that both index_ and integer_index_ are unchanged.
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
   EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(index_element_size));
@@ -974,8 +1016,10 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1008,8 +1052,10 @@ TEST_F(IndexProcessorTest,
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document_one));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
@@ -1054,12 +1100,18 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
   // empties the LiteIndex.
   constexpr int kNumDocsLiteIndexExhaustion = 3373;
   for (; doc_id < kNumDocsLiteIndexExhaustion; ++doc_id) {
-    EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
-                IsOk());
+    EXPECT_THAT(
+        index_processor_->IndexDocument(
+            tokenized_document, doc_id,
+            /*old_document_id=*/doc_id == 0 ? kInvalidDocumentId : doc_id - 1),
+        IsOk());
     EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
   }
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(
+          tokenized_document, doc_id,
+          /*old_document_id=*/doc_id == 0 ? kInvalidDocumentId : doc_id - 1),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 }
 
@@ -1116,19 +1168,23 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
   // 3. Index one document. This should fit in the LiteIndex without requiring a
   // merge.
   DocumentId doc_id = 0;
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, doc_id,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 
   // 4. Add one more document to trigger a merge, which should fail and result
   // in a Reset.
   ++doc_id;
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id,
+                                              /*old_document_id=*/doc_id - 1),
               StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
 
   // 5. Indexing a new document should succeed.
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id,
+                                              /*old_document_id=*/doc_id - 1),
               IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 }
@@ -1147,8 +1203,10 @@ TEST_F(IndexProcessorTest, ExactVerbatimProperty) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(1));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1179,8 +1237,10 @@ TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(1));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // We expect to match the document we indexed as "Hello, w" is a prefix
@@ -1213,8 +1273,10 @@ TEST_F(IndexProcessorTest, VerbatimPropertyDoesntMatchSubToken) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(1));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1244,8 +1306,10 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExact) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
@@ -1293,8 +1357,10 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
@@ -1323,8 +1389,10 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // "alexsav@" only matches "alexsav@google.com"
@@ -1374,8 +1442,10 @@ TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   std::unordered_map<SectionId, Hit::TermFrequency> expect_map{{}};
@@ -1405,8 +1475,10 @@ TEST_F(IndexProcessorTest, ExactUrlProperty) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1463,8 +1535,10 @@ TEST_F(IndexProcessorTest, ExactUrlPropertyDoesNotMatchPrefix) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(8));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1505,8 +1579,10 @@ TEST_F(IndexProcessorTest, PrefixUrlProperty) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // "goo" is a prefix of "google" and "google.com"
@@ -1557,8 +1633,10 @@ TEST_F(IndexProcessorTest, PrefixUrlPropertyNoMatch) {
                                 document));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(8));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // no token starts with "gle", so we should have no hits
@@ -1610,8 +1688,10 @@ TEST_F(IndexProcessorTest, IndexableIntegerProperty) {
   // Expected to have 1 integer section.
   EXPECT_THAT(tokenized_document.integer_sections(), SizeIs(1));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -1640,8 +1720,10 @@ TEST_F(IndexProcessorTest, IndexableIntegerPropertyNoMatch) {
   // Expected to have 1 integer section.
   EXPECT_THAT(tokenized_document.integer_sections(), SizeIs(1));
 
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
+  EXPECT_THAT(
+      index_processor_->IndexDocument(tokenized_document, kDocumentId0,
+                                      /*old_document_id=*/kInvalidDocumentId),
+      IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,

@@ -362,7 +362,8 @@ class SchemaUtil {
       const JoinableConfig& config,
       PropertyConfigProto::DataType::Code data_type,
       PropertyConfigProto::Cardinality::Code cardinality,
-      std::string_view schema_type, std::string_view property_name);
+      std::string_view schema_type, std::string_view property_name,
+      const FeatureFlags& feature_flags);
 
   // Checks that the 'document_indexing_config' satisfies the following rule:
   //    1. If indexable_nested_properties is non-empty, index_nested_properties

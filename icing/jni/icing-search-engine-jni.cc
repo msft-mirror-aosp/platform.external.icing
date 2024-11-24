@@ -251,8 +251,7 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
 }
 
 // TODO(b/273591938): Change this API back to the pre-registered API.
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
+jbyteArray nativeOpenWriteBlob(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -265,6 +264,25 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeOpenWriteBlob(
   }
 
   icing::lib::BlobProto blob_result_proto = icing->OpenWriteBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO(b/273591938): Change this API back to the pre-registered API.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeRemoveBlob(
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PropertyProto::BlobHandleProto blob_handle;
+  if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobHandle in nativeRemoveBlob";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto = icing->RemoveBlob(blob_handle);
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
@@ -287,8 +305,7 @@ jbyteArray nativeOpenReadBlob(
 }
 
 // TODO(b/273591938): Change this API back to the pre-registered API.
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeCommitBlob(
+jbyteArray nativeCommitBlob(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray blob_handle_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -580,9 +597,15 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeInvalidateNextPageToken",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;J)V",
        reinterpret_cast<void*>(nativeInvalidateNextPageToken)},
+      {"nativeOpenWriteBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeOpenWriteBlob)},
       {"nativeOpenReadBlob",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativeOpenReadBlob)},
+      {"nativeCommitBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeCommitBlob)},
       {"nativeSearch",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[B[B[BJ)[B",
        reinterpret_cast<void*>(nativeSearch)},

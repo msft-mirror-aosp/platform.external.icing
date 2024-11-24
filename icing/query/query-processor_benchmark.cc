@@ -89,8 +89,8 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
                      TermMatchType::Code term_match_type,
                      const std::string& token) {
   Index::Editor editor =
-      index->Edit(document_id, section_id, term_match_type, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(token.c_str()));
+      index->Edit(document_id, section_id, /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm(token, term_match_type));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 }
 
@@ -195,10 +195,11 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -347,10 +348,11 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -492,10 +494,11 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -633,10 +636,11 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);

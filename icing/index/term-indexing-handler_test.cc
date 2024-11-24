@@ -276,10 +276,10 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
       TermIndexingHandler::Create(
           &fake_clock_, normalizer_.get(), index.get(),
           /*build_property_existence_metadata_hits=*/true));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id));
 
@@ -341,10 +341,10 @@ TEST_F(TermIndexingHandlerTest,
       TermIndexingHandler::Create(
           &fake_clock_, normalizer_.get(), index.get(),
           /*build_property_existence_metadata_hits=*/true));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id));
 
@@ -439,22 +439,25 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
 
   // Handle doc0 and doc1. The LiteIndex should sort and merge after adding
   // these
-  EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
-  EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document0, document_id0,
+                      put_result0.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document1, document_id1,
+                      put_result1.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id1));
   EXPECT_THAT(index->LiteIndexNeedSort(), IsFalse());
 
   // Handle doc2. The LiteIndex should have an unsorted portion after adding
-  EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document2, document_id2,
+                      put_result2.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id2));
 
   // Hits in the hit buffer:
@@ -583,18 +586,21 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
           /*build_property_existence_metadata_hits=*/true));
 
   // Handle all docs
-  EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
-  EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
-  EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document0, document_id0,
+                      put_result0.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document1, document_id1,
+                      put_result1.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document2, document_id2,
+                      put_result2.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id2));
 
   // We've disabled sorting during indexing so the HitBuffer's unsorted section

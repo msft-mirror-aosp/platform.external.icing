@@ -25,7 +25,7 @@ option objc_class_prefix = "ICNG";
 // Encapsulates the configurations on how Icing should score and rank the search
 // results.
 // TODO(b/170347684): Change all timestamps to seconds.
-// Next tag: 7
+// Next tag: 8
 message ScoringSpecProto {
   // OPTIONAL: Indicates how the search results will be ranked.
   message RankingStrategy {
@@ -147,6 +147,9 @@ message ScoringSpecProto {
   // this proto, thus introducing duplicates. We can consider moving this to a
   // higher level proto and send it to downstreams.
   repeated SchemaTypeAliasMapProto schema_type_alias_map_protos = 6;
+
+  // Features enabled for scoring.
+  repeated ScoringFeatureType scoring_feature_types_enabled = 7 [packed = true];
 }
 
 // Next tag: 3
@@ -216,4 +219,12 @@ message SchemaTypeAliasMapProto {
   optional string alias_schema_type = 1;
   // Schema types in Icing.
   repeated string schema_types = 2;
+}
+
+// Next tag: 2
+enum ScoringFeatureType {
+  SCORING_FEATURE_TYPE_UNKNOWN = 0;
+
+  // Ranking with getScorableProperty(), in advanced scoring expression.
+  SCORABLE_PROPERTY_RANKING = 1;
 }

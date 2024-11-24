@@ -19,9 +19,11 @@
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/query-results.h"
@@ -51,7 +53,8 @@ class QueryProcessor {
       const EmbeddingIndex* embedding_index,
       const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Clock* clock);
+      const JoinChildrenFetcher* join_children_fetcher, const Clock* clock,
+      const FeatureFlags* feature_flags);
 
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
@@ -74,13 +77,13 @@ class QueryProcessor {
       QueryStatsProto::SearchStats* search_stats = nullptr);
 
  private:
-  explicit QueryProcessor(Index* index,
-                          const NumericIndex<int64_t>* numeric_index,
-                          const EmbeddingIndex* embedding_index,
-                          const LanguageSegmenter* language_segmenter,
-                          const Normalizer* normalizer,
-                          const DocumentStore* document_store,
-                          const SchemaStore* schema_store, const Clock* clock);
+  explicit QueryProcessor(
+      Index* index, const NumericIndex<int64_t>* numeric_index,
+      const EmbeddingIndex* embedding_index,
+      const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const JoinChildrenFetcher* join_children_fetcher, const Clock* clock,
+      const FeatureFlags* feature_flags);
 
   // Parse the query into a QueryResults object, which holds a
   // DocHitInfoIterator that represents the root of a query tree in our new
@@ -120,7 +123,11 @@ class QueryProcessor {
   const Normalizer& normalizer_;                 // Does not own.
   const DocumentStore& document_store_;          // Does not own.
   const SchemaStore& schema_store_;              // Does not own.
-  const Clock& clock_;                           // Does not own.
+  // Nullable. A non-null join_children_fetcher_ indicates that this is the
+  // parent query for a join query, in which case child scores are available.
+  const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
+  const Clock& clock_;                                // Does not own.
+  const FeatureFlags& feature_flags_;                 // Does not own.
 };
 
 }  // namespace lib

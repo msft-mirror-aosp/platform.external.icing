@@ -48,6 +48,7 @@
 namespace icing {
 namespace lib {
 
+static constexpr std::string_view kBlobFileDir = "blob_files";
 static constexpr std::string_view kBlobInfoProtoLogFileName =
     "blob_info_proto_file";
 static constexpr int32_t kSha256LengthBytes = 32;
@@ -57,6 +58,16 @@ namespace {
 
 std::string MakeBlobInfoProtoLogFileName(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kBlobInfoProtoLogFileName);
+}
+
+std::string MakeBlobFileDir(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kBlobFileDir);
+}
+
+std::string MakeBlobFileName(const std::string& base_dir,
+                             int64_t creation_time_ms) {
+  return absl_ports::StrCat(MakeBlobFileDir(base_dir), "/",
+                            std::to_string(creation_time_ms));
 }
 
 libtextclassifier3::Status ValidateBlobHandle(
@@ -111,12 +122,17 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
 
+  // Make sure the blob file directory exists.
+  if (!filesystem->CreateDirectoryRecursively(
+          MakeBlobFileDir(base_dir).c_str())) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Could not create blob file directory."));
+  }
+
   // Load existing file names (excluding the directory of key mapper).
   std::vector<std::string> file_names;
-  std::unordered_set<std::string> excludes = {
-      std::string(kBlobInfoProtoLogFileName)};
-  if (!filesystem->ListDirectory(base_dir.c_str(), excludes,
-                                 /*recursive=*/false, &file_names)) {
+  if (!filesystem->ListDirectory(MakeBlobFileDir(base_dir).c_str(),
+                                 &file_names)) {
     return absl_ports::InternalError("Failed to list directory.");
   }
   std::unordered_set<std::string> known_file_names(
@@ -163,30 +179,48 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenWrite(
           "Rewriting the committed blob is not allowed for blob handle: ",
           blob_handle.digest()));
     }
-    auto fd_itr = file_descriptors_for_write_.find(blob_handle_str);
-    if (fd_itr != file_descriptors_for_write_.end()) {
-      if (fcntl(fd_itr->second, F_GETFD) != -1 || errno != EBADF) {
-        // The file descriptor is still valid, return it.
-        return fd_itr->second;
-      }
-    }
   }
 
   // Create a new blob info and blob file.
   ICING_ASSIGN_OR_RETURN(BlobInfoProto blob_info,
                          GetOrCreateBlobInfo(blob_handle_str, blob_handle));
 
-  std::string file_name = absl_ports::StrCat(
-      base_dir_, "/", std::to_string(blob_info.creation_time_ms()));
+  std::string file_name =
+      MakeBlobFileName(base_dir_, blob_info.creation_time_ms());
   int file_descriptor = filesystem_.OpenForWrite(file_name.c_str());
   if (file_descriptor < 0) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to open blob file for handle: ", blob_handle.digest()));
   }
-  // Add the file descriptor for write to the file descriptors set under
-  // pending_blob_handle_str.
-  file_descriptors_for_write_[blob_handle_str] = file_descriptor;
   return file_descriptor;
+}
+
+libtextclassifier3::Status BlobStore::RemoveBlob(
+    const PropertyProto::BlobHandleProto& blob_handle) {
+  ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
+  std::string blob_handle_str = BuildBlobHandleStr(blob_handle);
+
+  auto blob_info_itr = blob_handle_to_offset_.find(blob_handle_str);
+  if (blob_info_itr == blob_handle_to_offset_.end()) {
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "Cannot find the blob for handle: ", blob_handle.digest()));
+  }
+
+  int64_t blob_info_offset = blob_info_itr->second;
+  ICING_ASSIGN_OR_RETURN(BlobInfoProto blob_info,
+                         blob_info_log_->ReadProto(blob_info_offset));
+
+  std::string file_name =
+      MakeBlobFileName(base_dir_, blob_info.creation_time_ms());
+  if (!filesystem_.DeleteFile(file_name.c_str())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to abandon blob file for handle: ", blob_handle.digest()));
+  }
+  ICING_RETURN_IF_ERROR(blob_info_log_->EraseProto(blob_info_offset));
+  blob_handle_to_offset_.erase(blob_info_itr);
+
+  has_mutated_ = true;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<int> BlobStore::OpenRead(
@@ -205,8 +239,9 @@ libtextclassifier3::StatusOr<int> BlobStore::OpenRead(
     return absl_ports::NotFoundError(absl_ports::StrCat(
         "Cannot find the blob for handle: ", blob_handle.digest()));
   }
-  std::string file_name = absl_ports::StrCat(
-      base_dir_, "/", std::to_string(blob_info.creation_time_ms()));
+
+  std::string file_name =
+      MakeBlobFileName(base_dir_, blob_info.creation_time_ms());
   int file_descriptor = filesystem_.OpenForRead(file_name.c_str());
   if (file_descriptor < 0) {
     return absl_ports::InternalError(absl_ports::StrCat(
@@ -238,8 +273,9 @@ libtextclassifier3::Status BlobStore::CommitBlob(
   }
 
   // Read the file and verify the digest.
-  std::string file_name = absl_ports::StrCat(
-      base_dir_, "/", std::to_string(blob_info_proto.creation_time_ms()));
+
+  std::string file_name =
+      MakeBlobFileName(base_dir_, blob_info_proto.creation_time_ms());
   Sha256 sha256;
   {
     ScopedFd sfd(filesystem_.OpenForRead(file_name.c_str()));
@@ -278,11 +314,6 @@ libtextclassifier3::Status BlobStore::CommitBlob(
   // cached pending blob info back if the digest is valid.
 
   ICING_RETURN_IF_ERROR(blob_info_log_->EraseProto(pending_blob_info_offset));
-  auto fd_itr = file_descriptors_for_write_.find(blob_handle_str);
-  if (fd_itr != file_descriptors_for_write_.end()) {
-    close(fd_itr->second);
-    file_descriptors_for_write_.erase(fd_itr);
-  }
 
   if (digest.length() != hash.size() ||
       digest.compare(0, digest.length(),
@@ -384,6 +415,10 @@ libtextclassifier3::Status BlobStore::Optimize(
   // Create the temp blob info log file.
   std::string temp_blob_info_proto_file_name =
       absl_ports::StrCat(MakeBlobInfoProtoLogFileName(base_dir_), "_temp");
+  if (!filesystem_.DeleteFile(temp_blob_info_proto_file_name.c_str())) {
+    return absl_ports::InternalError(
+        "Unable to delete temp file to prepare to build new blob proto file.");
+  }
 
   ICING_ASSIGN_OR_RETURN(PortableFileBackedProtoLog<BlobInfoProto>::CreateResult
                              temp_log_create_result,
@@ -413,8 +448,9 @@ libtextclassifier3::Status BlobStore::Optimize(
         BuildBlobHandleStr(blob_info_proto.blob_handle());
     if (dead_blob_handles.find(blob_handle_str) != dead_blob_handles.end()) {
       // Delete all dead blob files.
-      std::string file_name = absl_ports::StrCat(
-          base_dir_, "/", std::to_string(blob_info_proto.creation_time_ms()));
+
+      std::string file_name =
+          MakeBlobFileName(base_dir_, blob_info_proto.creation_time_ms());
       if (!filesystem_.DeleteFile(file_name.c_str())) {
         return absl_ports::InternalError(
             absl_ports::StrCat("Failed to delete blob file: ", file_name));
@@ -437,6 +473,10 @@ libtextclassifier3::Status BlobStore::Optimize(
     return absl_ports::InternalError(
         "Unable to apply new blob store due to failed swap!");
   }
+
+  // Delete the temp file, don't need to throw error if it fails, it will be
+  // deleted in the next run.
+  filesystem_.DeleteFile(temp_blob_info_proto_file_name.c_str());
 
   ICING_ASSIGN_OR_RETURN(
       PortableFileBackedProtoLog<BlobInfoProto>::CreateResult log_create_result,
@@ -468,8 +508,9 @@ BlobStore::GetStorageInfo() const {
       return std::move(blob_info_proto_or).status();
     }
     BlobInfoProto blob_info_proto = std::move(blob_info_proto_or).ValueOrDie();
-    std::string file_name = absl_ports::StrCat(
-        base_dir_, "/", std::to_string(blob_info_proto.creation_time_ms()));
+
+    std::string file_name =
+        MakeBlobFileName(base_dir_, blob_info_proto.creation_time_ms());
     int64_t file_size = filesystem_.GetFileSize(file_name.c_str());
     if (file_size == Filesystem::kBadFileSize) {
       ICING_LOG(WARNING) << "Bad file size for blob file: " << file_name;

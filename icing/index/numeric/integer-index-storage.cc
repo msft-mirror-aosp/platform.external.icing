@@ -716,9 +716,11 @@ libtextclassifier3::Status IntegerIndexStorage::TransferIndex(
                              old_pl_accessor->GetNextDataBatch());
       while (!batch_old_data.empty()) {
         for (const IntegerIndexData& old_data : batch_old_data) {
+          DocumentId old_document_id = old_data.basic_hit().document_id();
           DocumentId new_document_id =
-              old_data.basic_hit().document_id() < document_id_old_to_new.size()
-                  ? document_id_old_to_new[old_data.basic_hit().document_id()]
+              old_document_id >= 0 &&
+                      old_document_id < document_id_old_to_new.size()
+                  ? document_id_old_to_new[old_document_id]
                   : kInvalidDocumentId;
           // Transfer the document id of the hit if the document is not deleted
           // or outdated.

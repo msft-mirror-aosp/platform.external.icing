@@ -278,12 +278,15 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
 
   // Handle all docs
   EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
+                              put_result0.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
+                              put_result1.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
+                              put_result0.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
 
@@ -387,6 +390,7 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
       std::unique_ptr<PropertyExistenceIndexingHandler> handler,
       PropertyExistenceIndexingHandler::Create(&fake_clock_, index.get()));
   EXPECT_THAT(handler->Handle(tokenized_root_document, document_id,
+                              put_result.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
 
@@ -511,12 +515,15 @@ TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
 
   // Handle all docs
   EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
+                              put_result0.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
+                              put_result1.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
+                              put_result2.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
 

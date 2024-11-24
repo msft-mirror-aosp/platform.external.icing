@@ -116,11 +116,13 @@ const SectionMetadata kStringPrefixSectionMetadata(
 
 const JoinablePropertyMetadata kQualifiedId1JoinablePropertyMetadata(
     kQualifiedId1JoinablePropertyId, TYPE_STRING,
-    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId1));
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, DELETE_PROPAGATION_TYPE_PROPAGATE_FROM,
+    std::string(kQualifiedId1));
 
 const JoinablePropertyMetadata kQualifiedId2JoinablePropertyMetadata(
     kQualifiedId2JoinablePropertyId, TYPE_STRING,
-    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId2));
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, DELETE_PROPAGATION_TYPE_NONE,
+    std::string(kQualifiedId2));
 
 // Other non-indexable/joinable properties.
 constexpr std::string_view kUnindexedStringProperty = "unindexedString";
@@ -200,12 +202,14 @@ class TokenizedDocumentTest : public ::testing::Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kQualifiedId1)
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kQualifiedId2)
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_NONE)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(

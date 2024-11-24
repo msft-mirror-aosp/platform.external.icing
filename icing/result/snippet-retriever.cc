@@ -61,7 +61,8 @@ inline std::string AddIndexToPath(int values_size, int index,
 
 // Returns a string of the normalized text of the input Token. Normalization
 // is applied based on the Token's type.
-std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
+Normalizer::NormalizedTerm NormalizeToken(const Normalizer& normalizer,
+                                          const Token& token) {
   switch (token.type) {
     case Token::Type::RFC822_NAME:
       [[fallthrough]];
@@ -106,7 +107,7 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
     case Token::Type::REGULAR:
       return normalizer.NormalizeTerm(token.text);
     case Token::Type::VERBATIM:
-      return std::string(token.text);
+      return {std::string(token.text)};
     case Token::Type::QUERY_EXCLUSION:
       [[fallthrough]];
     case Token::Type::QUERY_LEFT_PARENTHESES:
@@ -120,7 +121,7 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
     case Token::Type::INVALID:
       ICING_LOG(WARNING) << "Unable to normalize token of type: "
                          << static_cast<int>(token.type);
-      return std::string(token.text);
+      return {std::string(token.text)};
   }
 }
 
@@ -227,10 +228,11 @@ class TokenMatcherExact : public TokenMatcher {
         normalizer_(normalizer) {}
 
   CharacterIterator Matches(Token token) const override {
-    std::string s = NormalizeToken(normalizer_, token);
-    auto itr = unrestricted_query_terms_.find(s);
+    Normalizer::NormalizedTerm normalized_term =
+        NormalizeToken(normalizer_, token);
+    auto itr = unrestricted_query_terms_.find(normalized_term.text);
     if (itr == unrestricted_query_terms_.end()) {
-      itr = restricted_query_terms_.find(s);
+      itr = restricted_query_terms_.find(normalized_term.text);
     }
     if (itr != unrestricted_query_terms_.end() &&
         itr != restricted_query_terms_.end()) {
@@ -257,16 +259,19 @@ class TokenMatcherPrefix : public TokenMatcher {
         normalizer_(normalizer) {}
 
   CharacterIterator Matches(Token token) const override {
-    std::string s = NormalizeToken(normalizer_, token);
+    Normalizer::NormalizedTerm normalized_term =
+        NormalizeToken(normalizer_, token);
     for (const std::string& query_term : unrestricted_query_terms_) {
-      if (query_term.length() <= s.length() &&
-          s.compare(0, query_term.length(), query_term) == 0) {
+      if (query_term.length() <= normalized_term.text.length() &&
+          normalized_term.text.compare(0, query_term.length(), query_term) ==
+              0) {
         return FindMatchEnd(normalizer_, token, query_term);
       }
     }
     for (const std::string& query_term : restricted_query_terms_) {
-      if (query_term.length() <= s.length() &&
-          s.compare(0, query_term.length(), query_term) == 0) {
+      if (query_term.length() <= normalized_term.text.length() &&
+          normalized_term.text.compare(0, query_term.length(), query_term) ==
+              0) {
         return FindMatchEnd(normalizer_, token, query_term);
       }
     }
