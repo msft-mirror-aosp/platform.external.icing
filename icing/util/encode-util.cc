@@ -44,7 +44,7 @@ uint64_t DecodeIntFromCString(std::string_view encoded_str) {
   return value;
 }
 
-std::string EncodeStringToCString(std::string input) {
+std::string EncodeStringToCString(const std::string& input) {
   std::string encoded_str;
   // use uint32_t to store 4 bytes, using unsigned types to keep automatically
   // remove extra left most bits.
