@@ -686,8 +686,11 @@ libtextclassifier3::Status LiteIndex::Optimize(
       // below if there are any valid hits pointing to that termid.
       tvi_to_delete.insert(curr_tvi);
     }
+    DocumentId old_document_id = term_id_hit_pair.hit().document_id();
     DocumentId new_document_id =
-        document_id_old_to_new[term_id_hit_pair.hit().document_id()];
+        old_document_id >= 0 && old_document_id < document_id_old_to_new.size()
+            ? document_id_old_to_new[old_document_id]
+            : kInvalidDocumentId;
     if (new_document_id == kInvalidDocumentId) {
       continue;
     }
@@ -704,6 +707,15 @@ libtextclassifier3::Status LiteIndex::Optimize(
     // allocated region of hit_buffer_.
     TermIdHitPair::Value* valp =
         hit_buffer_.GetMutableMem<TermIdHitPair::Value>(new_size++, 1);
+    if (valp == nullptr) {
+      // This really shouldn't happen since we are only writing to the already
+      // allocated region of hit_buffer_. But just in case, we log and return an
+      // error here.
+      ICING_LOG(ERROR)
+          << "GetMutableMem failed in Optimize. This should never happen.";
+      return absl_ports::ResourceExhaustedError(
+          "Allocating more space in hit buffer failed!");
+    }
     *valp = new_term_id_hit_pair.value();
   }
   header_->set_cur_size(new_size);
