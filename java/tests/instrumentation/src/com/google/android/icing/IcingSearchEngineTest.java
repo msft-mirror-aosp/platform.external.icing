@@ -313,8 +313,8 @@ public final class IcingSearchEngineTest {
     byte[] digest = calculateDigest(data);
     PropertyProto.BlobHandleProto blobHandle =
         PropertyProto.BlobHandleProto.newBuilder()
-            .setLabel("label")
             .setDigest(ByteString.copyFrom(digest))
+            .setNamespace("namespace")
             .build();
 
     // 2 Act: write the blob and read it back.
@@ -349,6 +349,52 @@ public final class IcingSearchEngineTest {
 
     // 3 Assert: the blob content matches.
     assertThat(output).isEqualTo(data);
+  }
+
+  @Ignore // b/350530146
+  @Test
+  public void removeBlob() throws Exception {
+    // 1 Arrange: set up IcingSearchEngine with and blob data
+    File tempDir = temporaryFolder.newFolder();
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] digest = calculateDigest(data);
+    PropertyProto.BlobHandleProto blobHandle =
+        PropertyProto.BlobHandleProto.newBuilder()
+            .setNamespace("ns")
+            .setDigest(ByteString.copyFrom(digest))
+            .build();
+
+    // 2 Act: write the blob and read it back.
+    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    assertStatusOk(openWriteBlobProto.getStatus());
+    Field field = FileDescriptor.class.getDeclaredField("fd");
+    field.setAccessible(true); // Make the field accessible
+
+    // Create a new FileDescriptor object
+    FileDescriptor writeFd = new FileDescriptor();
+
+    // Set the file descriptor value using reflection
+    field.setInt(writeFd, openWriteBlobProto.getFileDescriptor());
+
+    try (FileOutputStream outputStream = new FileOutputStream(writeFd)) {
+      outputStream.write(data);
+    }
+
+    // Remove the blob.
+    BlobProto removeBlobProto = icing.removeBlob(blobHandle);
+    assertStatusOk(removeBlobProto.getStatus());
+
+    // Commit will not found.
+    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    assertThat(commitBlobProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
   @Test
