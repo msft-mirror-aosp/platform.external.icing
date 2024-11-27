@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Google LLC
+// Copyright (C) 2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -21,19 +24,18 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/jni/jni-cache.h"
-#include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/iterator-test-utils.h"
 #include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
+
+namespace test_internal {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
@@ -41,19 +43,9 @@ using ::testing::IsEmpty;
 
 namespace {
 
-class IcuLanguageSegmenterAllLocalesTest
+class IcuWithReverseJniLanguageSegmenterFallbackTest
     : public testing::TestWithParam<const char*> {
  protected:
-  void SetUp() override {
-    if (!IsIcuTokenization()) {
-      GTEST_SKIP() << "ICU tokenization not enabled!";
-    }
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpIcuDataFile(
-            GetTestFilePath("icing/icu.dat")));
-  }
-
   static std::string GetLocale() { return GetParam(); }
 
   std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
@@ -61,31 +53,34 @@ class IcuLanguageSegmenterAllLocalesTest
 
 }  // namespace
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, EmptyText) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, EmptyText) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   EXPECT_THAT(language_segmenter->GetAllTerms(""), IsOkAndHolds(IsEmpty()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, SimpleText) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, SimpleText) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   EXPECT_THAT(language_segmenter->GetAllTerms("Hello World"),
               IsOkAndHolds(ElementsAre("Hello", " ", "World")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ASCII_Punctuation) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, ASCII_Punctuation) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // ASCII punctuation marks are kept
   EXPECT_THAT(
       language_segmenter->GetAllTerms("Hello, World!!!"),
@@ -98,12 +93,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ASCII_Punctuation) {
               IsOkAndHolds(ElementsAre("A", "&", "B")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ASCII_SpecialCharacter) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, ASCII_SpecialCharacter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // ASCII special characters are kept
   EXPECT_THAT(language_segmenter->GetAllTerms("Pay $1000"),
               IsOkAndHolds(ElementsAre("Pay", " ", "$", "1000")));
@@ -117,24 +113,27 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ASCII_SpecialCharacter) {
                                        UCharToString(0x0009), "World")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Non_ASCII_Non_Alphabetic) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       Non_ASCII_Non_Alphabetic) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Full-width (non-ASCII) punctuation marks and special characters are left
   // out.
   EXPECT_THAT(language_segmenter->GetAllTerms("。？·Hello！×"),
               IsOkAndHolds(ElementsAre("。", "？", "·", "Hello", "！", "×")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Acronym) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, Acronym) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   EXPECT_THAT(language_segmenter->GetAllTerms("U.S.𡔖 Bank"),
               IsOkAndHolds(ElementsAre("U.S", ".", "𡔖", " ", "Bank")));
   EXPECT_THAT(language_segmenter->GetAllTerms("I.B.M."),
@@ -145,12 +144,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Acronym) {
               IsOkAndHolds(ElementsAre("I", " ", "B", " ", "M")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // According to unicode word break rules
   // WB6(https://unicode.org/reports/tr29/#WB6),
   // WB7(https://unicode.org/reports/tr29/#WB7), and a few others, some
@@ -160,42 +160,46 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
   // Word connecters
   EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android"),
               IsOkAndHolds(ElementsAre("com.google.android")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("com:google:android"),
+              IsOkAndHolds(ElementsAre("com:google:android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com'google'android"),
               IsOkAndHolds(ElementsAre("com'google'android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com_google_android"),
               IsOkAndHolds(ElementsAre("com_google_android")));
 
   // Word connecters can be mixed
-  EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android_icing"),
-              IsOkAndHolds(ElementsAre("com.google.android_icing")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android:icing"),
+              IsOkAndHolds(ElementsAre("com.google.android:icing")));
 
   // Connectors that don't have valid terms on both sides of it are not
   // considered connectors.
-  EXPECT_THAT(language_segmenter->GetAllTerms("'bar'baz"),
-              IsOkAndHolds(ElementsAre("'", "bar'baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms(":bar:baz"),
+              IsOkAndHolds(ElementsAre(":", "bar:baz")));
 
-  EXPECT_THAT(language_segmenter->GetAllTerms("bar.baz."),
-              IsOkAndHolds(ElementsAre("bar.baz", ".")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:"),
+              IsOkAndHolds(ElementsAre("bar:baz", ":")));
 
   // Connectors that don't have valid terms on both sides of it are not
   // considered connectors.
-  EXPECT_THAT(language_segmenter->GetAllTerms(" .bar.baz"),
-              IsOkAndHolds(ElementsAre(" ", ".", "bar.baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms(" :bar:baz"),
+              IsOkAndHolds(ElementsAre(" ", ":", "bar:baz")));
 
-  EXPECT_THAT(language_segmenter->GetAllTerms("bar'baz' "),
-              IsOkAndHolds(ElementsAre("bar'baz", "'", " ")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz: "),
+              IsOkAndHolds(ElementsAre("bar:baz", ":", " ")));
 
   // Connectors don't connect if one side is an invalid term (？)
-  EXPECT_THAT(language_segmenter->GetAllTerms("bar.baz.？"),
-              IsOkAndHolds(ElementsAre("bar.baz", ".", "？")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("？'bar'baz"),
-              IsOkAndHolds(ElementsAre("？", "'", "bar'baz")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("私'は"),
-              IsOkAndHolds(ElementsAre("私", "'", "は")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("我.每"),
-              IsOkAndHolds(ElementsAre("我", ".", "每")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("เดิน'ไป"),
-              IsOkAndHolds(ElementsAre("เดิน'ไป")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:？"),
+              IsOkAndHolds(ElementsAre("bar:baz", ":", "？")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("？:bar:baz"),
+              IsOkAndHolds(ElementsAre("？", ":", "bar:baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("3:14"),
+              IsOkAndHolds(ElementsAre("3", ":", "14")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("私:は"),
+              IsOkAndHolds(ElementsAre("私", ":", "は")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("我:每"),
+              IsOkAndHolds(ElementsAre("我", ":", "每")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("เดิน:ไป"),
+              IsOkAndHolds(ElementsAre("เดิน:ไป")));
 
   // Any heading and trailing characters are not connecters
   EXPECT_THAT(language_segmenter->GetAllTerms(".com.google.android."),
@@ -210,6 +214,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
               IsOkAndHolds(ElementsAre("com", "+", "google", "+", "android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com*google*android"),
               IsOkAndHolds(ElementsAre("com", "*", "google", "*", "android")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("com@google@android"),
+              IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com^google^android"),
               IsOkAndHolds(ElementsAre("com", "^", "google", "^", "android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com&google&android"),
@@ -223,44 +229,15 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
   EXPECT_THAT(
       language_segmenter->GetAllTerms("com\"google\"android"),
       IsOkAndHolds(ElementsAre("com", "\"", "google", "\"", "android")));
-
-  // In ICU 72, there were a few changes:
-  //   1. ':' stopped being a word connector
-  //   2. '@' became a word connector
-  //   3. <numeric><word-connector><numeric> such as "3'14" is now considered as
-  //      a single token.
-  if (GetIcuTokenizationVersion() >= 72) {
-    EXPECT_THAT(
-        language_segmenter->GetAllTerms("com:google:android"),
-        IsOkAndHolds(ElementsAre("com", ":", "google", ":", "android")));
-    // In ICU 74, the rules for '@' were reverted.
-    if (GetIcuTokenizationVersion() >= 74) {
-      EXPECT_THAT(
-          language_segmenter->GetAllTerms("com@google@android"),
-          IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));
-    } else {
-      EXPECT_THAT(language_segmenter->GetAllTerms("com@google@android"),
-                  IsOkAndHolds(ElementsAre("com@google@android")));
-    }
-    EXPECT_THAT(language_segmenter->GetAllTerms("3'14"),
-                IsOkAndHolds(ElementsAre("3'14")));
-  } else {
-    EXPECT_THAT(language_segmenter->GetAllTerms("com:google:android"),
-                IsOkAndHolds(ElementsAre("com:google:android")));
-    EXPECT_THAT(
-        language_segmenter->GetAllTerms("com@google@android"),
-        IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));
-    EXPECT_THAT(language_segmenter->GetAllTerms("3'14"),
-                IsOkAndHolds(ElementsAre("3", "'", "14")));
-  }
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Apostrophes) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, Apostrophes) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   EXPECT_THAT(language_segmenter->GetAllTerms("It's ok."),
               IsOkAndHolds(ElementsAre("It's", " ", "ok", ".")));
   EXPECT_THAT(language_segmenter->GetAllTerms("He'll be back."),
@@ -279,12 +256,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Apostrophes) {
       IsOkAndHolds(ElementsAre(token_with_quote, " ", "be", " ", "back", ".")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Parentheses) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, Parentheses) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
 
   EXPECT_THAT(language_segmenter->GetAllTerms("(Hello)"),
               IsOkAndHolds(ElementsAre("(", "Hello", ")")));
@@ -293,12 +271,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Parentheses) {
               IsOkAndHolds(ElementsAre(")", "Hello", "(")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Quotes) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, Quotes) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
 
   EXPECT_THAT(language_segmenter->GetAllTerms("\"Hello\""),
               IsOkAndHolds(ElementsAre("\"", "Hello", "\"")));
@@ -307,24 +286,25 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Quotes) {
               IsOkAndHolds(ElementsAre("'", "Hello", "'")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Alphanumeric) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, Alphanumeric) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Alphanumeric terms are allowed
   EXPECT_THAT(language_segmenter->GetAllTerms("Se7en A4 3a"),
               IsOkAndHolds(ElementsAre("Se7en", " ", "A4", " ", "3a")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, Number) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, Number) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
 
   // Alphanumeric terms are allowed
   EXPECT_THAT(
@@ -338,22 +318,26 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Number) {
               IsOkAndHolds(ElementsAre("-", "123")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, FullWidthNumbers) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, FullWidthNumbers) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
+
   EXPECT_THAT(language_segmenter->GetAllTerms("０１２３４５６７８９"),
-              IsOkAndHolds(ElementsAre("０１２３４５６７８９")));
+              IsOkAndHolds(ElementsAre("０", "１", "２", "３", "４", "５", "６",
+                                       "７", "８", "９")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ContinuousWhitespaces) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, ContinuousWhitespaces) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Multiple continuous whitespaces are treated as one.
   const int kNumSeparators = 256;
   std::string text_with_spaces =
@@ -376,12 +360,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ContinuousWhitespaces) {
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, CJKT) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // CJKT (Chinese, Japanese, Khmer, Thai) are the 4 main languages that don't
   // have whitespaces as word delimiter.
 
@@ -402,22 +387,26 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, CJKT) {
       IsOkAndHolds(ElementsAre("ฉัน", "เดิน", "ไป", "ทำงาน", "ทุก", "วัน")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, LatinLettersWithAccents) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       LatinLettersWithAccents) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   EXPECT_THAT(language_segmenter->GetAllTerms("āăąḃḅḇčćç"),
               IsOkAndHolds(ElementsAre("āăąḃḅḇčćç")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, WhitespaceSplitLanguages) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       WhitespaceSplitLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Turkish
   EXPECT_THAT(language_segmenter->GetAllTerms("merhaba dünya"),
               IsOkAndHolds(ElementsAre("merhaba", " ", "dünya")));
@@ -427,12 +416,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WhitespaceSplitLanguages) {
       IsOkAndHolds(ElementsAre("나는", " ", "매일", " ", "출근합니다", ".")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, MixedLanguages) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, MixedLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   EXPECT_THAT(language_segmenter->GetAllTerms("How are you你好吗お元気ですか"),
               IsOkAndHolds(ElementsAre("How", " ", "are", " ", "you", "你好",
                                        "吗", "お", "元気", "です", "か")));
@@ -442,12 +432,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, MixedLanguages) {
       IsOkAndHolds(ElementsAre("나는", " ", "California", "에", " ", "산다")));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, NotCopyStrings) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, NotCopyStrings) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Validates that the input strings are not copied
   const std::string text = "Hello World";
   const char* word1_address = text.c_str();
@@ -463,31 +454,35 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, NotCopyStrings) {
   EXPECT_THAT(word2_address, Eq(word2_result_address));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToStartUtf32WordConnector) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ResetToStartUtf32WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-  constexpr std::string_view kText = "com.google.android is package";
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
+  constexpr std::string_view kText = "com:google:android is package";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
 
-  // String:      "com.google.android is package"
+  // String:      "com:google:android is package"
   //               ^                 ^^ ^^
   // UTF-8 idx:    0              18 19 21 22
   // UTF-32 idx:   0              18 19 21 22
   auto position_or = itr->ResetToStartUtf32();
   EXPECT_THAT(position_or, IsOk());
-  ASSERT_THAT(itr->GetTerm(), Eq("com.google.android"));
+  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, NewIteratorResetToStartUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       NewIteratorResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
@@ -500,13 +495,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, NewIteratorResetToStartUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        IteratorOneAdvanceResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
@@ -520,13 +516,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        IteratorMultipleAdvancesResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
@@ -543,12 +540,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, IteratorDoneResetToStartUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       IteratorDoneResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
@@ -564,17 +563,19 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, IteratorDoneResetToStartUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32WordConnector) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ResetToTermAfterUtf32WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-  constexpr std::string_view kText = "package com.google.android name";
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
+  constexpr std::string_view kText = "package com:google:android name";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
 
-  // String:     "package com.google.android name"
+  // String:     "package com:google:android name"
   //              ^      ^^                 ^^
   // UTF-8 idx:   0      7 8               26 27
   // UTF-32 idx:  0      7 8               26 27
@@ -586,15 +587,17 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32WordConnector) {
   position_or = itr->ResetToTermStartingAfterUtf32(7);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(8));
-  ASSERT_THAT(itr->GetTerm(), Eq("com.google.android"));
+  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32OutOfBounds) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ResetToTermAfterUtf32OutOfBounds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
@@ -615,17 +618,18 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32OutOfBounds) {
 }
 
 // Tests that ResetToTermAfter and Advance produce the same output. With the
-// exception of the first term which is inaccessible via ResetToTermAfter,
-// the stream of terms produced by Advance calls should exactly match the
+// exception of the first term which is inacessible via ResetToTermAfter,
+// the stream of terms produced by Advance calls should exacly match the
 // terms produced by ResetToTermAfter calls with the current position
 // provided as the argument.
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        MixedLanguagesResetToTermAfterUtf32EquivalentToAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are𡔖 you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -643,13 +647,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        ThaiResetToTermAfterUtf32EquivalentToAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -667,13 +672,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        KoreanResetToTermAfterUtf32EquivalentToAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kKorean = "나는 매일 출근합니다.";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -695,13 +701,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
 // ResetToTermAfter(current_position) can be used to simulate Advance, users
 // should be able to mix ResetToTermAfter(current_position) calls and Advance
 // calls to mimic calling Advance.
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        MixedLanguagesResetToTermAfterUtf32InteroperableWithAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are𡔖 you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -720,13 +727,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(advance_and_reset_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        ThaiResetToTermAfterUtf32InteroperableWithAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -745,13 +753,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(advance_and_reset_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        KoreanResetToTermAfterUtf32InteroperableWithAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kKorean = "나는 매일 출근합니다.";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -770,13 +779,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(advance_and_reset_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        MixedLanguagesResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> itr,
       language_segmenter->Segment("How are you你好吗お元気ですか"));
@@ -808,13 +818,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        ContinuousWhitespacesResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Multiple continuous whitespaces are treated as one.
   constexpr std::string_view kTextWithSpace = "Hello          World";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
@@ -849,12 +860,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermAfterUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ChineseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // CJKT (Chinese, Japanese, Khmer, Thai) are the 4 main languages that
   // don't have whitespaces as word delimiter. Chinese
   constexpr std::string_view kChinese = "我每天走路去上班。";
@@ -878,12 +891,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermAfterUtf32) {
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermAfterUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       JapaneseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Japanese
   constexpr std::string_view kJapanese = "私は毎日仕事に歩いています。";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
@@ -906,12 +921,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermAfterUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("。"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermAfterUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       KhmerResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kKhmer = "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kKhmer));
@@ -933,12 +950,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermAfterUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("ធ្វើការ"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermAfterUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ThaiResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Thai
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
@@ -961,25 +980,26 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermAfterUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("ทุก"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        ResetToTermBeforeWordConnectorUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-  constexpr std::string_view kText = "package name com.google.android!";
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
+  constexpr std::string_view kText = "package name com:google:android!";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
 
-  // String:      "package name com.google.android!"
+  // String:      "package name com:google:android!"
   //               ^      ^^   ^^                 ^
   // UTF-8 idx:    0      7 8 12 13               31
   // UTF-32 idx:   0      7 8 12 13               31
   auto position_or = itr->ResetToTermEndingBeforeUtf32(31);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(13));
-  ASSERT_THAT(itr->GetTerm(), Eq("com.google.android"));
+  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 
   position_or = itr->ResetToTermEndingBeforeUtf32(21);
   EXPECT_THAT(position_or, IsOk());
@@ -987,12 +1007,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   ASSERT_THAT(itr->GetTerm(), Eq(" "));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermBeforeOutOfBoundsUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ResetToTermBeforeOutOfBoundsUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kText));
@@ -1017,13 +1039,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermBeforeOutOfBoundsUtf32) {
 // the stream of terms produced by Advance calls should exactly match the
 // terms produced by ResetToTermBefore calls with the current position
 // provided as the argument (after their order has been reversed).
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        MixedLanguagesResetToTermBeforeEquivalentToAdvanceUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kText = "How are𡔖 you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -1043,13 +1066,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(advance_itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        ThaiResetToTermBeforeEquivalentToAdvanceUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -1068,13 +1092,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        KoreanResetToTermBeforeEquivalentToAdvanceUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kKorean = "나는 매일 출근합니다.";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
@@ -1093,13 +1118,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        MixedLanguagesResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> itr,
       language_segmenter->Segment("How are you你好吗お元気ですか"));
@@ -1132,13 +1158,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(itr->GetTerm(), Eq("です"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest,
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
        ContinuousWhitespacesResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Multiple continuous whitespaces are treated as one.
   constexpr std::string_view kTextWithSpace = "Hello          World";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
@@ -1172,12 +1199,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermBeforeUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ChineseResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // CJKT (Chinese, Japanese, Khmer, Thai) are the 4 main languages that
   // don't have whitespaces as word delimiter. Chinese
   constexpr std::string_view kChinese = "我每天走路去上班。";
@@ -1198,12 +1227,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermBeforeUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("去"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermBeforeUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       JapaneseResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Japanese
   constexpr std::string_view kJapanese = "私は毎日仕事に歩いています。";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
@@ -1223,12 +1254,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermBeforeUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("は"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermBeforeUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       KhmerResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   constexpr std::string_view kKhmer = "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kKhmer));
@@ -1247,12 +1280,14 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermBeforeUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("ញុំ"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermBeforeUtf32) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest,
+       ThaiResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Thai
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
@@ -1275,12 +1310,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermBeforeUtf32) {
   EXPECT_THAT(itr->GetTerm(), Eq("ไป"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, QuerySyntax) {
+TEST_P(IcuWithReverseJniLanguageSegmenterFallbackTest, QuerySyntax) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
           language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
+              GetLocale(), jni_cache_.get(),
+              /*enable_icu_segmenter=*/false)));
   // Validates that the input strings are not copied
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<std::string_view> terms,
@@ -1291,53 +1327,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, QuerySyntax) {
                                  "subproperty2", ":", "term3"));
 }
 
-TEST_P(IcuLanguageSegmenterAllLocalesTest, MultipleLangSegmentersTest) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(
-          language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> iterator_one,
-      language_segmenter->Segment("foo bar baz"));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> iterator_two,
-      language_segmenter->Segment("abra kadabra alakazam"));
-
-  ASSERT_TRUE(iterator_one->Advance());
-  ASSERT_TRUE(iterator_two->Advance());
-  EXPECT_THAT(iterator_one->GetTerm(), Eq("foo"));
-  EXPECT_THAT(iterator_two->GetTerm(), Eq("abra"));
-
-  ASSERT_TRUE(iterator_one->Advance());
-  ASSERT_TRUE(iterator_two->Advance());
-  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
-  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
-
-  ASSERT_TRUE(iterator_one->Advance());
-  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
-  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
-  ASSERT_TRUE(iterator_two->Advance());
-  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
-  EXPECT_THAT(iterator_two->GetTerm(), Eq("kadabra"));
-
-  ASSERT_TRUE(iterator_one->Advance());
-  ASSERT_TRUE(iterator_two->Advance());
-  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
-  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
-
-  ASSERT_TRUE(iterator_two->Advance());
-  ASSERT_TRUE(iterator_one->Advance());
-  EXPECT_THAT(iterator_one->GetTerm(), Eq("baz"));
-  EXPECT_THAT(iterator_two->GetTerm(), Eq("alakazam"));
-
-  ASSERT_FALSE(iterator_two->Advance());
-  ASSERT_FALSE(iterator_one->Advance());
-}
-
 INSTANTIATE_TEST_SUITE_P(
-    LocaleName, IcuLanguageSegmenterAllLocalesTest,
+    LocaleName, IcuWithReverseJniLanguageSegmenterFallbackTest,
     testing::Values(ULOC_US, ULOC_UK, ULOC_CANADA, ULOC_CANADA_FRENCH,
                     ULOC_FRANCE, ULOC_GERMANY, ULOC_ITALY, ULOC_JAPAN,
                     ULOC_KOREA, ULOC_SIMPLIFIED_CHINESE,
@@ -1354,6 +1345,8 @@ INSTANTIATE_TEST_SUITE_P(
                     "wrong_locale"  // Will fall back to ICU default locale
                     ""              // Will fall back to ICU default locale
                     ));
+
+}  // namespace test_internal
 
 }  // namespace lib
 }  // namespace icing
