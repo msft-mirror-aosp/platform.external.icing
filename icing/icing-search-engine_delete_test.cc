@@ -47,10 +47,10 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -97,7 +97,7 @@ class IcingSearchEngineDeleteTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -118,33 +118,32 @@ constexpr int64_t kDefaultCreationTimestampMs = 1575492852000;
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
+      true);
   return icing_options;
 }
 
-SchemaProto CreateMessageSchema() {
-  return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-          PropertyConfigBuilder()
-              .SetName("body")
-              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-              .SetCardinality(CARDINALITY_REQUIRED)))
+SchemaTypeConfigProto CreateMessageSchemaTypeConfig() {
+  return SchemaTypeConfigBuilder()
+      .SetType("Message")
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("body")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
       .Build();
 }
 
-SchemaProto CreateEmailSchema() {
-  return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder()
-                   .SetType("Email")
-                   .AddProperty(PropertyConfigBuilder()
-                                    .SetName("body")
-                                    .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                       TOKENIZER_PLAIN)
-                                    .SetCardinality(CARDINALITY_REQUIRED))
-                   .AddProperty(PropertyConfigBuilder()
-                                    .SetName("subject")
-                                    .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                       TOKENIZER_PLAIN)
-                                    .SetCardinality(CARDINALITY_REQUIRED)))
+SchemaTypeConfigProto CreateEmailSchemaTypeConfig() {
+  return SchemaTypeConfigBuilder()
+      .SetType("Email")
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("body")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("subject")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
       .Build();
 }
 
@@ -152,6 +151,186 @@ ScoringSpecProto GetDefaultScoringSpec() {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   return scoring_spec;
+}
+
+TEST_F(IcingSearchEngineDeleteTest, Delete) {
+  SchemaProto schema =
+      SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Sanity check that the document is present.
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document;
+  ASSERT_THAT(
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+
+  // Delete "namespace", "uri".
+  EXPECT_THAT(icing.Delete("namespace", "uri").status(), ProtoIsOk());
+
+  // Get again.
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace, uri) not found.");
+  expected_get_result_proto.clear_document();
+  EXPECT_THAT(
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineDeleteTest, DeleteWithJoinDeletePropagation) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                            DELETE_PROPAGATION_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("name", "Alice")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("name", "Bob")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "email1")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test")
+          .AddStringProperty("sender", "namespace#person1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "email2")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test")
+          .AddStringProperty("sender", "namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto message1 =
+      DocumentBuilder()
+          .SetKey("namespace", "message1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "test")
+          .AddStringProperty("sender", "namespace#person1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto message2 =
+      DocumentBuilder()
+          .SetKey("namespace", "message2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "test")
+          .AddStringProperty("sender", "namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(message1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(message2).status(), ProtoIsOk());
+
+  // Delete person1.
+  DeleteResultProto delete_result = icing.Delete("namespace", "person1");
+  EXPECT_THAT(delete_result.status(), ProtoIsOk());
+  // Person1 and email1 should be deleted.
+  EXPECT_THAT(delete_result.delete_stats().num_documents_deleted(), Eq(2));
+
+  // Verify Get API for email and message documents.
+  // Email1 should be deleted. The joinable property "sender" in schema type
+  // "Email" has delete propagation type PROPAGATE_FROM and the referenced
+  // document "person1" is deleted.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, email1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "email1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  // Email2 should still exist. The joinable property "sender" in schema type
+  // "Email" has delete propagation type PROPAGATE_FROM but the referenced
+  // document "person2" is not deleted.
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = email2;
+  EXPECT_THAT(
+      icing.Get("namespace", "email2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  // Message1 should still exist. The joinable property "sender" in schema type
+  // "Message" has delete propagation type NONE.
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto3.mutable_document() = message1;
+  EXPECT_THAT(icing.Get("namespace", "message1",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_proto3));
+
+  // Message2 should still exist. The joinable property "sender" in schema type
+  // "Message" has delete propagation type NONE, and the referenced document
+  // "person2" is not deleted.
+  GetResultProto expected_get_result_proto4;
+  expected_get_result_proto4.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto4.mutable_document() = message2;
+  EXPECT_THAT(icing.Get("namespace", "message2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_proto4));
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteBySchemaType) {
@@ -258,22 +437,22 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteBySchemaType) {
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteSchemaTypeByQuery) {
-  SchemaProto schema = CreateMessageSchema();
-  // Add an email type
-  SchemaProto tmp = CreateEmailSchema();
-  *schema.add_types() = tmp.types(0);
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(CreateMessageSchemaTypeConfig())
+                           .AddType(CreateEmailSchemaTypeConfig())
+                           .Build();
 
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
-          .SetSchema(schema.types(0).schema_type())
+          .SetSchema("Message")
           .AddStringProperty("body", "message body1")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
   DocumentProto document2 =
       DocumentBuilder()
           .SetKey("namespace2", "uri2")
-          .SetSchema(schema.types(1).schema_type())
+          .SetSchema("Email")
           .AddStringProperty("subject", "subject subject2")
           .AddStringProperty("body", "message body2")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -299,7 +478,7 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteSchemaTypeByQuery) {
   // Delete the first type. The first doc should be irretrievable. The
   // second should still be present.
   SearchSpecProto search_spec;
-  search_spec.add_schema_type_filters(schema.types(0).schema_type());
+  search_spec.add_schema_type_filters("Message");
   EXPECT_THAT(icing.DeleteByQuery(search_spec).status(), ProtoIsOk());
 
   expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
@@ -333,6 +512,9 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteSchemaTypeByQuery) {
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteByNamespace) {
+  SchemaProto schema =
+      SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -362,7 +544,7 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByNamespace) {
                               std::make_unique<IcingFilesystem>(),
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
@@ -434,6 +616,9 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByNamespace) {
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteNamespaceByQuery) {
+  SchemaProto schema =
+      SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -451,7 +636,7 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteNamespaceByQuery) {
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
@@ -504,6 +689,9 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteNamespaceByQuery) {
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteByQuery) {
+  SchemaProto schema =
+      SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -526,7 +714,7 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQuery) {
                               std::make_unique<IcingFilesystem>(),
                               std::move(fake_clock), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
@@ -591,6 +779,9 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQuery) {
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryReturnInfo) {
+  SchemaProto schema =
+      SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -620,7 +811,7 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryReturnInfo) {
                               std::make_unique<IcingFilesystem>(),
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
@@ -690,6 +881,9 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryReturnInfo) {
 }
 
 TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryNotFound) {
+  SchemaProto schema =
+      SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -707,7 +901,7 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryNotFound) {
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
