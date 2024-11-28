@@ -44,14 +44,8 @@ inline bool IsIcuTokenization() {
   return !IsReverseJniTokenization() && !IsCfStringTokenization();
 }
 
-// ICU and Reverse JNI tokenization are enabled.
-inline bool IsIcuWithReverseTokenization() {
-  return IsReverseJniTokenization() && !IsCfStringTokenization();
-}
-
 inline int GetIcuTokenizationVersion() {
-  return (IsIcuTokenization() || IsIcuWithReverseTokenization())
-      ? U_ICU_VERSION_MAJOR_NUM : 0;
+  return IsIcuTokenization() ? U_ICU_VERSION_MAJOR_NUM : 0;
 }
 // Indicates whether stemming is enabled.
 //

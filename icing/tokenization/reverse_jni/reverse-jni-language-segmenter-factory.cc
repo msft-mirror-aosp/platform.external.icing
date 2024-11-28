@@ -32,7 +32,7 @@ constexpr std::string_view kLocaleAmericanEnglishComputer = "en_US_POSIX";
 //
 // Returns:
 //   A LanguageSegmenter on success
-//   INVALID_ARGUMENT_ERROR if locale string is invalid
+//   INVALID_ARGUMENT if locale string is invalid
 //
 // TODO(b/156383798): Figure out if we want to verify locale strings and notify
 // users. Right now illegal locale strings will be ignored by ICU. ICU
