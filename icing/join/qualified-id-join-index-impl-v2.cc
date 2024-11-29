@@ -62,7 +62,7 @@ static constexpr int32_t kSchemaJoinableIdToPostingListMapperAverageKVByteSize =
 inline DocumentId GetNewDocumentId(
     const std::vector<DocumentId>& document_id_old_to_new,
     DocumentId old_document_id) {
-  if (old_document_id >= document_id_old_to_new.size()) {
+  if (old_document_id < 0 || old_document_id >= document_id_old_to_new.size()) {
     return kInvalidDocumentId;
   }
   return document_id_old_to_new[old_document_id];
@@ -71,7 +71,7 @@ inline DocumentId GetNewDocumentId(
 inline NamespaceId GetNewNamespaceId(
     const std::vector<NamespaceId>& namespace_id_old_to_new,
     NamespaceId namespace_id) {
-  if (namespace_id >= namespace_id_old_to_new.size()) {
+  if (namespace_id < 0 || namespace_id >= namespace_id_old_to_new.size()) {
     return kInvalidNamespaceId;
   }
   return namespace_id_old_to_new[namespace_id];
