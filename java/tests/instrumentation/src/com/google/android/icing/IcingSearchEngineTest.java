@@ -209,7 +209,7 @@ public final class IcingSearchEngineTest {
     assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
   }
 
-  // TODO(b/337913932) remove ingore when native API is registed in icing-search-engine-jni.cc
+  // TODO(b/337913932) re-enable this test after we preregister this API in jni
   @Ignore
   @Test
   public void setAndGetSchemaWithDatabase_ok() throws Exception {
