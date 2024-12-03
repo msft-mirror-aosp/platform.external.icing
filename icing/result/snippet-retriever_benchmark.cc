@@ -16,6 +16,7 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
@@ -24,13 +25,14 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "unicode/uloc.h"
 
@@ -72,10 +74,11 @@ using ::testing::SizeIs;
 void BM_SnippetOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string schema_dir = base_dir + "/schema";
   Filesystem filesystem;
@@ -103,7 +106,7 @@ void BM_SnippetOneProperty(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -201,10 +204,11 @@ BENCHMARK(BM_SnippetOneProperty)
 void BM_SnippetRfcOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string schema_dir = base_dir + "/schema";
   Filesystem filesystem;
@@ -232,7 +236,7 @@ void BM_SnippetRfcOneProperty(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));

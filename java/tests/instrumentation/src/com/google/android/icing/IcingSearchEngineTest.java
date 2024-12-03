@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.IcingSearchEngine;
+import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -61,11 +62,20 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
+import com.google.android.icing.protobuf.ByteString;
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.lang.reflect.Field;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -80,6 +90,7 @@ import org.junit.runners.JUnit4;
 public final class IcingSearchEngineTest {
   @Rule public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
+  private static final String SCHEMA_DATABASE_DELIMITER = "/";
   private static final String EMAIL_TYPE = "Email";
 
   private File tempDir;
@@ -110,6 +121,31 @@ public final class IcingSearchEngineTest {
         .build();
   }
 
+  private static SchemaTypeConfigProto createEmailTypeConfigWithDatabase(String database) {
+    return SchemaTypeConfigProto.newBuilder()
+        .setSchemaType(database + SCHEMA_DATABASE_DELIMITER + EMAIL_TYPE)
+        .setDatabase(database)
+        .addProperties(
+            PropertyConfigProto.newBuilder()
+                .setPropertyName("subject")
+                .setDataType(PropertyConfigProto.DataType.Code.STRING)
+                .setCardinality(PropertyConfigProto.Cardinality.Code.OPTIONAL)
+                .setStringIndexingConfig(
+                    StringIndexingConfig.newBuilder()
+                        .setTokenizerType(TokenizerType.Code.PLAIN)
+                        .setTermMatchType(TermMatchType.Code.PREFIX)))
+        .addProperties(
+            PropertyConfigProto.newBuilder()
+                .setPropertyName("body")
+                .setDataType(PropertyConfigProto.DataType.Code.STRING)
+                .setCardinality(PropertyConfigProto.Cardinality.Code.OPTIONAL)
+                .setStringIndexingConfig(
+                    StringIndexingConfig.newBuilder()
+                        .setTokenizerType(TokenizerType.Code.PLAIN)
+                        .setTermMatchType(TermMatchType.Code.PREFIX)))
+        .build();
+  }
+
   private static DocumentProto createEmailDocument(String namespace, String uri) {
     return DocumentProto.newBuilder()
         .setNamespace(namespace)
@@ -117,6 +153,21 @@ public final class IcingSearchEngineTest {
         .setSchema(EMAIL_TYPE)
         .setCreationTimestampMs(1) // Arbitrary non-zero number so Icing doesn't override it
         .build();
+  }
+
+  /** Generate an array contains random bytes for the given length. */
+  private static byte[] generateRandomBytes(int length) {
+    byte[] bytes = new byte[length];
+    Random rd = new Random(); // creating Random object
+    rd.nextBytes(bytes);
+    return bytes;
+  }
+
+  /** Calculate the sha-256 digest for the given data. */
+  private static byte[] calculateDigest(byte[] data) throws NoSuchAlgorithmException {
+    MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
+    messageDigest.update(data);
+    return messageDigest.digest();
   }
 
   @Before
@@ -145,7 +196,7 @@ public final class IcingSearchEngineTest {
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     SetSchemaResultProto setSchemaResultProto =
-        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+        icingSearchEngine.setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false);
     assertStatusOk(setSchemaResultProto.getStatus());
 
     GetSchemaResultProto getSchemaResultProto = icingSearchEngine.getSchema();
@@ -158,6 +209,52 @@ public final class IcingSearchEngineTest {
     assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
   }
 
+  // TODO(b/337913932) re-enable this test after we preregister this API in jni
+  @Ignore
+  @Test
+  public void setAndGetSchemaWithDatabase_ok() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableSchemaDatabase(true)
+            .build();
+    IcingSearchEngine icingSearchEngine = new IcingSearchEngine(options);
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    String db1 = "db1";
+    String db2 = "db2";
+    SchemaProto db1Schema =
+        SchemaProto.newBuilder().addTypes(createEmailTypeConfigWithDatabase(db1)).build();
+    SchemaProto db2Schema =
+        SchemaProto.newBuilder().addTypes(createEmailTypeConfigWithDatabase(db2)).build();
+
+    SetSchemaResultProto setSchemaResultProto =
+        icingSearchEngine.setSchema(db1Schema, /* ignoreErrorsAndDeleteDocuments= */ false);
+    assertStatusOk(setSchemaResultProto.getStatus());
+    setSchemaResultProto =
+        icingSearchEngine.setSchema(db2Schema, /* ignoreErrorsAndDeleteDocuments= */ false);
+    assertStatusOk(setSchemaResultProto.getStatus());
+
+    // Get schema for individual databases.
+    GetSchemaResultProto getSchemaResultProto = icingSearchEngine.getSchemaForDatabase(db1);
+    assertStatusOk(getSchemaResultProto.getStatus());
+    assertThat(getSchemaResultProto.getSchema()).isEqualTo(db1Schema);
+
+    getSchemaResultProto = icingSearchEngine.getSchemaForDatabase(db2);
+    assertStatusOk(getSchemaResultProto.getStatus());
+    assertThat(getSchemaResultProto.getSchema()).isEqualTo(db2Schema);
+
+    // The getSchema() API should still return the full schema.
+    SchemaProto fullSchema =
+        SchemaProto.newBuilder()
+            .addTypes(createEmailTypeConfigWithDatabase(db1))
+            .addTypes(createEmailTypeConfigWithDatabase(db2))
+            .build();
+    getSchemaResultProto = icingSearchEngine.getSchema();
+    assertStatusOk(getSchemaResultProto.getStatus());
+    assertThat(getSchemaResultProto.getSchema()).isEqualTo(fullSchema);
+  }
+
   @Test
   public void testPutAndGetDocuments() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
@@ -166,7 +263,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -189,7 +286,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -232,7 +329,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -291,6 +388,107 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
+  @Ignore // b/350530146
+  @Test
+  public void writeAndReadBlob_blobContentMatches() throws Exception {
+    // 1 Arrange: set up IcingSearchEngine with and blob data
+    File tempDir = temporaryFolder.newFolder();
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] digest = calculateDigest(data);
+    PropertyProto.BlobHandleProto blobHandle =
+        PropertyProto.BlobHandleProto.newBuilder()
+            .setDigest(ByteString.copyFrom(digest))
+            .setNamespace("namespace")
+            .build();
+
+    // 2 Act: write the blob and read it back.
+    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    assertStatusOk(openWriteBlobProto.getStatus());
+    Field field = FileDescriptor.class.getDeclaredField("fd");
+    field.setAccessible(true); // Make the field accessible
+
+    // Create a new FileDescriptor object
+    FileDescriptor writeFd = new FileDescriptor();
+
+    // Set the file descriptor value using reflection
+    field.setInt(writeFd, openWriteBlobProto.getFileDescriptor());
+
+    try (FileOutputStream outputStream = new FileOutputStream(writeFd)) {
+      outputStream.write(data);
+    }
+
+    // Commit and read the blob.
+    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    assertStatusOk(commitBlobProto.getStatus());
+
+    BlobProto openReadBlobProto = icing.openReadBlob(blobHandle);
+    assertStatusOk(openReadBlobProto.getStatus());
+
+    FileDescriptor readFd = new FileDescriptor();
+    field.setInt(readFd, openReadBlobProto.getFileDescriptor());
+    byte[] output = new byte[data.length];
+    try (FileInputStream inputStream = new FileInputStream(readFd)) {
+      inputStream.read(output);
+    }
+
+    // 3 Assert: the blob content matches.
+    assertThat(output).isEqualTo(data);
+  }
+
+  @Ignore // b/350530146
+  @Test
+  public void removeBlob() throws Exception {
+    // 1 Arrange: set up IcingSearchEngine with and blob data
+    File tempDir = temporaryFolder.newFolder();
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] digest = calculateDigest(data);
+    PropertyProto.BlobHandleProto blobHandle =
+        PropertyProto.BlobHandleProto.newBuilder()
+            .setNamespace("ns")
+            .setDigest(ByteString.copyFrom(digest))
+            .build();
+
+    // 2 Act: write the blob and read it back.
+    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    assertStatusOk(openWriteBlobProto.getStatus());
+    Field field = FileDescriptor.class.getDeclaredField("fd");
+    field.setAccessible(true); // Make the field accessible
+
+    // Create a new FileDescriptor object
+    FileDescriptor writeFd = new FileDescriptor();
+
+    // Set the file descriptor value using reflection
+    field.setInt(writeFd, openWriteBlobProto.getFileDescriptor());
+
+    try (FileOutputStream outputStream = new FileOutputStream(writeFd)) {
+      outputStream.write(data);
+    }
+
+    // Remove the blob.
+    BlobProto removeBlobProto = icing.removeBlob(blobHandle);
+    assertStatusOk(removeBlobProto.getStatus());
+
+    // Commit will not found.
+    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    assertThat(commitBlobProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
   @Test
   public void testDelete() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
@@ -299,7 +497,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -323,7 +521,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -348,7 +546,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -373,7 +571,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -428,7 +626,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -453,7 +651,7 @@ public final class IcingSearchEngineTest {
             .build();
 
     DeleteByQueryResultProto deleteResultProto =
-        icingSearchEngine.deleteByQuery(searchSpec, /*returnDeletedDocumentInfo=*/ true);
+        icingSearchEngine.deleteByQuery(searchSpec, /* returnDeletedDocumentInfo= */ true);
     assertStatusOk(deleteResultProto.getStatus());
     DeleteByQueryResultProto.DocumentGroupInfo info =
         DeleteByQueryResultProto.DocumentGroupInfo.newBuilder()
@@ -514,7 +712,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -543,7 +741,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -573,7 +771,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);
@@ -600,7 +798,9 @@ public final class IcingSearchEngineTest {
 
     SchemaProto schema = SchemaProto.newBuilder().addTypes(createEmailTypeConfig()).build();
     assertStatusOk(
-        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false).getStatus());
+        icingSearchEngine
+            .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+            .getStatus());
 
     // String:     "天是蓝的"
     //              ^ ^^ ^
@@ -668,7 +868,9 @@ public final class IcingSearchEngineTest {
 
     SchemaProto schema = SchemaProto.newBuilder().addTypes(createEmailTypeConfig()).build();
     assertStatusOk(
-        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false).getStatus());
+        icingSearchEngine
+            .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+            .getStatus());
 
     // String:    "𐀀𐀁 𐀂𐀃 𐀄"
     //             ^  ^  ^
@@ -737,7 +939,7 @@ public final class IcingSearchEngineTest {
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
     assertThat(
             icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
                 .getStatus()
                 .getCode())
         .isEqualTo(StatusProto.Code.OK);

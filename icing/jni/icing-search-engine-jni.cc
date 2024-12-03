@@ -15,12 +15,14 @@
 #include <jni.h>
 
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/jni/scoped-primitive-array-critical.h"
 #include "icing/jni/scoped-utf-chars.h"
+#include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/optimize.pb.h"
@@ -35,7 +37,8 @@
 #include <google/protobuf/message_lite.h>
 
 namespace {
-
+// TODO(b/347054358): Increase this class's test coverage for Failed to parse
+// Proto cases.
 bool ParseProtoFromJniByteArray(JNIEnv* env, jbyteArray bytes,
                                 google::protobuf::MessageLite* protobuf) {
   icing::lib::ScopedPrimitiveArrayCritical<uint8_t> scoped_array(env, bytes);
@@ -131,6 +134,23 @@ jbyteArray nativeGetSchema(JNIEnv* env, jclass clazz, jobject object) {
       GetIcingSearchEnginePointer(env, object);
 
   icing::lib::GetSchemaResultProto get_schema_result_proto = icing->GetSchema();
+
+  return SerializeProtoToJniByteArray(env, get_schema_result_proto);
+}
+
+// TODO : b/337913932 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetSchemaForDatabase(
+    JNIEnv* env, jclass clazz, jobject object, jstring database) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::ScopedUtfChars scoped_database_chars(env, database);
+  std::string_view database_str_view(scoped_database_chars.c_str(),
+                                     scoped_database_chars.size());
+  icing::lib::GetSchemaResultProto get_schema_result_proto =
+      icing->GetSchema(database_str_view);
 
   return SerializeProtoToJniByteArray(env, get_schema_result_proto);
 }
@@ -245,6 +265,75 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
   icing->InvalidateNextPageToken(next_page_token);
 
   return;
+}
+
+// TODO(b/273591938): Change this API back to the pre-registered API.
+jbyteArray nativeOpenWriteBlob(JNIEnv* env, jclass clazz, jobject object,
+                               jbyteArray blob_handle_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PropertyProto::BlobHandleProto blob_handle;
+  if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobHandle in nativeOpenWriteBlob";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto = icing->OpenWriteBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+jbyteArray nativeRemoveBlob(JNIEnv* env, jclass clazz, jobject object,
+                            jbyteArray blob_handle_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PropertyProto::BlobHandleProto blob_handle;
+  if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobHandle in nativeRemoveBlob";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto = icing->RemoveBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+jbyteArray nativeOpenReadBlob(JNIEnv* env, jclass clazz, jobject object,
+                              jbyteArray blob_handle_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PropertyProto::BlobHandleProto blob_handle;
+  if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobHandle in nativeOpenReadBlob";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto = icing->OpenReadBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+jbyteArray nativeCommitBlob(JNIEnv* env, jclass clazz, jobject object,
+                            jbyteArray blob_handle_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PropertyProto::BlobHandleProto blob_handle;
+  if (!ParseProtoFromJniByteArray(env, blob_handle_bytes, &blob_handle)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobHandle in nativeCommitBlob";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto = icing->CommitBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
 
 jbyteArray nativeSearch(JNIEnv* env, jclass clazz, jobject object,
@@ -486,6 +575,8 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       env->GetFieldID(java_class, "nativePointer", "J");
 
   // Register your class' native methods.
+  // TODO(b/629896095): Add blob methods pre-register here when g3 JNI build
+  // pick up the blob APIs.
   static const JNINativeMethod methods[] = {
       {"nativeCreate", "([B)J", reinterpret_cast<void*>(nativeCreate)},
       {"nativeDestroy", "(Lcom/google/android/icing/IcingSearchEngineImpl;)V",
@@ -520,6 +611,18 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeInvalidateNextPageToken",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;J)V",
        reinterpret_cast<void*>(nativeInvalidateNextPageToken)},
+      {"nativeOpenWriteBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeOpenWriteBlob)},
+      {"nativeRemoveBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeRemoveBlob)},
+      {"nativeOpenReadBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeOpenReadBlob)},
+      {"nativeCommitBlob",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeCommitBlob)},
       {"nativeSearch",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[B[B[BJ)[B",
        reinterpret_cast<void*>(nativeSearch)},

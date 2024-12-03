@@ -31,7 +31,7 @@
 #include "icing/join/document-id-to-join-info.h"
 #include "icing/join/posting-list-join-data-serializer.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -48,7 +48,7 @@ using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::SizeIs;
 
-using JoinDataType = DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>;
+using JoinDataType = DocumentIdToJoinInfo<NamespaceIdFingerprint>;
 
 static constexpr NamespaceId kDefaultNamespaceId = 1;
 
@@ -92,8 +92,8 @@ std::vector<JoinDataType> CreateData(int num_data, DocumentId start_document_id,
   for (int i = 0; i < num_data; ++i) {
     data.push_back(JoinDataType(
         start_document_id,
-        NamespaceFingerprintIdentifier(ref_namespace_id,
-                                       /*fingerprint=*/start_ref_hash_uri)));
+        NamespaceIdFingerprint(ref_namespace_id,
+                               /*fingerprint=*/start_ref_hash_uri)));
 
     ++start_document_id;
     ++start_ref_hash_uri;
@@ -137,7 +137,7 @@ TEST_F(PostingListJoinDataAccessorTest, PreexistingPLKeepOnSameBlock) {
   // Add a single data. This will fit in a min-sized posting list.
   JoinDataType data1(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(kDefaultNamespaceId, /*fingerprint=*/123));
+      NamespaceIdFingerprint(kDefaultNamespaceId, /*fingerprint=*/123));
   ICING_ASSERT_OK(pl_accessor->PrependData(data1));
   PostingListAccessor::FinalizeResult result1 =
       std::move(*pl_accessor).Finalize();
@@ -154,7 +154,7 @@ TEST_F(PostingListJoinDataAccessorTest, PreexistingPLKeepOnSameBlock) {
           flash_index_storage_.get(), serializer_.get(), result1.id));
   JoinDataType data2(
       /*document_id=*/2,
-      NamespaceFingerprintIdentifier(kDefaultNamespaceId, /*fingerprint=*/456));
+      NamespaceIdFingerprint(kDefaultNamespaceId, /*fingerprint=*/456));
   ICING_ASSERT_OK(pl_accessor->PrependData(data2));
   PostingListAccessor::FinalizeResult result2 =
       std::move(*pl_accessor).Finalize();
@@ -372,24 +372,24 @@ TEST_F(PostingListJoinDataAccessorTest,
           flash_index_storage_.get(), serializer_.get()));
   JoinDataType data1(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(kDefaultNamespaceId, /*fingerprint=*/819));
+      NamespaceIdFingerprint(kDefaultNamespaceId, /*fingerprint=*/819));
   ICING_ASSERT_OK(pl_accessor->PrependData(data1));
 
   JoinDataType data2(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(kDefaultNamespaceId, /*fingerprint=*/818));
+      NamespaceIdFingerprint(kDefaultNamespaceId, /*fingerprint=*/818));
   EXPECT_THAT(pl_accessor->PrependData(data2),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  JoinDataType data3(/*document_id=*/1,
-                     NamespaceFingerprintIdentifier(kDefaultNamespaceId - 1,
-                                                    /*fingerprint=*/820));
+  JoinDataType data3(
+      /*document_id=*/1,
+      NamespaceIdFingerprint(kDefaultNamespaceId - 1, /*fingerprint=*/820));
   EXPECT_THAT(pl_accessor->PrependData(data3),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  JoinDataType data4(/*document_id=*/0,
-                     NamespaceFingerprintIdentifier(kDefaultNamespaceId + 1,
-                                                    /*fingerprint=*/820));
+  JoinDataType data4(
+      /*document_id=*/0,
+      NamespaceIdFingerprint(kDefaultNamespaceId + 1, /*fingerprint=*/820));
   EXPECT_THAT(pl_accessor->PrependData(data4),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -414,7 +414,7 @@ TEST_F(PostingListJoinDataAccessorTest,
           flash_index_storage_.get(), serializer_.get()));
   JoinDataType data1(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(kDefaultNamespaceId, /*fingerprint=*/819));
+      NamespaceIdFingerprint(kDefaultNamespaceId, /*fingerprint=*/819));
   ICING_ASSERT_OK(pl_accessor1->PrependData(data1));
   PostingListAccessor::FinalizeResult result1 =
       std::move(*pl_accessor1).Finalize();

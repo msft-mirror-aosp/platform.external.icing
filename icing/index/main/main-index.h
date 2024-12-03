@@ -15,12 +15,20 @@
 #ifndef ICING_INDEX_MAIN_MAIN_INDEX_H_
 #define ICING_INDEX_MAIN_MAIN_INDEX_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/posting-list-hit-accessor.h"
 #include "icing/index/main/posting-list-hit-serializer.h"
@@ -32,8 +40,9 @@
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
-#include "icing/store/namespace-id.h"
+#include "icing/store/document-id.h"
 #include "icing/store/suggestion-result-checker.h"
+#include "icing/util/crc32.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -91,7 +100,7 @@ class MainIndex {
   // input prefix must be normalized, otherwise inaccurate results may be
   // returned. If scoring_match_type is EXACT, only exact hit will be counted
   // and it is PREFIX, both prefix and exact hits will be counted. Results are
-  // not sorted specifically and are in lexigraphical order. Number of results
+  // not sorted specifically and are in lexicographical order. Number of results
   // are no more than 'num_to_return'.
   //
   // Returns:
@@ -173,6 +182,12 @@ class MainIndex {
     }
     return absl_ports::InternalError("Unable to sync main index components.");
   }
+
+  // Updates and returns the checksums of the components in the MainIndex.
+  Crc32 UpdateChecksum() { return main_lexicon_->UpdateCrc(); }
+
+  // Calculates and returns the checksums of the components in the MainIndex.
+  Crc32 GetChecksum() const { return main_lexicon_->GetCrc(); }
 
   DocumentId last_added_document_id() const {
     return flash_index_storage_->get_last_indexed_docid();
@@ -324,8 +339,9 @@ class MainIndex {
   //   largest document id added to the translated posting list, on success
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<DocumentId> TransferAndAddHits(
-      const std::vector<DocumentId>& document_id_old_to_new, const char* term,
-      PostingListHitAccessor& old_pl_accessor, MainIndex* new_index);
+      const std::vector<DocumentId>& document_id_old_to_new,
+      std::string_view term, PostingListHitAccessor& old_pl_accessor,
+      MainIndex* new_index);
 
   // Transfer hits from the current main index to new_index.
   //

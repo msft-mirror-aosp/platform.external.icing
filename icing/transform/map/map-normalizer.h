@@ -38,7 +38,8 @@ class MapNormalizer : public Normalizer {
   //   - Common diacritic Latin characters -> ASCII
   //
   // Read more mapping details in normalization-map.cc
-  std::string NormalizeTerm(std::string_view term) const override;
+  Normalizer::NormalizedTerm NormalizeTerm(
+      std::string_view term) const override;
 
   // Returns a CharacterIterator pointing to one past the end of the segment of
   // term that (once normalized) matches with normalized_term.
