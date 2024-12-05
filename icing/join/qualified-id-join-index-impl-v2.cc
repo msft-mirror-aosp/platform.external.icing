@@ -39,7 +39,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
@@ -62,7 +62,7 @@ static constexpr int32_t kSchemaJoinableIdToPostingListMapperAverageKVByteSize =
 inline DocumentId GetNewDocumentId(
     const std::vector<DocumentId>& document_id_old_to_new,
     DocumentId old_document_id) {
-  if (old_document_id >= document_id_old_to_new.size()) {
+  if (old_document_id < 0 || old_document_id >= document_id_old_to_new.size()) {
     return kInvalidDocumentId;
   }
   return document_id_old_to_new[old_document_id];
@@ -71,7 +71,7 @@ inline DocumentId GetNewDocumentId(
 inline NamespaceId GetNewNamespaceId(
     const std::vector<NamespaceId>& namespace_id_old_to_new,
     NamespaceId namespace_id) {
-  if (namespace_id >= namespace_id_old_to_new.size()) {
+  if (namespace_id < 0 || namespace_id >= namespace_id_old_to_new.size()) {
     return kInvalidNamespaceId;
   }
   return namespace_id_old_to_new[namespace_id];
@@ -224,17 +224,16 @@ QualifiedIdJoinIndexImplV2::~QualifiedIdJoinIndexImplV2() {
 libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Put(
     SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
     DocumentId document_id,
-    std::vector<NamespaceFingerprintIdentifier>&&
-        ref_namespace_fingerprint_ids) {
-  std::sort(ref_namespace_fingerprint_ids.begin(),
-            ref_namespace_fingerprint_ids.end());
+    std::vector<NamespaceIdFingerprint>&& ref_namespace_id_uri_fingerprints) {
+  std::sort(ref_namespace_id_uri_fingerprints.begin(),
+            ref_namespace_id_uri_fingerprints.end());
 
   // Dedupe.
-  auto last = std::unique(ref_namespace_fingerprint_ids.begin(),
-                          ref_namespace_fingerprint_ids.end());
-  ref_namespace_fingerprint_ids.erase(last,
-                                      ref_namespace_fingerprint_ids.end());
-  if (ref_namespace_fingerprint_ids.empty()) {
+  auto last = std::unique(ref_namespace_id_uri_fingerprints.begin(),
+                          ref_namespace_id_uri_fingerprints.end());
+  ref_namespace_id_uri_fingerprints.erase(
+      last, ref_namespace_id_uri_fingerprints.end());
+  if (ref_namespace_id_uri_fingerprints.empty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -262,11 +261,11 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Put(
   }
 
   // Prepend join data into posting list.
-  for (const NamespaceFingerprintIdentifier& ref_namespace_fingerprint_id :
-       ref_namespace_fingerprint_ids) {
-    ICING_RETURN_IF_ERROR(pl_accessor->PrependData(
-        DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-            document_id, ref_namespace_fingerprint_id)));
+  for (const NamespaceIdFingerprint& ref_namespace_id_uri_fingerprint :
+       ref_namespace_id_uri_fingerprints) {
+    ICING_RETURN_IF_ERROR(
+        pl_accessor->PrependData(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            document_id, ref_namespace_id_uri_fingerprint)));
   }
 
   // Finalize the posting list and update mapper.
@@ -282,7 +281,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Put(
       encoded_schema_type_joinable_property_id_str, result.id));
 
   // Update info.
-  info().num_data += ref_namespace_fingerprint_ids.size();
+  info().num_data += ref_namespace_id_uri_fingerprints.size();
 
   return libtextclassifier3::Status::OK;
 }
@@ -565,9 +564,9 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::TransferIndex(
           // We can reuse the fingerprint from old_join_data, since document uri
           // (and its fingerprint) will never change.
           new_join_data_vec.push_back(JoinDataType(
-              new_document_id, NamespaceFingerprintIdentifier(
-                                   new_ref_namespace_id,
-                                   old_join_data.join_info().fingerprint())));
+              new_document_id,
+              NamespaceIdFingerprint(new_ref_namespace_id,
+                                     old_join_data.join_info().fingerprint())));
         }
       }
       ICING_ASSIGN_OR_RETURN(batch_old_join_data,

@@ -26,6 +26,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
@@ -46,6 +47,7 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/status-macros.h"
 
@@ -68,25 +70,26 @@ class ScoringProcessorTest
         schema_store_dir_(test_dir_ + "/schema_store") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     // Creates file directories
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -132,7 +135,7 @@ class ScoringProcessorTest
       SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT;
   EmbeddingQueryResults empty_embedding_query_results;
 
- private:
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const std::string test_dir_;
   const std::string doc_store_dir_;
   const std::string schema_store_dir_;
@@ -209,12 +212,13 @@ PropertyWeight CreatePropertyWeight(std::string path, double weight) {
 
 TEST_F(ScoringProcessorTest, CreationWithNullDocumentStoreShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(
-      ScoringProcessor::Create(
-          spec_proto, default_semantic_metric_type, /*document_store=*/nullptr,
-          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(ScoringProcessor::Create(
+                  spec_proto, default_semantic_metric_type,
+                  /*document_store=*/nullptr, schema_store(),
+                  fake_clock().GetSystemTimeMilliseconds(),
+                  /*join_children_fetcher=*/nullptr,
+                  &empty_embedding_query_results, feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
@@ -223,7 +227,8 @@ TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           /*schema_store=*/nullptr, fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -233,7 +238,8 @@ TEST_P(ScoringProcessorTest, ShouldCreateInstance) {
   ICING_EXPECT_OK(ScoringProcessor::Create(
       spec_proto, default_semantic_metric_type, document_store(),
       schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+      /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+      feature_flags_.get()));
 }
 
 TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
@@ -251,7 +257,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/5),
@@ -281,7 +288,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/-1),
@@ -314,7 +322,8 @@ TEST_P(ScoringProcessorTest, ShouldRespectNumToScore) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/2),
@@ -349,7 +358,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByDocumentScore) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -410,7 +420,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -485,7 +496,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -564,7 +576,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -584,6 +597,232 @@ TEST_P(ScoringProcessorTest,
       ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
                   EqualsScoredDocumentHit(expected_scored_doc_hit2),
                   EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
+TEST_P(ScoringProcessorTest, ShouldScoreByRelevanceScore_MultipleQueryTerms) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store()->Put(document1, /*num_tokens=*/20));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store()->Put(document2, /*num_tokens=*/20));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store()->Put(document3, /*num_tokens=*/20));
+  DocumentId document_id3 = put_result3.new_document_id;
+
+  // Index 5 terms with total frequencies:
+  // {"foo": 7, "bar": 5, "baz": 2, "qux": 1, "lux": 4}
+  // Document 1 term-frequencies: {"foo": 3, "bar": 3, "baz": 2, "qux": 0,
+  // "lux": 3}
+  DocHitInfoTermFrequencyPair foo_doc_hit_info1 = DocHitInfo(document_id1);
+  DocHitInfoTermFrequencyPair bar_doc_hit_info1 = DocHitInfo(document_id1);
+  DocHitInfoTermFrequencyPair baz_doc_hit_info1 = DocHitInfo(document_id1);
+  DocHitInfoTermFrequencyPair lux_doc_hit_info1 = DocHitInfo(document_id1);
+  foo_doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/3);
+  bar_doc_hit_info1.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/3);
+  baz_doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/2);
+  lux_doc_hit_info1.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/3);
+  // Document 2 term-frequencies: {"foo": 3, "bar": 2, "baz": 0, "qux": 0,
+  // "lux": 0}
+  DocHitInfoTermFrequencyPair foo_doc_hit_info2 = DocHitInfo(document_id2);
+  DocHitInfoTermFrequencyPair bar_doc_hit_info2 = DocHitInfo(document_id2);
+  foo_doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/3);
+  bar_doc_hit_info2.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/2);
+  // Document 3 term-frequencies: {"foo": 1, "bar": 0, "baz": 0, "qux": 1,
+  // "lux": 1}
+  DocHitInfoTermFrequencyPair foo_doc_hit_info3 = DocHitInfo(document_id3);
+  DocHitInfoTermFrequencyPair qux_doc_hit_info3 = DocHitInfo(document_id3);
+  DocHitInfoTermFrequencyPair lux_doc_hit_info3 = DocHitInfo(document_id3);
+  foo_doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  qux_doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/1);
+  lux_doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/1);
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfoTermFrequencyPair> foo_doc_hit_infos = {
+      foo_doc_hit_info1, foo_doc_hit_info2, foo_doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> bar_doc_hit_infos = {
+      bar_doc_hit_info1, bar_doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> baz_doc_hit_infos = {
+      baz_doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> qux_doc_hit_infos = {
+      qux_doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> lux_doc_hit_infos = {
+      lux_doc_hit_info1, lux_doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with the results for the query words
+  std::unique_ptr<DocHitInfoIterator> foo_doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(foo_doc_hit_infos, "foo");
+  std::unique_ptr<DocHitInfoIterator> bar_doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(bar_doc_hit_infos, "bar");
+  std::unique_ptr<DocHitInfoIterator> baz_doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(baz_doc_hit_infos, "baz");
+  std::unique_ptr<DocHitInfoIterator> qux_doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(qux_doc_hit_infos, "qux");
+  std::unique_ptr<DocHitInfoIterator> lux_doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(lux_doc_hit_infos, "lux");
+
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(
+          spec_proto, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
+
+  SectionIdMask kSectionIdMask1 = 0b00000001;
+  SectionIdMask kSectionIdMask2 = 0b00000010;
+
+  {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+        query_term_iterators;
+    query_term_iterators["foo"] =
+        std::make_unique<DocHitInfoIteratorDummy>(foo_doc_hit_infos, "foo");
+    query_term_iterators["bar"] =
+        std::make_unique<DocHitInfoIteratorDummy>(bar_doc_hit_infos, "bar");
+    query_term_iterators["baz"] =
+        std::make_unique<DocHitInfoIteratorDummy>(baz_doc_hit_infos, "baz");
+    query_term_iterators["qux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(qux_doc_hit_infos, "qux");
+    query_term_iterators["lux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(lux_doc_hit_infos, "lux");
+
+    // Score "foo".
+    ScoredDocumentHit foo_expected_scored_doc_hit1(document_id1,
+                                                   kSectionIdMask1,
+                                                   /*score=*/0.19672);
+    ScoredDocumentHit foo_expected_scored_doc_hit2(document_id2,
+                                                   kSectionIdMask1,
+                                                   /*score=*/0.19672);
+    ScoredDocumentHit foo_expected_scored_doc_hit3(document_id3,
+                                                   kSectionIdMask1,
+                                                   /*score=*/0.118455);
+    EXPECT_THAT(
+        scoring_processor->Score(std::move(foo_doc_hit_info_iterator),
+                                 /*num_to_score=*/3, &query_term_iterators),
+        ElementsAre(EqualsScoredDocumentHit(foo_expected_scored_doc_hit1),
+                    EqualsScoredDocumentHit(foo_expected_scored_doc_hit2),
+                    EqualsScoredDocumentHit(foo_expected_scored_doc_hit3)));
+  }
+
+  {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+        query_term_iterators;
+    query_term_iterators["foo"] =
+        std::make_unique<DocHitInfoIteratorDummy>(foo_doc_hit_infos, "foo");
+    query_term_iterators["bar"] =
+        std::make_unique<DocHitInfoIteratorDummy>(bar_doc_hit_infos, "bar");
+    query_term_iterators["baz"] =
+        std::make_unique<DocHitInfoIteratorDummy>(baz_doc_hit_infos, "baz");
+    query_term_iterators["qux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(qux_doc_hit_infos, "qux");
+    query_term_iterators["lux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(lux_doc_hit_infos, "lux");
+
+    // Score "bar"
+    ScoredDocumentHit bar_expected_scored_doc_hit1(document_id1,
+                                                   kSectionIdMask2,
+                                                   /*score=*/0.692416);
+    ScoredDocumentHit bar_expected_scored_doc_hit2(document_id2,
+                                                   kSectionIdMask2,
+                                                   /*score=*/0.594257);
+    EXPECT_THAT(
+        scoring_processor->Score(std::move(bar_doc_hit_info_iterator),
+                                 /*num_to_score=*/3, &query_term_iterators),
+        ElementsAre(EqualsScoredDocumentHit(bar_expected_scored_doc_hit1),
+                    EqualsScoredDocumentHit(bar_expected_scored_doc_hit2)));
+  }
+
+  {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+        query_term_iterators;
+    query_term_iterators["foo"] =
+        std::make_unique<DocHitInfoIteratorDummy>(foo_doc_hit_infos, "foo");
+    query_term_iterators["bar"] =
+        std::make_unique<DocHitInfoIteratorDummy>(bar_doc_hit_infos, "bar");
+    query_term_iterators["baz"] =
+        std::make_unique<DocHitInfoIteratorDummy>(baz_doc_hit_infos, "baz");
+    query_term_iterators["qux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(qux_doc_hit_infos, "qux");
+    query_term_iterators["lux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(lux_doc_hit_infos, "lux");
+
+    // Score "baz"
+    ScoredDocumentHit baz_expected_scored_doc_hit1(document_id1,
+                                                   kSectionIdMask1,
+                                                   /*score=*/1.240129);
+    EXPECT_THAT(
+        scoring_processor->Score(std::move(baz_doc_hit_info_iterator),
+                                 /*num_to_score=*/3, &query_term_iterators),
+        ElementsAre(EqualsScoredDocumentHit(baz_expected_scored_doc_hit1)));
+  }
+
+  {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+        query_term_iterators;
+    query_term_iterators["foo"] =
+        std::make_unique<DocHitInfoIteratorDummy>(foo_doc_hit_infos, "foo");
+    query_term_iterators["bar"] =
+        std::make_unique<DocHitInfoIteratorDummy>(bar_doc_hit_infos, "bar");
+    query_term_iterators["baz"] =
+        std::make_unique<DocHitInfoIteratorDummy>(baz_doc_hit_infos, "baz");
+    query_term_iterators["qux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(qux_doc_hit_infos, "qux");
+    query_term_iterators["lux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(lux_doc_hit_infos, "lux");
+
+    // Score "qux"
+    ScoredDocumentHit qux_expected_scored_doc_hit1(document_id3,
+                                                   kSectionIdMask2,
+                                                   /*score=*/0.87009);
+    EXPECT_THAT(
+        scoring_processor->Score(std::move(qux_doc_hit_info_iterator),
+                                 /*num_to_score=*/3, &query_term_iterators),
+        ElementsAre(EqualsScoredDocumentHit(qux_expected_scored_doc_hit1)));
+  }
+
+  {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+        query_term_iterators;
+    query_term_iterators["foo"] =
+        std::make_unique<DocHitInfoIteratorDummy>(foo_doc_hit_infos, "foo");
+    query_term_iterators["bar"] =
+        std::make_unique<DocHitInfoIteratorDummy>(bar_doc_hit_infos, "bar");
+    query_term_iterators["baz"] =
+        std::make_unique<DocHitInfoIteratorDummy>(baz_doc_hit_infos, "baz");
+    query_term_iterators["qux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(qux_doc_hit_infos, "qux");
+    query_term_iterators["lux"] =
+        std::make_unique<DocHitInfoIteratorDummy>(lux_doc_hit_infos, "lux");
+
+    // Score "lux"
+    ScoredDocumentHit lux_expected_scored_doc_hit1(document_id1,
+                                                   kSectionIdMask2,
+                                                   /*score=*/0.692416);
+    ScoredDocumentHit lux_expected_scored_doc_hit2(document_id3,
+                                                   kSectionIdMask2,
+                                                   /*score=*/0.416939);
+    EXPECT_THAT(
+        scoring_processor->Score(std::move(lux_doc_hit_info_iterator),
+                                 /*num_to_score=*/3, &query_term_iterators),
+        ElementsAre(EqualsScoredDocumentHit(lux_expected_scored_doc_hit1),
+                    EqualsScoredDocumentHit(lux_expected_scored_doc_hit2)));
+  }
 }
 
 TEST_P(ScoringProcessorTest,
@@ -617,7 +856,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -687,7 +927,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -762,7 +1003,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -827,7 +1069,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   ScoringSpecProto spec_proto_with_weights =
       CreateScoringSpecForRankingStrategy(
@@ -846,7 +1089,8 @@ TEST_P(ScoringProcessorTest,
           spec_proto_with_weights, default_semantic_metric_type,
           document_store(), schema_store(),
           fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -937,7 +1181,8 @@ TEST_P(ScoringProcessorTest,
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -1005,7 +1250,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1071,7 +1317,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1137,7 +1384,8 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -1176,7 +1424,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleNoScores) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/4),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
@@ -1231,7 +1480,8 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
       ScoringProcessor::Create(
           spec_proto, default_semantic_metric_type, document_store(),
           schema_store(), fake_clock().GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results));
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),

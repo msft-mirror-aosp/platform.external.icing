@@ -134,6 +134,20 @@ ExtractPropertyValues<int64_t>(const PropertyProto& property) {
 }
 
 template <>
+libtextclassifier3::StatusOr<std::vector<double>> ExtractPropertyValues<double>(
+    const PropertyProto& property) {
+  return std::vector<double>(property.double_values().begin(),
+                             property.double_values().end());
+}
+
+template <>
+libtextclassifier3::StatusOr<std::vector<bool>> ExtractPropertyValues<bool>(
+    const PropertyProto& property) {
+  return std::vector<bool>(property.boolean_values().begin(),
+                           property.boolean_values().end());
+}
+
+template <>
 libtextclassifier3::StatusOr<std::vector<PropertyProto::VectorProto>>
 ExtractPropertyValues<PropertyProto::VectorProto>(
     const PropertyProto& property) {

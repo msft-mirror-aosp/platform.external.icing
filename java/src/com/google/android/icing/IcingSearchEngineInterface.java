@@ -58,6 +58,14 @@ public interface IcingSearchEngineInterface extends Closeable {
   GetSchemaResultProto getSchema();
 
   /**
+   * Gets the schema for the specified database for the icing instance.
+   *
+   * @param database an icing schema database name. The retrieved SchemaProto will only contain
+   *     types that belong to the requested database.
+   */
+  GetSchemaResultProto getSchemaForDatabase(String database);
+
+  /**
    * Gets the schema for the icing instance.
    *
    * @param schemaType type of the schema.
@@ -99,6 +107,9 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Gets a file descriptor to write blob data. */
   BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);
+
+  /** Removes a pending blob. */
+  BlobProto removeBlob(PropertyProto.BlobHandleProto blobHandle);
 
   /** Gets a file descriptor to read blob data. */
   BlobProto openReadBlob(PropertyProto.BlobHandleProto blobHandle);

@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/schema/schema-store.h"
@@ -46,7 +47,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
         default_semantic_metric_type,
     const DocumentStore* document_store, const SchemaStore* schema_store,
     int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
-    const EmbeddingQueryResults* embedding_query_results);
+    const EmbeddingQueryResults* embedding_query_results,
+    const FeatureFlags* feature_flags);
 
 }  // namespace scorer_factory
 
