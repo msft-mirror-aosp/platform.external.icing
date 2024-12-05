@@ -23,6 +23,7 @@
 #include "third_party/absl/flags/flag.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-index.h"
@@ -39,14 +40,15 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "unicode/uloc.h"
 
@@ -87,8 +89,8 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
                      TermMatchType::Code term_match_type,
                      const std::string& token) {
   Index::Editor editor =
-      index->Edit(document_id, section_id, term_match_type, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(token.c_str()));
+      index->Edit(document_id, section_id, /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm(token, term_match_type));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 }
 
@@ -110,23 +112,24 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
 
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store) {
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
   return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store,
+      filesystem, base_dir, clock, schema_store, &feature_flags,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/true,
-      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
 
 void BM_QueryOneTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
@@ -149,9 +152,6 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto embedding_index,
-      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -164,17 +164,22 @@ void BM_QueryOneTerm(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
-                          schema_store.get())
+                          schema_store.get(), feature_flags)
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -190,10 +195,11 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -258,10 +264,11 @@ BENCHMARK(BM_QueryOneTerm)
 void BM_QueryFiveTerms(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
@@ -284,9 +291,6 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto embedding_index,
-      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -299,17 +303,22 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
-                          schema_store.get())
+                          schema_store.get(), feature_flags)
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -339,10 +348,11 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -411,10 +421,11 @@ BENCHMARK(BM_QueryFiveTerms)
 void BM_QueryDiacriticTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
@@ -437,9 +448,6 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto embedding_index,
-      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -452,17 +460,22 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
-                          schema_store.get())
+                          schema_store.get(), feature_flags)
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -481,10 +494,11 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -549,10 +563,11 @@ BENCHMARK(BM_QueryDiacriticTerm)
 void BM_QueryHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
@@ -575,9 +590,6 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
       DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto embedding_index,
-      EmbeddingIndex::Create(&filesystem, embedding_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -590,17 +602,22 @@ void BM_QueryHiragana(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
-                          schema_store.get())
+                          schema_store.get(), feature_flags)
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto embedding_index,
+      EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
+                             &feature_flags));
 
   DocumentId document_id = document_store
                                ->Put(DocumentBuilder()
@@ -619,10 +636,11 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             embedding_index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get(), &clock));
+      QueryProcessor::Create(
+          index.get(), numeric_index.get(), embedding_index.get(),
+          language_segmenter.get(), normalizer.get(), document_store.get(),
+          schema_store.get(), /*join_children_fetcher=*/nullptr, &clock,
+          &feature_flags));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
