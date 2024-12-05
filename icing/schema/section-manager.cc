@@ -62,6 +62,7 @@ libtextclassifier3::Status AppendNewSectionMetadata(
       property_config.string_indexing_config().term_match_type(),
       property_config.integer_indexing_config().numeric_match_type(),
       property_config.embedding_indexing_config().embedding_indexing_type(),
+      property_config.embedding_indexing_config().quantization_type(),
       std::move(concatenated_path)));
   return libtextclassifier3::Status::OK;
 }

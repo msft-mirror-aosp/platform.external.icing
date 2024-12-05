@@ -74,7 +74,7 @@ class PortableFileBackedProtoLogTest : public ::testing::Test {
   std::string file_path_;
   bool compress_ = true;
   int32_t compression_level_ =
-      PortableFileBackedProtoLog<DocumentProto>::kDeflateCompressionLevel;
+      PortableFileBackedProtoLog<DocumentProto>::kDefaultCompressionLevel;
   int64_t max_proto_size_ = 256 * 1024;  // 256 KiB
 };
 
