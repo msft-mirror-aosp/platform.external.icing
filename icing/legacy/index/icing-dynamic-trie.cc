@@ -284,7 +284,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   const Node *GetNode(uint32_t idx) const {
     return &array_storage_[NODE].array_cast<Node>()[idx];
   }
+
+  // REQUIRES: !empty(). Otherwise node 0 could contain invalid data
+  //   (next_index, is_leaf, log2_num_children).
   const Node *GetRootNode() const { return GetNode(0); }
+
   const Next *GetNext(uint32_t idx, int child) const {
     return &array_storage_[NEXT].array_cast<Next>()[idx + child];
   }
@@ -335,6 +339,8 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   void FillDirtyPageStats(Stats *stats) const;
 
   void inc_num_keys() { hdr_.hdr.set_num_keys(hdr_.hdr.num_keys() + 1); }
+
+  void dec_num_keys() { hdr_.hdr.set_num_keys(hdr_.hdr.num_keys() - 1); }
 
  private:
   friend void IcingDynamicTrie::SetHeader(
@@ -1072,9 +1078,22 @@ class IcingDynamicTrie::Dumper {
   //   level - how many levels deep we are in the trie
   //   ret - the stream to pretty print to
   //   keys - the keys encountered are appended to this
+  //
+  // REQUIRES: node is valid.
+  //   - Since we only invalidate Next to remove the edge from the trie and Node
+  //     is not invalidated after deletion, the caller should ensure that it
+  //     traverses correctly to a valid node according to the trie structure.
+  //     Calling this function with an invalid node is undefined behavior since
+  //     it could traverse into a deleted subtree, or invalid memory addresses.
+  //   - This also means storage_->empty() should be checked before calling this
+  //     function with the root node.
   void DumpNodeRecursive(const std::string &prefix, const Node &node, int level,
                          std::ostream *ret,
                          std::vector<std::string> *keys) const {
+    // This function should be called only if the node is valid. The first call
+    // is always from the root node, so it means the trie should not be empty at
+    // this moment. Otherwise (root) node could contain invalid next_index(),
+    // is_leaf(), and log2_num_children().
     if (node.is_leaf()) {
       // Dump suffix and value.
       for (int i = 0; i < level; i++) {
@@ -1368,8 +1387,19 @@ uint32_t IcingDynamicTrie::size() const {
   return storage_->hdr().num_keys();
 }
 
+bool IcingDynamicTrie::empty() const {
+  if (!is_initialized()) {
+    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+  }
+  return storage_->empty();
+}
+
 void IcingDynamicTrie::CollectStatsRecursive(const Node &node, Stats *stats,
                                              uint32_t depth) const {
+  // This function should be called only if the node is valid. The first call is
+  // always from the root node, so it means the trie should not be empty at this
+  // moment. Otherwise (root) node could contain invalid next_index(),
+  // is_leaf(), and log2_num_children().
   if (node.is_leaf()) {
     stats->num_leaves++;
     stats->sum_depth += depth;
@@ -2577,6 +2607,19 @@ bool IcingDynamicTrie::ClearDeleted(uint32_t value_index) {
 // 2. Remove the suffix and the value.
 // 3. Reset the nexts that point to the nodes to be removed.
 // 4. Sort any next array if needed.
+// 5. Reset the trie state if the trie is empty after deletion.
+//    - This is essential for storage_->empty(), which is a critical check for
+//      all trie APIs before accessing the root node via
+//      storage_->GetRootNode().
+//    - When the trie is empty, it is possible that the root node (i.e.
+//      Node(0)):
+//      - Contains an invalid next_index(), and accessing it will cause a crash
+//        or fetch incorrect data.
+//      - Points to a valid next array but the next elements in the array
+//        contain kInvalidNodeIndex. Accessing the next node via the next
+//        element will cause a crash or fetch incorrect data.
+//    - So we must reset the trie state to make sure storage_->empty() works
+//      correctly and prevents trie APIs from accessing the root node.
 bool IcingDynamicTrie::Delete(std::string_view key) {
   if (!is_initialized()) {
     ICING_LOG(ERROR) << "DynamicTrie not initialized";
@@ -2686,6 +2729,19 @@ bool IcingDynamicTrie::Delete(std::string_view key) {
       storage_->FreeNextArray(next_array_start + next_array_buffer_size / 2,
                               mutable_node->log2_num_children());
     }
+  }
+
+  storage_->dec_num_keys();
+  if (storage_->hdr().num_keys() == 0) {
+    // Reset the trie state to empty by calling Clear() directly.
+    //
+    // Note: in this case, last_multichild_node will be nullptr as well.
+    // - If we never saw a node with multiple children before deletion, then all
+    //   the traversed nodes, including the root node, are single-child nodes
+    //   before deletion.
+    // - Therefore, after deletion, there should be no valid nodes or nexts in
+    //   the trie.
+    Clear();
   }
 
   return true;
