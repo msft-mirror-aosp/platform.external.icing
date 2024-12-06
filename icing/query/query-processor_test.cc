@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -61,6 +62,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -150,8 +152,10 @@ class QueryProcessorTest : public ::testing::Test {
         language_segmenter_,
         language_segmenter_factory::Create(segmenter_options));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/1000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         query_processor_,
