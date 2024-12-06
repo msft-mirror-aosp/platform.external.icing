@@ -37,17 +37,19 @@ namespace version_util {
 //   (There were no M-2023-10, M-2023-12).
 // - Version 3: M-2024-02. Schema is compatible with v1 and v2.
 // - Version 4: Android V base. Schema is compatible with v1, v2 and v3.
-//
-// TODO(b/314816301): Bump kVersion to 4 for Android V rollout with v2 version
-// detection
-inline static constexpr int32_t kVersion = 4;
+// - Version 5: M-2025-02. Schema is compatible with v1, v2, v3 and v4.
+inline static constexpr int32_t kVersion = 5;
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;
 inline static constexpr int32_t kVersionFour = 4;
+inline static constexpr int32_t kVersionFive = 5;
 
 // Version at which v2 version file is introduced.
 inline static constexpr int32_t kFirstV2Version = kVersionFour;
+
+// Version at which the database field is introduced to the schema proto.
+inline static constexpr int32_t kSchemaDatabaseVersion = kVersionFive;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
 
@@ -95,6 +97,7 @@ struct DerivedFilesRebuildResult {
   bool needs_term_index_rebuild = false;
   bool needs_integer_index_rebuild = false;
   bool needs_qualified_id_join_index_rebuild = false;
+  bool needs_embedding_index_rebuild = false;
 
   DerivedFilesRebuildResult() = default;
 
@@ -102,7 +105,8 @@ struct DerivedFilesRebuildResult {
       bool needs_document_store_derived_files_rebuild_in,
       bool needs_schema_store_derived_files_rebuild_in,
       bool needs_term_index_rebuild_in, bool needs_integer_index_rebuild_in,
-      bool needs_qualified_id_join_index_rebuild_in)
+      bool needs_qualified_id_join_index_rebuild_in,
+      bool needs_embedding_index_rebuild_in)
       : needs_document_store_derived_files_rebuild(
             needs_document_store_derived_files_rebuild_in),
         needs_schema_store_derived_files_rebuild(
@@ -110,13 +114,15 @@ struct DerivedFilesRebuildResult {
         needs_term_index_rebuild(needs_term_index_rebuild_in),
         needs_integer_index_rebuild(needs_integer_index_rebuild_in),
         needs_qualified_id_join_index_rebuild(
-            needs_qualified_id_join_index_rebuild_in) {}
+            needs_qualified_id_join_index_rebuild_in),
+        needs_embedding_index_rebuild(needs_embedding_index_rebuild_in) {}
 
   bool IsRebuildNeeded() const {
     return needs_document_store_derived_files_rebuild ||
            needs_schema_store_derived_files_rebuild ||
            needs_term_index_rebuild || needs_integer_index_rebuild ||
-           needs_qualified_id_join_index_rebuild;
+           needs_qualified_id_join_index_rebuild ||
+           needs_embedding_index_rebuild;
   }
 
   bool operator==(const DerivedFilesRebuildResult& other) const {
@@ -127,23 +133,20 @@ struct DerivedFilesRebuildResult {
            needs_term_index_rebuild == other.needs_term_index_rebuild &&
            needs_integer_index_rebuild == other.needs_integer_index_rebuild &&
            needs_qualified_id_join_index_rebuild ==
-               other.needs_qualified_id_join_index_rebuild;
+               other.needs_qualified_id_join_index_rebuild &&
+           needs_embedding_index_rebuild == other.needs_embedding_index_rebuild;
   }
 
   void CombineWithOtherRebuildResultOr(const DerivedFilesRebuildResult& other) {
-    needs_document_store_derived_files_rebuild =
-        needs_document_store_derived_files_rebuild ||
+    needs_document_store_derived_files_rebuild |=
         other.needs_document_store_derived_files_rebuild;
-    needs_schema_store_derived_files_rebuild =
-        needs_schema_store_derived_files_rebuild ||
+    needs_schema_store_derived_files_rebuild |=
         other.needs_schema_store_derived_files_rebuild;
-    needs_term_index_rebuild =
-        needs_term_index_rebuild || other.needs_term_index_rebuild;
-    needs_integer_index_rebuild =
-        needs_integer_index_rebuild || other.needs_integer_index_rebuild;
-    needs_qualified_id_join_index_rebuild =
-        needs_qualified_id_join_index_rebuild ||
+    needs_term_index_rebuild |= other.needs_term_index_rebuild;
+    needs_integer_index_rebuild |= other.needs_integer_index_rebuild;
+    needs_qualified_id_join_index_rebuild |=
         other.needs_qualified_id_join_index_rebuild;
+    needs_embedding_index_rebuild |= other.needs_embedding_index_rebuild;
   }
 };
 
@@ -166,7 +169,6 @@ inline VersionInfo GetVersionInfoFromProto(
     const IcingSearchEngineVersionProto& version_proto) {
   return VersionInfo(version_proto.version(), version_proto.max_version());
 }
-
 
 // Reads the IcingSearchEngineVersionProto from the version files of the
 // existing data.
@@ -246,6 +248,14 @@ DerivedFilesRebuildResult CalculateRequiredDerivedFilesRebuild(
 //   the callers (except unit tests) will always use a version # greater than 0.
 bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
                                int32_t curr_version = kVersion);
+
+// Returns whether the schema database migration is required.
+//
+// This is true if the previous version is less than the version at which the
+// database field is introduced, or if the schema database feature was
+// not enabled in the previous version.
+bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto);
 
 // Returns the derived files rebuilds required for a given feature.
 DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(

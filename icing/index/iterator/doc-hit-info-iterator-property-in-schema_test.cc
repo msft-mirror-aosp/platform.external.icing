@@ -22,7 +22,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
@@ -36,6 +38,7 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -53,6 +56,7 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     document1_ = DocumentBuilder()
                      .SetKey("namespace", "uri1")
@@ -89,22 +93,22 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
             .Build();
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
         schema_, /*ignore_errors_and_delete_documents=*/false,
         /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -114,6 +118,7 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   const Filesystem filesystem_;
@@ -130,8 +135,9 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithIndexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -150,8 +156,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithUnindexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -183,8 +190,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest, NoMatchWithUndefinedProperty) {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        CorrectlySetsSectionIdMasksAndPopulatesTermMatchInfo) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document1_));
+  DocumentId document_id = put_result.new_document_id;
 
   // Arbitrary section ids for the documents in the DocHitInfoIterators.
   // Created to test correct section_id_mask behavior.
@@ -245,10 +253,12 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        FindPropertyDefinedByMultipleTypes) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document2_));
+  DocumentId document_id2 = put_result2.new_document_id;
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
 
