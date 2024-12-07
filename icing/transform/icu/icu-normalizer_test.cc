@@ -14,13 +14,12 @@
 
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/test-data.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/icu-data-file-helper.h"
 
@@ -37,24 +36,22 @@ class IcuNormalizerTest : public testing::Test {
         icu_data_file_helper::SetUpIcuDataFile(
             GetTestFilePath("icing/icu.dat")));
 
-    NormalizerOptions options(/*max_term_byte_size=*/1024);
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
-                               normalizer_factory::Create(options));
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/1024));
   }
 
   std::unique_ptr<Normalizer> normalizer_;
 };
 
 TEST_F(IcuNormalizerTest, Creation) {
-  NormalizerOptions options1(/*max_term_byte_size=*/5);
-  EXPECT_THAT(normalizer_factory::Create(options1), IsOk());
-
-  NormalizerOptions options2(/*max_term_byte_size=*/0);
-  EXPECT_THAT(normalizer_factory::Create(options2),
+  EXPECT_THAT(normalizer_factory::Create(
+                  /*max_term_byte_size=*/5),
+              IsOk());
+  EXPECT_THAT(normalizer_factory::Create(
+                  /*max_term_byte_size=*/0),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  NormalizerOptions options3(/*max_term_byte_size=*/-1);
-  EXPECT_THAT(normalizer_factory::Create(options3),
+  EXPECT_THAT(normalizer_factory::Create(
+                  /*max_term_byte_size=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -187,9 +184,8 @@ TEST_F(IcuNormalizerTest, FullWidthCharsToASCII) {
 }
 
 TEST_F(IcuNormalizerTest, IdeographicToASCII) {
-  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-      options));
+                                                  /*max_term_byte_size=*/1000));
 
   EXPECT_THAT(normalizer->NormalizeTerm("，。"), EqualsNormalizedTerm(",."));
 }
@@ -268,9 +264,8 @@ TEST_F(IcuNormalizerTest, FractionsToASCII) {
 
 TEST_F(IcuNormalizerTest, Truncate) {
   {
-    NormalizerOptions options(/*max_term_byte_size=*/5);
     ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-        options));
+                                                    /*max_term_byte_size=*/5));
 
     // Won't be truncated
     EXPECT_THAT(normalizer->NormalizeTerm("hi"), EqualsNormalizedTerm("hi"));
@@ -292,9 +287,8 @@ TEST_F(IcuNormalizerTest, Truncate) {
   }
 
   {
-    NormalizerOptions options(/*max_term_byte_size=*/2);
     ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-        options));
+                                                    /*max_term_byte_size=*/2));
     // The Japanese character has 3 bytes, truncating it results in an empty
     // string.
     EXPECT_THAT(normalizer->NormalizeTerm("キ"), EqualsNormalizedTerm(""));
@@ -305,9 +299,8 @@ TEST_F(IcuNormalizerTest, PrefixMatchLength) {
   // Verify that FindNormalizedMatchEndPosition will properly find the length of
   // the prefix match when given a non-normalized term and a normalized term
   // is a prefix of the non-normalized one.
-  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-      options));
+                                                  /*max_term_byte_size=*/1000));
 
   // Upper to lower
   std::string term = "MDI";
@@ -384,9 +377,8 @@ TEST_F(IcuNormalizerTest, SharedPrefixMatchLength) {
   // Verify that FindNormalizedMatchEndPosition will properly find the length of
   // the prefix match when given a non-normalized term and a normalized term
   // that share a common prefix.
-  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-      options));
+                                                  /*max_term_byte_size=*/1000));
 
   // Upper to lower
   std::string term = "MDI";

@@ -13,8 +13,6 @@
 // limitations under the License.
 
 #include <algorithm>
-#include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <thread>  // NOLINT
@@ -39,7 +37,6 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -103,10 +100,8 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
         std::move(schema), /*ignore_errors_and_delete_documents=*/false,
         /*allow_circular_schema_definitions=*/false));
 
-    NormalizerOptions normalizer_options(
-        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
-                               normalizer_factory::Create(normalizer_options));
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/10000));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,

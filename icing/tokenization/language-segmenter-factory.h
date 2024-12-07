@@ -28,8 +28,6 @@ namespace lib {
 
 namespace language_segmenter_factory {
 
-// TODO: b/332382299 - Avoid using default values in the SegmenterOptions
-// constructor. This can lead to unexpected behavior.
 struct SegmenterOptions {
   explicit SegmenterOptions(std::string locale,
                             const JniCache* jni_cache = nullptr,

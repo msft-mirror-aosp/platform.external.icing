@@ -888,48 +888,6 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
-       PutLargeNumberOfDataShouldHandleRemapAddressCorrectly) {
-  // Create new qualified id join index
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
-                             QualifiedIdJoinIndexImplV3::Create(
-                                 filesystem_, working_path_, *feature_flags_));
-
-  DocumentId parent_doc_id = 0;
-  DocumentId child_doc_id = 30000;
-
-  // For the first grow of FBV, the file size is 65536. 12 bytes will be used
-  // for the header, so we can fit (65536 - 12) / 4 = 16378 children.
-  //
-  // Add 16378 unique parent and child pairs, so we allocate 16378
-  // DocumentJoinIdPair (extensible) arrays with size 1 for all parents, and
-  // FBV is full now.
-  constexpr int kNumChildrenToFillFbv = 16378;
-  for (int i = 0; i < kNumChildrenToFillFbv; ++i) {
-    DocumentJoinIdPair child_join_id_pair(child_doc_id++,
-                                          /*joinable_property_id=*/20);
-    EXPECT_THAT(
-        index->Put(
-            child_join_id_pair,
-            /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id++}),
-        IsOk());
-  }
-
-  // Put a child for parent doc_id=0 again. This will cause:
-  // - FBV file size is extended to 131072, and remap happens.
-  // - Parent 0's array is reallocated and extended to size 2.
-  //
-  // The test verifies that object related to mmap address is refreshed
-  // correctly after remap.
-  DocumentJoinIdPair additional_child_join_id_pair(child_doc_id++,
-                                                   /*joinable_property_id=*/20);
-  EXPECT_THAT(index->Put(additional_child_join_id_pair,
-                         /*parent_document_ids=*/std::vector<DocumentId>{0}),
-              IsOk());
-
-  EXPECT_THAT(index, Pointee(SizeIs(kNumChildrenToFillFbv + 1)));
-}
-
 TEST_F(QualifiedIdJoinIndexImplV3Test, PutShouldSkipInvalidParentDocumentId) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,

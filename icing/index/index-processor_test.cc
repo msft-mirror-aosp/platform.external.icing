@@ -66,7 +66,6 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/crc32.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -199,10 +198,10 @@ class IndexProcessorTest : public Test {
         lang_segmenter_,
         language_segmenter_factory::Create(std::move(segmenter_options)));
 
-    NormalizerOptions normalizer_options(
-        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
-                               normalizer_factory::Create(normalizer_options));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        normalizer_,
+        normalizer_factory::Create(
+            /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()));
@@ -658,9 +657,9 @@ TEST_F(IndexProcessorTest, LexiconExhaustedTest) {
 TEST_F(IndexProcessorTest, TooLongTokens) {
   // Only allow the tokens of length four, truncating "hello", "world" and
   // "night".
-  NormalizerOptions normalizer_options(/*max_term_byte_size=*/4);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(normalizer_options));
+                             normalizer_factory::Create(
+                                 /*max_term_byte_size=*/4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<TermIndexingHandler> term_indexing_handler,

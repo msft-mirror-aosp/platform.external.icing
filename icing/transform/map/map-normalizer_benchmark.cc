@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <limits>
 #include <memory>
 
 #include "testing/base/public/benchmark.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 
 // Run on a Linux workstation:
@@ -44,10 +42,10 @@ namespace lib {
 namespace {
 
 void BM_NormalizeUppercase(benchmark::State& state) {
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(options));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string(state.range(0), 'A');
 
@@ -76,10 +74,10 @@ BENCHMARK(BM_NormalizeUppercase)
     ->Arg(4096000);
 
 void BM_NormalizeAccent(benchmark::State& state) {
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(options));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -111,10 +109,10 @@ BENCHMARK(BM_NormalizeAccent)
     ->Arg(4096000);
 
 void BM_NormalizeHiragana(benchmark::State& state) {
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(options));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -146,10 +144,11 @@ BENCHMARK(BM_NormalizeHiragana)
     ->Arg(4096000);
 
 void BM_UppercaseSubTokenLength(benchmark::State& state) {
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(options));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string(state.range(0), 'A');
   std::string normalized_input_string(state.range(0), 'a');
@@ -175,10 +174,10 @@ BENCHMARK(BM_UppercaseSubTokenLength)
     ->Arg(4096000);
 
 void BM_AccentSubTokenLength(benchmark::State& state) {
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(options));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   std::string normalized_input_string;
@@ -209,10 +208,10 @@ BENCHMARK(BM_AccentSubTokenLength)
     ->Arg(4096000);
 
 void BM_HiraganaSubTokenLength(benchmark::State& state) {
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create(options));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   std::string normalized_input_string;

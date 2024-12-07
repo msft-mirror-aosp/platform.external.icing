@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <limits>
-
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
@@ -33,7 +31,6 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
@@ -93,10 +90,11 @@ void BM_SnippetOneProperty(benchmark::State& state) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
-  NormalizerOptions normalizer_options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
   std::unique_ptr<Normalizer> normalizer =
-      normalizer_factory::Create(normalizer_options).ValueOrDie();
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max())
+          .ValueOrDie();
+
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type1").AddProperty(
@@ -222,10 +220,10 @@ void BM_SnippetRfcOneProperty(benchmark::State& state) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
-  NormalizerOptions normalizer_options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
   std::unique_ptr<Normalizer> normalizer =
-      normalizer_factory::Create(normalizer_options).ValueOrDie();
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max())
+          .ValueOrDie();
 
   SchemaProto schema =
       SchemaBuilder()

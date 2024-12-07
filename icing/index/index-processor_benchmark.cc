@@ -44,7 +44,6 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -166,9 +165,10 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
-  NormalizerOptions normalizer_options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  return normalizer_factory::Create(normalizer_options).ValueOrDie();
+  return normalizer_factory::Create(
+
+             /*max_term_byte_size=*/std::numeric_limits<int>::max())
+      .ValueOrDie();
 }
 
 std::unique_ptr<SchemaStore> CreateSchemaStore(

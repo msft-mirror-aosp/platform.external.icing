@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <cstdint>
-#include <limits>
 #include <memory>
 #include <vector>
 
@@ -42,7 +40,6 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
@@ -84,11 +81,8 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
                                            &fake_clock_, feature_flags_.get()));
-
-    NormalizerOptions normalizer_options(
-        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
-                               normalizer_factory::Create(normalizer_options));
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/10000));
 
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");

@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <limits>
-#include <memory>
-
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/icu-data-file-helper.h"
 
@@ -62,10 +58,10 @@ void BM_NormalizeUppercase(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string(state.range(0), 'A');
   for (auto _ : state) {
@@ -95,10 +91,10 @@ void BM_NormalizeAccent(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -132,10 +128,10 @@ void BM_NormalizeGreekAccent(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -169,10 +165,10 @@ void BM_NormalizeHiragana(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -206,10 +202,10 @@ void BM_UppercaseSubTokenLength(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string(state.range(0), 'A');
   std::string normalized_input_string(state.range(0), 'a');
@@ -241,10 +237,10 @@ void BM_AccentSubTokenLength(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   std::string normalized_input_string;
@@ -281,10 +277,10 @@ void BM_HiraganaSubTokenLength(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
-  NormalizerOptions options(
-      /*max_term_byte_size=*/std::numeric_limits<int>::max());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             normalizer_factory::Create((options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Normalizer> normalizer,
+      normalizer_factory::Create(
+          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
   std::string normalized_input_string;

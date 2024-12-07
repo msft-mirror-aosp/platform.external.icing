@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -53,7 +52,6 @@
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/status-macros.h"
@@ -130,11 +128,8 @@ class CombinedTokenizerTest : public ::testing::Test {
         lang_segmenter_,
         language_segmenter_factory::Create(std::move(segmenter_options)));
 
-    NormalizerOptions normalizer_options(
-        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
-                               normalizer_factory::Create(normalizer_options));
-
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/1000));
     ICING_ASSERT_OK_AND_ASSIGN(
         query_processor_,
         QueryProcessor::Create(
