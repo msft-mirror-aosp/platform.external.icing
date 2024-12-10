@@ -96,6 +96,7 @@
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/util/clock.h"
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
@@ -732,8 +733,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   TC3_ASSIGN_OR_RETURN(language_segmenter_, language_segmenter_factory::Create(
                                                 std::move(segmenter_options)));
 
+  NormalizerOptions normalizer_options(
+      /*max_term_byte_size=*/options_.max_token_length());
   TC3_ASSIGN_OR_RETURN(normalizer_,
-                       normalizer_factory::Create(options_.max_token_length()));
+                       normalizer_factory::Create(normalizer_options));
 
   std::string marker_filepath =
       MakeSetSchemaMarkerFilePath(options_.base_dir());
