@@ -1933,62 +1933,144 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_SchemaNotExistInSchemaStore) {
 }
 
 TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotScorable) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo(put_result.new_document_id);
+
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
       "this.documentScore() + "
-      "sum(getScorableProperty(\"aliasEmail\", \"subject\"))");
-  AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"email"});
-  scoring_spec.add_scoring_feature_types_enabled(
-      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
-
-  EXPECT_THAT(AdvancedScorer::Create(
-                  scoring_spec, /*default_score=*/10,
-                  kDefaultSemanticMetricType, document_store_.get(),
-                  schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-                  /*join_children_fetcher=*/nullptr,
-                  &empty_embedding_query_results_, feature_flags_.get()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-                       HasSubstr("'subject' is not defined as a scorable "
-                                 "property under schema type")));
-}
-
-TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotExist) {
-  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
-      "this.documentScore() + "
-      "sum(getScorableProperty(\"aliasEmail\", \"non_exist\"))");
-  AddSchemaTypeAliasMap(&scoring_spec, "aliasEmail", {"email"});
-  scoring_spec.add_scoring_feature_types_enabled(
-      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
-
-  EXPECT_THAT(AdvancedScorer::Create(
-                  scoring_spec, /*default_score=*/10,
-                  kDefaultSemanticMetricType, document_store_.get(),
-                  schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-                  /*join_children_fetcher=*/nullptr,
-                  &empty_embedding_query_results_, feature_flags_.get()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-                       HasSubstr("'non_exist' is not defined as a scorable "
-                                 "property under schema type")));
-}
-
-TEST_F(AdvancedScorerTest, GetScorableProperty_SomePropertiesNotScorable) {
-  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
-      "this.documentScore() + "
-      "100 * avg(getScorableProperty(\"aliasPerson\", \"isStarred\")) + "
-      "10  * max(getScorableProperty(\"aliasPerson\", \"frequencyScore\")) + "
-      "10  * sum(getScorableProperty(\"aliasPerson\", \"non_exist\"))");
+      "sum(getScorableProperty(\"aliasPerson\", \"subject\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
   scoring_spec.add_scoring_feature_types_enabled(
       ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+  double expected_score = 100 + 0;
 
-  EXPECT_THAT(AdvancedScorer::Create(
-                  scoring_spec, /*default_score=*/10,
-                  kDefaultSemanticMetricType, document_store_.get(),
-                  schema_store_.get(), fake_clock_.GetSystemTimeMilliseconds(),
-                  /*join_children_fetcher=*/nullptr,
-                  &empty_embedding_query_results_, feature_flags_.get()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-                       HasSubstr("'non_exist' is not defined as a scorable "
-                                 "property under schema type")));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_,
+                             feature_flags_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotExist) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"aliasPerson\", \"notExist\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+  double expected_score = 100 + 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_,
+                             feature_flags_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest, GetScorableProperty_SomePropertiesNotScorable) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo(put_result.new_document_id);
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "max(getScorableProperty(\"aliasPerson\", \"frequencyScore\")) + "
+      "sum(getScorableProperty(\"aliasPerson\", \"nonExist\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+  double expected_score = 100 + std::max({1.0, 2.0, 3.0}) + 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_,
+                             feature_flags_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       GetScorableProperty_InvalidSchemaTypeInTheGetScorablePropertyFunction) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("email")
+                               .SetScore(100)
+                               .SetCreationTimestampMs(123)
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo(put_result.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"aliasPerson\", \"frequencyScore\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"invalid"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+  double expected_score = 100 + 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(
+          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
+          document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_,
+          feature_flags_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
 }
 
 TEST_F(AdvancedScorerTest,
@@ -2060,6 +2142,84 @@ TEST_F(AdvancedScorerTest,
   scorer->PrepareToScore(/*query_term_iterators=*/{});
   EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
               DoubleNear(expected_score, kEps));
+}
+
+TEST_F(AdvancedScorerTest,
+       SchemaTypeAliasMap_PropertyNotScorableForSomeSchemaTypes) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("pkg/db1/gmail")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("frequencyScore")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetCardinality(CARDINALITY_REPEATED)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("pkg/db2/gmail")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("frequencyScore")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true,
+      /*allow_circular_schema_definitions=*/false));
+
+  DocumentProto document_from_db1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("pkg/db1/gmail")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+  DocumentProto document_from_db2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("pkg/db2/gmail")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+  double expected_score_doc1 = 100 + (1 + 2 + 3);
+  double expected_score_doc2 = 100 + 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store_->Put(document_from_db1));
+  DocHitInfo docHitInfo1(put_result1.new_document_id);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store_->Put(document_from_db2));
+  DocHitInfo docHitInfo2(put_result2.new_document_id);
+
+  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"gmail\", \"frequencyScore\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "gmail",
+                        {"pkg/db1/gmail", "pkg/db2/gmail"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_,
+                             feature_flags_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr),
+              DoubleNear(expected_score_doc1, kEps));
+  EXPECT_THAT(scorer->GetScore(docHitInfo2, /*query_it=*/nullptr),
+              DoubleNear(expected_score_doc2, kEps));
 }
 
 TEST_F(AdvancedScorerTest, GetScorableProperty_WithDoubleList) {
@@ -2517,53 +2677,6 @@ TEST_F(AdvancedScorerTest, SchemaTypeAliasMap_AliasSchemaTypeNotMatched) {
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("The alias schema type in the score expression is not "
                          "found in the schema_type_alias_map")));
-}
-
-TEST_F(AdvancedScorerTest,
-       SchemaTypeAliasMap_PropertyNotScorableForSomeSchemaTypes) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("pkg1/db1/message")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("frequencyScore")
-                          .SetDataType(PropertyConfigProto::DataType::INT64)
-                          .SetCardinality(CARDINALITY_REPEATED)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)))
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("pkg2/db1/message")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("frequencyScore")
-                          .SetDataType(PropertyConfigProto::DataType::INT64)
-                          .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-
-  ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
-
-  ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
-      "this.documentScore() + "
-      "sum(getScorableProperty(\"message\", \"frequencyScore\"))");
-  AddSchemaTypeAliasMap(&scoring_spec, "message",
-                        {"pkg1/db1/message", "pkg2/db1/message"});
-  scoring_spec.add_scoring_feature_types_enabled(
-      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
-
-  EXPECT_THAT(
-      AdvancedScorer::Create(
-          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
-          document_store_.get(), schema_store_.get(),
-          fake_clock_.GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_,
-          feature_flags_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-               HasSubstr("'frequencyScore' is not defined as a scorable "
-                         "property under schema type 1")));
 }
 
 }  // namespace
