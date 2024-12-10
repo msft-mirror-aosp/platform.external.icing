@@ -95,6 +95,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] getSchemaForDatabase(@NonNull String database) {
+    throwIfClosed();
+    return nativeGetSchemaForDatabase(this, database);
+  }
+
+  @Nullable
   public byte[] getSchemaType(@NonNull String schemaType) {
     throwIfClosed();
     return nativeGetSchemaType(this, schemaType);
@@ -285,6 +291,9 @@ public class IcingSearchEngineImpl implements Closeable {
       IcingSearchEngineImpl instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
 
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeGetSchemaForDatabase(
+      IcingSearchEngineImpl instance, String database);
 
   private static native byte[] nativeGetSchemaType(
       IcingSearchEngineImpl instance, String schemaType);

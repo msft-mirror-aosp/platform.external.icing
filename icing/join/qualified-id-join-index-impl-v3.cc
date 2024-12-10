@@ -645,6 +645,19 @@ QualifiedIdJoinIndexImplV3::
       FileBackedVector<DocumentJoinIdPair>::MutableArrayView new_mutable_arr,
       child_document_join_id_pair_array_->Allocate(new_array_info.length));
 
+  // It is possible that Allocate() causes FBV to grow and remap. In this case,
+  // original_mutable_arr will point to an invalid memory region, so we need to
+  // refresh it.
+  //
+  // Note: original_mutable_arr has length = array_info.length and only contains
+  //   valid elements with length = array_info.used_length. We could've
+  //   constructed original_mutable_arr with length = array_info.used_length
+  //   here, but let's make it consistent with all other cases (i.e.
+  //   constructing the array view object for the entire extensible array).
+  ICING_ASSIGN_OR_RETURN(original_mutable_arr,
+                         child_document_join_id_pair_array_->GetMutable(
+                             array_info.index, array_info.length));
+
   // Move all existing elements to the new array.
   new_mutable_arr.SetArray(/*idx=*/0, original_mutable_arr.data(),
                            array_info.used_length);
