@@ -290,9 +290,12 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   // to the new parent document id.
   //
   // Returns:
-  //   - OK on success
+  //   - On success, true if extended, and the caller should invalidate or
+  //     refresh existing objects using related mmap addresses due to potential
+  //     remapping. False otherwise
   //   - Any FileBackedVector errors
-  libtextclassifier3::Status ExtendParentDocumentIdToChildArrayInfoIfNecessary(
+  libtextclassifier3::StatusOr<bool>
+  ExtendParentDocumentIdToChildArrayInfoIfNecessary(
       DocumentId parent_document_id);
 
   // Gets the DocumentJoinIdPair mutable array and extends it if necessary to
