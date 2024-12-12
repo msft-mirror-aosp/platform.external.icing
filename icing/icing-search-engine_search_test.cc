@@ -77,6 +77,7 @@ using ::testing::IsEmpty;
 using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::SizeIs;
+using ::testing::UnorderedElementsAre;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -8621,27 +8622,18 @@ TEST_F(IcingSearchEngineSearchTest,
        SearchWithRankingByScorableProperty_WithInvalidPropertyName) {
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("Person")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("name")
-                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                          .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("income")
-                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)
-                          .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   DocumentProto document0 = DocumentBuilder()
                                 .SetKey("icing", "person0")
                                 .SetSchema("Person")
                                 .SetScore(10)
                                 .SetCreationTimestampMs(1)
-                                .AddStringProperty("name", "John")
                                 .AddDoubleProperty("income", 10000, 20000)
                                 .Build();
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -8659,17 +8651,17 @@ TEST_F(IcingSearchEngineSearchTest,
   AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
   scoring_spec.add_scoring_feature_types_enabled(
       ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(
-      StatusProto::INVALID_ARGUMENT);
-  expected_search_result_proto.mutable_status()->set_message(
-      "'not_exist' is not defined as a scorable property under schema type 0");
+  int expected_score = /*documentScore=*/10 + /*getScorableProperty=*/0;
 
-  SearchResultProto actual_search_result_proto = icing.Search(
+  SearchResultProto search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
-  EXPECT_THAT(
-      actual_search_result_proto,
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Verify that the search results are ranked as expected.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(expected_score));
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -9220,17 +9212,14 @@ TEST_F(IcingSearchEngineSearchTest,
   scoring_spec.set_advanced_scoring_expression(
       "sum(getScorableProperty(\"Person\", \"income\"))");
 
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(
-      StatusProto::INVALID_ARGUMENT);
-  expected_search_result_proto.mutable_status()->set_message(
-      "'income' is not defined as a scorable property under schema type 0");
-
   SearchResultProto actual_search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
-  EXPECT_THAT(
-      actual_search_result_proto,
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(actual_search_result_proto.status(), ProtoIsOk());
+
+  EXPECT_THAT(GetUrisFromSearchResults(actual_search_result_proto),
+              UnorderedElementsAre("person0", "person1"));
+  EXPECT_THAT(GetScoresFromSearchResults(actual_search_result_proto),
+              ElementsAre(0, 0));
 
   // Update the schema to set Person.income as a scorable property.
   SchemaProto new_schema =
@@ -9326,16 +9315,15 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(
-      StatusProto::INVALID_ARGUMENT);
-  expected_search_result_proto.mutable_status()->set_message(
-      "'income' is not defined as a scorable property under schema type 0");
-  SearchResultProto actual_search_result_proto = icing.Search(
+
+  SearchResultProto search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
-  EXPECT_THAT(
-      actual_search_result_proto,
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Check the search results.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto), ElementsAre(0));
 
   // Update the schema to set Person.income as scorable again. It would
   // re-populate the scorable property cache.
@@ -9358,8 +9346,8 @@ TEST_F(IcingSearchEngineSearchTest,
           .Build();
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
-  SearchResultProto search_result_proto = icing.Search(
-      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  search_result_proto = icing.Search(search_spec, scoring_spec,
+                                     ResultSpecProto::default_instance());
   EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
 
   // Check the search results.
