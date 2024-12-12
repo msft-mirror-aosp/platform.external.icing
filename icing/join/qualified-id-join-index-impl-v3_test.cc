@@ -44,11 +44,13 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Lt;
+using ::testing::Ne;
 using ::testing::Not;
 using ::testing::Pointee;
 using ::testing::SizeIs;
@@ -888,6 +890,90 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
+TEST_F(QualifiedIdJoinIndexImplV3Test,
+       PutLargeParentShouldHandleAddressCorrectlyForRemap) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  const std::string array_working_path = absl_ports::StrCat(
+      working_path_, "/parent_document_id_to_child_array_info");
+
+  // Add a child for parent doc id 1 to the index.
+  DocumentId parent_doc_id1 = 1;
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/0);
+  EXPECT_THAT(
+      index->Put(
+          child_join_id_pair1,
+          /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}),
+      IsOk());
+  int64_t file_size_before =
+      filesystem_.GetFileSize(array_working_path.c_str());
+  ASSERT_THAT(file_size_before, Ne(Filesystem::kBadFileSize));
+
+  // Add another child with large parent document id to the index. This will
+  // cause parent_document_id_to_child_array_info being extended and remap. The
+  // test verifies that addresses after remap are handled correctly without
+  // crashing.
+  DocumentId parent_doc_id2 = 30000;
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  EXPECT_THAT(
+      index->Put(
+          child_join_id_pair2,
+          /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id2}),
+      IsOk());
+  int64_t file_size_after = filesystem_.GetFileSize(array_working_path.c_str());
+  ASSERT_THAT(file_size_after, Ne(Filesystem::kBadFileSize));
+
+  // Sanity check that the file size is extended and remap happens.
+  EXPECT_THAT(file_size_after, Gt(file_size_before));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test,
+       PutLargeNumberOfDataShouldHandleRemapAddressCorrectly) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  DocumentId parent_doc_id = 0;
+  DocumentId child_doc_id = 30000;
+
+  // For the first grow of FBV, the file size is 65536. 12 bytes will be used
+  // for the header, so we can fit (65536 - 12) / 4 = 16378 children.
+  //
+  // Add 16378 unique parent and child pairs, so we allocate 16378
+  // DocumentJoinIdPair (extensible) arrays with size 1 for all parents, and
+  // FBV is full now.
+  constexpr int kNumChildrenToFillFbv = 16378;
+  for (int i = 0; i < kNumChildrenToFillFbv; ++i) {
+    DocumentJoinIdPair child_join_id_pair(child_doc_id++,
+                                          /*joinable_property_id=*/20);
+    EXPECT_THAT(
+        index->Put(
+            child_join_id_pair,
+            /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id++}),
+        IsOk());
+  }
+
+  // Put a child for parent doc_id=0 again. This will cause:
+  // - FBV file size is extended to 131072, and remap happens.
+  // - Parent 0's array is reallocated and extended to size 2.
+  //
+  // The test verifies that object related to mmap address is refreshed
+  // correctly after remap.
+  DocumentJoinIdPair additional_child_join_id_pair(child_doc_id++,
+                                                   /*joinable_property_id=*/20);
+  EXPECT_THAT(index->Put(additional_child_join_id_pair,
+                         /*parent_document_ids=*/std::vector<DocumentId>{0}),
+              IsOk());
+
+  EXPECT_THAT(index, Pointee(SizeIs(kNumChildrenToFillFbv + 1)));
+}
+
 TEST_F(QualifiedIdJoinIndexImplV3Test, PutShouldSkipInvalidParentDocumentId) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -1023,6 +1109,57 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
   EXPECT_THAT(
       index->Get(parent_doc_id2),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test,
+       MigrateParentToLargeIdShouldHandleAddressCorrectlyForRemap) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  const std::string array_working_path = absl_ports::StrCat(
+      working_path_, "/parent_document_id_to_child_array_info");
+
+  DocumentId parent_doc_id1 = 1;
+  DocumentId parent_doc_id2 = 30000;
+
+  // Add 2 children for parent doc id 1 to the index.
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair1,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair2,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+  int64_t file_size_before =
+      filesystem_.GetFileSize(array_working_path.c_str());
+  ASSERT_THAT(file_size_before, Ne(Filesystem::kBadFileSize));
+
+  // Sanity check.
+  ASSERT_THAT(index, Pointee(SizeIs(2)));
+  ASSERT_THAT(
+      index->Get(parent_doc_id1),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+  ASSERT_THAT(index->Get(parent_doc_id2), IsOkAndHolds(IsEmpty()));
+
+  // Migrate parent document id 1 to 30000. This will
+  // cause parent_document_id_to_child_array_info being extended and remap. The
+  // test verifies that addresses after remap are handled correctly without
+  // crashing.
+  EXPECT_THAT(index->MigrateParent(parent_doc_id1, parent_doc_id2), IsOk());
+  EXPECT_THAT(index->Get(parent_doc_id1), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      index->Get(parent_doc_id2),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+  int64_t file_size_after = filesystem_.GetFileSize(array_working_path.c_str());
+  ASSERT_THAT(file_size_after, Ne(Filesystem::kBadFileSize));
+
+  // Sanity check that the file size is extended and remap happens.
+  EXPECT_THAT(file_size_after, Gt(file_size_before));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {
