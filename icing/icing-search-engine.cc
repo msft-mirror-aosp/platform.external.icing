@@ -1811,6 +1811,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       deleted_info_map;
 
   component_timer = clock_->GetNewTimer();
+  std::unordered_set<DocumentId> deleted_document_ids;
   while (query_results.root_iterator->Advance().ok()) {
     ICING_VLOG(3) << "Deleting doc "
                   << query_results.root_iterator->doc_hit_info().document_id();
@@ -1826,6 +1827,18 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
         return result_proto;
       }
     }
+
+    // Insert the deleted document id into the set, regardless of whether it has
+    // been deleted or expired. This is to ensure that we propagate the delete
+    // operation for the document. If the document has already been deleted,
+    // then the delete propagation was completed in the previous delete request,
+    // and even though we still add the document id to the set, it will not
+    // affect the delete propagation.
+    //
+    // TODO(b/376913014): handle expiry propagation.
+    deleted_document_ids.insert(
+        query_results.root_iterator->doc_hit_info().document_id());
+
     status = document_store_->Delete(
         query_results.root_iterator->doc_hit_info().document_id(),
         current_time_ms);
@@ -1836,6 +1849,18 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       return result_proto;
     }
   }
+
+  // Propagate deletion.
+  libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
+      PropagateDelete(deleted_document_ids, current_time_ms);
+  if (!propagated_child_docs_deleted_or.ok()) {
+    TransformStatus(propagated_child_docs_deleted_or.status(), result_status);
+    delete_stats->set_document_removal_latency_ms(
+        component_timer->GetElapsedMilliseconds());
+    return result_proto;
+  }
+  num_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+
   delete_stats->set_document_removal_latency_ms(
       component_timer->GetElapsedMilliseconds());
   int term_count = 0;

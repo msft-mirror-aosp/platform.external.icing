@@ -138,10 +138,7 @@ jbyteArray nativeGetSchema(JNIEnv* env, jclass clazz, jobject object) {
   return SerializeProtoToJniByteArray(env, get_schema_result_proto);
 }
 
-// TODO : b/337913932 - pre-register this API once Jetpack build is dropped back
-// into g3
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetSchemaForDatabase(
+jbyteArray nativeGetSchemaForDatabase(
     JNIEnv* env, jclass clazz, jobject object, jstring database) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
@@ -590,6 +587,9 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeGetSchema",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;)[B",
        reinterpret_cast<void*>(nativeGetSchema)},
+      {"nativeGetSchemaForDatabase",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/String;)[B",
+       reinterpret_cast<void*>(nativeGetSchemaForDatabase)},
       {"nativeGetSchemaType",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/String;)[B",
        reinterpret_cast<void*>(nativeGetSchemaType)},
