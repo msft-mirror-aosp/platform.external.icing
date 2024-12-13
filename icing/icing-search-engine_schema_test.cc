@@ -671,6 +671,164 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
               HasSubstr("'Photo' not found"));
 }
 
+TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")  // schema type id 0
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")  // schema type id 1
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Set schema with Person and Email types.
+  SetSchemaResultProto set_schema_result1 = icing.SetSchema(schema_one);
+  EXPECT_THAT(set_schema_result1.status(), ProtoStatusIs(StatusProto::OK));
+  EXPECT_THAT(set_schema_result1.latency_ms(), Eq(1000));
+
+  // Put a person document and an email document.
+  DocumentProto person_document = DocumentBuilder()
+                                      .SetKey("namespace", "person/1")
+                                      .SetSchema("Person")
+                                      .SetCreationTimestampMs(1000)
+                                      .AddStringProperty("name", "John")
+                                      .AddInt64Property("age", 20)
+                                      .Build();
+  DocumentProto email_document =
+      DocumentBuilder()
+          .SetKey("namespace", "email/1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject", "subject")
+          .AddStringProperty("sender", "namespace#person/1")
+          .Build();
+  EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
+
+  // SetSchema again with the schema types reordered. Schema type id will
+  // change. This should succeed and all search features should still work after
+  // schema id changed.
+  SchemaProto schema_two =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")  // schema type id 0
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")  // schema type id 1
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+
+          .Build();
+  SetSchemaResultProto set_schema_result2 = icing.SetSchema(schema_two);
+  EXPECT_THAT(set_schema_result2.status(), ProtoStatusIs(StatusProto::OK));
+  EXPECT_THAT(set_schema_result2.latency_ms(), Eq(1000));
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // Verify term search
+  // We should be able to retrieve the person document by searching "name:John".
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("name:John");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_search_result_proto1;
+  expected_search_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto1.mutable_results()->Add()->mutable_document() =
+      person_document;
+  EXPECT_THAT(
+      icing.Search(search_spec1, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto1));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching "age == 20".
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("age == 20");
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto expected_search_result_google::protobuf;
+  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
+      person_document;
+  EXPECT_THAT(
+      icing.Search(search_spec2, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_google::protobuf));
+
+  // Verify join search: join a query for `name:John` (which will get
+  // person_document) with a child query for `subject:subject` (which will get
+  // email_document) based on the child's `sender` field.
+  SearchSpecProto search_spec3;
+  search_spec3.set_query("name:John");
+  search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("sender");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:subject");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = result_spec;
+
+  SearchResultProto expected_search_result_proto3;
+  expected_search_result_proto3.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_search_result_proto3.mutable_results()->Add();
+  *result_proto->mutable_document() = person_document;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() =
+      email_document;
+  EXPECT_THAT(
+      icing.Search(search_spec3, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto3));
+}
+
 TEST_F(IcingSearchEngineSchemaTest,
        SetSchemaNewIndexedStringPropertyTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -2785,15 +2943,55 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeFailedPrecondition) {
 TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaTypeConfigProto schema_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("SchemaType")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("string")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("document")
+                  .SetDataTypeDocument("NestedType",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("boolean")
+                           .SetDataType(TYPE_BOOLEAN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("int64")
+                           .SetDataType(TYPE_INT64)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("double")
+                           .SetDataType(TYPE_DOUBLE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("byte")
+                           .SetDataType(TYPE_BYTES)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("blobHandle")
+                           .SetDataType(TYPE_BLOB_HANDLE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("NestedType").Build())
+          .AddType(schema_type_config)
+          .Build();
 
-  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
   GetSchemaTypeResultProto expected_get_schema_type_result_proto;
   expected_get_schema_type_result_proto.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_type_result_proto.mutable_schema_type_config() =
-      CreateMessageSchema().types(0);
-  EXPECT_THAT(icing.GetSchemaType(CreateMessageSchema().types(0).schema_type()),
+      schema_type_config;
+  EXPECT_THAT(icing.GetSchemaType("SchemaType"),
               EqualsProto(expected_get_schema_type_result_proto));
 }
 

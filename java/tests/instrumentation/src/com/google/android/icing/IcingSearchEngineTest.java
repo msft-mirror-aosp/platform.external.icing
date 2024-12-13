@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.IcingSearchEngine;
+import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -61,11 +62,20 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
+import com.google.protobuf.ByteString;
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.lang.reflect.Field;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -117,6 +127,21 @@ public final class IcingSearchEngineTest {
         .setSchema(EMAIL_TYPE)
         .setCreationTimestampMs(1) // Arbitrary non-zero number so Icing doesn't override it
         .build();
+  }
+
+  /** Generate an array contains random bytes for the given length. */
+  private static byte[] generateRandomBytes(int length) {
+    byte[] bytes = new byte[length];
+    Random rd = new Random(); // creating Random object
+    rd.nextBytes(bytes);
+    return bytes;
+  }
+
+  /** Calculate the sha-256 digest for the given data. */
+  private static byte[] calculateDigest(byte[] data) throws NoSuchAlgorithmException {
+    MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
+    messageDigest.update(data);
+    return messageDigest.digest();
   }
 
   @Before
@@ -269,6 +294,61 @@ public final class IcingSearchEngineTest {
     searchResultProto = icingSearchEngine.getNextPage(searchResultProto.getNextPageToken());
     assertStatusOk(searchResultProto.getStatus());
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
+  }
+
+  @Ignore // b/350530146
+  @Test
+  public void writeAndReadBlob_blobContentMatches() throws Exception {
+    // 1 Arrange: set up IcingSearchEngine with and blob data
+    File tempDir = temporaryFolder.newFolder();
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] digest = calculateDigest(data);
+    PropertyProto.BlobHandleProto blobHandle =
+        PropertyProto.BlobHandleProto.newBuilder()
+            .setLabel("label")
+            .setDigest(ByteString.copyFrom(digest))
+            .build();
+
+    // 2 Act: write the blob and read it back.
+    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    assertStatusOk(openWriteBlobProto.getStatus());
+    Field field = FileDescriptor.class.getDeclaredField("fd");
+    field.setAccessible(true); // Make the field accessible
+
+    // Create a new FileDescriptor object
+    FileDescriptor writeFd = new FileDescriptor();
+
+    // Set the file descriptor value using reflection
+    field.setInt(writeFd, openWriteBlobProto.getFileDescriptor());
+
+    try (FileOutputStream outputStream = new FileOutputStream(writeFd)) {
+      outputStream.write(data);
+    }
+
+    // Commit and read the blob.
+    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    assertStatusOk(commitBlobProto.getStatus());
+
+    BlobProto openReadBlobProto = icing.openReadBlob(blobHandle);
+    assertStatusOk(openReadBlobProto.getStatus());
+
+    FileDescriptor readFd = new FileDescriptor();
+    field.setInt(readFd, openReadBlobProto.getFileDescriptor());
+    byte[] output = new byte[data.length];
+    try (FileInputStream inputStream = new FileInputStream(readFd)) {
+      inputStream.read(output);
+    }
+
+    // 3 Assert: the blob content matches.
+    assertThat(output).isEqualTo(data);
   }
 
   @Test

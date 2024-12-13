@@ -29,22 +29,23 @@ namespace lib {
 // Returns a hit that has a delta of desired_byte_length from last_hit.
 Hit CreateHit(const Hit& last_hit, int desired_byte_length) {
   return CreateHit(last_hit, desired_byte_length, last_hit.term_frequency(),
-                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
 }
 
 // Returns a hit that has a delta of desired_byte_length from last_hit, with
 // the desired term_frequency and flags
 Hit CreateHit(const Hit& last_hit, int desired_byte_length,
               Hit::TermFrequency term_frequency, bool is_in_prefix_section,
-              bool is_prefix_hit) {
+              bool is_prefix_hit, bool is_stemmed_hit) {
   Hit hit = last_hit;
   uint8_t buf[5];
   do {
     hit = (hit.section_id() == kMinSectionId)
               ? Hit(kMaxSectionId, hit.document_id() + 1, term_frequency,
-                    is_in_prefix_section, is_prefix_hit)
+                    is_in_prefix_section, is_prefix_hit, is_stemmed_hit)
               : Hit(hit.section_id() - 1, hit.document_id(), term_frequency,
-                    is_in_prefix_section, is_prefix_hit);
+                    is_in_prefix_section, is_prefix_hit, is_stemmed_hit);
   } while (PostingListHitSerializer::EncodeNextHitValue(
                /*next_hit_value=*/hit.value(),
                /*curr_hit_value=*/last_hit.value(), buf) < desired_byte_length);
@@ -61,7 +62,7 @@ std::vector<Hit> CreateHits(DocumentId start_docid, int num_hits,
   }
   hits.push_back(Hit(/*section_id=*/1, /*document_id=*/start_docid,
                      Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
-                     /*is_prefix_hit=*/false));
+                     /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false));
   while (hits.size() < num_hits) {
     hits.push_back(CreateHit(hits.back(), desired_byte_length));
   }

@@ -156,10 +156,11 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(
             /*id=*/i, /*document_score=*/distribution(random_generator),
             /*creation_timestamp_ms=*/1)));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -267,10 +268,11 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(
             /*id=*/i, /*document_score=*/1,
             /*creation_timestamp_ms=*/distribution(random_generator))));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -374,9 +376,10 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(/*id=*/i, /*document_score=*/1,
                                                 /*creation_timestamp_ms=*/1)));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -487,11 +490,12 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
+        DocumentStore::PutResult put_result,
         document_store->Put(CreateEmailDocument(
                                 /*id=*/i, /*document_score=*/1,
                                 /*creation_timestamp_ms=*/1),
                             /*num_tokens=*/10));
+    DocumentId document_id = put_result.new_document_id;
     DocHitInfoTermFrequencyPair doc_hit =
         DocHitInfo(document_id, section_id_mask);
     // Set five matches for term "foo" for each document hit.
