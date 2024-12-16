@@ -205,8 +205,18 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
     return libtextclassifier3::Status::OK;
   }
 
-  ICING_RETURN_IF_ERROR(
+  ICING_ASSIGN_OR_RETURN(
+      bool is_extended,
       ExtendParentDocumentIdToChildArrayInfoIfNecessary(new_document_id));
+  if (is_extended) {
+    // If parent_document_id_to_child_array_info_ is extended, then it is
+    // possible that file size is extended and remap happens. We need to refresh
+    // mutable_old_array_info.
+    ICING_ASSIGN_OR_RETURN(
+        mutable_old_array_info,
+        parent_document_id_to_child_array_info_->GetMutable(old_document_id));
+  }
+
   ICING_RETURN_IF_ERROR(parent_document_id_to_child_array_info_->Set(
       new_document_id, mutable_old_array_info.Get()));
   mutable_old_array_info.Get() = kInvalidArrayInfo;
@@ -497,9 +507,10 @@ QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status
+libtextclassifier3::StatusOr<bool>
 QualifiedIdJoinIndexImplV3::ExtendParentDocumentIdToChildArrayInfoIfNecessary(
     DocumentId parent_document_id) {
+  bool is_extended = false;
   if (parent_document_id >=
       parent_document_id_to_child_array_info_->num_elements()) {
     int32_t num_to_extend =
@@ -509,8 +520,9 @@ QualifiedIdJoinIndexImplV3::ExtendParentDocumentIdToChildArrayInfoIfNecessary(
         FileBackedVector<ArrayInfo>::MutableArrayView mutable_arr,
         parent_document_id_to_child_array_info_->Allocate(num_to_extend));
     mutable_arr.Fill(/*idx=*/0, /*len=*/num_to_extend, kInvalidArrayInfo);
+    is_extended = true;
   }
-  return libtextclassifier3::Status::OK;
+  return is_extended;
 }
 
 libtextclassifier3::StatusOr<
@@ -644,6 +656,19 @@ QualifiedIdJoinIndexImplV3::
   ICING_ASSIGN_OR_RETURN(
       FileBackedVector<DocumentJoinIdPair>::MutableArrayView new_mutable_arr,
       child_document_join_id_pair_array_->Allocate(new_array_info.length));
+
+  // It is possible that Allocate() causes FBV to grow and remap. In this case,
+  // original_mutable_arr will point to an invalid memory region, so we need to
+  // refresh it.
+  //
+  // Note: original_mutable_arr has length = array_info.length and only contains
+  //   valid elements with length = array_info.used_length. We could've
+  //   constructed original_mutable_arr with length = array_info.used_length
+  //   here, but let's make it consistent with all other cases (i.e.
+  //   constructing the array view object for the entire extensible array).
+  ICING_ASSIGN_OR_RETURN(original_mutable_arr,
+                         child_document_join_id_pair_array_->GetMutable(
+                             array_info.index, array_info.length));
 
   // Move all existing elements to the new array.
   new_mutable_arr.SetArray(/*idx=*/0, original_mutable_arr.data(),
