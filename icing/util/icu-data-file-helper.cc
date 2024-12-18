@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/icu-data-file-helper.h"
+#include "icing/util/icu-data-file-helper.h"
 
 #include <sys/mman.h>
 
@@ -22,9 +22,10 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/filesystem.h"
+#ifdef CUSTOM_ICU_DAT_FILE
 #include "unicode/udata.h"
 #include "unicode/utypes.h"
-
+#endif  // CUSTOM_ICU_DAT_FILE
 namespace icing {
 namespace lib {
 
@@ -35,8 +36,9 @@ namespace icu_data_file_helper {
 // segmentation fault errors.
 bool has_set_up_icu_data_file = false;
 
-libtextclassifier3::Status SetUpICUDataFile(
+libtextclassifier3::Status SetUpIcuDataFile(
     const std::string& icu_data_file_absolute_path) {
+#ifdef CUSTOM_ICU_DAT_FILE
   if (has_set_up_icu_data_file) {
     return libtextclassifier3::Status::OK;
   }
@@ -62,7 +64,7 @@ libtextclassifier3::Status SetUpICUDataFile(
   }
 
   has_set_up_icu_data_file = true;
-
+#endif  // CUSTOM_ICU_DAT_FILE
   return libtextclassifier3::Status::OK;
 }
 

@@ -17,11 +17,11 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/test-data.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -33,7 +33,7 @@ class IcuNormalizerTest : public testing::Test {
   void SetUp() override {
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
+        icu_data_file_helper::SetUpIcuDataFile(
             GetTestFilePath("icing/icu.dat")));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
@@ -57,88 +57,109 @@ TEST_F(IcuNormalizerTest, Creation) {
 
 // Strings that are already normalized won't change if normalized again.
 TEST_F(IcuNormalizerTest, AlreadyNormalized) {
-  EXPECT_THAT(normalizer_->NormalizeTerm(""), Eq(""));
-  EXPECT_THAT(normalizer_->NormalizeTerm("hello world"), Eq("hello world"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("你好"), Eq("你好"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("キャンパス"), Eq("キャンパス"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("안녕하세요"), Eq("안녕하세요"));
+  EXPECT_THAT(normalizer_->NormalizeTerm(""), EqualsNormalizedTerm(""));
+  EXPECT_THAT(normalizer_->NormalizeTerm("hello world"),
+              EqualsNormalizedTerm("hello world"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("キャンパス"),
+              EqualsNormalizedTerm("キャンパス"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("안녕하세요"),
+              EqualsNormalizedTerm("안녕하세요"));
 }
 
 TEST_F(IcuNormalizerTest, UppercaseToLowercase) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("MDI"), Eq("mdi"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Icing"), Eq("icing"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("MDI"), EqualsNormalizedTerm("mdi"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Icing"),
+              EqualsNormalizedTerm("icing"));
 }
 
 TEST_F(IcuNormalizerTest, LatinLetterRemoveAccent) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("Zürich"), Eq("zurich"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("après-midi"), Eq("apres-midi"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Buenos días"), Eq("buenos dias"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Zürich"),
+              EqualsNormalizedTerm("zurich"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("après-midi"),
+              EqualsNormalizedTerm("apres-midi"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Buenos días"),
+              EqualsNormalizedTerm("buenos dias"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÀÁÂÃÄÅĀĂĄḀḁàáâãäåāăą"),
-              Eq("aaaaaaaaaaaaaaaaaaaa"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ḂḄḆḃḅḇ"), Eq("bbbbbb"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ÇĆĈĊČḈḉćĉċčç"), Eq("cccccccccccc"));
+              EqualsNormalizedTerm("aaaaaaaaaaaaaaaaaaaa"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ḂḄḆḃḅḇ"),
+              EqualsNormalizedTerm("bbbbbb"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ÇĆĈĊČḈḉćĉċčç"),
+              EqualsNormalizedTerm("cccccccccccc"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÐĎĐḊḌḎḐḒḋḍḏḑḓďđ"),
-              Eq("ddddddddddddddd"));
+              EqualsNormalizedTerm("ddddddddddddddd"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÈÉÊËĒĔĖĘḔḖḘḚḜḕḗḙḛḝèéêëēĕėęě"),
-              Eq("eeeeeeeeeeeeeeeeeeeeeeeeeee"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Ḟḟ"), Eq("ff"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ĜĞĠĢḠḡĝğġģ"), Eq("gggggggggg"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ĤḢḤḦḨḪḣḥḧḩḫĥẖ"), Eq("hhhhhhhhhhhhh"));
+              EqualsNormalizedTerm("eeeeeeeeeeeeeeeeeeeeeeeeeee"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Ḟḟ"), EqualsNormalizedTerm("ff"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ĜĞĠĢḠḡĝğġģ"),
+              EqualsNormalizedTerm("gggggggggg"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ĤḢḤḦḨḪḣḥḧḩḫĥẖ"),
+              EqualsNormalizedTerm("hhhhhhhhhhhhh"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÌÍÎÏĨĪĬḬḭḯìíîïĩīĭ"),
-              Eq("iiiiiiiiiiiiiiiii"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Ĵĵ"), Eq("jj"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ĶḰḲḴḵḱḳķ"), Eq("kkkkkkkk"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ĹĻĽḶḸḼḷḹḻḽĺļľ"), Eq("lllllllllllll"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ḾṀṂḿṁṃ"), Eq("mmmmmm"));
+              EqualsNormalizedTerm("iiiiiiiiiiiiiiiii"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Ĵĵ"), EqualsNormalizedTerm("jj"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ĶḰḲḴḵḱḳķ"),
+              EqualsNormalizedTerm("kkkkkkkk"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ĹĻĽḶḸḼḷḹḻḽĺļľ"),
+              EqualsNormalizedTerm("lllllllllllll"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ḾṀṂḿṁṃ"),
+              EqualsNormalizedTerm("mmmmmm"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ÑŃŅŇṄṆṈṊṅṇṉṋñńņň"),
-              Eq("nnnnnnnnnnnnnnnn"));
+              EqualsNormalizedTerm("nnnnnnnnnnnnnnnn"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ŌŎŐÒÓÔÕÖṌṎṐṒṍṏṑṓòóôõöōŏő"),
-              Eq("oooooooooooooooooooooooo"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ṔṖṕṗ"), Eq("pppp"));
+              EqualsNormalizedTerm("oooooooooooooooooooooooo"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ṔṖṕṗ"), EqualsNormalizedTerm("pppp"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ŔŖŘṘṚṜṞṙṛṝṟŕŗř"),
-              Eq("rrrrrrrrrrrrrr"));
+              EqualsNormalizedTerm("rrrrrrrrrrrrrr"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ŚŜŞŠȘṠṢṤṦṨṡṣṥṧṩșśŝşš"),
-              Eq("ssssssssssssssssssss"));
+              EqualsNormalizedTerm("ssssssssssssssssssss"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ŢŤȚṪṬṮṰṫṭṯṱțţť"),
-              Eq("tttttttttttttt"));
+              EqualsNormalizedTerm("tttttttttttttt"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ŨŪŬÙÚÛÜṲṴṶṸṺṳṵṷṹṻùúûüũūŭ"),
-              Eq("uuuuuuuuuuuuuuuuuuuuuuuu"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ṼṾṽṿ"), Eq("vvvv"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ŴẀẂẄẆẈẁẃẅẇẉŵ"), Eq("wwwwwwwwwwww"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ẊẌẋẍ"), Eq("xxxx"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ÝŶŸẎẏŷýÿ"), Eq("yyyyyyyy"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ŹŻŽẐẒẔẑẓẕźżž"), Eq("zzzzzzzzzzzz"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Barış"), Eq("baris"));
+              EqualsNormalizedTerm("uuuuuuuuuuuuuuuuuuuuuuuu"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ṼṾṽṿ"), EqualsNormalizedTerm("vvvv"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ŴẀẂẄẆẈẁẃẅẇẉŵ"),
+              EqualsNormalizedTerm("wwwwwwwwwwww"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ẊẌẋẍ"), EqualsNormalizedTerm("xxxx"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ÝŶŸẎẏŷýÿ"),
+              EqualsNormalizedTerm("yyyyyyyy"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ŹŻŽẐẒẔẑẓẕźżž"),
+              EqualsNormalizedTerm("zzzzzzzzzzzz"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Barış"),
+              EqualsNormalizedTerm("baris"));
 }
 
 TEST_F(IcuNormalizerTest, GreekLetterRemoveAccent) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("kαλημέρα"), Eq("kαλημερα"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("εγγραφή"), Eq("εγγραφη"));
-  EXPECT_THAT(normalizer_->NormalizeTerm(
-                  "ἈἉἊἋἌἍἎἏᾈᾉᾊᾋᾌᾍᾎᾏᾸᾹᾺΆᾼἀἁἂἃἄἅἆἇὰάᾀᾁᾂᾃᾄᾅᾆᾇᾰᾱᾲᾳᾴᾶᾷ"),
-              Eq("αααααααααααααααααααααααααααααααααααααααααααααα"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("kαλημέρα"),
+              EqualsNormalizedTerm("kαλημερα"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("εγγραφή"),
+              EqualsNormalizedTerm("εγγραφη"));
+  EXPECT_THAT(
+      normalizer_->NormalizeTerm(
+          "ἈἉἊἋἌἍἎἏᾈᾉᾊᾋᾌᾍᾎᾏᾸᾹᾺΆᾼἀἁἂἃἄἅἆἇὰάᾀᾁᾂᾃᾄᾅᾆᾇᾰᾱᾲᾳᾴᾶᾷ"),
+      EqualsNormalizedTerm("αααααααααααααααααααααααααααααααααααααααααααααα"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ἘἙἚἛἜἝῈΈἐἑἒἓἔἕὲέ"),
-              Eq("εεεεεεεεεεεεεεεε"));
+              EqualsNormalizedTerm("εεεεεεεεεεεεεεεε"));
   EXPECT_THAT(
       normalizer_->NormalizeTerm("ἨἩἪἫἬἭἮἯᾘᾙᾚᾛᾜᾝᾞᾟῊΉῌἠἡἢἣἤἥἦἧὴήᾐᾑᾒᾓᾔᾕᾖᾗῂῃῄῆῇ"),
-      Eq("ηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηη"));
+      EqualsNormalizedTerm("ηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηηη"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ἸἹἺἻἼἽἾἿῘῙῚΊἰἱἲἳἴἵἶἷὶίῐῑῒΐῖῗ"),
-              Eq("ιιιιιιιιιιιιιιιιιιιιιιιιιιιι"));
+              EqualsNormalizedTerm("ιιιιιιιιιιιιιιιιιιιιιιιιιιιι"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ὈὉὊὋὌὍῸΌὀὁὂὃὄὅὸό"),
-              Eq("οοοοοοοοοοοοοοοο"));
+              EqualsNormalizedTerm("οοοοοοοοοοοοοοοο"));
   EXPECT_THAT(normalizer_->NormalizeTerm("ὙὛὝὟῨῩῪΎὐὑὒὓὔὕὖὗὺύῠῡῢΰῦῧ"),
-              Eq("υυυυυυυυυυυυυυυυυυυυυυυυ"));
+              EqualsNormalizedTerm("υυυυυυυυυυυυυυυυυυυυυυυυ"));
   EXPECT_THAT(
       normalizer_->NormalizeTerm("ὨὩὪὫὬὭὮὯᾨᾩᾪᾫᾬᾭᾮᾯῺΏῼὠὡὢὣὤὥὦὧὼώᾠᾡᾢᾣᾤᾥᾦᾧῲῳῴῶῷ"),
-      Eq("ωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωω"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Ῥῤῥ"), Eq("ρρρ"));
+      EqualsNormalizedTerm("ωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωωω"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Ῥῤῥ"), EqualsNormalizedTerm("ρρρ"));
 }
 
 // Accent / diacritic marks won't be removed in non-latin chars, e.g. in
 // Japanese
 TEST_F(IcuNormalizerTest, NonLatinLetterNotRemoveAccent) {
   // Katakana
-  EXPECT_THAT(normalizer_->NormalizeTerm("ダヂヅデド"), Eq("ダヂヅデド"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ダヂヅデド"),
+              EqualsNormalizedTerm("ダヂヅデド"));
 
   // Our current ICU rules can't handle Hebrew properly, e.g. the accents in
   // "אָלֶף־בֵּית עִבְרִי"
@@ -147,76 +168,98 @@ TEST_F(IcuNormalizerTest, NonLatinLetterNotRemoveAccent) {
 
 TEST_F(IcuNormalizerTest, FullWidthCharsToASCII) {
   // Full-width punctuation to ASCII punctuation
-  EXPECT_THAT(normalizer_->NormalizeTerm("‘’．，！？：“”"), Eq("''.,!?:\"\""));
+  EXPECT_THAT(normalizer_->NormalizeTerm("‘’．，！？：“”"),
+              EqualsNormalizedTerm("''.,!?:\"\""));
   // Full-width 0-9
   EXPECT_THAT(normalizer_->NormalizeTerm("０１２３４５６７８９"),
-              Eq("0123456789"));
+              EqualsNormalizedTerm("0123456789"));
   // Full-width A-Z
   EXPECT_THAT(normalizer_->NormalizeTerm(
                   "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ"),
-              Eq("abcdefghijklmnopqrstuvwxyz"));
+              EqualsNormalizedTerm("abcdefghijklmnopqrstuvwxyz"));
   // Full-width a-z
   EXPECT_THAT(normalizer_->NormalizeTerm(
                   "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"),
-              Eq("abcdefghijklmnopqrstuvwxyz"));
+              EqualsNormalizedTerm("abcdefghijklmnopqrstuvwxyz"));
 }
 
 TEST_F(IcuNormalizerTest, IdeographicToASCII) {
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
                                                   /*max_term_byte_size=*/1000));
 
-  EXPECT_THAT(normalizer->NormalizeTerm("，。"), Eq(",."));
+  EXPECT_THAT(normalizer->NormalizeTerm("，。"), EqualsNormalizedTerm(",."));
 }
 
 // For Katakana, each character is normalized to its full-width version.
 TEST_F(IcuNormalizerTest, KatakanaHalfWidthToFullWidth) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("ｶ"), Eq("カ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ｫ"), Eq("ォ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ｻ"), Eq("サ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ﾎ"), Eq("ホ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ｶ"), EqualsNormalizedTerm("カ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ｫ"), EqualsNormalizedTerm("ォ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ｻ"), EqualsNormalizedTerm("サ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ﾎ"), EqualsNormalizedTerm("ホ"));
 }
 
 TEST_F(IcuNormalizerTest, HiraganaToKatakana) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("あいうえお"), Eq("アイウエオ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("かきくけこ"), Eq("カキクケコ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("さしすせそ"), Eq("サシスセソ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("たちつてと"), Eq("タチツテト"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("なにぬねの"), Eq("ナニヌネノ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("はひふへほ"), Eq("ハヒフヘホ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("まみむめも"), Eq("マミムメモ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("やゆよ"), Eq("ヤユヨ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("らりるれろ"), Eq("ラリルレロ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("わゐゑを"), Eq("ワヰヱヲ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ん"), Eq("ン"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("がぎぐげご"), Eq("ガギグゲゴ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ざじずぜぞ"), Eq("ザジズゼゾ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("だぢづでど"), Eq("ダヂヅデド"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ばびぶべぼ"), Eq("バビブベボ"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("ぱぴぷぺぽ"), Eq("パピプペポ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("あいうえお"),
+              EqualsNormalizedTerm("アイウエオ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("かきくけこ"),
+              EqualsNormalizedTerm("カキクケコ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("さしすせそ"),
+              EqualsNormalizedTerm("サシスセソ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("たちつてと"),
+              EqualsNormalizedTerm("タチツテト"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("なにぬねの"),
+              EqualsNormalizedTerm("ナニヌネノ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("はひふへほ"),
+              EqualsNormalizedTerm("ハヒフヘホ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("まみむめも"),
+              EqualsNormalizedTerm("マミムメモ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("やゆよ"),
+              EqualsNormalizedTerm("ヤユヨ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("らりるれろ"),
+              EqualsNormalizedTerm("ラリルレロ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("わゐゑを"),
+              EqualsNormalizedTerm("ワヰヱヲ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ん"), EqualsNormalizedTerm("ン"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("がぎぐげご"),
+              EqualsNormalizedTerm("ガギグゲゴ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ざじずぜぞ"),
+              EqualsNormalizedTerm("ザジズゼゾ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("だぢづでど"),
+              EqualsNormalizedTerm("ダヂヅデド"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ばびぶべぼ"),
+              EqualsNormalizedTerm("バビブベボ"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("ぱぴぷぺぽ"),
+              EqualsNormalizedTerm("パピプペポ"));
+}
+
+TEST_F(IcuNormalizerTest, HanToPinyin) {
+  EXPECT_THAT(normalizer_->NormalizeTerm("戴"), EqualsNormalizedTerm("戴"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("慧"), EqualsNormalizedTerm("慧"));
 }
 
 TEST_F(IcuNormalizerTest, SuperscriptAndSubscriptToASCII) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("⁹"), Eq("9"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("₉"), Eq("9"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("⁹"), EqualsNormalizedTerm("9"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("₉"), EqualsNormalizedTerm("9"));
 }
 
 TEST_F(IcuNormalizerTest, CircledCharsToASCII) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("①"), Eq("1"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("Ⓐ"), Eq("a"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("①"), EqualsNormalizedTerm("1"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("Ⓐ"), EqualsNormalizedTerm("a"));
 }
 
 TEST_F(IcuNormalizerTest, RotatedCharsToASCII) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("︷"), Eq("{"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("︸"), Eq("}"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("︷"), EqualsNormalizedTerm("{"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("︸"), EqualsNormalizedTerm("}"));
 }
 
 TEST_F(IcuNormalizerTest, SquaredCharsToASCII) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("㌀"), Eq("アパート"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("㌀"),
+              EqualsNormalizedTerm("アパート"));
 }
 
 TEST_F(IcuNormalizerTest, FractionsToASCII) {
-  EXPECT_THAT(normalizer_->NormalizeTerm("¼"), Eq(" 1/4"));
-  EXPECT_THAT(normalizer_->NormalizeTerm("⅚"), Eq(" 5/6"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("¼"), EqualsNormalizedTerm(" 1/4"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("⅚"), EqualsNormalizedTerm(" 5/6"));
 }
 
 TEST_F(IcuNormalizerTest, Truncate) {
@@ -225,19 +268,22 @@ TEST_F(IcuNormalizerTest, Truncate) {
                                                     /*max_term_byte_size=*/5));
 
     // Won't be truncated
-    EXPECT_THAT(normalizer->NormalizeTerm("hi"), Eq("hi"));
-    EXPECT_THAT(normalizer->NormalizeTerm("hello"), Eq("hello"));
+    EXPECT_THAT(normalizer->NormalizeTerm("hi"), EqualsNormalizedTerm("hi"));
+    EXPECT_THAT(normalizer->NormalizeTerm("hello"),
+                EqualsNormalizedTerm("hello"));
 
     // Truncated to length 5.
-    EXPECT_THAT(normalizer->NormalizeTerm("hello!"), Eq("hello"));
+    EXPECT_THAT(normalizer->NormalizeTerm("hello!"),
+                EqualsNormalizedTerm("hello"));
 
     // Each Japanese character has 3 bytes, so truncating to length 5 results in
     // only 1 character.
-    EXPECT_THAT(normalizer->NormalizeTerm("キャンパス"), Eq("キ"));
+    EXPECT_THAT(normalizer->NormalizeTerm("キャンパス"),
+                EqualsNormalizedTerm("キ"));
 
     // Each Greek character has 2 bytes, so truncating to length 5 results in 2
     // character.
-    EXPECT_THAT(normalizer->NormalizeTerm("αβγδε"), Eq("αβ"));
+    EXPECT_THAT(normalizer->NormalizeTerm("αβγδε"), EqualsNormalizedTerm("αβ"));
   }
 
   {
@@ -245,7 +291,7 @@ TEST_F(IcuNormalizerTest, Truncate) {
                                                     /*max_term_byte_size=*/2));
     // The Japanese character has 3 bytes, truncating it results in an empty
     // string.
-    EXPECT_THAT(normalizer->NormalizeTerm("キ"), Eq(""));
+    EXPECT_THAT(normalizer->NormalizeTerm("キ"), EqualsNormalizedTerm(""));
   }
 }
 

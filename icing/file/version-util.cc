@@ -66,8 +66,7 @@ libtextclassifier3::StatusOr<VersionInfo> ReadV1VersionInfo(
     // Real error.
     return std::move(existing_flash_index_magic).status();
   }
-  if (existing_flash_index_magic.ValueOrDie() ==
-      kVersionZeroFlashIndexMagic) {
+  if (existing_flash_index_magic.ValueOrDie() == kVersionZeroFlashIndexMagic) {
     existing_version_info.version = 0;
     if (existing_version_info.max_version == -1) {
       existing_version_info.max_version = 0;
@@ -233,7 +232,8 @@ DerivedFilesRebuildResult CalculateRequiredDerivedFilesRebuild(
         /*needs_schema_store_derived_files_rebuild=*/true,
         /*needs_term_index_rebuild=*/true,
         /*needs_integer_index_rebuild=*/true,
-        /*needs_qualified_id_join_index_rebuild=*/true);
+        /*needs_qualified_id_join_index_rebuild=*/true,
+        /*needs_embedding_index_rebuild=*/true);
   }
 
   // 2. Compare the previous enabled features with the current enabled features
@@ -263,7 +263,8 @@ DerivedFilesRebuildResult CalculateRequiredDerivedFilesRebuild(
           /*needs_schema_store_derived_files_rebuild=*/true,
           /*needs_term_index_rebuild=*/true,
           /*needs_integer_index_rebuild=*/true,
-          /*needs_qualified_id_join_index_rebuild=*/true);
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/true);
     }
     if (curr_features.find(prev_feature) == curr_features.end()) {
       DerivedFilesRebuildResult required_rebuilds =
@@ -318,6 +319,10 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
         // version 3 -> version 4 upgrade, no need to rebuild
         break;
       }
+      case 4: {
+        // version 4 -> version 5 upgrade, no need to rebuild
+        break;
+      }
       default:
         // This should not happen. Rebuild anyway if unsure.
         should_rebuild |= true;
@@ -330,13 +335,62 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
 DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
     IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature) {
   switch (feature) {
+    case IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES: {
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/true,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
     case IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR: {
       return DerivedFilesRebuildResult(
           /*needs_document_store_derived_files_rebuild=*/false,
           /*needs_schema_store_derived_files_rebuild=*/false,
           /*needs_term_index_rebuild=*/true,
           /*needs_integer_index_rebuild=*/false,
-          /*needs_qualified_id_join_index_rebuild=*/false);
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX: {
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/true);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION: {
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/true);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE: {
+      // The schema database feature requires schema-store migration, which is
+      // done separately from derived files rebuild.
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::
+        FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM: {
+      return DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/false);
     }
     case IcingSearchEngineFeatureInfoProto::UNKNOWN:
       return DerivedFilesRebuildResult(
@@ -344,8 +398,25 @@ DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
           /*needs_schema_store_derived_files_rebuild=*/true,
           /*needs_term_index_rebuild=*/true,
           /*needs_integer_index_rebuild=*/true,
-          /*needs_qualified_id_join_index_rebuild=*/true);
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/true);
   }
+}
+
+bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto) {
+  if (prev_version_proto.version() < kSchemaDatabaseVersion) {
+    return true;
+  }
+  for (const auto& feature : prev_version_proto.enabled_features()) {
+    // The schema database feature was enabled in the previous version, so no
+    // need to migrate.
+    if (feature.feature_type() ==
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE) {
+      return false;
+    }
+  }
+  return true;
 }
 
 IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(
@@ -363,6 +434,7 @@ IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(
   info.set_needs_integer_index_rebuild(result.needs_integer_index_rebuild);
   info.set_needs_qualified_id_join_index_rebuild(
       result.needs_qualified_id_join_index_rebuild);
+  info.set_needs_embedding_index_rebuild(result.needs_embedding_index_rebuild);
 
   return info;
 }
@@ -374,6 +446,31 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   if (options.build_property_existence_metadata_hits()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR));
+  }
+  // EmbeddingIndex feature
+  if (options.enable_embedding_index()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
+  }
+  if (options.enable_scorable_properties()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES));
+  }
+  // EmbeddingQuantization feature
+  if (options.enable_embedding_quantization()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
+  }
+  // SchemaDatabase feature
+  if (options.enable_schema_database()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
+  }
+  // QualifiedIdJoinIndex V3 and delete propagation type PROPAGATE_FROM feature
+  if (options.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM));
   }
 }
 

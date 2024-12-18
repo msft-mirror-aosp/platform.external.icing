@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -36,6 +37,9 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -46,6 +50,7 @@
 #include "icing/store/document-store.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
+#include "icing/util/scorable_property_set.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -59,6 +64,23 @@ libtextclassifier3::Status CheckChildrenNotNull(
     ICING_RETURN_ERROR_IF_NULL(child);
   }
   return libtextclassifier3::Status::OK;
+}
+
+SchemaTypeId GetSchemaTypeId(DocumentId document_id,
+                             const DocumentStore& document_store,
+                             int64_t current_time_ms) {
+  auto filter_data_optional =
+      document_store.GetAliveDocumentFilterData(document_id, current_time_ms);
+  if (!filter_data_optional) {
+    // This should never happen. The only failure case for
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
+    ICING_LOG(WARNING) << "No document filter data for document ["
+                       << document_id << "]";
+    return kInvalidSchemaTypeId;
+  }
+  return filter_data_optional.value().schema_type_id();
 }
 
 }  // namespace
@@ -94,8 +116,10 @@ OperatorScoreExpression::Create(
   if (children_all_constant_double) {
     // Because all of the children are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
@@ -277,8 +301,10 @@ MathFunctionScoreExpression::Create(
   if (args_all_constant_double) {
     // Because all of the arguments are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
@@ -581,7 +607,8 @@ libtextclassifier3::StatusOr<
     std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
 ChildrenRankingSignalsFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args,
-    const JoinChildrenFetcher* join_children_fetcher) {
+    const DocumentStore& document_store,
+    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms) {
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         "childrenRankingSignals must have 1 argument.");
@@ -595,12 +622,11 @@ ChildrenRankingSignalsFunctionScoreExpression::Create(
   if (join_children_fetcher == nullptr) {
     return absl_ports::InvalidArgumentError(
         "childrenRankingSignals must only be used with join, but "
-        "JoinChildrenFetcher "
-        "is not provided.");
+        "JoinChildrenFetcher is not provided.");
   }
   return std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>(
       new ChildrenRankingSignalsFunctionScoreExpression(
-          *join_children_fetcher));
+          document_store, *join_children_fetcher, current_time_ms));
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
@@ -643,7 +669,8 @@ PropertyWeightsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator*) const {
   std::vector<double> weights;
   SectionIdMask sections = hit_info.hit_section_ids_mask();
-  SchemaTypeId schema_type_id = GetSchemaTypeId(hit_info.document_id());
+  SchemaTypeId schema_type_id = GetSchemaTypeId(
+      hit_info.document_id(), document_store_, current_time_ms_);
 
   while (sections != 0) {
     SectionId section_id = __builtin_ctzll(sections);
@@ -654,25 +681,11 @@ PropertyWeightsFunctionScoreExpression::EvaluateList(
   return weights;
 }
 
-SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
-    DocumentId document_id) const {
-  auto filter_data_optional =
-      document_store_.GetAliveDocumentFilterData(document_id, current_time_ms_);
-  if (!filter_data_optional) {
-    // This should never happen. The only failure case for
-    // GetAliveDocumentFilterData is if the document_id is outside of the range
-    // of allocated document_ids, which shouldn't be possible since we're
-    // getting this document_id from the posting lists.
-    ICING_LOG(WARNING) << "No document filter data for document ["
-                       << document_id << "]";
-    return kInvalidSchemaTypeId;
-  }
-  return filter_data_optional.value().schema_type_id();
-}
-
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
 GetEmbeddingParameterFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " must have 1 argument."));
@@ -686,9 +699,10 @@ GetEmbeddingParameterFunctionScoreExpression::Create(
       std::unique_ptr<GetEmbeddingParameterFunctionScoreExpression>(
           new GetEmbeddingParameterFunctionScoreExpression(std::move(args[0])));
   if (is_constant) {
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr),
-        expression->type());
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value, expression->type());
   }
   return expression;
 }
@@ -698,6 +712,14 @@ GetEmbeddingParameterFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
                          arg_->EvaluateDouble(hit_info, query_it));
+  if (raw_query_index < 0) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query must be a non-negative integer.");
+  }
+  if (raw_query_index > std::numeric_limits<uint32_t>::max()) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query exceeds the maximum value of uint32.");
+  }
   uint32_t query_index = (uint32_t)raw_query_index;
   if (query_index != raw_query_index) {
     return absl_ports::InvalidArgumentError(
@@ -723,7 +745,8 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " got invalid number of arguments."));
   }
-  if (args[1]->type() != ScoreExpressionType::kVectorIndex) {
+  ScoreExpression* embedding_index_arg = args[1].get();
+  if (embedding_index_arg->type() != ScoreExpressionType::kVectorIndex) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         kFunctionName, " got invalid argument type for embedding vector."));
   }
@@ -744,6 +767,20 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
         metric_type,
         embedding_util::GetEmbeddingQueryMetricTypeFromName(metric));
   }
+  if (embedding_index_arg->is_constant()) {
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t embedding_index,
+        embedding_index_arg->EvaluateDouble(DocHitInfo(),
+                                            /*query_it=*/nullptr));
+    if (embedding_query_results->GetScoreMap(embedding_index, metric_type) ==
+        nullptr) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The embedding query index ", std::to_string(embedding_index),
+          " with metric type ",
+          SearchSpecProto::EmbeddingQueryMetricType::Code_Name(metric_type),
+          " has not been queried."));
+    }
+  }
   return std::unique_ptr<MatchedSemanticScoresFunctionScoreExpression>(
       new MatchedSemanticScoresFunctionScoreExpression(
           std::move(args), metric_type, *embedding_query_results));
@@ -762,6 +799,140 @@ MatchedSemanticScoresFunctionScoreExpression::EvaluateList(
     return std::vector<double>();
   }
   return *scores;
+}
+
+GetScorablePropertyFunctionScoreExpression::
+    GetScorablePropertyFunctionScoreExpression(
+        const DocumentStore* document_store, const SchemaStore* schema_store,
+        int64_t current_time_ms,
+        std::unordered_set<SchemaTypeId>&& schema_type_ids,
+        std::string_view property_path)
+    : document_store_(*document_store),
+      schema_store_(*schema_store),
+      current_time_ms_(current_time_ms),
+      schema_type_ids_(std::move(schema_type_ids)),
+      property_path_(property_path) {}
+
+libtextclassifier3::StatusOr<std::unordered_set<SchemaTypeId>>
+GetScorablePropertyFunctionScoreExpression::GetAndValidateSchemaTypeIds(
+    std::string_view alias_schema_type, std::string_view property_path,
+    const SchemaTypeAliasMap& schema_type_alias_map,
+    const SchemaStore& schema_store) {
+  auto alias_map_iter = schema_type_alias_map.find(alias_schema_type.data());
+  if (alias_map_iter == schema_type_alias_map.end()) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "The alias schema type in the score expression is not found in the "
+        "schema_type_alias_map: ",
+        alias_schema_type));
+  }
+
+  std::unordered_set<SchemaTypeId> schema_type_ids;
+  for (std::string_view schema_type : alias_map_iter->second) {
+    // First, verify that the schema type has a valid schema type id in the
+    // schema store.
+    libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
+        schema_store.GetSchemaTypeId(schema_type);
+    if (!schema_type_id_or.ok()) {
+      if (absl_ports::IsNotFound(schema_type_id_or.status())) {
+        // Ignores the schema type if it is not found in the schema store.
+        continue;
+      }
+      return schema_type_id_or.status();
+    }
+    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+    // Then, calls GetScorablePropertyIndex() here to validate if the property
+    // path is scorable under the schema type, no need to check the returned
+    // index value.
+    libtextclassifier3::StatusOr<std::optional<int>>
+        scorable_property_index_or = schema_store.GetScorablePropertyIndex(
+            schema_type_id, property_path);
+    if (!scorable_property_index_or.ok()) {
+      return scorable_property_index_or.status();
+    }
+    if (!scorable_property_index_or.ValueOrDie().has_value()) {
+      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+          "'%s' is not defined as a scorable property under schema type %d",
+          property_path.data(), schema_type_id));
+    }
+    schema_type_ids.insert(schema_type_id);
+  }
+  return schema_type_ids;
+}
+
+libtextclassifier3::StatusOr<
+    std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
+GetScorablePropertyFunctionScoreExpression::Create(
+    std::vector<std::unique_ptr<ScoreExpression>> args,
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const SchemaTypeAliasMap& schema_type_alias_map, int64_t current_time_ms) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
+  if (args.size() != 2 || args[0]->type() != ScoreExpressionType::kString ||
+      args[1]->type() != ScoreExpressionType::kString) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        kFunctionName, " must take exactly two string params"));
+  }
+
+  // Validate schema type.
+  ICING_ASSIGN_OR_RETURN(std::string_view alias_schema_type,
+                         args[0]->EvaluateString());
+  ICING_ASSIGN_OR_RETURN(std::string_view property_path,
+                         args[1]->EvaluateString());
+  ICING_ASSIGN_OR_RETURN(
+      std::unordered_set<SchemaTypeId> schema_type_ids,
+      GetAndValidateSchemaTypeIds(alias_schema_type, property_path,
+                                  schema_type_alias_map, *schema_store));
+
+  return std::unique_ptr<GetScorablePropertyFunctionScoreExpression>(
+      new GetScorablePropertyFunctionScoreExpression(
+          document_store, schema_store, current_time_ms,
+          std::move(schema_type_ids), property_path));
+}
+
+libtextclassifier3::StatusOr<std::vector<double>>
+GetScorablePropertyFunctionScoreExpression::EvaluateList(
+    const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
+  SchemaTypeId doc_schema_type_id = GetSchemaTypeId(
+      hit_info.document_id(), document_store_, current_time_ms_);
+  if (schema_type_ids_.find(doc_schema_type_id) == schema_type_ids_.end()) {
+    return std::vector<double>();
+  }
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      document_store_.GetScorablePropertySet(hit_info.document_id(),
+                                             current_time_ms_);
+  // It should never happen.
+  if (scorable_property_set == nullptr) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Failed to retrieve ScorablePropertySet for document %d",
+        hit_info.document_id()));
+  }
+
+  const ScorablePropertyProto* scorable_property_proto =
+      scorable_property_set->GetScorablePropertyProto(property_path_);
+  // It should never happen as icing generates a default value for each scorable
+  // property when the document is created.
+  if (scorable_property_proto == nullptr) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Failed to retrieve ScorablePropertyProto for document %d, and "
+        "property path %s",
+        hit_info.document_id(), property_path_.c_str()));
+  }
+
+  // Converts ScorablePropertyProto to a vector of doubles.
+  if (scorable_property_proto->int64_values_size() > 0) {
+    return std::vector<double>(scorable_property_proto->int64_values().begin(),
+                               scorable_property_proto->int64_values().end());
+  } else if (scorable_property_proto->double_values_size() > 0) {
+    return std::vector<double>(scorable_property_proto->double_values().begin(),
+                               scorable_property_proto->double_values().end());
+  } else if (scorable_property_proto->boolean_values_size() > 0) {
+    return std::vector<double>(
+        scorable_property_proto->boolean_values().begin(),
+        scorable_property_proto->boolean_values().end());
+  }
+  return std::vector<double>();
 }
 
 }  // namespace lib
