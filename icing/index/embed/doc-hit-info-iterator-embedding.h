@@ -37,7 +37,8 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorEmbedding
+    : public DocHitInfoIteratorHandlingSectionRestrict {
  public:
   // Create a DocHitInfoIterator for iterating through all docs which have an
   // embedding matched with the provided query with a score in the range of
@@ -46,8 +47,8 @@ class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
   // The iterator will store the matched embedding scores in score_map to
   // prepare for scoring.
   //
-  // The iterator will handle the section restriction logic internally by the
-  // provided section_restrict_data.
+  // The iterator will handle the section restriction logic internally with the
+  // help of DocHitInfoIteratorHandlingSectionRestrict.
   //
   // Returns:
   //   - a DocHitInfoIteratorEmbedding instance on success.
@@ -55,19 +56,12 @@ class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
   static libtextclassifier3::StatusOr<
       std::unique_ptr<DocHitInfoIteratorEmbedding>>
   Create(const PropertyProto::VectorProto* query,
-         std::unique_ptr<SectionRestrictData> section_restrict_data,
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
          double score_low, double score_high,
          EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
          const EmbeddingIndex* embedding_index);
 
   libtextclassifier3::Status Advance() override;
-
-  // The iterator will internally handle the section restriction logic by itself
-  // to have better control, so that it is able to filter out embedding hits
-  // from unwanted sections to avoid retrieving unnecessary vectors and
-  // calculate scores for them.
-  bool full_section_restriction_applied() const override { return true; }
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
     return absl_ports::InvalidArgumentError(
@@ -93,7 +87,6 @@ class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
  private:
   explicit DocHitInfoIteratorEmbedding(
       const PropertyProto::VectorProto* query,
-      std::unique_ptr<SectionRestrictData> section_restrict_data,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
       double score_high,
@@ -101,7 +94,6 @@ class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
       const EmbeddingIndex* embedding_index,
       std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor)
       : query_(*query),
-        section_restrict_data_(std::move(section_restrict_data)),
         metric_type_(metric_type),
         embedding_scorer_(std::move(embedding_scorer)),
         score_low_(score_low),
@@ -129,9 +121,18 @@ class DocHitInfoIteratorEmbedding : public DocHitInfoLeafIterator {
   //   - Any error from posting lists.
   libtextclassifier3::StatusOr<const EmbeddingHit*> AdvanceToNextEmbeddingHit();
 
+  // Similar to Advance(), this method advances the iterator to the next
+  // document, but it does not guarantee that the next document will have
+  // a matched embedding hit within the score range.
+  //
+  // Returns:
+  //   - OK, if it is able to advance to a new document_id.
+  //   - RESOUCE_EXHAUSTED, if we have run out of document_ids to iterate over.
+  //   - Any error from posting lists.
+  libtextclassifier3::Status AdvanceToNextUnfilteredDocument();
+
   // Query information
-  const PropertyProto::VectorProto& query_;                     // Does not own
-  std::unique_ptr<SectionRestrictData> section_restrict_data_;  // Nullable.
+  const PropertyProto::VectorProto& query_;  // Does not own
 
   // Scoring arguments
   SearchSpecProto::EmbeddingQueryMetricType::Code metric_type_;

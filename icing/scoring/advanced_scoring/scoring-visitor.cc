@@ -29,11 +29,6 @@
 namespace icing {
 namespace lib {
 
-void ScoringVisitor::VisitFunctionName(const FunctionNameNode* node) {
-  pending_error_ = absl_ports::InternalError(
-      "FunctionNameNode should be handled in VisitFunction!");
-}
-
 void ScoringVisitor::VisitString(const StringNode* node) {
   stack_.push_back(StringExpression::Create(node->value()));
 }
@@ -97,7 +92,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     }
     args.push_back(pop_stack());
   }
-  const std::string& function_name = node->function_name()->value();
+  const std::string& function_name = node->function_name();
   libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> expression =
       absl_ports::InvalidArgumentError(
           absl_ports::StrCat("Unknown function: ", function_name));
@@ -129,11 +124,18 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     expression = MathFunctionScoreExpression::Create(
         MathFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
+  } else if (ListOperationFunctionScoreExpression::kFunctionNames.find(
+                 function_name) !=
+             ListOperationFunctionScoreExpression::kFunctionNames.end()) {
+    // List operation functions
+    expression = ListOperationFunctionScoreExpression::Create(
+        ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
+        std::move(args));
   } else if (function_name ==
-             GetSearchSpecEmbeddingFunctionScoreExpression::kFunctionName) {
-    // getSearchSpecEmbedding function
+                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
+    // getEmbeddingParameter function
     expression =
-        GetSearchSpecEmbeddingFunctionScoreExpression::Create(std::move(args));
+        GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));
   } else if (function_name ==
              MatchedSemanticScoresFunctionScoreExpression::kFunctionName) {
     // matchedSemanticScores function

@@ -87,8 +87,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, document_store_dir, &clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -142,7 +142,10 @@ class NumericIndexIntegerTest : public ::testing::Test {
     }
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::OptimizeResult doc_store_optimize_result,
-        doc_store_->OptimizeInto(document_store_compact_dir, nullptr));
+        doc_store_->OptimizeInto(document_store_compact_dir,
+                                 /*lang_segmenter=*/nullptr,
+                                 /*potentially_optimizable_blob_handles=*/
+                                 std::unordered_set<std::string>()));
 
     doc_store_.reset();
     if (!filesystem_.SwapFiles(document_store_dir.c_str(),
@@ -159,8 +162,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
         DocumentStore::Create(
             &filesystem_, document_store_dir, &clock_, schema_store_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDeflateCompressionLevel,
             /*initialize_stats=*/nullptr));
@@ -1222,6 +1225,47 @@ TEST_P(IntegerIndexTest,
                            GetParam().num_data_threshold_for_bucket_split,
                            GetParam().pre_mapping_fbv),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_P(IntegerIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index1,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  // Insert some data.
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/0,
+        /*section_id=*/20, /*keys=*/{0, 100, -100});
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        /*section_id=*/2, /*keys=*/{3, -1000, 500});
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        /*section_id=*/15, /*keys=*/{-6, 321, 98});
+  integer_index1->set_last_added_document_id(2);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> doc_hit_info_vec,
+      Query(integer_index1.get(), kDefaultTestPropertyPath,
+            /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // written correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, integer_index1->GetChecksum());
+  EXPECT_THAT(integer_index1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(integer_index1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index2,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+  EXPECT_THAT(integer_index2->last_added_document_id(), Eq(2));
+  EXPECT_THAT(Query(integer_index2.get(), kDefaultTestPropertyPath,
+                    /*key_lower=*/std::numeric_limits<int64_t>::min(),
+                    /*key_upper=*/std::numeric_limits<int64_t>::max()),
+              IsOkAndHolds(ElementsAreArray(doc_hit_info_vec.begin(),
+                                            doc_hit_info_vec.end())));
 }
 
 TEST_P(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {

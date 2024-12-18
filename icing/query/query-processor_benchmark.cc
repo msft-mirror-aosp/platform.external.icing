@@ -114,8 +114,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
   return DocumentStore::Create(
       filesystem, base_dir, clock, schema_store,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/false,
+      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
@@ -181,7 +181,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
                                          .SetKey("icing", "type1")
                                          .SetSchema("type1")
                                          .Build())
-                               .ValueOrDie();
+                               .ValueOrDie()
+                               .new_document_id;
 
   const std::string input_string(state.range(0), 'A');
   AddTokenToIndex(index.get(), document_id, /*section_id=*/0,
@@ -315,7 +316,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
                                          .SetKey("icing", "type1")
                                          .SetSchema("type1")
                                          .Build())
-                               .ValueOrDie();
+                               .ValueOrDie()
+                               .new_document_id;
 
   int term_length = state.range(0) / 5;
 
@@ -467,7 +469,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
                                          .SetKey("icing", "type1")
                                          .SetSchema("type1")
                                          .Build())
-                               .ValueOrDie();
+                               .ValueOrDie()
+                               .new_document_id;
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -604,7 +607,8 @@ void BM_QueryHiragana(benchmark::State& state) {
                                          .SetKey("icing", "type1")
                                          .SetSchema("type1")
                                          .Build())
-                               .ValueOrDie();
+                               .ValueOrDie()
+                               .new_document_id;
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {

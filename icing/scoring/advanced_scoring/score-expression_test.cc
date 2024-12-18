@@ -31,6 +31,7 @@ namespace lib {
 
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::Eq;
 
 class NonConstantScoreExpression : public ScoreExpression {
@@ -39,7 +40,7 @@ class NonConstantScoreExpression : public ScoreExpression {
     return std::make_unique<NonConstantScoreExpression>();
   }
 
-  libtextclassifier3::StatusOr<double> eval(
+  libtextclassifier3::StatusOr<double> EvaluateDouble(
       const DocHitInfo &, const DocHitInfoIterator *) const override {
     return 0;
   }
@@ -61,7 +62,7 @@ class ListScoreExpression : public ScoreExpression {
     return res;
   }
 
-  libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo &, const DocHitInfoIterator *) const override {
     return values;
   }
@@ -89,7 +90,8 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
           MakeChildren(ConstantScoreExpression::Create(1),
                        ConstantScoreExpression::Create(1))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(2)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(2)));
 
   // 1 - 2 - 3 = -4
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -99,7 +101,8 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                                    ConstantScoreExpression::Create(2),
                                    ConstantScoreExpression::Create(3))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(-4)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(-4)));
 
   // 1 * 2 * 3 * 4 = 24
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -110,7 +113,8 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                                    ConstantScoreExpression::Create(3),
                                    ConstantScoreExpression::Create(4))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(24)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(24)));
 
   // 1 / 2 / 4 = 0.125
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -120,7 +124,8 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                                    ConstantScoreExpression::Create(2),
                                    ConstantScoreExpression::Create(4))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(0.125)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(0.125)));
 
   // -(2) = -2
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -128,7 +133,8 @@ TEST(ScoreExpressionTest, OperatorSimplification) {
                       OperatorScoreExpression::OperatorType::kNegative,
                       MakeChildren(ConstantScoreExpression::Create(2))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(-2)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(-2)));
 }
 
 TEST(ScoreExpressionTest, MathFunctionSimplification) {
@@ -140,7 +146,8 @@ TEST(ScoreExpressionTest, MathFunctionSimplification) {
           MakeChildren(ConstantScoreExpression::Create(2),
                        ConstantScoreExpression::Create(2))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(4)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(4)));
 
   // abs(-2) = 2
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -148,7 +155,8 @@ TEST(ScoreExpressionTest, MathFunctionSimplification) {
                       MathFunctionScoreExpression::FunctionType::kAbs,
                       MakeChildren(ConstantScoreExpression::Create(-2))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(2)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(2)));
 
   // log(e) = 1
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -156,7 +164,8 @@ TEST(ScoreExpressionTest, MathFunctionSimplification) {
                       MathFunctionScoreExpression::FunctionType::kLog,
                       MakeChildren(ConstantScoreExpression::Create(M_E))));
   ASSERT_TRUE(expression->is_constant());
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(1)));
 }
 
 TEST(ScoreExpressionTest, CannotSimplifyNonConstant) {
@@ -214,84 +223,132 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgument) {
       MathFunctionScoreExpression::Create(
           MathFunctionScoreExpression::FunctionType::kMax,
           MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(3)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(3)));
 
   // min({1, 2, 3}) = 1
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kMin,
                       MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(1)));
 
   // len({1, 2, 3}) = 3
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kLen,
                       MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(3)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(3)));
 
   // sum({1, 2, 3}) = 6
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kSum,
                       MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(6)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(6)));
 
   // avg({1, 2, 3}) = 2
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kAvg,
                       MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(2)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(2)));
 
   // max({4}) = 4
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kMax,
                       MakeChildren(ListScoreExpression::Create({4}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(4)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(4)));
 
   // min({5}) = 5
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kMin,
                       MakeChildren(ListScoreExpression::Create({5}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(5)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(5)));
 
   // len({6}) = 1
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kLen,
                       MakeChildren(ListScoreExpression::Create({6}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(1)));
 
   // sum({7}) = 7
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kSum,
                       MakeChildren(ListScoreExpression::Create({7}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(7)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(7)));
 
   // avg({7}) = 7
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kAvg,
                       MakeChildren(ListScoreExpression::Create({7}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(7)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(7)));
 
   // len({}) = 0
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kLen,
                       MakeChildren(ListScoreExpression::Create({}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(0)));
 
   // sum({}) = 0
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kSum,
                       MakeChildren(ListScoreExpression::Create({}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(0)));
+
+  // maxOrDefault({1, 2, 3}, 100) = 3
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMaxOrDefault,
+                      MakeChildren(ListScoreExpression::Create({1, 2, 3}),
+                                   ConstantScoreExpression::Create(100))));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(3)));
+
+  // minOrDefault({1, 2, 3}, -100) = 1
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMinOrDefault,
+                      MakeChildren(ListScoreExpression::Create({1, 2, 3}),
+                                   ConstantScoreExpression::Create(-100))));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(1)));
+
+  // maxOrDefault({}, 100) = 100
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMaxOrDefault,
+                      MakeChildren(ListScoreExpression::Create({}),
+                                   ConstantScoreExpression::Create(100))));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(100)));
+
+  // minOrDefault({}, -100) = -100
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMinOrDefault,
+                      MakeChildren(ListScoreExpression::Create({}),
+                                   ConstantScoreExpression::Create(-100))));
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
+              IsOkAndHolds(Eq(-100)));
 }
 
 TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
@@ -302,7 +359,7 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
       MathFunctionScoreExpression::Create(
           MathFunctionScoreExpression::FunctionType::kMax,
           MakeChildren(ListScoreExpression::Create({}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr),
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // avg({}) = evaluation error, since avg on empty list does not produce a
@@ -311,7 +368,7 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
       expression, MathFunctionScoreExpression::Create(
                       MathFunctionScoreExpression::FunctionType::kAvg,
                       MakeChildren(ListScoreExpression::Create({}))));
-  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr),
+  EXPECT_THAT(expression->EvaluateDouble(DocHitInfo(), nullptr),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // max(1, {2}) = type error, since max must take either n > 0 parameters of
@@ -334,6 +391,100 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
   EXPECT_THAT(MathFunctionScoreExpression::Create(
                   MathFunctionScoreExpression::FunctionType::kSin,
                   MakeChildren(ListScoreExpression::Create({1}))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // maxOrDefault({2}) = type error, since the default value is not provided.
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kMaxOrDefault,
+                  MakeChildren(ListScoreExpression::Create({2}))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // minOrDefault({2}, 1, 2) = type error, since there are too many arguments.
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kMinOrDefault,
+                  MakeChildren(ListScoreExpression::Create({2}),
+                               ConstantScoreExpression::Create(1),
+                               ConstantScoreExpression::Create(2))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // minOrDefault(1, 2) = type error, since the first argument is not a list.
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kMinOrDefault,
+                  MakeChildren(ConstantScoreExpression::Create(1),
+                               ConstantScoreExpression::Create(2))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(ScoreExpressionTest, ListOperationFunction) {
+  // filterByRange({4, 5, 2, 1, 3}, 2, 4) = {4, 2, 3}
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoreExpression> expression,
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          MakeChildren(ListScoreExpression::Create({4, 5, 2, 1, 3}),
+                       ConstantScoreExpression::Create(2),
+                       ConstantScoreExpression::Create(4))));
+  EXPECT_THAT(expression->EvaluateList(DocHitInfo(), nullptr),
+              IsOkAndHolds(ElementsAre(4, 2, 3)));
+}
+
+TEST(ScoreExpressionTest, ListOperationFunctionError) {
+  // filterByRange() = type error, no arguments provided.
+  EXPECT_THAT(
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          {}),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // filterByRange({2}) = type error, since the low and high arguments are not
+  // provided.
+  EXPECT_THAT(
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          MakeChildren(ListScoreExpression::Create({2}))),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // filterByRange({2}, 1, 2, 3) = type error, since there are too many
+  // arguments.
+  EXPECT_THAT(
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          MakeChildren(ListScoreExpression::Create({2}),
+                       ConstantScoreExpression::Create(1),
+                       ConstantScoreExpression::Create(2),
+                       ConstantScoreExpression::Create(3))),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // filterByRange(1, 2, 3) = type error, since the first argument is not a
+  // list.
+  EXPECT_THAT(
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          MakeChildren(ConstantScoreExpression::Create(1),
+                       ConstantScoreExpression::Create(2),
+                       ConstantScoreExpression::Create(3))),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // filterByRange({1, 2}, {1}, 2) = type error, since the low argument should
+  // be a double.
+  EXPECT_THAT(
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          MakeChildren(ListScoreExpression::Create({1, 2}),
+                       ListScoreExpression::Create({1}),
+                       ConstantScoreExpression::Create(2))),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // filterByRange({1, 2}, 2, 1) = evaluation error, since we should have
+  // low <= high.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoreExpression> expression,
+      ListOperationFunctionScoreExpression::Create(
+          ListOperationFunctionScoreExpression::FunctionType::kFilterByRange,
+          MakeChildren(ListScoreExpression::Create({2}),
+                       ConstantScoreExpression::Create(2),
+                       ConstantScoreExpression::Create(1))));
+  EXPECT_THAT(expression->EvaluateList(DocHitInfo(), nullptr),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 

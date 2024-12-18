@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -94,24 +95,28 @@ OperatorScoreExpression::Create(
   if (children_all_constant_double) {
     // Because all of the children are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->eval(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
 
-libtextclassifier3::StatusOr<double> OperatorScoreExpression::eval(
+libtextclassifier3::StatusOr<double> OperatorScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   // The Create factory guarantees that an operator will have at least one
   // child.
-  ICING_ASSIGN_OR_RETURN(double res, children_.at(0)->eval(hit_info, query_it));
+  ICING_ASSIGN_OR_RETURN(double res,
+                         children_.at(0)->EvaluateDouble(hit_info, query_it));
 
   if (op_ == OperatorType::kNegative) {
     return -res;
   }
 
   for (int i = 1; i < children_.size(); ++i) {
-    ICING_ASSIGN_OR_RETURN(double v, children_.at(i)->eval(hit_info, query_it));
+    ICING_ASSIGN_OR_RETURN(double v,
+                           children_.at(i)->EvaluateDouble(hit_info, query_it));
     switch (op_) {
       case OperatorType::kPlus:
         res += v;
@@ -138,17 +143,29 @@ libtextclassifier3::StatusOr<double> OperatorScoreExpression::eval(
 
 const std::unordered_map<std::string, MathFunctionScoreExpression::FunctionType>
     MathFunctionScoreExpression::kFunctionNames = {
-        {"log", FunctionType::kLog}, {"pow", FunctionType::kPow},
-        {"max", FunctionType::kMax}, {"min", FunctionType::kMin},
-        {"len", FunctionType::kLen}, {"sum", FunctionType::kSum},
-        {"avg", FunctionType::kAvg}, {"sqrt", FunctionType::kSqrt},
-        {"abs", FunctionType::kAbs}, {"sin", FunctionType::kSin},
-        {"cos", FunctionType::kCos}, {"tan", FunctionType::kTan}};
+        {"log", FunctionType::kLog},
+        {"pow", FunctionType::kPow},
+        {"max", FunctionType::kMax},
+        {"min", FunctionType::kMin},
+        {"len", FunctionType::kLen},
+        {"sum", FunctionType::kSum},
+        {"avg", FunctionType::kAvg},
+        {"sqrt", FunctionType::kSqrt},
+        {"abs", FunctionType::kAbs},
+        {"sin", FunctionType::kSin},
+        {"cos", FunctionType::kCos},
+        {"tan", FunctionType::kTan},
+        {"maxOrDefault", FunctionType::kMaxOrDefault},
+        {"minOrDefault", FunctionType::kMinOrDefault}};
 
 const std::unordered_set<MathFunctionScoreExpression::FunctionType>
     MathFunctionScoreExpression::kVariableArgumentsFunctions = {
         FunctionType::kMax, FunctionType::kMin, FunctionType::kLen,
         FunctionType::kSum, FunctionType::kAvg};
+
+const std::unordered_set<MathFunctionScoreExpression::FunctionType>
+    MathFunctionScoreExpression::kListArgumentFunctions = {
+        FunctionType::kMaxOrDefault, FunctionType::kMinOrDefault};
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
 MathFunctionScoreExpression::Create(
@@ -160,26 +177,32 @@ MathFunctionScoreExpression::Create(
   }
   ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
 
-  // Received a list type in the function argument.
-  if (args.size() == 1 && args[0]->type() == ScoreExpressionType::kDoubleList) {
-    // Only certain functions support list type.
-    if (kVariableArgumentsFunctions.count(function_type) > 0) {
-      return std::unique_ptr<MathFunctionScoreExpression>(
-          new MathFunctionScoreExpression(function_type, std::move(args)));
-    }
-    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Received an unsupported list type argument in the math function."));
+  // Return early for functions that support variable length arguments and the
+  // first argument is a list.
+  if (args.size() == 1 && args[0]->type() == ScoreExpressionType::kDoubleList &&
+      kVariableArgumentsFunctions.count(function_type) > 0) {
+    return std::unique_ptr<MathFunctionScoreExpression>(
+        new MathFunctionScoreExpression(function_type, std::move(args)));
   }
 
-  bool args_all_constant_double = true;
-  for (const auto& child : args) {
-    if (child->type() != ScoreExpressionType::kDouble) {
+  bool args_all_constant_double = false;
+  if (kListArgumentFunctions.count(function_type) > 0) {
+    if (args[0]->type() != ScoreExpressionType::kDoubleList) {
       return absl_ports::InvalidArgumentError(
-          "Got an invalid type for the math function. Should expect a double "
-          "type argument.");
+          "Got an invalid type for the math function. Should expect a list "
+          "type value in the first argument.");
     }
-    if (!child->is_constant()) {
-      args_all_constant_double = false;
+  } else {
+    args_all_constant_double = true;
+    for (const auto& child : args) {
+      if (child->type() != ScoreExpressionType::kDouble) {
+        return absl_ports::InvalidArgumentError(
+            "Got an invalid type for the math function. Should expect a double "
+            "type argument.");
+      }
+      if (!child->is_constant()) {
+        args_all_constant_double = false;
+      }
     }
   }
   switch (function_type) {
@@ -219,6 +242,26 @@ MathFunctionScoreExpression::Create(
         return absl_ports::InvalidArgumentError("tan must have 1 argument.");
       }
       break;
+    case FunctionType::kMaxOrDefault:
+      if (args.size() != 2) {
+        return absl_ports::InvalidArgumentError(
+            "maxOrDefault must have 2 arguments.");
+      }
+      if (args[1]->type() != ScoreExpressionType::kDouble) {
+        return absl_ports::InvalidArgumentError(
+            "maxOrDefault must have a double type as the second argument.");
+      }
+      break;
+    case FunctionType::kMinOrDefault:
+      if (args.size() != 2) {
+        return absl_ports::InvalidArgumentError(
+            "minOrDefault must have 2 arguments.");
+      }
+      if (args[1]->type() != ScoreExpressionType::kDouble) {
+        return absl_ports::InvalidArgumentError(
+            "minOrDefault must have a double type as the second argument.");
+      }
+      break;
     // Functions that support variable length arguments
     case FunctionType::kMax:
       [[fallthrough]];
@@ -237,22 +280,28 @@ MathFunctionScoreExpression::Create(
   if (args_all_constant_double) {
     // Because all of the arguments are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->eval(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
 
-libtextclassifier3::StatusOr<double> MathFunctionScoreExpression::eval(
+libtextclassifier3::StatusOr<double>
+MathFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   std::vector<double> values;
+  int ind = 0;
   if (args_.at(0)->type() == ScoreExpressionType::kDoubleList) {
-    ICING_ASSIGN_OR_RETURN(values, args_.at(0)->eval_list(hit_info, query_it));
-  } else {
-    for (const auto& child : args_) {
-      ICING_ASSIGN_OR_RETURN(double v, child->eval(hit_info, query_it));
-      values.push_back(v);
-    }
+    ICING_ASSIGN_OR_RETURN(values,
+                           args_.at(0)->EvaluateList(hit_info, query_it));
+    ind = 1;
+  }
+  for (; ind < args_.size(); ++ind) {
+    ICING_ASSIGN_OR_RETURN(double v,
+                           args_.at(ind)->EvaluateDouble(hit_info, query_it));
+    values.push_back(v);
   }
 
   double res = 0;
@@ -311,6 +360,22 @@ libtextclassifier3::StatusOr<double> MathFunctionScoreExpression::eval(
     case FunctionType::kTan:
       res = tan(values[0]);
       break;
+    // For the following two functions, the last value is the default value.
+    // If values.size() == 1, then it means the provided list is empty.
+    case FunctionType::kMaxOrDefault:
+      if (values.size() == 1) {
+        res = values[0];
+      } else {
+        res = *std::max_element(values.begin(), values.end() - 1);
+      }
+      break;
+    case FunctionType::kMinOrDefault:
+      if (values.size() == 1) {
+        res = values[0];
+      } else {
+        res = *std::min_element(values.begin(), values.end() - 1);
+      }
+      break;
   }
   if (!std::isfinite(res)) {
     return absl_ports::InvalidArgumentError(
@@ -318,6 +383,69 @@ libtextclassifier3::StatusOr<double> MathFunctionScoreExpression::eval(
         "expression.");
   }
   return res;
+}
+
+const std::unordered_map<std::string,
+                         ListOperationFunctionScoreExpression::FunctionType>
+    ListOperationFunctionScoreExpression::kFunctionNames = {
+        {"filterByRange", FunctionType::kFilterByRange}};
+
+libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
+ListOperationFunctionScoreExpression::Create(
+    FunctionType function_type,
+    std::vector<std::unique_ptr<ScoreExpression>> args) {
+  if (args.empty()) {
+    return absl_ports::InvalidArgumentError(
+        "List operation functions must have at least one argument.");
+  }
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
+  switch (function_type) {
+    case FunctionType::kFilterByRange:
+      if (args.size() != 3) {
+        return absl_ports::InvalidArgumentError(
+            "filterByRange must have 3 arguments.");
+      }
+      if (args[0]->type() != ScoreExpressionType::kDoubleList) {
+        return absl_ports::InvalidArgumentError(
+            "Should expect a list type value for the first argument of "
+            "filterByRange.");
+      }
+      if (args.at(1)->type() != ScoreExpressionType::kDouble ||
+          args.at(2)->type() != ScoreExpressionType::kDouble) {
+        return absl_ports::InvalidArgumentError(
+            "Should expect double type values for the second and third "
+            "arguments of filterByRange.");
+      }
+      break;
+  }
+  return std::unique_ptr<ListOperationFunctionScoreExpression>(
+      new ListOperationFunctionScoreExpression(function_type, std::move(args)));
+}
+
+libtextclassifier3::StatusOr<std::vector<double>>
+ListOperationFunctionScoreExpression::EvaluateList(
+    const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
+  switch (function_type_) {
+    case FunctionType::kFilterByRange:
+      ICING_ASSIGN_OR_RETURN(std::vector<double> list_value,
+                             args_.at(0)->EvaluateList(hit_info, query_it));
+      ICING_ASSIGN_OR_RETURN(double low,
+                             args_.at(1)->EvaluateDouble(hit_info, query_it));
+      ICING_ASSIGN_OR_RETURN(double high,
+                             args_.at(2)->EvaluateDouble(hit_info, query_it));
+      if (low > high) {
+        return absl_ports::InvalidArgumentError(
+            "The lower bound cannot be greater than the upper bound.");
+      }
+      auto new_end =
+          std::remove_if(list_value.begin(), list_value.end(),
+                         [low, high](double v) { return v < low || v > high; });
+      list_value.erase(new_end, list_value.end());
+      return list_value;
+      break;
+  }
+  return absl_ports::InternalError("Should never reach here.");
 }
 
 const std::unordered_map<std::string,
@@ -370,7 +498,8 @@ DocumentFunctionScoreExpression::Create(
                                           current_time_ms));
 }
 
-libtextclassifier3::StatusOr<double> DocumentFunctionScoreExpression::eval(
+libtextclassifier3::StatusOr<double>
+DocumentFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   switch (function_type_) {
     case FunctionType::kDocumentScore:
@@ -389,7 +518,7 @@ libtextclassifier3::StatusOr<double> DocumentFunctionScoreExpression::eval(
       [[fallthrough]];
     case FunctionType::kUsageLastUsedTimestamp: {
       ICING_ASSIGN_OR_RETURN(double raw_usage_type,
-                             args_[1]->eval(hit_info, query_it));
+                             args_[1]->EvaluateDouble(hit_info, query_it));
       int usage_type = (int)raw_usage_type;
       if (usage_type < 1 || usage_type > 3 || raw_usage_type != usage_type) {
         return absl_ports::InvalidArgumentError(
@@ -444,7 +573,7 @@ RelevanceScoreFunctionScoreExpression::Create(
 }
 
 libtextclassifier3::StatusOr<double>
-RelevanceScoreFunctionScoreExpression::eval(
+RelevanceScoreFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   if (query_it == nullptr) {
     return default_score_;
@@ -480,7 +609,7 @@ ChildrenRankingSignalsFunctionScoreExpression::Create(
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
-ChildrenRankingSignalsFunctionScoreExpression::eval_list(
+ChildrenRankingSignalsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(
       std::vector<ScoredDocumentHit> children_hits,
@@ -515,7 +644,7 @@ PropertyWeightsFunctionScoreExpression::Create(
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
-PropertyWeightsFunctionScoreExpression::eval_list(
+PropertyWeightsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator*) const {
   std::vector<double> weights;
   SectionIdMask sections = hit_info.hit_section_ids_mask();
@@ -547,8 +676,10 @@ SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
-GetSearchSpecEmbeddingFunctionScoreExpression::Create(
+GetEmbeddingParameterFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " must have 1 argument."));
@@ -559,22 +690,30 @@ GetSearchSpecEmbeddingFunctionScoreExpression::Create(
   }
   bool is_constant = args[0]->is_constant();
   std::unique_ptr<ScoreExpression> expression =
-      std::unique_ptr<GetSearchSpecEmbeddingFunctionScoreExpression>(
-          new GetSearchSpecEmbeddingFunctionScoreExpression(
-              std::move(args[0])));
+      std::unique_ptr<GetEmbeddingParameterFunctionScoreExpression>(
+          new GetEmbeddingParameterFunctionScoreExpression(std::move(args[0])));
   if (is_constant) {
-    return ConstantScoreExpression::Create(
-        expression->eval(DocHitInfo(), /*query_it=*/nullptr),
-        expression->type());
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value, expression->type());
   }
   return expression;
 }
 
 libtextclassifier3::StatusOr<double>
-GetSearchSpecEmbeddingFunctionScoreExpression::eval(
+GetEmbeddingParameterFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
-                         arg_->eval(hit_info, query_it));
+                         arg_->EvaluateDouble(hit_info, query_it));
+  if (raw_query_index < 0) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query must be a non-negative integer.");
+  }
+  if (raw_query_index > std::numeric_limits<uint32_t>::max()) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query exceeds the maximum value of uint32.");
+  }
   uint32_t query_index = (uint32_t)raw_query_index;
   if (query_index != raw_query_index) {
     return absl_ports::InvalidArgumentError(
@@ -600,7 +739,8 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " got invalid number of arguments."));
   }
-  if (args[1]->type() != ScoreExpressionType::kVectorIndex) {
+  ScoreExpression* embedding_index_arg = args[1].get();
+  if (embedding_index_arg->type() != ScoreExpressionType::kVectorIndex) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         kFunctionName, " got invalid argument type for embedding vector."));
   }
@@ -616,10 +756,24 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
       return absl_ports::InvalidArgumentError(
           "Embedding metric can only be given as a constant string.");
     }
-    ICING_ASSIGN_OR_RETURN(std::string_view metric, args[2]->eval_string());
+    ICING_ASSIGN_OR_RETURN(std::string_view metric, args[2]->EvaluateString());
     ICING_ASSIGN_OR_RETURN(
         metric_type,
         embedding_util::GetEmbeddingQueryMetricTypeFromName(metric));
+  }
+  if (embedding_index_arg->is_constant()) {
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t embedding_index,
+        embedding_index_arg->EvaluateDouble(DocHitInfo(),
+                                            /*query_it=*/nullptr));
+    if (embedding_query_results->GetScoreMap(embedding_index, metric_type) ==
+        nullptr) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The embedding query index ", std::to_string(embedding_index),
+          " with metric type ",
+          SearchSpecProto::EmbeddingQueryMetricType::Code_Name(metric_type),
+          " has not been queried."));
+    }
   }
   return std::unique_ptr<MatchedSemanticScoresFunctionScoreExpression>(
       new MatchedSemanticScoresFunctionScoreExpression(
@@ -627,10 +781,10 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
-MatchedSemanticScoresFunctionScoreExpression::eval_list(
+MatchedSemanticScoresFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
-                         args_[1]->eval(hit_info, query_it));
+                         args_[1]->EvaluateDouble(hit_info, query_it));
   uint32_t query_index = (uint32_t)raw_query_index;
   const std::vector<double>* scores =
       embedding_query_results_.GetMatchedScoresForDocument(
