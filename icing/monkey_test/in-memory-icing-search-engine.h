@@ -100,9 +100,7 @@ class InMemoryIcingSearchEngine {
       const std::string &schema_type);
 
   // Deletes all Documents that match the query specified in search_spec.
-  // Currently, only the "query" and "term_match_type" fields are recognized by
-  // the in-memory Icing, and only single term queries with possible section
-  // restrictions are supported.
+  // Check the comments of Search() for the supported query types.
   //
   // Returns:
   //   The number of deleted documents on success
@@ -111,9 +109,17 @@ class InMemoryIcingSearchEngine {
       const SearchSpecProto &search_spec);
 
   // Retrieves documents according to search_spec.
-  // Currently, only the "query" and "term_match_type" fields are recognized by
-  // the in-memory Icing, and only single term queries with possible section
+  // Currently, only the "query", "term_match_type", "embedding_query_vectors",
+  // and "embedding_query_metric_type" fields are recognized by the in-memory
+  // Icing.
+  //
+  // For term based queries, only single term queries with possible section
   // restrictions are supported.
+  //
+  // For embedding based queries, only the fixed format of
+  // `semanticSearch(getEmbeddingParameter(0), low, high)` is supported, where
+  // `low` and `high` are floating point numbers that specify the score range.
+  // Section restrictions are also recognized.
   libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
       const SearchSpecProto &search_spec) const;
 
@@ -152,13 +158,20 @@ class InMemoryIcingSearchEngine {
   libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
       const std::string &schema_type, const std::string &property_name) const;
 
-  libtextclassifier3::StatusOr<TermMatchType::Code> GetTermMatchType(
+  struct PropertyIndexInfo {
+    // Whether the property is indexable.
+    bool indexable;
+    // The term match type if the property is of type string.
+    TermMatchType::Code term_match_type =
+        TermMatchType::Code::TermMatchType_Code_UNKNOWN;
+  };
+  libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
       const std::string &schema_type,
       const MonkeyTokenizedSection &section) const;
 
   libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
-      const MonkeyTokenizedDocument &document, const std::string &query,
-      TermMatchType::Code term_match_type) const;
+      const MonkeyTokenizedDocument &document,
+      const SearchSpecProto &search_spec) const;
 };
 
 }  // namespace lib

@@ -94,6 +94,14 @@ message StringIndexingConfig {
   // Content in this property should be returned for queries that are either
   // exact matches or query matches of the tokens appearing in this property.
   // Ex. A property with "fool" *should* match a query for "foo".
+  //
+  // TermMatchType.Code=STEMMING
+  // Content in this property should also be returned for queries that are stems
+  // of the tokens appearing in this property.
+  // Ex. A property with "running" *should* match a query for "run".
+  //
+  // TODO: b/344915547 - Refactor this to be a repeated field so that clients
+  // can choose multiple fuzzy match types.
   optional TermMatchType.Code term_match_type = 1;
 
   message TokenizerType {
@@ -235,7 +243,7 @@ message JoinableConfig {
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 11
+// Next tag: 12
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -275,6 +283,9 @@ message PropertyConfigProto {
 
       // A list of floats. Vector type is used for embedding searches.
       VECTOR = 7;
+
+      // A handle to uniquely identify a large blob of data.
+      BLOB_HANDLE = 8;
     }
   }
   optional DataType.Code data_type = 2;
@@ -340,6 +351,27 @@ message PropertyConfigProto {
   // OPTIONAL: Describes how vector properties should be indexed. Vector
   // properties that do not set the indexing config will not be indexed.
   optional EmbeddingIndexingConfig embedding_indexing_config = 10;
+
+  // OPTIONAL: Describes how a property can be used to for scoring.
+  //
+  // The ScorableType should only be enabled for the following data types:
+  // - INT64
+  // - DOUBLE
+  // - BOOLEAN
+  message ScorableType {
+    enum Code {
+      // This value should not be used on purpose.
+      // It will be treated as DISABLED in icing.
+      UNKNOWN = 0;
+
+      // Property is disabled for scoring.
+      DISABLED = 1;
+
+      // Property is enabled for scoring.
+      ENABLED = 2;
+    }
+  }
+  optional ScorableType.Code scorable_type = 11;
 }
 
 // List of all supported types constitutes the schema used by Icing.

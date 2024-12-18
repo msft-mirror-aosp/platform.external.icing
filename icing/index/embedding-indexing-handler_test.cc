@@ -290,8 +290,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(embedding_index_->last_added_document_id(),
               Eq(kInvalidDocumentId));
@@ -348,8 +349,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(embedding_index_->last_added_document_id(),
               Eq(kInvalidDocumentId));
@@ -462,8 +464,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
@@ -543,11 +546,13 @@ TEST_F(EmbeddingIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(tokenized_document1.document()));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(tokenized_document2.document()));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
