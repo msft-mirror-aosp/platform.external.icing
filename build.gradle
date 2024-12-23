@@ -53,21 +53,8 @@ afterEvaluate {
     }
 }
 
-protobuf {
-    protoc {
-        artifact = libs.protobufCompiler.get()
-    }
-    generateProtoTasks {
-        all().each { task ->
-            task.builtins {
-                java {
-                    option 'lite'
-                }
-            }
-        }
-    }
-}
-
 androidx {
     mavenVersion = LibraryVersions.APPSEARCH
+    // JSpecify lint is disabled since icing is developed externally
+    optOutJSpecify = true
 }

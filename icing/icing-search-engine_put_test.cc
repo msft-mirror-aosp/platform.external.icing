@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -25,6 +23,7 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
@@ -48,11 +47,11 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -60,6 +59,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::EqualsProto;
 using ::testing::Ge;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
@@ -111,7 +111,7 @@ class IcingSearchEnginePutTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -330,6 +330,29 @@ TEST_F(IcingSearchEnginePutTest, IndexingDocMergeFailureResets) {
   }
 }
 
+TEST_F(IcingSearchEnginePutTest, PutDocumentReplacementSucceeds) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_index_merge_size(document.ByteSizeLong());
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_FALSE(put_result_proto.was_replacement());
+
+  // Putting the document again should succeed.
+  put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_TRUE(put_result_proto.was_replacement());
+}
+
 TEST_F(IcingSearchEnginePutTest, PutDocumentShouldLogFunctionLatency) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
@@ -348,6 +371,7 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentShouldLogFunctionLatency) {
 
   PutResultProto put_result_proto = icing.Put(document);
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_FALSE(put_result_proto.was_replacement());
   EXPECT_THAT(put_result_proto.put_document_stats().latency_ms(), Eq(10));
 }
 
@@ -371,6 +395,7 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentShouldLogDocumentStoreStats) {
 
   PutResultProto put_result_proto = icing.Put(document);
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_FALSE(put_result_proto.was_replacement());
   EXPECT_THAT(put_result_proto.put_document_stats().document_store_latency_ms(),
               Eq(10));
   size_t document_size = put_result_proto.put_document_stats().document_size();
@@ -397,6 +422,7 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentShouldLogIndexingStats) {
 
   PutResultProto put_result_proto = icing.Put(document);
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_FALSE(put_result_proto.was_replacement());
   EXPECT_THAT(put_result_proto.put_document_stats().index_latency_ms(), Eq(10));
   // No merge should happen.
   EXPECT_THAT(put_result_proto.put_document_stats().index_merge_latency_ms(),
@@ -435,6 +461,7 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentShouldLogIndexMergeLatency) {
 
   // Putting document2 should trigger an index merge.
   PutResultProto put_result_proto = icing.Put(document2);
+  EXPECT_FALSE(put_result_proto.was_replacement());
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(put_result_proto.put_document_stats().index_merge_latency_ms(),
               Eq(10));
@@ -474,6 +501,86 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentIndexFailureDeletion) {
   GetResultProto get_result =
       icing.Get("namespace", "uri1", GetResultSpecProto::default_instance());
   ASSERT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEnginePutTest, PutAndGetDocumentWithBlobHandle) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing
+          .SetSchema(
+              SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("SchemaType")
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName("blobHandle")
+                                       .SetDataType(TYPE_BLOB_HANDLE)
+                                       .SetCardinality(CARDINALITY_REQUIRED)))
+                  .Build())
+          .status(),
+      ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_digest(std::string(32, ' '));
+  blob_handle.set_namespace_("namespace");
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("SchemaType")
+          .AddBlobHandleProperty("blobHandle", blob_handle)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  GetResultProto get_result =
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance());
+  EXPECT_THAT(get_result.status(), ProtoIsOk());
+  EXPECT_THAT(get_result.document(), EqualsProto(document));
+}
+
+TEST_F(IcingSearchEnginePutTest, PutDocumentWithInvalidBlobHandle) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(
+      icing
+          .SetSchema(
+              SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("SchemaType")
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName("blobHandle")
+                                       .SetDataType(TYPE_BLOB_HANDLE)
+                                       .SetCardinality(CARDINALITY_REQUIRED)))
+                  .Build())
+          .status(),
+      ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_digest("invalid digest");
+  blob_handle.set_namespace_("namespace");
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("SchemaType")
+          .AddBlobHandleProperty("blobHandle", blob_handle)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 }  // namespace

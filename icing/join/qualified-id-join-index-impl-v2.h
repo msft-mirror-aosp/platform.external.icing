@@ -29,8 +29,8 @@
 #include "icing/file/persistent-storage.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
-#include "icing/join/doc-join-info.h"
 #include "icing/join/document-id-to-join-info.h"
+#include "icing/join/document-join-id-pair.h"
 #include "icing/join/posting-list-join-data-accessor.h"
 #include "icing/join/posting-list-join-data-serializer.h"
 #include "icing/join/qualified-id-join-index.h"
@@ -38,7 +38,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -46,11 +46,11 @@ namespace icing {
 namespace lib {
 
 // QualifiedIdJoinIndexImplV2: a class to maintain join data (DocumentId to
-// referenced NamespaceFingerprintIdentifier). It stores join data in posting
-// lists and bucketizes them by (schema_type_id, joinable_property_id).
+// referenced NamespaceIdFingerprint). It stores join data in posting lists
+// and bucketizes them by (schema_type_id, joinable_property_id).
 class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
  public:
-  using JoinDataType = DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>;
+  using JoinDataType = DocumentIdToJoinInfo<NamespaceIdFingerprint>;
 
   class JoinDataIterator : public JoinDataIteratorBase {
    public:
@@ -85,13 +85,13 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
   };
 
   struct Info {
-    static constexpr int32_t kMagic = 0x12d1c074;
+    static constexpr int32_t kMagic = 0x32e374a7;
 
     int32_t magic;
     int32_t num_data;
     DocumentId last_added_document_id;
 
-    Crc32 ComputeChecksum() const {
+    Crc32 GetChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
@@ -109,10 +109,10 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
       WorkingPathType::kDirectory;
 
   // Creates a QualifiedIdJoinIndexImplV2 instance to store join data
-  // (DocumentId to referenced NamespaceFingerPrintIdentifier) for future
-  // joining search. If any of the underlying file is missing, then delete the
-  // whole working_path and (re)initialize with new ones. Otherwise initialize
-  // and create the instance by existing files.
+  // (DocumentId to referenced NamespaceIdFingerprint) for future joining
+  // search. If any of the underlying file is missing, then delete the whole
+  // working_path and (re)initialize with new ones. Otherwise initialize and
+  // create the instance by existing files.
   //
   // filesystem: Object to make system level calls
   // working_path: Specifies the working path for PersistentStorage.
@@ -152,73 +152,57 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
 
   // v1 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::Status Put(
-      const DocJoinInfo& doc_join_info,
+      const DocumentJoinIdPair& document_join_id_pair,
       std::string_view ref_qualified_id_str) override {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
   // v1 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::StatusOr<std::string_view> Get(
-      const DocJoinInfo& doc_join_info) const override {
+      const DocumentJoinIdPair& document_join_id_pair) const override {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
-  // Puts a list of referenced (parent) NamespaceFingerprintIdentifiers into
-  // the join index, given the (child) DocumentId, SchemaTypeId and
-  // JoinablePropertyId.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if schema_type_id, joinable_property_id, or
-  //     document_id is invalid
-  //   - Any KeyMapper/FlashIndexStorage errors
-  libtextclassifier3::Status Put(SchemaTypeId schema_type_id,
-                                 JoinablePropertyId joinable_property_id,
-                                 DocumentId document_id,
-                                 std::vector<NamespaceFingerprintIdentifier>&&
-                                     ref_namespace_fingerprint_ids) override;
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
+  libtextclassifier3::Status Put(
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<DocumentId>&& parent_document_ids) override {
+    return absl_ports::UnimplementedError("This API is not supported in V2");
+  }
 
-  // Returns a JoinDataIterator for iterating through all join data of the
-  // specified (schema_type_id, joinable_property_id).
-  //
-  // Returns:
-  //   - On success: a JoinDataIterator
-  //   - INVALID_ARGUMENT_ERROR if schema_type_id or joinable_property_id is
-  //     invalid
-  //   - Any KeyMapper/FlashIndexStorage errors
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
+  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
+      DocumentId parent_document_id) const override {
+    return absl_ports::UnimplementedError("This API is not supported in V2");
+  }
+
+  libtextclassifier3::Status Put(
+      SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
+      DocumentId document_id,
+      std::vector<NamespaceIdFingerprint>&& ref_namespace_id_uri_fingerprints)
+      override;
+
   libtextclassifier3::StatusOr<std::unique_ptr<JoinDataIteratorBase>>
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const override;
 
-  // Reduces internal file sizes by reclaiming space and ids of deleted
-  // documents. Qualified id join index will convert all entries to the new
-  // document ids and namespace ids.
-  //
-  // - document_id_old_to_new: a map for converting old document id to new
-  //   document id.
-  // - namespace_id_old_to_new: a map for converting old namespace id to new
-  //   namespace id.
-  // - new_last_added_document_id: will be used to update the last added
-  //                               document id in the qualified id join index.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error. This could potentially leave the index in
-  //     an invalid state and the caller should handle it properly (e.g. discard
-  //     and rebuild)
+  // No-op since v2 stores parent information in (namespace_id,
+  // fingerprint(uri)) format and does not require parent migration.
+  libtextclassifier3::Status MigrateParent(
+      DocumentId old_document_id, DocumentId new_document_id) override {
+    return libtextclassifier3::Status::OK;
+  }
+
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) override;
 
-  // Clears all data and set last_added_document_id to kInvalidDocumentId.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status Clear() override;
 
-  bool is_v2() const override { return true; }
+  QualifiedIdJoinIndex::Version version() const override {
+    return QualifiedIdJoinIndex::Version::kV2;
+  }
 
   int32_t size() const override { return info().num_data; }
 
@@ -280,33 +264,19 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       QualifiedIdJoinIndexImplV2* new_index) const;
 
-  // Flushes contents of metadata file.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
+  libtextclassifier3::Status PersistMetadataToDisk() override;
 
-  // Flushes contents of all storages to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
+  libtextclassifier3::Status PersistStoragesToDisk() override;
 
-  // Computes and returns Info checksum.
-  //
-  // Returns:
-  //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
+  libtextclassifier3::Status WriteMetadata() override;
 
-  // Computes and returns all storages checksum.
-  //
-  // Returns:
-  //   - Crc of all storages on success
-  //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override;
+  libtextclassifier3::Status InternalWriteMetadata(const ScopedFd& sfd);
+
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override;
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_buffer_.get() +
@@ -348,7 +318,7 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
       schema_joinable_id_to_posting_list_mapper_;
 
   // Posting list related members. Use posting list to store join data
-  // (document id to referenced NamespaceFingerprintIdentifier).
+  // (document id to referenced NamespaceIdFingerprint).
   std::unique_ptr<PostingListJoinDataSerializer<JoinDataType>>
       posting_list_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
