@@ -203,6 +203,12 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     // Add the document, itself.
     *result.mutable_document() = std::move(document);
     result.set_score(next_best_document_hit.final_score());
+    const auto* parent_additional_scores =
+        next_best_document_hit.parent_scored_document_hit().additional_scores();
+    if (parent_additional_scores != nullptr) {
+      result.mutable_additional_scores()->Add(parent_additional_scores->begin(),
+                                              parent_additional_scores->end());
+    }
 
     // Retrieve child documents
     for (const ScoredDocumentHit& child_scored_document_hit :
@@ -235,6 +241,11 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
 
       *child_result->mutable_document() = std::move(child_document);
       child_result->set_score(child_scored_document_hit.score());
+      if (child_scored_document_hit.additional_scores() != nullptr) {
+        child_result->mutable_additional_scores()->Add(
+            child_scored_document_hit.additional_scores()->begin(),
+            child_scored_document_hit.additional_scores()->end());
+      }
     }
 
     size_t result_bytes = result.ByteSizeLong();

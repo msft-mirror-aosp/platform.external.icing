@@ -14,10 +14,12 @@
 
 #include "icing/join/qualified-id-join-index-impl-v1.h"
 
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -28,7 +30,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
-#include "icing/join/doc-join-info.h"
+#include "icing/join/document-join-id-pair.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/store/document-id.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
@@ -47,10 +49,10 @@ namespace {
 
 // Set 1M for max # of qualified id entries and 10 bytes for key-value bytes.
 // This will take at most 23 MiB disk space and mmap for persistent hash map.
-static constexpr int32_t kDocJoinInfoMapperMaxNumEntries = 1 << 20;
-static constexpr int32_t kDocJoinInfoMapperAverageKVByteSize = 10;
+static constexpr int32_t kDocumentJoinIdPairMapperMaxNumEntries = 1 << 20;
+static constexpr int32_t kDocumentJoinIdPairMapperAverageKVByteSize = 10;
 
-static constexpr int32_t kDocJoinInfoMapperDynamicTrieMaxSize =
+static constexpr int32_t kDocumentJoinIdPairMapperDynamicTrieMaxSize =
     128 * 1024 * 1024;  // 128 MiB
 
 DocumentId GetNewDocumentId(
@@ -66,7 +68,10 @@ std::string GetMetadataFilePath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/metadata");
 }
 
-std::string GetDocJoinInfoMapperPath(std::string_view working_path) {
+std::string GetDocumentJoinIdPairMapperPath(std::string_view working_path) {
+  // Use the old directory name "doc_join_info_mapper" to avoid rebuild. We just
+  // changed the class, variable and function name, so there is no need to
+  // change the directory name or rebuild the index.
   return absl_ports::StrCat(working_path, "/doc_join_info_mapper");
 }
 
@@ -84,7 +89,7 @@ QualifiedIdJoinIndexImplV1::Create(const Filesystem& filesystem,
                                    bool use_persistent_hash_map) {
   if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str()) ||
       !filesystem.DirectoryExists(
-          GetDocJoinInfoMapperPath(working_path).c_str()) ||
+          GetDocumentJoinIdPairMapperPath(working_path).c_str()) ||
       !filesystem.FileExists(GetQualifiedIdStoragePath(working_path).c_str())) {
     // Discard working_path if any file/directory is missing, and reinitialize.
     if (filesystem.DirectoryExists(working_path.c_str())) {
@@ -107,12 +112,13 @@ QualifiedIdJoinIndexImplV1::~QualifiedIdJoinIndexImplV1() {
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Put(
-    const DocJoinInfo& doc_join_info, std::string_view ref_qualified_id_str) {
+    const DocumentJoinIdPair& document_join_id_pair,
+    std::string_view ref_qualified_id_str) {
   SetDirty();
 
-  if (!doc_join_info.is_valid()) {
+  if (!document_join_id_pair.is_valid()) {
     return absl_ports::InvalidArgumentError(
-        "Cannot put data for an invalid DocJoinInfo");
+        "Cannot put data for an invalid DocumentJoinIdPair");
   }
 
   int32_t qualified_id_index = qualified_id_storage_->num_elements();
@@ -124,8 +130,8 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Put(
   mutable_arr.SetArray(/*idx=*/ref_qualified_id_str.size(), /*arr=*/"\0",
                        /*arr_len=*/1);
 
-  ICING_RETURN_IF_ERROR(doc_join_info_mapper_->Put(
-      encode_util::EncodeIntToCString(doc_join_info.value()),
+  ICING_RETURN_IF_ERROR(document_join_id_pair_mapper_->Put(
+      encode_util::EncodeIntToCString(document_join_id_pair.value()),
       qualified_id_index));
 
   // TODO(b/268521214): add data into delete propagation storage
@@ -134,16 +140,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Put(
 }
 
 libtextclassifier3::StatusOr<std::string_view> QualifiedIdJoinIndexImplV1::Get(
-    const DocJoinInfo& doc_join_info) const {
-  if (!doc_join_info.is_valid()) {
+    const DocumentJoinIdPair& document_join_id_pair) const {
+  if (!document_join_id_pair.is_valid()) {
     return absl_ports::InvalidArgumentError(
-        "Cannot get data for an invalid DocJoinInfo");
+        "Cannot get data for an invalid DocumentJoinIdPair");
   }
 
   ICING_ASSIGN_OR_RETURN(
       int32_t qualified_id_index,
-      doc_join_info_mapper_->Get(
-          encode_util::EncodeIntToCString(doc_join_info.value())));
+      document_join_id_pair_mapper_->Get(
+          encode_util::EncodeIntToCString(document_join_id_pair.value())));
 
   const char* data = qualified_id_storage_->array() + qualified_id_index;
   return std::string_view(data, strlen(data));
@@ -181,7 +187,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
 
   // Destruct current index's storage instances to safely swap directories.
   // TODO(b/268521214): handle delete propagation storage
-  doc_join_info_mapper_.reset();
+  document_join_id_pair_mapper_.reset();
   qualified_id_storage_.reset();
 
   if (!filesystem_.SwapFiles(temp_working_path_ddir.dir().c_str(),
@@ -199,18 +205,19 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
   }
   if (use_persistent_hash_map_) {
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper_,
+        document_join_id_pair_mapper_,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem_, GetDocJoinInfoMapperPath(working_path_),
+            filesystem_, GetDocumentJoinIdPairMapperPath(working_path_),
             pre_mapping_fbv_,
-            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
-            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
+            /*max_num_entries=*/kDocumentJoinIdPairMapperMaxNumEntries,
+            /*average_kv_byte_size=*/
+            kDocumentJoinIdPairMapperAverageKVByteSize));
   } else {
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper_,
+        document_join_id_pair_mapper_,
         DynamicTrieKeyMapper<int32_t>::Create(
-            filesystem_, GetDocJoinInfoMapperPath(working_path_),
-            kDocJoinInfoMapperDynamicTrieMaxSize));
+            filesystem_, GetDocumentJoinIdPairMapperPath(working_path_),
+            kDocumentJoinIdPairMapperDynamicTrieMaxSize));
   }
 
   ICING_ASSIGN_OR_RETURN(
@@ -227,26 +234,28 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
 libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Clear() {
   SetDirty();
 
-  doc_join_info_mapper_.reset();
+  document_join_id_pair_mapper_.reset();
   // Discard and reinitialize doc join info mapper.
-  std::string doc_join_info_mapper_path =
-      GetDocJoinInfoMapperPath(working_path_);
+  std::string document_join_id_pair_mapper_path =
+      GetDocumentJoinIdPairMapperPath(working_path_);
   if (use_persistent_hash_map_) {
     ICING_RETURN_IF_ERROR(PersistentHashMapKeyMapper<int32_t>::Delete(
-        filesystem_, doc_join_info_mapper_path));
+        filesystem_, document_join_id_pair_mapper_path));
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper_,
+        document_join_id_pair_mapper_,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem_, std::move(doc_join_info_mapper_path), pre_mapping_fbv_,
-            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
-            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
+            filesystem_, std::move(document_join_id_pair_mapper_path),
+            pre_mapping_fbv_,
+            /*max_num_entries=*/kDocumentJoinIdPairMapperMaxNumEntries,
+            /*average_kv_byte_size=*/
+            kDocumentJoinIdPairMapperAverageKVByteSize));
   } else {
     ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<int32_t>::Delete(
-        filesystem_, doc_join_info_mapper_path));
-    ICING_ASSIGN_OR_RETURN(doc_join_info_mapper_,
+        filesystem_, document_join_id_pair_mapper_path));
+    ICING_ASSIGN_OR_RETURN(document_join_id_pair_mapper_,
                            DynamicTrieKeyMapper<int32_t>::Create(
-                               filesystem_, doc_join_info_mapper_path,
-                               kDocJoinInfoMapperDynamicTrieMaxSize));
+                               filesystem_, document_join_id_pair_mapper_path,
+                               kDocumentJoinIdPairMapperDynamicTrieMaxSize));
   }
 
   // Clear qualified_id_storage_.
@@ -272,22 +281,24 @@ QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
         absl_ports::StrCat("Failed to create directory: ", working_path));
   }
 
-  // Initialize doc_join_info_mapper
-  std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper;
+  // Initialize document_join_id_pair_mapper
+  std::unique_ptr<KeyMapper<int32_t>> document_join_id_pair_mapper;
   if (use_persistent_hash_map) {
     // TODO(b/263890397): decide PersistentHashMapKeyMapper size
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper,
+        document_join_id_pair_mapper,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem, GetDocJoinInfoMapperPath(working_path), pre_mapping_fbv,
-            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
-            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
+            filesystem, GetDocumentJoinIdPairMapperPath(working_path),
+            pre_mapping_fbv,
+            /*max_num_entries=*/kDocumentJoinIdPairMapperMaxNumEntries,
+            /*average_kv_byte_size=*/
+            kDocumentJoinIdPairMapperAverageKVByteSize));
   } else {
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper,
+        document_join_id_pair_mapper,
         DynamicTrieKeyMapper<int32_t>::Create(
-            filesystem, GetDocJoinInfoMapperPath(working_path),
-            kDocJoinInfoMapperDynamicTrieMaxSize));
+            filesystem, GetDocumentJoinIdPairMapperPath(working_path),
+            kDocumentJoinIdPairMapperDynamicTrieMaxSize));
   }
 
   // Initialize qualified_id_storage
@@ -304,11 +315,13 @@ QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
       new QualifiedIdJoinIndexImplV1(
           filesystem, std::move(working_path),
           /*metadata_buffer=*/std::make_unique<uint8_t[]>(kMetadataFileSize),
-          std::move(doc_join_info_mapper), std::move(qualified_id_storage),
-          pre_mapping_fbv, use_persistent_hash_map));
+          std::move(document_join_id_pair_mapper),
+          std::move(qualified_id_storage), pre_mapping_fbv,
+          use_persistent_hash_map));
   // Initialize info content.
   new_index->info().magic = Info::kMagic;
   new_index->info().last_added_document_id = kInvalidDocumentId;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_index->InitializeNewStorage());
@@ -329,9 +342,9 @@ QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
     return absl_ports::InternalError("Fail to read metadata file");
   }
 
-  // Initialize doc_join_info_mapper
+  // Initialize document_join_id_pair_mapper
   bool dynamic_trie_key_mapper_dir_exists = filesystem.DirectoryExists(
-      absl_ports::StrCat(GetDocJoinInfoMapperPath(working_path),
+      absl_ports::StrCat(GetDocumentJoinIdPairMapperPath(working_path),
                          "/key_mapper_dir")
           .c_str());
   if ((use_persistent_hash_map && dynamic_trie_key_mapper_dir_exists) ||
@@ -341,20 +354,22 @@ QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
     return absl_ports::FailedPreconditionError("Key mapper type mismatch");
   }
 
-  std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper;
+  std::unique_ptr<KeyMapper<int32_t>> document_join_id_pair_mapper;
   if (use_persistent_hash_map) {
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper,
+        document_join_id_pair_mapper,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem, GetDocJoinInfoMapperPath(working_path), pre_mapping_fbv,
-            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
-            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
+            filesystem, GetDocumentJoinIdPairMapperPath(working_path),
+            pre_mapping_fbv,
+            /*max_num_entries=*/kDocumentJoinIdPairMapperMaxNumEntries,
+            /*average_kv_byte_size=*/
+            kDocumentJoinIdPairMapperAverageKVByteSize));
   } else {
     ICING_ASSIGN_OR_RETURN(
-        doc_join_info_mapper,
+        document_join_id_pair_mapper,
         DynamicTrieKeyMapper<int32_t>::Create(
-            filesystem, GetDocJoinInfoMapperPath(working_path),
-            kDocJoinInfoMapperDynamicTrieMaxSize));
+            filesystem, GetDocumentJoinIdPairMapperPath(working_path),
+            kDocumentJoinIdPairMapperDynamicTrieMaxSize));
   }
 
   // Initialize qualified_id_storage
@@ -368,10 +383,12 @@ QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
 
   // Create instance.
   auto type_joinable_index = std::unique_ptr<QualifiedIdJoinIndexImplV1>(
-      new QualifiedIdJoinIndexImplV1(
-          filesystem, std::move(working_path), std::move(metadata_buffer),
-          std::move(doc_join_info_mapper), std::move(qualified_id_storage),
-          pre_mapping_fbv, use_persistent_hash_map));
+      new QualifiedIdJoinIndexImplV1(filesystem, std::move(working_path),
+                                     std::move(metadata_buffer),
+                                     std::move(document_join_id_pair_mapper),
+                                     std::move(qualified_id_storage),
+                                     pre_mapping_fbv, use_persistent_hash_map));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(type_joinable_index->InitializeExistingStorage());
 
@@ -387,9 +404,9 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::TransferIndex(
     const std::vector<DocumentId>& document_id_old_to_new,
     QualifiedIdJoinIndexImplV1* new_index) const {
   std::unique_ptr<KeyMapper<int32_t>::Iterator> iter =
-      doc_join_info_mapper_->GetIterator();
+      document_join_id_pair_mapper_->GetIterator();
   while (iter->Advance()) {
-    DocJoinInfo old_doc_join_info(
+    DocumentJoinIdPair old_document_join_id_pair(
         encode_util::DecodeIntFromCString(iter->GetKey()));
     int32_t qualified_id_index = iter->GetValue();
 
@@ -398,78 +415,102 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::TransferIndex(
 
     // Translate to new doc id.
     DocumentId new_document_id = GetNewDocumentId(
-        document_id_old_to_new, old_doc_join_info.document_id());
+        document_id_old_to_new, old_document_join_id_pair.document_id());
 
     if (new_document_id != kInvalidDocumentId) {
-      ICING_RETURN_IF_ERROR(
-          new_index->Put(DocJoinInfo(new_document_id,
-                                     old_doc_join_info.joinable_property_id()),
-                         ref_qualified_id_str));
+      ICING_RETURN_IF_ERROR(new_index->Put(
+          DocumentJoinIdPair(new_document_id,
+                             old_document_join_id_pair.joinable_property_id()),
+          ref_qualified_id_str));
     }
   }
 
   // TODO(b/268521214): transfer delete propagation storage
-
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk(
-    bool force) {
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   std::string metadata_file_path = GetMetadataFilePath(working_path_);
-
   ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
+  ICING_RETURN_IF_ERROR(InternalWriteMetadata(sfd));
+  if (!filesystem_.DataSync(sfd.get())) {
+    return absl_ports::InternalError("Fail to sync metadata to disk");
+  }
+  is_info_dirty_ = false;
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  ICING_RETURN_IF_ERROR(document_join_id_pair_mapper_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(qualified_id_storage_->PersistToDisk());
+  is_storage_dirty_ = false;
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::WriteMetadata() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  std::string metadata_file_path = GetMetadataFilePath(working_path_);
+  ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
+  return InternalWriteMetadata(std::move(sfd));
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::InternalWriteMetadata(
+    const ScopedFd& sfd) {
   if (!sfd.is_valid()) {
     return absl_ports::InternalError("Fail to open metadata file for write");
   }
-
   if (!filesystem_.PWrite(sfd.get(), /*offset=*/0, metadata_buffer_.get(),
                           kMetadataFileSize)) {
     return absl_ports::InternalError("Fail to write metadata file");
   }
-
-  if (!filesystem_.DataSync(sfd.get())) {
-    return absl_ports::InternalError("Fail to sync metadata to disk");
-  }
-
-  return libtextclassifier3::Status::OK;
-}
-
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
-    return libtextclassifier3::Status::OK;
-  }
-
-  ICING_RETURN_IF_ERROR(doc_join_info_mapper_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(qualified_id_storage_->PersistToDisk());
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV1::ComputeInfoChecksum(bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
-}
-
-libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV1::ComputeStoragesChecksum(bool force) {
-  if (!force && !is_storage_dirty()) {
+QualifiedIdJoinIndexImplV1::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
-  ICING_ASSIGN_OR_RETURN(Crc32 doc_join_info_mapper_crc,
-                         doc_join_info_mapper_->ComputeChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 document_join_id_pair_mapper_crc,
+                         document_join_id_pair_mapper_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 qualified_id_storage_crc,
-                         qualified_id_storage_->ComputeChecksum());
+                         qualified_id_storage_->UpdateChecksum());
+  return Crc32(document_join_id_pair_mapper_crc.Get() ^
+               qualified_id_storage_crc.Get());
+}
 
-  return Crc32(doc_join_info_mapper_crc.Get() ^ qualified_id_storage_crc.Get());
+libtextclassifier3::StatusOr<Crc32>
+QualifiedIdJoinIndexImplV1::GetInfoChecksum() const {
+  // Info checksum is not cached and is calculated on the fly. Just call Get.
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32>
+QualifiedIdJoinIndexImplV1::GetStoragesChecksum() const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  ICING_ASSIGN_OR_RETURN(Crc32 document_join_id_pair_mapper_crc,
+                         document_join_id_pair_mapper_->GetChecksum());
+  Crc32 qualified_id_storage_crc = qualified_id_storage_->GetChecksum();
+  return Crc32(document_join_id_pair_mapper_crc.Get() ^
+               qualified_id_storage_crc.Get());
 }
 
 }  // namespace lib

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string_view>
@@ -19,6 +20,8 @@
 
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -35,14 +38,17 @@
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/snippet-helpers.h"
 #include "unicode/uloc.h"
 
@@ -64,10 +70,11 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -76,10 +83,13 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
+
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -109,14 +119,14 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -143,6 +153,7 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
     return kInvalidSectionId;
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
@@ -209,14 +220,17 @@ ResultSpecProto CreateResultSpec(int num_per_page) {
 TEST_F(ResultRetrieverV2SnippetTest,
        DefaultSnippetSpecShouldDisableSnippeting) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -259,14 +273,17 @@ TEST_F(ResultRetrieverV2SnippetTest,
 
 TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -369,14 +386,17 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
 
 TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -448,14 +468,17 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
 
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -504,14 +527,17 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllResults) {
 
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -563,14 +589,17 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
 
 TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -624,14 +653,17 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
 TEST_F(ResultRetrieverV2SnippetTest,
        ShouldNotSnippetAnyResultsForNonPositiveNumMatchesPerProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id3,
+      DocumentStore::PutResult put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
                                             GetSectionId("Email", "body")};
@@ -686,24 +718,30 @@ TEST_F(ResultRetrieverV2SnippetTest,
 
 TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id1,
+      DocumentStore::PutResult person_put_result1,
       document_store_->Put(CreatePersonDocument(/*id=*/1)));
+  DocumentId person_document_id1 = person_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id2,
+      DocumentStore::PutResult person_put_result2,
       document_store_->Put(CreatePersonDocument(/*id=*/2)));
+  DocumentId person_document_id2 = person_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id3,
+      DocumentStore::PutResult person_put_result3,
       document_store_->Put(CreatePersonDocument(/*id=*/3)));
+  DocumentId person_document_id3 = person_put_result3.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id1,
+      DocumentStore::PutResult email_put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId email_document_id1 = email_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id2,
+      DocumentStore::PutResult email_put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId email_document_id2 = email_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id3,
+      DocumentStore::PutResult email_put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId email_document_id3 = email_put_result3.new_document_id;
 
   std::vector<SectionId> person_hit_section_ids = {
       GetSectionId("Person", "name")};
@@ -920,21 +958,26 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
 
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id1,
+      DocumentStore::PutResult person_put_result1,
       document_store_->Put(CreatePersonDocument(/*id=*/1)));
+  DocumentId person_document_id1 = person_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id2,
+      DocumentStore::PutResult person_put_result2,
       document_store_->Put(CreatePersonDocument(/*id=*/2)));
+  DocumentId person_document_id2 = person_put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id1,
+      DocumentStore::PutResult email_put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId email_document_id1 = email_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id2,
+      DocumentStore::PutResult email_put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId email_document_id2 = email_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id3,
+      DocumentStore::PutResult email_put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId email_document_id3 = email_put_result3.new_document_id;
 
   std::vector<SectionId> person_hit_section_ids = {
       GetSectionId("Person", "name")};
@@ -1039,21 +1082,26 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
 
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id1,
+      DocumentStore::PutResult person_put_result1,
       document_store_->Put(CreatePersonDocument(/*id=*/1)));
+  DocumentId person_document_id1 = person_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId person_document_id2,
+      DocumentStore::PutResult person_put_result2,
       document_store_->Put(CreatePersonDocument(/*id=*/2)));
+  DocumentId person_document_id2 = person_put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id1,
+      DocumentStore::PutResult email_put_result1,
       document_store_->Put(CreateEmailDocument(/*id=*/1)));
+  DocumentId email_document_id1 = email_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id2,
+      DocumentStore::PutResult email_put_result2,
       document_store_->Put(CreateEmailDocument(/*id=*/2)));
+  DocumentId email_document_id2 = email_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId email_document_id3,
+      DocumentStore::PutResult email_put_result3,
       document_store_->Put(CreateEmailDocument(/*id=*/3)));
+  DocumentId email_document_id3 = email_put_result3.new_document_id;
 
   std::vector<SectionId> person_hit_section_ids = {
       GetSectionId("Person", "name")};

@@ -14,6 +14,7 @@
 
 #include "icing/index/integer-section-indexing-handler.h"
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -25,6 +26,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -40,11 +42,12 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -88,10 +91,11 @@ static constexpr SectionId kSectionIdPrice = 4;
 class IntegerSectionIndexingHandlerTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -118,8 +122,8 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()),
         IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -167,13 +171,12 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
                               /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
+                              /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
   }
@@ -187,6 +190,7 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
   std::string base_dir_;
@@ -232,7 +236,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -242,10 +246,12 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
       IntegerSectionIndexingHandler::Create(&fake_clock_,
                                             integer_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+      handler->Handle(tokenized_document, put_result.new_document_id,
+                      put_result.old_document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
       IsOk());
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id));
 
   // Query "timestamp".
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -256,7 +262,8 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
           *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
-                  document_id, std::vector<SectionId>{kSectionIdTimestamp})));
+                  put_result.new_document_id,
+                  std::vector<SectionId>{kSectionIdTimestamp})));
 }
 
 TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
@@ -281,7 +288,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(nested_document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -291,10 +298,12 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
       IntegerSectionIndexingHandler::Create(&fake_clock_,
                                             integer_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+      handler->Handle(tokenized_document, put_result.new_document_id,
+                      put_result.old_document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
       IsOk());
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id));
 
   // Query "nested.timestamp".
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -303,10 +312,10 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
           "nested.timestamp", /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
           *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      GetHits(std::move(itr)),
-      ElementsAre(EqualsDocHitInfo(
-          document_id, std::vector<SectionId>{kSectionIdNestedTimestamp})));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  put_result.new_document_id,
+                  std::vector<SectionId>{kSectionIdNestedTimestamp})));
 
   // Query "price".
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -315,9 +324,10 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
           kPropertyPrice, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
           *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(GetHits(std::move(itr)),
-              ElementsAre(EqualsDocHitInfo(
-                  document_id, std::vector<SectionId>{kSectionIdPrice})));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(EqualsDocHitInfo(put_result.new_document_id,
+                                   std::vector<SectionId>{kSectionIdPrice})));
 
   // Query "timestamp". Should get empty result.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -343,7 +353,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -354,10 +364,12 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
       IntegerSectionIndexingHandler::Create(&fake_clock_,
                                             integer_index_.get()));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+      handler->Handle(tokenized_document, put_result.new_document_id,
+                      put_result.old_document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
       IsOk());
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id));
 
   // Query "timestamp". Should get empty result.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -370,7 +382,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
 }
 
 TEST_F(IntegerSectionIndexingHandlerTest,
-       HandleInvalidDocumentIdShouldReturnInvalidArgumentError) {
+       HandleInvalidNewDocumentIdShouldReturnInvalidArgumentError) {
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -398,6 +410,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
   // index data and last_added_document_id should remain unchanged.
   EXPECT_THAT(
       handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*old_document_id=*/kInvalidDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(integer_index_->last_added_document_id(), Eq(kCurrentDocumentId));
@@ -414,6 +427,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
   // Recovery mode should get the same result.
   EXPECT_THAT(
       handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*old_document_id=*/kInvalidDocumentId,
                       /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(integer_index_->last_added_document_id(), Eq(kCurrentDocumentId));
@@ -443,7 +457,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       document_store_->Put(tokenized_document.document()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -454,13 +468,16 @@ TEST_F(IntegerSectionIndexingHandlerTest,
   // Handling document with document_id == last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
   // unchanged.
-  integer_index_->set_last_added_document_id(document_id);
-  ASSERT_THAT(integer_index_->last_added_document_id(), Eq(document_id));
+  integer_index_->set_last_added_document_id(put_result.new_document_id);
+  ASSERT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+      handler->Handle(tokenized_document, put_result.new_document_id,
+                      put_result.old_document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id));
 
   // Query "timestamp". Should get empty result.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -474,13 +491,16 @@ TEST_F(IntegerSectionIndexingHandlerTest,
   // Handling document with document_id < last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
   // unchanged.
-  integer_index_->set_last_added_document_id(document_id + 1);
-  ASSERT_THAT(integer_index_->last_added_document_id(), Eq(document_id + 1));
+  integer_index_->set_last_added_document_id(put_result.new_document_id + 1);
+  ASSERT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id + 1));
   EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+      handler->Handle(tokenized_document, put_result.new_document_id,
+                      put_result.old_document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id + 1));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result.new_document_id + 1));
 
   // Query "timestamp". Should get empty result.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -519,10 +539,10 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       document_store_->Put(tokenized_document1.document()));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       document_store_->Put(tokenized_document2.document()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -533,10 +553,12 @@ TEST_F(IntegerSectionIndexingHandlerTest,
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.
   EXPECT_THAT(
-      handler->Handle(tokenized_document1, document_id1, /*recovery_mode=*/true,
+      handler->Handle(tokenized_document1, put_result1.new_document_id,
+                      put_result1.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       IsOk());
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id1));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result1.new_document_id));
 
   // Query "timestamp".
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -547,19 +569,23 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
-                  document_id1, std::vector<SectionId>{kSectionIdTimestamp})));
+                  put_result1.new_document_id,
+                  std::vector<SectionId>{kSectionIdTimestamp})));
 
   // Handle document with document_id == last_added_document_id in recovery
   // mode. We should not get any error, but the handler should ignore the
   // document, so both index data and last_added_document_id should remain
   // unchanged.
-  integer_index_->set_last_added_document_id(document_id2);
-  ASSERT_THAT(integer_index_->last_added_document_id(), Eq(document_id2));
+  integer_index_->set_last_added_document_id(put_result2.new_document_id);
+  ASSERT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result2.new_document_id));
   EXPECT_THAT(
-      handler->Handle(tokenized_document2, document_id2, /*recovery_mode=*/true,
+      handler->Handle(tokenized_document2, put_result2.new_document_id,
+                      put_result2.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       IsOk());
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id2));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result2.new_document_id));
 
   // Query "timestamp". Should not get hits for document2.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -570,18 +596,22 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
-                  document_id1, std::vector<SectionId>{kSectionIdTimestamp})));
+                  put_result1.new_document_id,
+                  std::vector<SectionId>{kSectionIdTimestamp})));
 
   // Handle document with document_id < last_added_document_id in recovery mode.
   // We should not get any error, but the handler should ignore the document, so
   // both index data and last_added_document_id should remain unchanged.
-  integer_index_->set_last_added_document_id(document_id2 + 1);
-  ASSERT_THAT(integer_index_->last_added_document_id(), Eq(document_id2 + 1));
+  integer_index_->set_last_added_document_id(put_result2.new_document_id + 1);
+  ASSERT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result2.new_document_id + 1));
   EXPECT_THAT(
-      handler->Handle(tokenized_document2, document_id2, /*recovery_mode=*/true,
+      handler->Handle(tokenized_document2, put_result2.new_document_id,
+                      put_result2.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       IsOk());
-  EXPECT_THAT(integer_index_->last_added_document_id(), Eq(document_id2 + 1));
+  EXPECT_THAT(integer_index_->last_added_document_id(),
+              Eq(put_result2.new_document_id + 1));
 
   // Query "timestamp". Should not get hits for document2.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -592,7 +622,8 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
-                  document_id1, std::vector<SectionId>{kSectionIdTimestamp})));
+                  put_result1.new_document_id,
+                  std::vector<SectionId>{kSectionIdTimestamp})));
 }
 
 }  // namespace

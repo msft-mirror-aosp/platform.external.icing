@@ -22,6 +22,8 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
+// TODO(b/305098009): fix byte size vs size naming issue.
+
 // Next tag: 10
 message NamespaceStorageInfoProto {
   // Name of the namespace
@@ -50,7 +52,7 @@ message NamespaceStorageInfoProto {
   // LINT.ThenChange()
 }
 
-// Next tag: 15
+// Next tag: 16
 message DocumentStorageInfoProto {
   // Total number of alive documents.
   optional int32 num_alive_documents = 1;
@@ -97,6 +99,10 @@ message DocumentStorageInfoProto {
   // Size of the namespace id mapper in bytes. Will be set to -1 if an IO error
   // is encountered while calculating this field.
   optional int64 namespace_id_mapper_size = 12;
+
+  // Size of the scorable properties cache in bytes. Will be set to -1 if an IO
+  // error is encountered while calculating this field.
+  optional int64 scorable_property_cache_size = 15;
 
   // Number of namespaces seen from the current documents.
   //
@@ -157,7 +163,19 @@ message IndexStorageInfoProto {
   optional float min_free_fraction = 8;
 }
 
-// Next tag: 5
+// Next tag: 4
+message NamespaceBlobStorageInfoProto {
+  // The package name of who own the blobs.
+  optional string namespace = 1;
+
+  // Total size of blobs storage of this package in bytes.
+  optional int64 blob_size = 2;
+
+  // Total number of blobs of this package.
+  optional int32 num_blobs = 3;
+}
+
+// Next tag: 6
 message StorageInfoProto {
   // Total size of Icing’s storage in bytes. Will be set to -1 if an IO error is
   // encountered while calculating this field.
@@ -171,6 +189,9 @@ message StorageInfoProto {
 
   // Storage information of the index.
   optional IndexStorageInfoProto index_storage_info = 4;
+
+  // Storage information of the BlobStore.
+  repeated NamespaceBlobStorageInfoProto namespace_blob_storage_info = 5;
 }
 
 // Next tag: 3

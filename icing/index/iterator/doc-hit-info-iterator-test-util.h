@@ -15,15 +15,20 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 
+#include <array>
 #include <cinttypes>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/schema/section.h"
@@ -59,6 +64,14 @@ class DocHitInfoTermFrequencyPair {
 
   Hit::TermFrequency hit_term_frequency(SectionId section_id) const {
     return hit_term_frequency_[section_id];
+  }
+
+  bool operator==(const DocHitInfoTermFrequencyPair& other) const {
+    if (!(doc_hit_info() == other.doc_hit_info())) {
+      return false;
+    }
+    return memcmp(&hit_term_frequency_, &other.hit_term_frequency_,
+                  kTotalNumSections) == 0;
   }
 
  private:

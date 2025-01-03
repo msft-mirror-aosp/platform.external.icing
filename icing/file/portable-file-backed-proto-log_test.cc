@@ -74,7 +74,7 @@ class PortableFileBackedProtoLogTest : public ::testing::Test {
   std::string file_path_;
   bool compress_ = true;
   int32_t compression_level_ =
-      PortableFileBackedProtoLog<DocumentProto>::kDeflateCompressionLevel;
+      PortableFileBackedProtoLog<DocumentProto>::kDefaultCompressionLevel;
   int64_t max_proto_size_ = 256 * 1024;  // 256 KiB
 };
 
@@ -1038,21 +1038,9 @@ TEST_F(PortableFileBackedProtoLogTest, Iterator) {
     ASSERT_THAT(iterator.Advance(),
                 StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   }
-
-  {
-    // Iterator with bad filesystem
-    ScopedFd sfd(filesystem_.OpenForRead(file_path_.c_str()));
-    MockFilesystem mock_filesystem;
-    ON_CALL(mock_filesystem, GetFileSize(A<int>()))
-        .WillByDefault(Return(Filesystem::kBadFileSize));
-    PortableFileBackedProtoLog<DocumentProto>::Iterator bad_iterator(
-        mock_filesystem, sfd.get(), /*initial_offset=*/0);
-    ASSERT_THAT(bad_iterator.Advance(),
-                StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
-  }
 }
 
-TEST_F(PortableFileBackedProtoLogTest, ComputeChecksum) {
+TEST_F(PortableFileBackedProtoLogTest, UpdateChecksum) {
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
   Crc32 checksum;
 
@@ -1068,10 +1056,12 @@ TEST_F(PortableFileBackedProtoLogTest, ComputeChecksum) {
 
     ICING_EXPECT_OK(proto_log->WriteProto(document));
 
-    ICING_ASSERT_OK_AND_ASSIGN(checksum, proto_log->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(checksum, proto_log->GetChecksum());
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
     // Calling it twice with no changes should get us the same checksum
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
   }
 
   {
@@ -1085,15 +1075,19 @@ TEST_F(PortableFileBackedProtoLogTest, ComputeChecksum) {
     ASSERT_FALSE(create_result.has_data_loss());
 
     // Checksum should be consistent across instances
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+    ICING_ASSERT_OK_AND_ASSIGN(checksum, proto_log->GetChecksum());
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
     // PersistToDisk shouldn't affect the checksum value
     ICING_EXPECT_OK(proto_log->PersistToDisk());
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
     // Check that modifying the log leads to a different checksum
     ICING_EXPECT_OK(proto_log->WriteProto(document));
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Not(Eq(checksum))));
   }
 }
 
@@ -1200,7 +1194,7 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     // rewind position is 0.
     ICING_ASSERT_OK(proto_log->EraseProto(document1_offset));
 
-    EXPECT_THAT(proto_log->ComputeChecksum(),
+    EXPECT_THAT(proto_log->UpdateChecksum(),
                 IsOkAndHolds(Eq(Crc32(2175574628))));
   }  // New checksum is updated in destructor.
 
@@ -1220,7 +1214,7 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     // is updated.
     ICING_ASSERT_OK(proto_log->EraseProto(document2_offset));
 
-    EXPECT_THAT(proto_log->ComputeChecksum(),
+    EXPECT_THAT(proto_log->UpdateChecksum(),
                 IsOkAndHolds(Eq(Crc32(790877774))));
   }
 
@@ -1243,7 +1237,7 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     // is updated.
     ICING_ASSERT_OK(proto_log->EraseProto(document3_offset));
 
-    EXPECT_THAT(proto_log->ComputeChecksum(),
+    EXPECT_THAT(proto_log->UpdateChecksum(),
                 IsOkAndHolds(Eq(Crc32(2344803210))));
   }  // Checksum is updated with the newly appended document.
 
