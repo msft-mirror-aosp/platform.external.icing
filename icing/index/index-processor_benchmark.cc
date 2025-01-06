@@ -24,6 +24,7 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/index-processor.h"
@@ -37,14 +38,15 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
@@ -169,14 +171,15 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
       .ValueOrDie();
 }
 
-std::unique_ptr<SchemaStore> CreateSchemaStore(const Filesystem& filesystem,
-                                               const Clock* clock,
-                                               const std::string& base_dir) {
+std::unique_ptr<SchemaStore> CreateSchemaStore(
+    const Filesystem& filesystem, const Clock* clock,
+    const std::string& base_dir, const FeatureFlags& feature_flags) {
   std::string schema_store_dir = base_dir + "/schema_store_test";
   filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   std::unique_ptr<SchemaStore> schema_store =
-      SchemaStore::Create(&filesystem, schema_store_dir, clock).ValueOrDie();
+      SchemaStore::Create(&filesystem, schema_store_dir, clock, &feature_flags)
+          .ValueOrDie();
 
   SchemaProto schema;
   CreateFakeTypeConfig(schema.add_types());
@@ -217,10 +220,11 @@ void CleanUp(const Filesystem& filesystem, const std::string& base_dir) {
 void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
@@ -244,7 +248,7 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, &clock, base_dir);
+      CreateSchemaStore(filesystem, &clock, base_dir, feature_flags);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
@@ -259,10 +263,12 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
@@ -293,10 +299,11 @@ BENCHMARK(BM_IndexDocumentWithOneProperty)
 void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
@@ -320,7 +327,7 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, &clock, base_dir);
+      CreateSchemaStore(filesystem, &clock, base_dir, feature_flags);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
@@ -336,10 +343,12 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
@@ -370,10 +379,11 @@ BENCHMARK(BM_IndexDocumentWithTenProperties)
 void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
@@ -397,7 +407,7 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, &clock, base_dir);
+      CreateSchemaStore(filesystem, &clock, base_dir, feature_flags);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
@@ -413,10 +423,12 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
@@ -447,10 +459,11 @@ BENCHMARK(BM_IndexDocumentWithDiacriticLetters)
 void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
   std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
@@ -474,7 +487,7 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
   std::unique_ptr<SchemaStore> schema_store =
-      CreateSchemaStore(filesystem, &clock, base_dir);
+      CreateSchemaStore(filesystem, &clock, base_dir, feature_flags);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<std::unique_ptr<DataIndexingHandler>> handlers,
@@ -489,10 +502,12 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
                                 input_document)
           .ValueOrDie()));
 
+  DocumentId old_document_id = kInvalidDocumentId;
   DocumentId document_id = 0;
   for (auto _ : state) {
-    ICING_ASSERT_OK(
-        index_processor->IndexDocument(tokenized_document, document_id++));
+    ICING_ASSERT_OK(index_processor->IndexDocument(
+        tokenized_document, document_id, old_document_id));
+    old_document_id = document_id++;
   }
 
   index_processor.reset();
