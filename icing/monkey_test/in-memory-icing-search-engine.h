@@ -16,18 +16,21 @@
 #define ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/monkey_test/monkey-test-generators.h"
+#include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -43,14 +46,13 @@ class InMemoryIcingSearchEngine {
     std::optional<DocumentProto> document;
   };
 
-  InMemoryIcingSearchEngine(MonkeyTestRandomEngine *random,
-                            SchemaProto &&schema)
-      : random_(random),
-        schema_(std::make_unique<SchemaProto>(std::move(schema))) {}
+  InMemoryIcingSearchEngine(MonkeyTestRandomEngine *random) : random_(random) {}
 
   uint32_t GetNumAliveDocuments() const { return existing_doc_ids_.size(); }
 
   const SchemaProto *GetSchema() const { return schema_.get(); }
+
+  void SetSchema(SchemaProto &&schema);
 
   // Randomly pick a document from the in-memory Icing for monkey testing.
   //
@@ -98,9 +100,7 @@ class InMemoryIcingSearchEngine {
       const std::string &schema_type);
 
   // Deletes all Documents that match the query specified in search_spec.
-  // Currently, only the "query" and "term_match_type" fields are recognized by
-  // the in-memory Icing, and only single term queries with possible section
-  // restrictions are supported.
+  // Check the comments of Search() for the supported query types.
   //
   // Returns:
   //   The number of deleted documents on success
@@ -109,10 +109,19 @@ class InMemoryIcingSearchEngine {
       const SearchSpecProto &search_spec);
 
   // Retrieves documents according to search_spec.
-  // Currently, only the "query" and "term_match_type" fields are recognized by
-  // the in-memory Icing, and only single term queries with possible section
+  // Currently, only the "query", "term_match_type", "embedding_query_vectors",
+  // and "embedding_query_metric_type" fields are recognized by the in-memory
+  // Icing.
+  //
+  // For term based queries, only single term queries with possible section
   // restrictions are supported.
-  std::vector<DocumentProto> Search(const SearchSpecProto &search_spec) const;
+  //
+  // For embedding based queries, only the fixed format of
+  // `semanticSearch(getEmbeddingParameter(0), low, high)` is supported, where
+  // `low` and `high` are floating point numbers that specify the score range.
+  // Section restrictions are also recognized.
+  libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
+      const SearchSpecProto &search_spec) const;
 
  private:
   // Does not own.
@@ -126,6 +135,11 @@ class InMemoryIcingSearchEngine {
       namespace_uri_docid_map;
 
   std::unique_ptr<SchemaProto> schema_;
+  // A map that maps from (schema_type, property_name) to the corresponding
+  // PropertyConfigProto.
+  std::unordered_map<
+      std::string, std::unordered_map<std::string, const PropertyConfigProto &>>
+      property_config_map_;
 
   // Finds and returns the internal document id for the document identified by
   // the given key (namespace, uri)
@@ -138,7 +152,25 @@ class InMemoryIcingSearchEngine {
 
   // A helper method for DeleteByQuery and Search to get matched internal doc
   // ids.
-  std::vector<DocumentId> InternalSearch(
+  libtextclassifier3::StatusOr<std::vector<DocumentId>> InternalSearch(
+      const SearchSpecProto &search_spec) const;
+
+  libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
+      const std::string &schema_type, const std::string &property_name) const;
+
+  struct PropertyIndexInfo {
+    // Whether the property is indexable.
+    bool indexable;
+    // The term match type if the property is of type string.
+    TermMatchType::Code term_match_type =
+        TermMatchType::Code::TermMatchType_Code_UNKNOWN;
+  };
+  libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
+      const std::string &schema_type,
+      const MonkeyTokenizedSection &section) const;
+
+  libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
+      const MonkeyTokenizedDocument &document,
       const SearchSpecProto &search_spec) const;
 };
 

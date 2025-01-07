@@ -16,30 +16,45 @@
 #define ICING_FILE_VERSION_UTIL_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
+#include "icing/proto/initialize.pb.h"
 
 namespace icing {
 namespace lib {
 
 namespace version_util {
 
-// - Version 0: Android T. Can be identified only by flash index magic.
-// - Version 1: Android U release 2023-06.
-// - Version 2: Android U 1st mainline release 2023-09. Schema is compatible
-//   with version 1.
-// TODO(b/288969109): bump kVersion to 2 before finalizing the 1st Android U
-// mainline release.
-// LINT.IfChange(kVersion)
-inline static constexpr int32_t kVersion = 2;
-// LINT.ThenChange(//depot/google3/icing/schema/schema-store.cc:min_overlay_version_compatibility)
+// - Version 0: Android T base. Can be identified only by flash index magic.
+// - Version 1: Android U base and M-2023-08.
+// - Version 2: M-2023-09, M-2023-11, M-2024-01. Schema is compatible with v1.
+//   (There were no M-2023-10, M-2023-12).
+// - Version 3: M-2024-02. Schema is compatible with v1 and v2.
+// - Version 4: Android V base. Schema is compatible with v1, v2 and v3.
+// - Version 5: M-2025-02. Schema is compatible with v1, v2, v3 and v4.
+inline static constexpr int32_t kVersion = 5;
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
+inline static constexpr int32_t kVersionThree = 3;
+inline static constexpr int32_t kVersionFour = 4;
+inline static constexpr int32_t kVersionFive = 5;
+
+// Version at which v2 version file is introduced.
+inline static constexpr int32_t kFirstV2Version = kVersionFour;
+
+// Version at which the database field is introduced to the schema proto.
+inline static constexpr int32_t kSchemaDatabaseVersion = kVersionFive;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
+
+inline static constexpr std::string_view kVersionFilenameV1 = "version";
+inline static constexpr std::string_view kVersionFilenameV2 = "version2";
 
 struct VersionInfo {
   int32_t version;
@@ -66,28 +81,144 @@ enum class StateChange {
   kVersionZeroRollForward,
 };
 
-// Helper method to read version info (using version file and flash index header
-// magic) from the existing data. If the state is invalid (e.g. flash index
-// header file is missing), then return an invalid VersionInfo.
+// Contains information about which derived files need to be rebuild.
+//
+// These flags only reflect whether each component should be rebuilt, but do not
+// handle any dependencies. The caller should handle the dependencies by
+// themselves.
+// e.g. - qualified id join index depends on document store derived files, but
+//        it's possible to have needs_document_store_derived_files_rebuild =
+//        true and needs_qualified_id_join_index_rebuild = false.
+//      - The caller should know that join index should also be rebuilt in this
+//        case even though needs_qualified_id_join_index_rebuild = false.
+struct DerivedFilesRebuildResult {
+  bool needs_document_store_derived_files_rebuild = false;
+  bool needs_schema_store_derived_files_rebuild = false;
+  bool needs_term_index_rebuild = false;
+  bool needs_integer_index_rebuild = false;
+  bool needs_qualified_id_join_index_rebuild = false;
+  bool needs_embedding_index_rebuild = false;
+
+  DerivedFilesRebuildResult() = default;
+
+  explicit DerivedFilesRebuildResult(
+      bool needs_document_store_derived_files_rebuild_in,
+      bool needs_schema_store_derived_files_rebuild_in,
+      bool needs_term_index_rebuild_in, bool needs_integer_index_rebuild_in,
+      bool needs_qualified_id_join_index_rebuild_in,
+      bool needs_embedding_index_rebuild_in)
+      : needs_document_store_derived_files_rebuild(
+            needs_document_store_derived_files_rebuild_in),
+        needs_schema_store_derived_files_rebuild(
+            needs_schema_store_derived_files_rebuild_in),
+        needs_term_index_rebuild(needs_term_index_rebuild_in),
+        needs_integer_index_rebuild(needs_integer_index_rebuild_in),
+        needs_qualified_id_join_index_rebuild(
+            needs_qualified_id_join_index_rebuild_in),
+        needs_embedding_index_rebuild(needs_embedding_index_rebuild_in) {}
+
+  bool IsRebuildNeeded() const {
+    return needs_document_store_derived_files_rebuild ||
+           needs_schema_store_derived_files_rebuild ||
+           needs_term_index_rebuild || needs_integer_index_rebuild ||
+           needs_qualified_id_join_index_rebuild ||
+           needs_embedding_index_rebuild;
+  }
+
+  bool operator==(const DerivedFilesRebuildResult& other) const {
+    return needs_document_store_derived_files_rebuild ==
+               other.needs_document_store_derived_files_rebuild &&
+           needs_schema_store_derived_files_rebuild ==
+               other.needs_schema_store_derived_files_rebuild &&
+           needs_term_index_rebuild == other.needs_term_index_rebuild &&
+           needs_integer_index_rebuild == other.needs_integer_index_rebuild &&
+           needs_qualified_id_join_index_rebuild ==
+               other.needs_qualified_id_join_index_rebuild &&
+           needs_embedding_index_rebuild == other.needs_embedding_index_rebuild;
+  }
+
+  void CombineWithOtherRebuildResultOr(const DerivedFilesRebuildResult& other) {
+    needs_document_store_derived_files_rebuild |=
+        other.needs_document_store_derived_files_rebuild;
+    needs_schema_store_derived_files_rebuild |=
+        other.needs_schema_store_derived_files_rebuild;
+    needs_term_index_rebuild |= other.needs_term_index_rebuild;
+    needs_integer_index_rebuild |= other.needs_integer_index_rebuild;
+    needs_qualified_id_join_index_rebuild |=
+        other.needs_qualified_id_join_index_rebuild;
+    needs_embedding_index_rebuild |= other.needs_embedding_index_rebuild;
+  }
+};
+
+// There are two icing version files:
+// 1. V1 version file contains version and max_version info of the existing
+//    data.
+// 2. V2 version file writes the version information using
+//    FileBackedProto<IcingSearchEngineVersionProto>. This contains information
+//    about the version's enabled trunk stable features in addition to the
+//    version numbers written for V1.
+//
+// Both version files must be written to maintain backwards compatibility.
+inline std::string MakeVersionFilePath(std::string_view version_file_dir,
+                                       std::string_view version_file_name) {
+  return absl_ports::StrCat(version_file_dir, "/", version_file_name);
+}
+
+// Returns a VersionInfo from a given IcingSearchEngineVersionProto.
+inline VersionInfo GetVersionInfoFromProto(
+    const IcingSearchEngineVersionProto& version_proto) {
+  return VersionInfo(version_proto.version(), version_proto.max_version());
+}
+
+// Reads the IcingSearchEngineVersionProto from the version files of the
+// existing data.
+//
+// This method reads both the v1 and v2 version files, and returns the v1
+// version numbers in the absence of the v2 version file. If there is a mismatch
+// between the v1 and v2 version numbers, or if the state is invalid (e.g. flash
+// index header file is missing), then an invalid VersionInfo is returned.
 //
 // RETURNS:
-//   - Existing data's VersionInfo on success
+//   - Existing data's IcingSearchEngineVersionProto on success
 //   - INTERNAL_ERROR on I/O errors
-libtextclassifier3::StatusOr<VersionInfo> ReadVersion(
-    const Filesystem& filesystem, const std::string& version_file_path,
+libtextclassifier3::StatusOr<IcingSearchEngineVersionProto> ReadVersion(
+    const Filesystem& filesystem, const std::string& version_file_dir,
     const std::string& index_base_dir);
 
-// Helper method to write version file.
+// Writes the v1 version file. V1 version file is written for all versions and
+// contains only Icing's VersionInfo (version number and max_version)
 //
 // RETURNS:
 //   - OK on success
 //   - INTERNAL_ERROR on I/O errors
-libtextclassifier3::Status WriteVersion(const Filesystem& filesystem,
-                                        const std::string& version_file_path,
-                                        const VersionInfo& version_info);
+libtextclassifier3::Status WriteV1Version(const Filesystem& filesystem,
+                                          const std::string& version_file_dir,
+                                          const VersionInfo& version_info);
 
-// Helper method to determine the change state between the existing data version
-// and the current code version.
+// Writes the v2 version file. V2 version file writes the version information
+// using FileBackedProto<IcingSearchEngineVersionProto>.
+//
+// REQUIRES: version_proto.version >= kFirstV2Version. We implement v2 version
+// checking in kFirstV2Version, so callers will always use a version # greater
+// than this.
+//
+// RETURNS:
+//   - OK on success
+//   - INTERNAL_ERROR on I/O errors
+libtextclassifier3::Status WriteV2Version(
+    const Filesystem& filesystem, const std::string& version_file_dir,
+    std::unique_ptr<IcingSearchEngineVersionProto> version_proto);
+
+// Deletes Icing's version files from version_file_dir.
+//
+// Returns:
+//   - OK on success
+//   - INTERNAL_ERROR on I/O error
+libtextclassifier3::Status DiscardVersionFiles(
+    const Filesystem& filesystem, std::string_view version_file_dir);
+
+// Determines the change state between the existing data version and the current
+// code version.
 //
 // REQUIRES: curr_version > 0. We implement version checking in version 1, so
 //   the callers (except unit tests) will always use a version # greater than 0.
@@ -96,7 +227,19 @@ libtextclassifier3::Status WriteVersion(const Filesystem& filesystem,
 StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
                                   int32_t curr_version = kVersion);
 
-// Helper method to determine whether Icing should rebuild all derived files.
+// Determines the derived files that need to be rebuilt between Icing's existing
+// data based on previous data version and enabled features, and the current
+// code version and enabled features.
+//
+// REQUIRES: curr_version >= kFirstV2Version. We implement v2 version checking
+// in kFirstV2Version, so callers will always use a version # greater than this.
+//
+// RETURNS: DerivedFilesRebuildResult
+DerivedFilesRebuildResult CalculateRequiredDerivedFilesRebuild(
+    const IcingSearchEngineVersionProto& prev_version_proto,
+    const IcingSearchEngineVersionProto& curr_version_proto);
+
+// Determines whether Icing should rebuild all derived files.
 // Sometimes it is not required to rebuild derived files when
 // roll-forward/upgrading. This function "encodes" upgrade paths and checks if
 // the roll-forward/upgrading requires derived files to be rebuilt or not.
@@ -105,6 +248,32 @@ StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
 //   the callers (except unit tests) will always use a version # greater than 0.
 bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
                                int32_t curr_version = kVersion);
+
+// Returns whether the schema database migration is required.
+//
+// This is true if the previous version is less than the version at which the
+// database field is introduced, or if the schema database feature was
+// not enabled in the previous version.
+bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto);
+
+// Returns the derived files rebuilds required for a given feature.
+DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
+    IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature);
+
+// Constructs the IcingSearchEngineFeatureInfoProto for a given feature.
+IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(
+    IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature);
+
+// Populates the enabled_features field for an IcingSearchEngineFeatureInfoProto
+// based on icing's initialization flag options.
+//
+// All enabled features are converted into an IcingSearchEngineFeatureInfoProto
+// and returned in IcingSearchEngineVersionProto::enabled_features. A conversion
+// should be added for each trunk stable feature flag defined in
+// IcingSearchEngineOptions.
+void AddEnabledFeatures(const IcingSearchEngineOptions& options,
+                        IcingSearchEngineVersionProto* version_proto);
 
 }  // namespace version_util
 

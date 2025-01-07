@@ -14,6 +14,7 @@
 
 #include "icing/index/numeric/integer-index.h"
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -26,7 +27,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
@@ -36,9 +39,12 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -67,6 +73,7 @@ template <typename T>
 class NumericIndexIntegerTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     base_dir_ = GetTestTempDir() + "/icing";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
                 IsTrue());
@@ -75,22 +82,24 @@ class NumericIndexIntegerTest : public ::testing::Test {
     std::string schema_dir = base_dir_ + "/schema_test";
 
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(schema_dir.c_str()));
+
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, schema_dir, &clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_dir, &clock_,
+                                           feature_flags_.get()));
 
     std::string document_store_dir = base_dir_ + "/doc_store_test";
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(document_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -140,8 +149,11 @@ class NumericIndexIntegerTest : public ::testing::Test {
       return absl_ports::InternalError("Unable to create compact directory");
     }
     ICING_ASSIGN_OR_RETURN(
-        std::vector<DocumentId> docid_map,
-        doc_store_->OptimizeInto(document_store_compact_dir, nullptr));
+        DocumentStore::OptimizeResult doc_store_optimize_result,
+        doc_store_->OptimizeInto(document_store_compact_dir,
+                                 /*lang_segmenter=*/nullptr,
+                                 /*potentially_optimizable_blob_handles=*/
+                                 std::unordered_set<std::string>()));
 
     doc_store_.reset();
     if (!filesystem_.SwapFiles(document_store_dir.c_str(),
@@ -155,16 +167,16 @@ class NumericIndexIntegerTest : public ::testing::Test {
 
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
-    return docid_map;
+    return std::move(doc_store_optimize_result.document_id_old_to_new);
   }
 
   libtextclassifier3::StatusOr<std::vector<DocHitInfo>> Query(
@@ -183,6 +195,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
     return result;
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   std::string base_dir_;
   std::string working_path_;
@@ -1221,6 +1234,47 @@ TEST_P(IntegerIndexTest,
                            GetParam().num_data_threshold_for_bucket_split,
                            GetParam().pre_mapping_fbv),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_P(IntegerIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index1,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  // Insert some data.
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/0,
+        /*section_id=*/20, /*keys=*/{0, 100, -100});
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        /*section_id=*/2, /*keys=*/{3, -1000, 500});
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        /*section_id=*/15, /*keys=*/{-6, 321, 98});
+  integer_index1->set_last_added_document_id(2);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> doc_hit_info_vec,
+      Query(integer_index1.get(), kDefaultTestPropertyPath,
+            /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // written correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, integer_index1->GetChecksum());
+  EXPECT_THAT(integer_index1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(integer_index1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index2,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+  EXPECT_THAT(integer_index2->last_added_document_id(), Eq(2));
+  EXPECT_THAT(Query(integer_index2.get(), kDefaultTestPropertyPath,
+                    /*key_lower=*/std::numeric_limits<int64_t>::min(),
+                    /*key_upper=*/std::numeric_limits<int64_t>::max()),
+              IsOkAndHolds(ElementsAreArray(doc_hit_info_vec.begin(),
+                                            doc_hit_info_vec.end())));
 }
 
 TEST_P(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
@@ -2442,6 +2496,138 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
                     /*key_lower=*/3, /*key_upper=*/3),
               IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
                   /*document_id=*/7, expected_sections_typea))));
+}
+
+TEST_P(IntegerIndexTest, IteratorCallStats) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
+        kDefaultSectionId, /*keys=*/{1});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        kDefaultSectionId, /*keys=*/{3});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        kDefaultSectionId, /*keys=*/{2});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/3,
+        kDefaultSectionId, /*keys=*/{0});
+
+  // GetIterator for range [INT_MIN, INT_MAX] and Advance all. Those 4 keys are
+  // in 1 single bucket, so there will be only 1 posting list (and 1 block).
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> iter,
+      integer_index->GetIterator(
+          kDefaultTestPropertyPath,
+          /*key_lower=*/std::numeric_limits<int64_t>::min(),
+          /*key_upper=*/std::numeric_limits<int64_t>::max(), *doc_store_,
+          *schema_store_, clock_.GetSystemTimeMilliseconds()));
+
+  // 1 block should be read even without calling Advance(), since we read the
+  // posting list and put bucket into the priority queue in ctor.
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/1,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1));
+
+  // 1st Advance().
+  ICING_ASSERT_OK(iter->Advance());
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/2,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1));
+
+  // 2nd Advance().
+  ICING_ASSERT_OK(iter->Advance());
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/3,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1));
+
+  // 3rd Advance().
+  ICING_ASSERT_OK(iter->Advance());
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/4,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1));
+
+  // 4th Advance().
+  ICING_ASSERT_OK(iter->Advance());
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/4,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1));
+
+  // 5th Advance().
+  ASSERT_THAT(iter->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/4,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1));
+}
+
+TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
+        kDefaultSectionId, /*keys=*/{1});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        kDefaultSectionId, /*keys=*/{3});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        kDefaultSectionId, /*keys=*/{2});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/3,
+        kDefaultSectionId, /*keys=*/{0});
+
+  // GetIterator for property "otherProperty1".
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> iter,
+      integer_index->GetIterator(
+          "otherProperty1", /*key_lower=*/std::numeric_limits<int64_t>::min(),
+          /*key_upper=*/std::numeric_limits<int64_t>::max(), *doc_store_,
+          *schema_store_, clock_.GetSystemTimeMilliseconds()));
+
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/0,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/0));
+
+  // 1st Advance().
+  ASSERT_THAT(iter->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(iter->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/0,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/0));
 }
 
 INSTANTIATE_TEST_SUITE_P(

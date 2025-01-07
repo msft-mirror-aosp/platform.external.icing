@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -35,6 +36,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
@@ -129,6 +131,22 @@ class Index {
     return main_index_->PersistToDisk();
   }
 
+  // Updates all checksums in the index and returns the combined index checksum.
+  Crc32 UpdateChecksum() {
+    Crc32 lite_crc = lite_index_->UpdateChecksum();
+    Crc32 main_crc = main_index_->UpdateChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
+  // Calculates and returns the combined index checksum.
+  Crc32 GetChecksum() const {
+    Crc32 lite_crc = lite_index_->GetChecksum();
+    Crc32 main_crc = main_index_->GetChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
   // Discard parts of the index if they contain data for document ids greater
   // than document_id.
   //
@@ -172,6 +190,13 @@ class Index {
     *debug_info.mutable_main_index_info() =
         main_index_->GetDebugInfo(verbosity);
     return debug_info;
+  }
+
+  void PublishQueryStats(QueryStatsProto* query_stats) const {
+    query_stats->set_lite_index_hit_buffer_byte_size(
+        lite_index_->GetHitBufferByteSize());
+    query_stats->set_lite_index_hit_buffer_unsorted_byte_size(
+        lite_index_->GetHitBufferUnsortedByteSize());
   }
 
   // Returns the byte size of the all the elements held in the index. This
@@ -237,16 +262,16 @@ class Index {
     // TODO(b/141180665): Add nullptr checks for the raw pointers
     Editor(const TermIdCodec* term_id_codec, LiteIndex* lite_index,
            DocumentId document_id, SectionId section_id,
-           TermMatchType::Code term_match_type, NamespaceId namespace_id)
+           NamespaceId namespace_id)
         : term_id_codec_(term_id_codec),
           lite_index_(lite_index),
           document_id_(document_id),
-          term_match_type_(term_match_type),
           namespace_id_(namespace_id),
           section_id_(section_id) {}
 
     // Buffer the term in seen_tokens_.
-    libtextclassifier3::Status BufferTerm(const char* term);
+    libtextclassifier3::Status BufferTerm(std::string_view term,
+                                          TermMatchType::Code match_type);
     // Index all the terms stored in seen_tokens_.
     libtextclassifier3::Status IndexAllBufferedTerms();
 
@@ -254,18 +279,21 @@ class Index {
     // The Editor is able to store previously seen terms as TermIds. This is
     // is more efficient than a client doing this externally because TermIds are
     // not exposed to clients.
-    std::unordered_map<uint32_t, Hit::TermFrequency> seen_tokens_;
+    struct HitDetails {
+      TermMatchType::Code match_type;
+      Hit::TermFrequency term_frequency;
+    };
+    std::unordered_map<uint32_t, HitDetails> seen_tokens_;
     const TermIdCodec* term_id_codec_;
     LiteIndex* lite_index_;
     DocumentId document_id_;
-    TermMatchType::Code term_match_type_;
     NamespaceId namespace_id_;
     SectionId section_id_;
   };
   Editor Edit(DocumentId document_id, SectionId section_id,
-              TermMatchType::Code term_match_type, NamespaceId namespace_id) {
+              NamespaceId namespace_id) {
     return Editor(term_id_codec_.get(), lite_index_.get(), document_id,
-                  section_id, term_match_type, namespace_id);
+                  section_id, namespace_id);
   }
 
   bool WantsMerge() const { return lite_index_->WantsMerge(); }
@@ -297,9 +325,7 @@ class Index {
   }
 
   // Sorts the LiteIndex HitBuffer.
-  void SortLiteIndex() {
-    lite_index_->SortHits();
-  }
+  void SortLiteIndex() { lite_index_->SortHits(); }
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
   // new_last_added_document_id will be used to update the last added document
