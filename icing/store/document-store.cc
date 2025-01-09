@@ -1243,7 +1243,6 @@ DocumentStore::InternalPut(DocumentProto&& document,
     // The old document exists, copy over the usage scores and delete the old
     // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
-    put_result.old_document_id = old_document_id;
 
     ICING_RETURN_IF_ERROR(
         usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
@@ -1253,7 +1252,11 @@ DocumentStore::InternalPut(DocumentProto&& document,
     // been deleted previously.
     auto delete_status =
         Delete(old_document_id, clock_.GetSystemTimeMilliseconds());
-    if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+    if (delete_status.ok()) {
+      // The old document had existed and was not previously deleted. Return its
+      // document id to mark it as a replacement.
+      put_result.old_document_id = old_document_id;
+    } else if (!absl_ports::IsNotFound(delete_status)) {
       // Real error, pass it up.
       return delete_status;
     }

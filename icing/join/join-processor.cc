@@ -63,9 +63,6 @@ JoinProcessor::GetChildrenFetcher(
   }
 
   switch (qualified_id_join_index_->version()) {
-    case QualifiedIdJoinIndex::Version::kV1:
-      return GetChildrenFetcherV1(join_spec,
-                                  std::move(child_scored_document_hits));
     case QualifiedIdJoinIndex::Version::kV2:
       return GetChildrenFetcherV2(join_spec,
                                   std::move(child_scored_document_hits));
@@ -74,40 +71,6 @@ JoinProcessor::GetChildrenFetcher(
           join_spec, schema_store_, doc_store_, qualified_id_join_index_,
           current_time_ms_, std::move(child_scored_document_hits));
   }
-}
-
-libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
-JoinProcessor::GetChildrenFetcherV1(
-    const JoinSpecProto& join_spec,
-    std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
-  ScoredDocumentHitComparator score_comparator(
-      /*is_descending=*/join_spec.nested_spec().scoring_spec().order_by() ==
-      ScoringSpecProto::Order::DESC);
-  std::sort(child_scored_document_hits.begin(),
-            child_scored_document_hits.end(), score_comparator);
-
-  // Step 1: group child documents by parent documentId. Currently we only
-  //         support QualifiedId joining, so fetch the qualified id content of
-  //         child_property_expression, break it down into namespace + uri, and
-  //         lookup the DocumentId.
-  // The keys of this map are the DocumentIds of the parent docs the child
-  // ScoredDocumentHits refer to. The values in this map are vectors of child
-  // ScoredDocumentHits that refer to a parent DocumentId.
-  std::unordered_map<DocumentId, std::vector<ScoredDocumentHit>>
-      map_joinable_qualified_id;
-  for (const ScoredDocumentHit& child : child_scored_document_hits) {
-    ICING_ASSIGN_OR_RETURN(
-        DocumentId ref_doc_id,
-        FetchReferencedQualifiedId(child.document_id(),
-                                   join_spec.child_property_expression()));
-    if (ref_doc_id == kInvalidDocumentId) {
-      continue;
-    }
-
-    map_joinable_qualified_id[ref_doc_id].push_back(child);
-  }
-  return JoinChildrenFetcherImplDeprecated::Create(
-      join_spec, std::move(map_joinable_qualified_id));
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
@@ -319,54 +282,6 @@ JoinProcessor::GetPropagatedChildDocumentsToDelete(
   }
 
   return child_documents_to_delete;
-}
-
-libtextclassifier3::StatusOr<DocumentId>
-JoinProcessor::FetchReferencedQualifiedId(
-    const DocumentId& child_document_id,
-    const std::string& property_path) const {
-  std::optional<DocumentFilterData> child_filter_data =
-      doc_store_->GetAliveDocumentFilterData(child_document_id,
-                                             current_time_ms_);
-  if (!child_filter_data) {
-    return kInvalidDocumentId;
-  }
-
-  ICING_ASSIGN_OR_RETURN(
-      const JoinablePropertyMetadata* metadata,
-      schema_store_->GetJoinablePropertyMetadata(
-          child_filter_data->schema_type_id(), property_path));
-  if (metadata == nullptr ||
-      metadata->value_type != JoinableConfig::ValueType::QUALIFIED_ID) {
-    // Currently we only support qualified id.
-    return kInvalidDocumentId;
-  }
-
-  DocumentJoinIdPair info(child_document_id, metadata->id);
-  libtextclassifier3::StatusOr<std::string_view> ref_qualified_id_str_or =
-      qualified_id_join_index_->Get(info);
-  if (!ref_qualified_id_str_or.ok()) {
-    if (absl_ports::IsNotFound(ref_qualified_id_str_or.status())) {
-      return kInvalidDocumentId;
-    }
-    return std::move(ref_qualified_id_str_or).status();
-  }
-
-  libtextclassifier3::StatusOr<QualifiedId> ref_qualified_id_or =
-      QualifiedId::Parse(std::move(ref_qualified_id_str_or).ValueOrDie());
-  if (!ref_qualified_id_or.ok()) {
-    // This shouldn't happen because we've validated it during indexing and only
-    // put valid qualified id strings into qualified id join index.
-    return kInvalidDocumentId;
-  }
-  QualifiedId qualified_id = std::move(ref_qualified_id_or).ValueOrDie();
-
-  libtextclassifier3::StatusOr<DocumentId> ref_document_id_or =
-      doc_store_->GetDocumentId(qualified_id.name_space(), qualified_id.uri());
-  if (!ref_document_id_or.ok()) {
-    return kInvalidDocumentId;
-  }
-  return std::move(ref_document_id_or).ValueOrDie();
 }
 
 }  // namespace lib
