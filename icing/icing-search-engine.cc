@@ -99,6 +99,7 @@
 #include "icing/transform/normalizer-options.h"
 #include "icing/util/clock.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
@@ -727,14 +728,26 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
+  // Initialize ICU if the data file has been provided.
+  libtextclassifier3::Status icu_status =
+      absl_ports::InvalidArgumentError("ICU data file path is empty.");
+  if (!options_.icu_data_file_absolute_path().empty()) {
+    icu_status = icu_data_file_helper::SetUpIcuDataFile(
+        options_.icu_data_file_absolute_path());
+  }
+
+  bool enable_icu = icu_status.ok();
+  TransformStatus(icu_status,
+                  initialize_stats->mutable_initialize_icu_data_status());
+
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
-      ULOC_US, jni_cache_.get());
+      ULOC_US, jni_cache_.get(), enable_icu);
   TC3_ASSIGN_OR_RETURN(language_segmenter_, language_segmenter_factory::Create(
                                                 std::move(segmenter_options)));
 
   NormalizerOptions normalizer_options(
-      /*max_term_byte_size=*/options_.max_token_length());
+      /*max_term_byte_size=*/options_.max_token_length(), enable_icu);
   TC3_ASSIGN_OR_RETURN(normalizer_,
                        normalizer_factory::Create(normalizer_options));
 

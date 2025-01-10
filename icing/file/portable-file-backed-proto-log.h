@@ -390,8 +390,8 @@ class PortableFileBackedProtoLog {
   // }
   class Iterator {
    public:
-    Iterator(const Filesystem& filesystem, int fd, int64_t initial_offset,
-             int64_t file_size);
+    explicit Iterator(const Filesystem& filesystem, int fd,
+                      int64_t initial_offset, int64_t file_size);
 
     // Advances to the position of next proto whether it has been erased or not.
     //
@@ -402,7 +402,7 @@ class PortableFileBackedProtoLog {
     libtextclassifier3::Status Advance();
 
     // Returns the file offset of current proto.
-    int64_t GetOffset();
+    int64_t GetOffset() const;
 
    private:
     static constexpr int64_t kInvalidOffset = -1;
@@ -418,7 +418,7 @@ class PortableFileBackedProtoLog {
   // Returns an iterator of current proto log. The caller needs to keep the
   // proto log unchanged while using the iterator, otherwise unexpected
   // behaviors could happen.
-  Iterator GetIterator();
+  Iterator GetIterator() const;
 
   // Persists all changes since initialization or the last call to
   // PersistToDisk(). Any changes that aren't persisted may be lost if the
@@ -1130,13 +1130,13 @@ PortableFileBackedProtoLog<ProtoT>::Iterator::Advance() {
 }
 
 template <typename ProtoT>
-int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
+int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() const {
   return current_offset_;
 }
 
 template <typename ProtoT>
 typename PortableFileBackedProtoLog<ProtoT>::Iterator
-PortableFileBackedProtoLog<ProtoT>::GetIterator() {
+PortableFileBackedProtoLog<ProtoT>::GetIterator() const {
   return Iterator(*filesystem_, fd_.get(),
                   /*initial_offset=*/kHeaderReservedBytes, file_size_);
 }

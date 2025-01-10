@@ -2660,23 +2660,39 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
 }
 
 TEST_F(AdvancedScorerTest, SchemaTypeAliasMap_AliasSchemaTypeNotMatched) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("person")
+          .SetScore(100)
+          .SetCreationTimestampMs(123)
+          .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             document_store_->Put(document));
+  DocHitInfo docHitInfo(put_result.new_document_id);
+
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
       "this.documentScore() + "
-      "sum(getScorableProperty(\"aliasEmail\", \"frequencyScore\"))");
+      "sum(getScorableProperty(\"notExist\", \"frequencyScore\"))");
   AddSchemaTypeAliasMap(&scoring_spec, "aliasPerson", {"person"});
   scoring_spec.add_scoring_feature_types_enabled(
       ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+  double expected_score = 100 + 0;
 
-  EXPECT_THAT(
-      AdvancedScorer::Create(
-          scoring_spec, /*default_score=*/10, kDefaultSemanticMetricType,
-          document_store_.get(), schema_store_.get(),
-          fake_clock_.GetSystemTimeMilliseconds(),
-          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results_,
-          feature_flags_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-               HasSubstr("The alias schema type in the score expression is not "
-                         "found in the schema_type_alias_map")));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(scoring_spec,
+                             /*default_score=*/10, kDefaultSemanticMetricType,
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds(),
+                             /*join_children_fetcher=*/nullptr,
+                             &empty_embedding_query_results_,
+                             feature_flags_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
+              DoubleNear(expected_score, kEps));
 }
 
 }  // namespace

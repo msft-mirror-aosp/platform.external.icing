@@ -43,7 +43,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/term-indexing-handler.h"
 #include "icing/index/term-property-id.h"
-#include "icing/join/qualified-id-join-index-impl-v1.h"
+#include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -188,11 +188,10 @@ class IndexProcessorTest : public Test {
             IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
             /*pre_mapping_fbv=*/false));
 
-    ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
-                               QualifiedIdJoinIndexImplV1::Create(
-                                   filesystem_, qualified_id_join_index_dir_,
-                                   /*pre_mapping_fbv=*/false,
-                                   /*use_persistent_hash_map=*/false));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        qualified_id_join_index_,
+        QualifiedIdJoinIndexImplV3::Create(
+            filesystem_, qualified_id_join_index_dir_, *feature_flags_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
