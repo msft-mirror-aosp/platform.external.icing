@@ -818,42 +818,37 @@ GetScorablePropertyFunctionScoreExpression::GetAndValidateSchemaTypeIds(
     std::string_view alias_schema_type, std::string_view property_path,
     const SchemaTypeAliasMap& schema_type_alias_map,
     const SchemaStore& schema_store) {
+  std::unordered_set<SchemaTypeId> schema_type_ids;
+
   auto alias_map_iter = schema_type_alias_map.find(alias_schema_type.data());
   if (alias_map_iter == schema_type_alias_map.end()) {
-    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "The alias schema type in the score expression is not found in the "
-        "schema_type_alias_map: ",
-        alias_schema_type));
+    return schema_type_ids;
   }
 
-  std::unordered_set<SchemaTypeId> schema_type_ids;
   for (std::string_view schema_type : alias_map_iter->second) {
     // First, verify that the schema type has a valid schema type id in the
     // schema store.
     libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
         schema_store.GetSchemaTypeId(schema_type);
     if (!schema_type_id_or.ok()) {
-      if (absl_ports::IsNotFound(schema_type_id_or.status())) {
-        // Ignores the schema type if it is not found in the schema store.
-        continue;
-      }
-      return schema_type_id_or.status();
+      // Swallow the error of invalid schema type in the getScorableProperty
+      // function.
+      // Icing will return an empty list of double values in this case.
+      continue;
     }
     SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
 
     // Then, calls GetScorablePropertyIndex() here to validate if the property
-    // path is scorable under the schema type, no need to check the returned
-    // index value.
+    // path is scorable under the schema type.
+    // No error will be thrown if the property path is not scorable under the
+    // schema type. Instead, Icing will return an empty list of double values
+    // in this case.
     libtextclassifier3::StatusOr<std::optional<int>>
         scorable_property_index_or = schema_store.GetScorablePropertyIndex(
             schema_type_id, property_path);
-    if (!scorable_property_index_or.ok()) {
-      return scorable_property_index_or.status();
-    }
-    if (!scorable_property_index_or.ValueOrDie().has_value()) {
-      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-          "'%s' is not defined as a scorable property under schema type %d",
-          property_path.data(), schema_type_id));
+    if (!scorable_property_index_or.ok() ||
+        !scorable_property_index_or.ValueOrDie().has_value()) {
+      continue;
     }
     schema_type_ids.insert(schema_type_id);
   }
@@ -899,6 +894,9 @@ GetScorablePropertyFunctionScoreExpression::EvaluateList(
     return std::vector<double>();
   }
 
+  // By this point, the document to be evaluated is guaranteed to have a
+  // ScorablePropertySetProto, and the property path is guaranteed to be a
+  // scorable property under the schema type.
   std::unique_ptr<ScorablePropertySet> scorable_property_set =
       document_store_.GetScorablePropertySet(hit_info.document_id(),
                                              current_time_ms_);
