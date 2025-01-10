@@ -52,7 +52,7 @@ class QualifiedIdJoinIndex : public PersistentStorage {
         const = 0;
   };
 
-  enum class Version { kV1, kV2, kV3 };
+  enum class Version { kV2, kV3 };
 
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
@@ -69,20 +69,6 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   }
 
   virtual ~QualifiedIdJoinIndex() override = default;
-
-  // (v1 only) Puts a new data into index: DocumentJoinIdPair (DocumentId,
-  // JoinablePropertyId) references to ref_qualified_id_str (the identifier of
-  // another document).
-  //
-  // REQUIRES: ref_qualified_id_str contains no '\0'.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
-  //   - Any KeyMapper errors
-  virtual libtextclassifier3::Status Put(
-      const DocumentJoinIdPair& document_join_id_pair,
-      std::string_view ref_qualified_id_str) = 0;
 
   // (v2 only) Puts a list of referenced NamespaceIdFingerprint into index,
   // given the DocumentId, SchemaTypeId and JoinablePropertyId.
@@ -108,18 +94,6 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::Status Put(
       const DocumentJoinIdPair& child_document_join_id_pair,
       std::vector<DocumentId>&& parent_document_ids) = 0;
-
-  // (v1 only) Gets the referenced document's qualified id string by
-  // DocumentJoinIdPair.
-  //
-  // Returns:
-  //   - A qualified id string referenced by the given DocumentJoinIdPair
-  //     (DocumentId, JoinablePropertyId) on success
-  //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
-  //   - NOT_FOUND_ERROR if doc_join_info doesn't exist
-  //   - Any KeyMapper errors
-  virtual libtextclassifier3::StatusOr<std::string_view> Get(
-      const DocumentJoinIdPair& document_join_id_pair) const = 0;
 
   // (v2 only) Returns a JoinDataIterator for iterating through all join data of
   // the specified (schema_type_id, joinable_property_id).

@@ -818,15 +818,13 @@ GetScorablePropertyFunctionScoreExpression::GetAndValidateSchemaTypeIds(
     std::string_view alias_schema_type, std::string_view property_path,
     const SchemaTypeAliasMap& schema_type_alias_map,
     const SchemaStore& schema_store) {
+  std::unordered_set<SchemaTypeId> schema_type_ids;
+
   auto alias_map_iter = schema_type_alias_map.find(alias_schema_type.data());
   if (alias_map_iter == schema_type_alias_map.end()) {
-    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "The alias schema type in the score expression is not found in the "
-        "schema_type_alias_map: ",
-        alias_schema_type));
+    return schema_type_ids;
   }
 
-  std::unordered_set<SchemaTypeId> schema_type_ids;
   for (std::string_view schema_type : alias_map_iter->second) {
     // First, verify that the schema type has a valid schema type id in the
     // schema store.

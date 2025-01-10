@@ -224,7 +224,7 @@ libtextclassifier3::Status BlobStore::RemoveBlob(
 }
 
 libtextclassifier3::StatusOr<int> BlobStore::OpenRead(
-    const PropertyProto::BlobHandleProto& blob_handle) {
+    const PropertyProto::BlobHandleProto& blob_handle) const {
   ICING_RETURN_IF_ERROR(ValidateBlobHandle(blob_handle));
   std::string blob_handle_str = BuildBlobHandleStr(blob_handle);
   auto itr = blob_handle_to_offset_.find(blob_handle_str);
@@ -387,7 +387,7 @@ libtextclassifier3::StatusOr<BlobInfoProto> BlobStore::GetOrCreateBlobInfo(
 }
 
 std::unordered_set<std::string>
-BlobStore::GetPotentiallyOptimizableBlobHandles() {
+BlobStore::GetPotentiallyOptimizableBlobHandles() const {
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   if (orphan_blob_time_to_live_ms_ > current_time_ms) {
     // Nothing to optimize, return empty set.
