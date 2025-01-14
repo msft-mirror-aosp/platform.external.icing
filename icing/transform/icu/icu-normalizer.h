@@ -33,7 +33,8 @@ namespace lib {
 //  2. Transforms full-width Latin characters to ASCII characters if possible.
 //  3. Transforms hiragana to katakana.
 //  4. Removes accent / diacritic marks on Latin characters
-//  5. Normalized text must be less than or equal to max_term_byte_size,
+//  5. Removes accent / diacritic marks on Greek characters
+//  6. Normalized text must be less than or equal to max_term_byte_size,
 //     otherwise it will be truncated.
 //
 // There're some other rules from ICU not listed here, please see .cc file for
@@ -55,7 +56,8 @@ class IcuNormalizer : public Normalizer {
   //
   // NOTE: Term should not mix Latin and non-Latin characters. Doing so may
   // result in the non-Latin characters not properly being normalized
-  std::string NormalizeTerm(std::string_view term) const override;
+  Normalizer::NormalizedTerm NormalizeTerm(
+      std::string_view term) const override;
 
   // Returns a CharacterIterator pointing to one past the end of the segment of
   // term that (once normalized) matches with normalized_term.
@@ -85,7 +87,10 @@ class IcuNormalizer : public Normalizer {
     ~TermTransformer();
 
     // Transforms the text based on our rules described at top of this file
-    std::string Transform(std::string_view term) const;
+    struct TransformResult {
+      std::string transformed_term;
+    };
+    TransformResult Transform(std::string_view term) const;
 
     // Returns a CharacterIterator pointing to one past the end of the segment
     // of a non-latin term that (once normalized) matches with normalized_term.

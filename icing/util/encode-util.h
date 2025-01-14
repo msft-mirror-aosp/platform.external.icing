@@ -37,6 +37,18 @@ std::string EncodeIntToCString(uint64_t value);
 // integer.
 uint64_t DecodeIntFromCString(std::string_view encoded_str);
 
+// Converts the given string which may contains 0-byte to a C string.
+//
+// The output C string that does not contain 0-byte since C string uses 0-byte
+// as terminator.
+// This will increase the size of the encoded_str.
+// new_length = ceil(old_length / 7.0 * 8.0)
+// Eg1: This increases the size from 32-bytes of sha-256 hash to 37-bytes C
+// string.
+// Eg2: This increases the size from 1-byte string to 2-bytes C string.
+// Eg3: This increases the size from 2-byte string to 3-bytes C string.
+std::string EncodeStringToCString(const std::string& input);
+
 }  // namespace encode_util
 
 }  // namespace lib

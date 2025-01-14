@@ -14,17 +14,23 @@
 
 #include "icing/scoring/scoring-processor.h"
 
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/scoring.pb.h"
-#include "icing/scoring/ranker.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer-factory.h"
 #include "icing/scoring/scorer.h"
@@ -42,24 +48,29 @@ constexpr double kDefaultScoreInAscendingOrder =
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
+                         SearchSpecProto::EmbeddingQueryMetricType::Code
+                             default_semantic_metric_type,
                          const DocumentStore* document_store,
                          const SchemaStore* schema_store,
                          int64_t current_time_ms,
-                         const JoinChildrenFetcher* join_children_fetcher) {
+                         const JoinChildrenFetcher* join_children_fetcher,
+                         const EmbeddingQueryResults* embedding_query_results,
+                         const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(embedding_query_results);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
-  bool is_descending_order =
-      scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
-
+  double default_score =
+      (scoring_spec.order_by() == ScoringSpecProto::Order::DESC)
+          ? kDefaultScoreInDescendingOrder
+          : kDefaultScoreInAscendingOrder;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
-      scorer_factory::Create(scoring_spec,
-                             is_descending_order
-                                 ? kDefaultScoreInDescendingOrder
-                                 : kDefaultScoreInAscendingOrder,
-                             document_store, schema_store, current_time_ms,
-                             join_children_fetcher));
+      scorer_factory::Create(
+          scoring_spec, default_score, default_semantic_metric_type,
+          document_store, schema_store, current_time_ms, join_children_fetcher,
+          embedding_query_results, feature_flags));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
@@ -68,7 +79,8 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
 std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator, int num_to_score,
     std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
-        query_term_iterators) {
+        query_term_iterators,
+    QueryStatsProto::SearchStats* search_stats) {
   std::vector<ScoredDocumentHit> scored_document_hits;
   scorer_->PrepareToScore(query_term_iterators);
 
@@ -81,8 +93,23 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     double score =
         scorer_->GetScore(doc_hit_info, doc_hit_info_iterator.get()) *
         hit_demotion_factor;
-    scored_document_hits.emplace_back(
-        doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);
+    std::vector<double> additional_scores =
+        scorer_->GetAdditionalScores(doc_hit_info, doc_hit_info_iterator.get());
+    scored_document_hits.push_back(ScoredDocumentHit(
+        doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score,
+        std::move(additional_scores)));
+  }
+
+  if (search_stats != nullptr) {
+    search_stats->set_num_documents_scored(scored_document_hits.size());
+    DocHitInfoIterator::CallStats iterator_call_stats =
+        doc_hit_info_iterator->GetCallStats();
+    search_stats->set_num_fetched_hits_lite_index(
+        iterator_call_stats.num_leaf_advance_calls_lite_index);
+    search_stats->set_num_fetched_hits_main_index(
+        iterator_call_stats.num_leaf_advance_calls_main_index);
+    search_stats->set_num_fetched_hits_integer_index(
+        iterator_call_stats.num_leaf_advance_calls_integer_index);
   }
 
   return scored_document_hits;
