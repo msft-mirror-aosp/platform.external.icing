@@ -96,8 +96,10 @@
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/util/clock.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
@@ -726,14 +728,28 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
+  // Initialize ICU if the data file has been provided.
+  libtextclassifier3::Status icu_status =
+      absl_ports::InvalidArgumentError("ICU data file path is empty.");
+  if (!options_.icu_data_file_absolute_path().empty()) {
+    icu_status = icu_data_file_helper::SetUpIcuDataFile(
+        options_.icu_data_file_absolute_path());
+  }
+
+  bool enable_icu = icu_status.ok();
+  TransformStatus(icu_status,
+                  initialize_stats->mutable_initialize_icu_data_status());
+
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
-      ULOC_US, jni_cache_.get());
+      ULOC_US, jni_cache_.get(), enable_icu);
   TC3_ASSIGN_OR_RETURN(language_segmenter_, language_segmenter_factory::Create(
                                                 std::move(segmenter_options)));
 
+  NormalizerOptions normalizer_options(
+      /*max_term_byte_size=*/options_.max_token_length(), enable_icu);
   TC3_ASSIGN_OR_RETURN(normalizer_,
-                       normalizer_factory::Create(options_.max_token_length()));
+                       normalizer_factory::Create(normalizer_options));
 
   std::string marker_filepath =
       MakeSetSchemaMarkerFilePath(options_.base_dir());
@@ -1808,6 +1824,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       deleted_info_map;
 
   component_timer = clock_->GetNewTimer();
+  std::unordered_set<DocumentId> deleted_document_ids;
   while (query_results.root_iterator->Advance().ok()) {
     ICING_VLOG(3) << "Deleting doc "
                   << query_results.root_iterator->doc_hit_info().document_id();
@@ -1823,6 +1840,18 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
         return result_proto;
       }
     }
+
+    // Insert the deleted document id into the set, regardless of whether it has
+    // been deleted or expired. This is to ensure that we propagate the delete
+    // operation for the document. If the document has already been deleted,
+    // then the delete propagation was completed in the previous delete request,
+    // and even though we still add the document id to the set, it will not
+    // affect the delete propagation.
+    //
+    // TODO(b/376913014): handle expiry propagation.
+    deleted_document_ids.insert(
+        query_results.root_iterator->doc_hit_info().document_id());
+
     status = document_store_->Delete(
         query_results.root_iterator->doc_hit_info().document_id(),
         current_time_ms);
@@ -1833,6 +1862,18 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       return result_proto;
     }
   }
+
+  // Propagate deletion.
+  libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
+      PropagateDelete(deleted_document_ids, current_time_ms);
+  if (!propagated_child_docs_deleted_or.ok()) {
+    TransformStatus(propagated_child_docs_deleted_or.status(), result_status);
+    delete_stats->set_document_removal_latency_ms(
+        component_timer->GetElapsedMilliseconds());
+    return result_proto;
+  }
+  num_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+
   delete_stats->set_document_removal_latency_ms(
       component_timer->GetElapsedMilliseconds());
   int term_count = 0;

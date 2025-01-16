@@ -209,8 +209,6 @@ public final class IcingSearchEngineTest {
     assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
   }
 
-  // TODO(b/337913932) re-enable this test after we preregister this API in jni
-  @Ignore
   @Test
   public void setAndGetSchemaWithDatabase_ok() throws Exception {
     IcingSearchEngineOptions options =

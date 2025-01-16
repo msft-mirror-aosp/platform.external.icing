@@ -4139,6 +4139,68 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
+TEST_P(DocumentStoreTest, DeletedDocumentsShouldNotBeReplacements) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
+
+  // Delete the document.
+  ICING_ASSERT_OK(document_store->Delete(
+      document_id, fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Re-add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+
+  // Because the document was deleted, it should not be a replacement.
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+}
+
+TEST_P(DocumentStoreTest, ExpiredDocumentsShouldNotBeReplacements) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add the document.
+  DocumentProto doc1 = test_document1_;
+  doc1.set_ttl_ms(1);
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(doc1));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
+
+  // Expire the document by advancing the clock by two milliseconds.
+  fake_clock_.SetSystemTimeMilliseconds(
+      fake_clock_.GetSystemTimeMilliseconds() + 2);
+
+  // Re-add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+
+  // Because the document was expired, it should not be a replacement.
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+}
+
 TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
   {
     // Can put and delete fine.

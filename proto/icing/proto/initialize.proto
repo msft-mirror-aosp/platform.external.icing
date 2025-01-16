@@ -109,7 +109,7 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 26
+// Next tag: 27
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -276,6 +276,10 @@ message IcingSearchEngineOptions {
   // The default value is false.
   optional bool enable_qualified_id_join_index_v3_and_delete_propagate_from =
       25;
+
+  // The absolute path to the ICU data file.
+  // If set, ICU will be initialized using this data file.
+  optional string icu_data_file_absolute_path = 26;
 
   reserved 2, 20;
 }

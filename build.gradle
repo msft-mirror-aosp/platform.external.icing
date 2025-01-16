@@ -55,4 +55,6 @@ afterEvaluate {
 
 androidx {
     mavenVersion = LibraryVersions.APPSEARCH
+    // JSpecify lint is disabled since icing is developed externally
+    optOutJSpecify = true
 }

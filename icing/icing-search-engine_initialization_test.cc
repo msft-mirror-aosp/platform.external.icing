@@ -92,6 +92,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -190,10 +191,10 @@ class IcingSearchEngineInitializationTest : public testing::Test {
         lang_segmenter_,
         language_segmenter_factory::Create(std::move(segmenter_options)));
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        normalizer_,
-        normalizer_factory::Create(
-            /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
   }
 
   void TearDown() override {

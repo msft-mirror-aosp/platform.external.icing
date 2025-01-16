@@ -16,6 +16,7 @@
 #define ICING_STORE_TOKENIZED_DOCUMENT_H_
 
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -46,7 +47,7 @@ class TokenizedDocument {
       const SchemaStore* schema_store,
       const LanguageSegmenter* language_segmenter, DocumentProto document);
 
-  const DocumentProto& document() const { return document_; }
+  const DocumentProto& document() const { return *document_; }
 
   int32_t num_string_tokens() const {
     int32_t num_string_tokens = 0;
@@ -77,7 +78,7 @@ class TokenizedDocument {
  private:
   // Use TokenizedDocument::Create() to instantiate.
   explicit TokenizedDocument(
-      DocumentProto&& document,
+      std::unique_ptr<DocumentProto> document,
       std::vector<TokenizedSection>&& tokenized_string_sections,
       std::vector<Section<int64_t>>&& integer_sections,
       std::vector<Section<PropertyProto::VectorProto>>&& vector_sections,
@@ -88,7 +89,7 @@ class TokenizedDocument {
         vector_sections_(std::move(vector_sections)),
         joinable_property_group_(std::move(joinable_property_group)) {}
 
-  DocumentProto document_;
+  std::unique_ptr<DocumentProto> document_;
   std::vector<TokenizedSection> tokenized_string_sections_;
   std::vector<Section<int64_t>> integer_sections_;
   std::vector<Section<PropertyProto::VectorProto>> vector_sections_;

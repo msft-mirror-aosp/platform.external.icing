@@ -1084,7 +1084,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
   DocumentId parent_doc_id1 = 1;
   DocumentId parent_doc_id2 = 1024;
 
-  // Add 6 children with their parents to the index.
+  // Add 2 children with their parents to the index.
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
                                          /*joinable_property_id=*/0);
   DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
@@ -1207,7 +1207,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
   // - Document 2: 102, 103, 105
   // - Document 3: 101, 106
   // - Document 4: 103
-  // Add 6 children with their parents to the index.
+  // Add 7 children with their parents to the index.
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/101,
                                          /*joinable_property_id=*/0);
   DocumentJoinIdPair child_join_id_pair2(/*document_id=*/102,
@@ -1395,7 +1395,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
   // - Document 2: 102, 103, 105
   // - Document 3: 101, 106
   // - Document 4: 103
-  // Add 6 children with their parents to the index.
+  // Add 7 children with their parents to the index.
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/101,
                                          /*joinable_property_id=*/0);
   DocumentJoinIdPair child_join_id_pair2(/*document_id=*/102,
@@ -1460,7 +1460,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
 
-  // Add 6 children with their parents to the index.
+  // Add 4 children with their parents to the index.
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
                                          /*joinable_property_id=*/20);
   DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,

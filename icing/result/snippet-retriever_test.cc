@@ -45,6 +45,7 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/map/map-normalizer.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/snippet-helpers.h"
@@ -120,8 +121,11 @@ class SnippetRetrieverTest : public testing::Test {
         schema, /*ignore_errors_and_delete_documents=*/false,
         /*allow_circular_schema_definitions=*/false));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
+
     ICING_ASSERT_OK_AND_ASSIGN(
         snippet_retriever_,
         SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),

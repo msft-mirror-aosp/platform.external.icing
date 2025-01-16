@@ -33,7 +33,6 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/join-children-fetcher.h"
-#include "icing/join/qualified-id-join-index-impl-v1.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
 #include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
@@ -76,7 +75,7 @@ using ::testing::Ne;
 using ::testing::UnorderedElementsAre;
 
 // TODO(b/275121148): remove template after deprecating
-// QualifiedIdJoinIndexImplV1.
+// QualifiedIdJoinIndexImplV2.
 template <typename T>
 class JoinProcessorTest : public ::testing::Test {
  protected:
@@ -218,14 +217,6 @@ class JoinProcessorTest : public ::testing::Test {
 
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
-  CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV1>() {
-    return QualifiedIdJoinIndexImplV1::Create(
-        filesystem_, qualified_id_join_index_dir_, /*pre_mapping_fbv=*/false,
-        /*use_persistent_hash_map=*/false);
-  }
-
-  template <>
-  libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV2>() {
     return QualifiedIdJoinIndexImplV2::Create(filesystem_,
                                               qualified_id_join_index_dir_,
@@ -291,8 +282,7 @@ class JoinProcessorTest : public ::testing::Test {
 };
 
 using TestTypes =
-    ::testing::Types<QualifiedIdJoinIndexImplV1, QualifiedIdJoinIndexImplV2,
-                     QualifiedIdJoinIndexImplV3>;
+    ::testing::Types<QualifiedIdJoinIndexImplV2, QualifiedIdJoinIndexImplV3>;
 TYPED_TEST_SUITE(JoinProcessorTest, TestTypes);
 
 TYPED_TEST(JoinProcessorTest, JoinByQualifiedId_allDocuments) {

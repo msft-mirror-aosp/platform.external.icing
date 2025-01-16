@@ -16,10 +16,12 @@
 #define ICING_STORE_BLOB_STORE_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -106,7 +108,7 @@ class BlobStore {
   //   INVALID_ARGUMENT_ERROR on invalid blob handle
   //   NOT_FOUND_ERROR on blob is not found or is not committed
   libtextclassifier3::StatusOr<int> OpenRead(
-      const PropertyProto::BlobHandleProto& blob_handle);
+      const PropertyProto::BlobHandleProto& blob_handle) const;
 
   // Commits the given blob, if the blob is finished wrote via OpenWrite.
   // Before the blob is committed, it is not visible to any reader via OpenRead.
@@ -130,7 +132,7 @@ class BlobStore {
   // A blob will be consider as a potentially optimizable blob if it created
   // before the orphan_blob_time_to_live_ms. And the blob should be removed if
   // it has no reference document links to it.
-  std::unordered_set<std::string> GetPotentiallyOptimizableBlobHandles();
+  std::unordered_set<std::string> GetPotentiallyOptimizableBlobHandles() const;
 
   // Optimize the blob store and remove dead blob files.
   //
@@ -153,7 +155,7 @@ class BlobStore {
   libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>
   GetStorageInfo() const;
 
-private:
+ private:
   explicit BlobStore(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
       int64_t orphan_blob_time_to_live_ms, int32_t compression_level,

@@ -17,13 +17,14 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/scoring.proto";
+import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 15
+// Next tag: 16
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -127,6 +128,12 @@ message InitializeStatsProto {
   // - SCHEMA_CHANGES_OUT_OF_SYNC
   // - IO_ERROR
   optional RecoveryCause embedding_index_restoration_cause = 14;
+
+  // Possible status codes for ICU data initialization.
+  // - OK
+  // - INVALID_ARGUMENT
+  // - INTERNAL
+  optional StatusProto initialize_icu_data_status = 15;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().

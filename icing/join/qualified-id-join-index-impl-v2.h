@@ -150,19 +150,6 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
 
   ~QualifiedIdJoinIndexImplV2() override;
 
-  // v1 only API. Returns UNIMPLEMENTED_ERROR.
-  libtextclassifier3::Status Put(
-      const DocumentJoinIdPair& document_join_id_pair,
-      std::string_view ref_qualified_id_str) override {
-    return absl_ports::UnimplementedError("This API is not supported in V2");
-  }
-
-  // v1 only API. Returns UNIMPLEMENTED_ERROR.
-  libtextclassifier3::StatusOr<std::string_view> Get(
-      const DocumentJoinIdPair& document_join_id_pair) const override {
-    return absl_ports::UnimplementedError("This API is not supported in V2");
-  }
-
   // v3 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::Status Put(
       const DocumentJoinIdPair& child_document_join_id_pair,
