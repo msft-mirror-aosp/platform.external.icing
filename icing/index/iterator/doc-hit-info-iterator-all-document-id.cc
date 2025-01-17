@@ -32,7 +32,6 @@ libtextclassifier3::Status DocHitInfoIteratorAllDocumentId::Advance() {
   if (!IsDocumentIdValid(current_document_id_)) {
     // Reached the end, set these to invalid values and return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -40,5 +39,12 @@ libtextclassifier3::Status DocHitInfoIteratorAllDocumentId::Advance() {
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorAllDocumentId::TrimRightMostNode() && {
+  // The all document id node should be trimmed.
+  TrimmedNode node = {nullptr, /*term=*/"", /*term_start_index_=*/0,
+                      /*unnormalized_term_length_=*/0};
+  return node;
+}
 }  // namespace lib
 }  // namespace icing

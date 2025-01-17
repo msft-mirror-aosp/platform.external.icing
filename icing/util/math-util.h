@@ -15,6 +15,7 @@
 #ifndef ICING_UTIL_MATH_UTIL_H_
 #define ICING_UTIL_MATH_UTIL_H_
 
+#include <cstdint>
 #include <limits>
 
 namespace icing {
@@ -37,7 +38,7 @@ inline double SafeDivide(double first, double second) {
 template <typename IntType>
 static IntType RoundDownTo(IntType input_value, IntType rounding_value) {
   static_assert(std::numeric_limits<IntType>::is_integer,
-                "RoundUpTo() operation type is not integer");
+                "RoundDownTo() operation type is not integer");
 
   if (input_value <= 0) {
     return 0;
@@ -71,6 +72,23 @@ static IntType RoundUpTo(IntType input_value, IntType rounding_value) {
   const IntType remainder = input_value % rounding_value;
   return (remainder == 0) ? input_value
                           : (input_value - remainder + rounding_value);
+}
+
+// Returns the next power of 2 given n (the smallest power of 2 which is
+// greater or equal to n).
+//
+// REQUIRES: n <= 2^31, since 2^31 is the largest power of 2 that can be
+//   represented by an unsigned int.
+inline uint32_t NextPowerOf2(uint32_t n) {
+  if (n == 0) {
+    return 1;
+  }
+
+  if ((n & (n - 1)) != 0) {
+    // not 2's power
+    return UINT32_C(1) << (32 - __builtin_clz(n));
+  }
+  return n;
 }
 
 }  // namespace math_util

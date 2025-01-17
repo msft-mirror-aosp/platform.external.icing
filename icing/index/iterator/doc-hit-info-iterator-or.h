@@ -16,7 +16,9 @@
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_OR_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 
@@ -34,17 +36,44 @@ class DocHitInfoIteratorOr : public DocHitInfoIterator {
   explicit DocHitInfoIteratorOr(std::unique_ptr<DocHitInfoIterator> left_it,
                                 std::unique_ptr<DocHitInfoIterator> right_it);
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
-
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override {
+    return left_->GetCallStats() + right_->GetCallStats();
+  }
 
   std::string ToString() const override;
+
+  void MapChildren(const ChildrenMapper &mapper) override {
+    left_ = mapper(std::move(left_));
+    right_ = mapper(std::move(right_));
+  }
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo> *matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    current_->PopulateMatchedTermsStats(matched_terms_stats,
+                                        filtering_section_mask);
+    // If equal, then current_ == left_. Combine with results from right_.
+    if (left_document_id_ == right_document_id_) {
+      right_->PopulateMatchedTermsStats(matched_terms_stats,
+                                        filtering_section_mask);
+    }
+  }
 
  private:
   std::unique_ptr<DocHitInfoIterator> left_;
   std::unique_ptr<DocHitInfoIterator> right_;
+  // Pointer to the chosen iterator that points to the current doc_hit_info_. If
+  // both left_ and right_ point to the same docid, then chosen_ == left.
+  // chosen_ does not own the iterator it points to.
+  DocHitInfoIterator *current_;
   DocumentId left_document_id_ = kMaxDocumentId;
   DocumentId right_document_id_ = kMaxDocumentId;
 };
@@ -57,16 +86,38 @@ class DocHitInfoIteratorOrNary : public DocHitInfoIterator {
   explicit DocHitInfoIteratorOrNary(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
-
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override;
 
   std::string ToString() const override;
 
+  void MapChildren(const ChildrenMapper &mapper) override {
+    for (int i = 0; i < iterators_.size(); ++i) {
+      iterators_[i] = mapper(std::move(iterators_[i]));
+    }
+  }
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo> *matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    for (size_t i = 0; i < current_iterators_.size(); i++) {
+      current_iterators_.at(i)->PopulateMatchedTermsStats(
+          matched_terms_stats, filtering_section_mask);
+    }
+  }
+
  private:
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators_;
+  // Pointers to the iterators that point to the current doc_hit_info_.
+  // current_iterators_ does not own the iterators it points to.
+  std::vector<DocHitInfoIterator *> current_iterators_;
 };
 
 }  // namespace lib

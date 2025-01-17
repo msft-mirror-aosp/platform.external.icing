@@ -35,19 +35,22 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/legacy/core/icing-compat.h"
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
+#include "icing/util/crc32.h"
 #include "icing/util/i18n-utils.h"
 #include "unicode/utf8.h"
 
@@ -153,8 +156,13 @@ class IcingDynamicTrie : public IIcingStorage {
     uint32_t max_nodes;
     // Count of intermediate nodes.
     uint32_t num_intermediates;
+    // Total and maximum number of children of intermediate nodes.
+    uint32_t sum_children, max_children;
+
     // Count of leaf nodes.
     uint32_t num_leaves;
+    // Total and maximum depth of leaf nodes.
+    uint32_t sum_depth, max_depth;
 
     // Next stats
 
@@ -187,6 +195,7 @@ class IcingDynamicTrie : public IIcingStorage {
     uint32_t dirty_pages_nexts;
     uint32_t dirty_pages_suffixes;
 
+    // TODO(b/222349894) Convert the string output to a protocol buffer instead.
     std::string DumpStats(int verbosity) const;
   };
 
@@ -275,6 +284,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // Number of keys in trie.
   uint32_t size() const;
 
+  bool empty() const;
+
   // Collecting stats.
   void CollectStats(Stats *stats) const;
 
@@ -288,31 +299,21 @@ class IcingDynamicTrie : public IIcingStorage {
   // Empty out the trie without closing or removing.
   void Clear();
 
+  // Clears the suffix and value at the given index. Returns true on success.
+  bool ClearSuffixAndValue(uint32_t suffix_value_index);
+
+  // Resets the next at the given index so that it points to no node.
+  // Returns true on success.
+  bool ResetNext(uint32_t next_index);
+
+  // Sorts the next array of the node. Returns true on success.
+  bool SortNextArray(const Node *node);
+
   // Sync to disk.
   bool Sync() override;
 
   // Tell kernel we will access the memory shortly.
   void Warm() const;
-
-  // Potentially about to get nuked.
-  void OnSleep() override;
-
-  // Compact trie into out for value indices present in old_tvi_to_new_value.
-  class NewValueMap {
-   public:
-    virtual ~NewValueMap();
-
-    // Returns the new value we want to assign to the entry at old
-    // value index. We don't take ownership of the pointer.
-    virtual const void *GetNewValue(uint32_t old_value_index) const = 0;
-  };
-  // Compacts this trie. This drops all deleted keys, drops all keys for which
-  // old_tvi_to_new_value returns nullptr, updates values to be the values
-  // returned by old_tvi_to_new_value, rewrites tvis, and saves the results into
-  // the trie given in 'out'. 'old_to_new_tvi' is be populated with a mapping of
-  // old value_index to new value_index.
-  bool Compact(const NewValueMap &old_tvi_to_new_value, IcingDynamicTrie *out,
-               std::unordered_map<uint32_t, uint32_t> *old_to_new_tvi) const;
 
   // Insert value at key. If key already exists and replace == true,
   // replaces old value with value. We take a copy of value.
@@ -321,18 +322,22 @@ class IcingDynamicTrie : public IIcingStorage {
   // value_index. This can then be used with SetValueAtIndex
   // below. value_index is not valid past a Clear/Read/Write.
   //
-  // Returns false if there is no space left in the trie.
-  //
   // REQUIRES: value a buffer of size value_size()
-  bool Insert(const char *key, const void *value) {
+  //
+  // Returns:
+  //   OK on success
+  //   RESOURCE_EXHAUSTED if no disk space is available
+  //   INTERNAL_ERROR if there are inconsistencies in the dynamic trie.
+  libtextclassifier3::Status Insert(std::string_view key, const void *value) {
     return Insert(key, value, nullptr, true, nullptr);
   }
-  bool Insert(const char *key, const void *value, uint32_t *value_index,
-              bool replace) {
+  libtextclassifier3::Status Insert(std::string_view key, const void *value,
+                                    uint32_t *value_index, bool replace) {
     return Insert(key, value, value_index, replace, nullptr);
   }
-  bool Insert(const char *key, const void *value, uint32_t *value_index,
-              bool replace, bool *pnew_key);
+  libtextclassifier3::Status Insert(std::string_view key, const void *value,
+                                    uint32_t *value_index, bool replace,
+                                    bool *pnew_key);
 
   // Get a value returned by Insert value_index. This points to the
   // value in the trie. The pointer is immutable and always valid
@@ -351,10 +356,10 @@ class IcingDynamicTrie : public IIcingStorage {
   // value_index is modified.
   //
   // REQUIRES: value a buffer of size value_size()
-  bool Find(const char *key, void *value) const {
+  bool Find(std::string_view key, void *value) const {
     return Find(key, value, nullptr);
   }
-  bool Find(const char *key, void *value, uint32_t *value_index) const;
+  bool Find(std::string_view key, void *value, uint32_t *value_index) const;
 
   // Find the input key and all keys that are a variant of the input
   // key according to a variant map. Currently supports
@@ -375,6 +380,24 @@ class IcingDynamicTrie : public IIcingStorage {
     bool is_full_match() const { return value_index != kInvalidValueIndex; }
   };
 
+  static constexpr int kNoBranchFound = -1;
+  // Return prefix of any new branches created if key were inserted. If utf8 is
+  // true, does not cut key mid-utf8. Returns kNoBranchFound if no branches
+  // would be created.
+  int FindNewBranchingPrefixLength(std::string_view key, bool utf8) const;
+
+  // Find all prefixes of key where the trie branches. Excludes the key
+  // itself. If utf8 is true, does not cut key mid-utf8.
+  std::vector<int> FindBranchingPrefixLengths(std::string_view key,
+                                              bool utf8) const;
+
+  // Check if key is a branching term.
+  //
+  // key is a branching term, if and only if there exists terms s1 and s2 in the
+  // trie such that key is the maximum common prefix of s1 and s2, but s1 and s2
+  // are not prefixes of each other.
+  bool IsBranchingTerm(std::string_view key) const;
+
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
   double min_free_fraction() const;
@@ -386,7 +409,12 @@ class IcingDynamicTrie : public IIcingStorage {
   // If in kMapSharedWithCrc mode, update crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files
   // and property bitmaps.
-  uint32_t UpdateCrc();
+  Crc32 UpdateCrc() override;
+
+  // If in kMapSharedWithCrc mode, calculates crcs and return the master
+  // crc, else return kNoCrc. This crc includes both the trie files
+  // and property bitmaps. Does NOT update any stored crcs.
+  Crc32 GetCrc() const;
 
   // Store dynamic properties for each value.  When a property is added to
   // a value, the deleted flag is cleared for it (if it was previously set).
@@ -401,6 +429,10 @@ class IcingDynamicTrie : public IIcingStorage {
 
   // Clears the deleted property for each value.
   bool ClearDeleted(uint32_t value_index);
+
+  // Deletes the entry associated with the key. Data can not be recovered after
+  // the deletion. Returns true on success.
+  bool Delete(std::string_view key);
 
   // Clear a specific property id from all values.  For each value that has this
   // property cleared, also check to see if it was the only property set;  if
@@ -479,16 +511,20 @@ class IcingDynamicTrie : public IIcingStorage {
   // Not thread-safe.
   //
   // Change in underlying trie invalidates iterator.
+  //
+  // TODO(b/241784804): change IcingDynamicTrie::Iterator to follow the common
+  //                    iterator pattern in our codebase.
   class Iterator {
    public:
-    Iterator(const IcingDynamicTrie &trie, const char *prefix);
+    Iterator(const IcingDynamicTrie &trie, std::string prefix,
+             bool reverse = false);
     void Reset();
     bool Advance();
 
-    // If !IsValid(), GetKey() will return NULL and GetValue() will
-    // return 0.
+    // If !IsValid(), GetKey() will return a std::string_view object with
+    // data() == nullptr and size() == 0, and GetValue() will return nullptr.
     bool IsValid() const;
-    const char *GetKey() const;
+    std::string_view GetKey() const;
     // This points directly to the underlying data and is valid while
     // the trie is alive. We keep ownership of the pointer.
     const void *GetValue() const;
@@ -498,9 +534,10 @@ class IcingDynamicTrie : public IIcingStorage {
     Iterator();
     // Copy is ok.
 
-    // Helper function that takes the left-most branch down
-    // intermediate nodes to a leaf.
-    void LeftBranchToLeaf(uint32_t node_index);
+    enum class BranchType { kLeftMost = 0, kRightMost = 1 };
+    // Helper function that takes the left-most or the right-most branch down
+    // intermediate nodes to a leaf, based on branch_type.
+    void BranchToLeaf(uint32_t node_index, BranchType branch_type);
 
     std::string cur_key_;
     const char *cur_suffix_;
@@ -509,10 +546,12 @@ class IcingDynamicTrie : public IIcingStorage {
       uint32_t node_idx;
       int child_idx;
 
-      explicit Branch(uint32_t ni) : node_idx(ni), child_idx(0) {}
+      explicit Branch(uint32_t node_index, int child_index)
+          : node_idx(node_index), child_idx(child_index) {}
     };
     std::vector<Branch> branch_stack_;
     bool single_leaf_match_;
+    bool reverse_;
 
     const IcingDynamicTrie &trie_;
   };
@@ -575,19 +614,30 @@ class IcingDynamicTrie : public IIcingStorage {
   void GetHeader(IcingDynamicTrieHeader *hdr) const;
   void SetHeader(const IcingDynamicTrieHeader &new_hdr);
 
-  static const uint32_t kInvalidNodeIndex;
-  static const uint32_t kInvalidNextIndex;
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
-  void CollectStatsRecursive(const Node &node, Stats *stats) const;
+  //
+  // REQUIRES: node is valid.
+  //   - Since we only invalidate Next to remove the edge from the trie and Node
+  //     is not invalidated after deletion, the caller should ensure that it
+  //     traverses correctly to a valid node according to the trie structure.
+  //     Calling this function with an invalid node is undefined behavior since
+  //     it could traverse into a deleted subtree, or invalid memory addresses.
+  //   - This also means storage_->empty() should be checked before calling this
+  //     function with the root node.
+  void CollectStatsRecursive(const Node &node, Stats *stats,
+                             uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.
   const Next *GetNextByChar(const Node *node, uint8_t key_char) const;
-  const Next *LowerBound(const Next *start, const Next *end,
-                         uint8_t key_char) const;
-  void FindBestNode(const char *key, uint32_t *best_node_index, int *key_offset,
-                    bool prefix) const;
+  const Next *LowerBound(const Next *start, const Next *end, uint8_t key_char,
+                         uint32_t node_index = 0) const;
+  // Returns the number of valid nexts in the array.
+  int GetValidNextsSize(const IcingDynamicTrie::Next *next_array_start,
+                        int next_array_length) const;
+  void FindBestNode(std::string_view key, uint32_t *best_node_index,
+                    int *key_offset, bool prefix, bool utf8 = false) const;
 
   // For value properties.  This truncates the data by clearing it, but leaving
   // the storage intact.

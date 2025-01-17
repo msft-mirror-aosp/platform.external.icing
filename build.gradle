@@ -14,111 +14,47 @@
  * limitations under the License.
  */
 
-import org.anarres.gradle.plugin.jarjar.JarjarTask
-
-import static androidx.build.SupportConfig.*
-import static androidx.build.dependencies.DependenciesKt.*
-
-buildscript {
-    dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.8')
-        classpath('org.anarres.jarjar:jarjar-gradle:1.0.1')
-    }
-}
+import androidx.build.SdkHelperKt
 
 plugins {
-    id('com.android.library')
-    id('com.google.protobuf')
-    id('org.anarres.jarjar')
+    id("AndroidXPlugin")
+    id("AndroidXRepackagePlugin")
+    id("java-library")
+    id("com.google.protobuf")
 }
 
-android {
-    buildToolsVersion BUILD_TOOLS_VERSION
-    compileSdkVersion COMPILE_SDK_VERSION
-    defaultConfig {
-        minSdkVersion DEFAULT_MIN_SDK_VERSION
-        targetSdkVersion TARGET_SDK_VERSION
-        testInstrumentationRunner INSTRUMENTATION_RUNNER
+repackage {
+    // Must match what is in frameworks/support/appsearch/appsearch-external-protobuf/build.gradle
+    addRelocation {
+        sourcePackage = "com.google.protobuf"
+        targetPackage = "com.google.android.icing.protobuf"
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-    sourceSets {
-        main {
-            java.srcDir 'java/src/'
-            manifest.srcFile 'AndroidManifest.xml'
-            proto.srcDir 'proto/'
-        }
-        // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
-        //  inside appsearch:appsearch.
-        //androidTest.java.srcDir 'java/tests/instrumentation/'
+}
+
+sourceSets {
+    main {
+        java.srcDir 'java/src/'
+        proto.srcDir 'proto/'
     }
 }
 
 dependencies {
-    api('androidx.annotation:annotation:1.1.0')
-
-    implementation('com.google.protobuf:protobuf-javalite:3.10.0')
-
-    androidTestImplementation(ANDROIDX_TEST_CORE)
-    androidTestImplementation(ANDROIDX_TEST_RULES)
-    androidTestImplementation(TRUTH)
+    compileOnly("androidx.annotation:annotation:1.1.0")
+    compileOnly(SdkHelperKt.getSdkDependency(project))
+    compileOnly(libs.protobufLite)
 }
 
-protobuf {
-    protoc {
-        artifact = 'com.google.protobuf:protoc:3.10.0'
-    }
-
-    generateProtoTasks {
-        all().each { task ->
-            task.builtins {
-                java {
-                    option 'lite'
-                }
-            }
+afterEvaluate {
+    lint {
+        lintOptions {
+            // protobuf generates unannotated methods
+            disable("UnknownNullness")
         }
     }
 }
 
-// Create jarjar artifact for all variants (debug/release)
-android.libraryVariants.all { variant ->
-    def variantName = variant.name
-    def suffix = variantName.capitalize()
-    def jarjarTask = tasks.create("jarjar${suffix}", JarjarTask) {
-        destinationName "icing-java-${variantName}-jarjar.jar"
-
-
-        dependsOn protoLiteJarWithoutProtoFiles
-        from files(protoLiteJarWithoutProtoFiles.archiveFile.get().getAsFile())    
-
-        from files(variant.javaCompileProvider.get().destinationDir)
-        dependsOn variant.javaCompileProvider.get()
-        classRename 'com.google.protobuf.**', 'com.google.android.icing.protobuf.@1'
-    }
-
-    def jarjarConf = configurations.register("jarjar${suffix}")
-    artifacts.add("${jarjarConf.name}", jarjarTask.destinationPath) {
-        name "icing-java-${variantName}-jarjar"
-        type 'jar'
-        builtBy jarjarTask
-    }
+androidx {
+    mavenVersion = LibraryVersions.APPSEARCH
+    // JSpecify lint is disabled since icing is developed externally
+    optOutJSpecify = true
 }
-
-// The proto-lite dependency includes .proto files, which are not used by icing. When apps depend on
-// appsearch as well as proto-lite directly, these files conflict since jarjar only renames the java
-// classes. Remove them here since they are unused.
-tasks.register("protoLiteJarWithoutProtoFiles", Jar){
-    // Get proto lite dependency as a jar file:
-    def jarFile = configurations.detachedConfiguration(
-      dependencies.create('com.google.protobuf:protobuf-javalite:3.10.0')).getSingleFile()
-
-    // Expand the jar and remove any .proto files.
-    from(zipTree(jarFile)) {
-      exclude("**/*.proto")
-    }
-
-    into 'icing-proto-lite-dep-stripped'
-}
-

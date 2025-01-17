@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/logging.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -23,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Defines a unit of data understood by the IcingSearchEngine.
-// Next tag: 9
+// Next tag: 10
 message DocumentProto {
   // REQUIRED: Namespace that this Document resides in.
   // Namespaces can affect read/write permissions.
@@ -49,11 +50,6 @@ message DocumentProto {
   // already defined in the schema for this Document's schema_type.
   repeated PropertyProto properties = 5;
 
-  // OPTIONAL: Properties that will not be validated against the schema,
-  // indexed, or be searchable. The properties will be stored in the Documents,
-  // but never looked at by Icing.
-  repeated PropertyProto custom_properties = 6;
-
   // OPTIONAL: Score of the document which could be used during search result
   // ranking. Negative values will lead to validation errors. The default is the
   // lowest score 0.
@@ -68,10 +64,21 @@ message DocumentProto {
   // TODO(cassiewang): Benchmark if fixed64 or some other proto type is better
   // in terms of space/time efficiency. Both for ttl_ms and timestamp fields
   optional int64 ttl_ms = 8 [default = 0];
+
+  // Defines document level data that's generated internally by Icing.
+  message InternalFields {
+    // The length of the document as a count of tokens (or terms) in all indexed
+    // text properties. This field is used in the computation of BM25F relevance
+    // score.
+    optional int32 length_in_tokens = 1;
+  }
+  optional InternalFields internal_fields = 9;
+
+  reserved 6;
 }
 
 // Holds a property field of the Document.
-// Next tag: 8
+// Next tag: 10
 message PropertyProto {
   // Name of the property.
   // See icing.lib.PropertyConfigProto.property_name for details.
@@ -85,10 +92,34 @@ message PropertyProto {
   repeated bool boolean_values = 5;
   repeated bytes bytes_values = 6;
   repeated DocumentProto document_values = 7;
+
+  message VectorProto {
+    // The values of the vector.
+    repeated float values = 1 [packed = true];
+    // The model signature of the vector, which can be any string used to
+    // identify the model, so that embedding searches can be restricted only to
+    // the vectors with the matching target signature.
+    // Eg: "universal-sentence-encoder_v0"
+    optional string model_signature = 2;
+  }
+  repeated VectorProto vector_values = 8;
+
+  // Holds a blob handle field of the property.
+  // Next tag: 4
+  message BlobHandleProto {
+    // The sha-256 hashed digest for a blob.
+    optional bytes digest = 1;
+
+    // The namespace of the blob.
+    optional string namespace = 3;
+
+    reserved 2;
+  }
+  repeated BlobHandleProto blob_handle_values = 9;
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 2
+// Next tag: 4
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -102,6 +133,15 @@ message PutResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats of the function call. Inside PutDocumentStatsProto, the function
+  // call latency 'latency_ms' will always be populated. The other fields will
+  // be accurate only when the status above is OK. See logging.proto for
+  // details.
+  optional PutDocumentStatsProto put_document_stats = 2;
+
+  // Whether or not the document was a replacement of an existing document.
+  optional bool was_replacement = 3;
 }
 
 // Result of a call to IcingSearchEngine.Get
@@ -139,7 +179,7 @@ message GetAllNamespacesResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 2
+// Next tag: 3
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -152,10 +192,13 @@ message DeleteResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional DeleteStatsProto delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 2
+// Next tag: 3
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -168,10 +211,13 @@ message DeleteByNamespaceResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional DeleteStatsProto delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 2
+// Next tag: 3
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -184,4 +230,41 @@ message DeleteBySchemaTypeResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional DeleteStatsProto delete_stats = 2;
+}
+
+// Result of a call to IcingSearchEngine.DeleteByQuery
+// Next tag: 5
+message DeleteByQueryResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional DeleteByQueryStatsProto delete_by_query_stats = 3;
+
+  // Used by DeleteByQueryResultProto to return information about deleted
+  // documents.
+  message DocumentGroupInfo {
+    optional string namespace = 1;
+    optional string schema = 2;
+    repeated string uris = 3;
+  }
+
+  // Additional return message that shows the uris of the deleted documents, if
+  // users set return_deleted_document_info to true.
+  // The result is grouped by the corresponding namespace and type.
+  repeated DocumentGroupInfo deleted_documents = 4;
+
+  reserved 2;
 }

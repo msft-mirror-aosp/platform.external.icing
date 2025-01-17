@@ -15,81 +15,237 @@
 #ifndef ICING_LEGACY_INDEX_ICING_MOCK_FILESYSTEM_H_
 #define ICING_LEGACY_INDEX_ICING_MOCK_FILESYSTEM_H_
 
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
-#include <memory>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
-#include "icing/legacy/index/icing-filesystem.h"
 #include "gmock/gmock.h"
+#include "icing/legacy/index/icing-filesystem.h"
 
 namespace icing {
 namespace lib {
+using ::testing::_;
+using ::testing::A;
 
 class IcingMockFilesystem : public IcingFilesystem {
  public:
-  MOCK_CONST_METHOD1(DeleteFile, bool(const char *file_name));
+  IcingMockFilesystem() {
+    ON_CALL(*this, DeleteFile).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.DeleteFile(file_name);
+    });
 
-  MOCK_CONST_METHOD1(DeleteDirectory, bool(const char *dir_name));
+    ON_CALL(*this, DeleteDirectory).WillByDefault([this](const char *dir_name) {
+      return real_icing_filesystem_.DeleteDirectory(dir_name);
+    });
 
-  MOCK_CONST_METHOD1(DeleteDirectoryRecursively, bool(const char *dir_name));
+    ON_CALL(*this, DeleteDirectoryRecursively)
+        .WillByDefault([this](const char *dir_name) {
+          return real_icing_filesystem_.DeleteDirectoryRecursively(dir_name);
+        });
 
-  MOCK_CONST_METHOD1(FileExists, bool(const char *file_name));
+    ON_CALL(*this, FileExists).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.FileExists(file_name);
+    });
 
-  MOCK_CONST_METHOD1(DirectoryExists, bool(const char *dir_name));
+    ON_CALL(*this, DirectoryExists).WillByDefault([this](const char *dir_name) {
+      return real_icing_filesystem_.DirectoryExists(dir_name);
+    });
 
-  MOCK_CONST_METHOD1(GetBasenameIndex, int(const char *file_name));
+    ON_CALL(*this, GetBasenameIndex)
+        .WillByDefault([this](const char *file_name) {
+          return real_icing_filesystem_.GetBasenameIndex(file_name);
+        });
 
-  MOCK_CONST_METHOD1(GetBasename, std::string(const char *file_name));
+    ON_CALL(*this, GetBasename).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.GetBasename(file_name);
+    });
 
-  MOCK_CONST_METHOD1(GetDirname, std::string(const char *file_name));
+    ON_CALL(*this, GetDirname).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.GetDirname(file_name);
+    });
 
-  MOCK_CONST_METHOD2(ListDirectory, bool(const char *dir_name,
-                                         std::vector<std::string> *entries));
+    ON_CALL(*this, ListDirectory)
+        .WillByDefault(
+            [this](const char *dir_name, std::vector<std::string> *entries) {
+              return real_icing_filesystem_.ListDirectory(dir_name, entries);
+            });
 
-  MOCK_CONST_METHOD2(GetMatchingFiles,
-                     bool(const char *glob, std::vector<std::string> *matches));
+    ON_CALL(*this, GetMatchingFiles)
+        .WillByDefault(
+            [this](const char *glob, std::vector<std::string> *matches) {
+              return real_icing_filesystem_.GetMatchingFiles(glob, matches);
+            });
 
-  MOCK_CONST_METHOD1(OpenForWrite, int(const char *file_name));
+    ON_CALL(*this, OpenForWrite).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.OpenForWrite(file_name);
+    });
 
-  MOCK_CONST_METHOD1(OpenForAppend, int(const char *file_name));
+    ON_CALL(*this, OpenForAppend).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.OpenForAppend(file_name);
+    });
 
-  MOCK_CONST_METHOD1(OpenForRead, int(const char *file_name));
+    ON_CALL(*this, OpenForRead).WillByDefault([this](const char *file_name) {
+      return real_icing_filesystem_.OpenForRead(file_name);
+    });
 
-  MOCK_CONST_METHOD1(GetFileSize, uint64_t(int fd));
+    ON_CALL(*this, GetFileSize(A<int>())).WillByDefault([this](int fd) {
+      return real_icing_filesystem_.GetFileSize(fd);
+    });
 
-  MOCK_CONST_METHOD1(GetFileSize, uint64_t(const char *filename));
+    ON_CALL(*this, GetFileSize(A<const char *>()))
+        .WillByDefault([this](const char *filename) {
+          return real_icing_filesystem_.GetFileSize(filename);
+        });
 
-  MOCK_CONST_METHOD2(Truncate, bool(int fd, uint64_t new_size));
+    ON_CALL(*this, Truncate(A<int>(), _))
+        .WillByDefault([this](int fd, uint64_t new_size) {
+          return real_icing_filesystem_.Truncate(fd, new_size);
+        });
 
-  MOCK_CONST_METHOD2(Truncate, bool(const char *filename, uint64_t new_size));
+    ON_CALL(*this, Truncate(A<const char *>(), _))
+        .WillByDefault([this](const char *filename, uint64_t new_size) {
+          return real_icing_filesystem_.Truncate(filename, new_size);
+        });
 
-  MOCK_CONST_METHOD2(Grow, bool(int fd, uint64_t new_size));
+    ON_CALL(*this, Grow).WillByDefault([this](int fd, uint64_t new_size) {
+      return real_icing_filesystem_.Grow(fd, new_size);
+    });
 
-  MOCK_CONST_METHOD3(Write, bool(int fd, const void *data, size_t data_size));
-  MOCK_CONST_METHOD4(PWrite, bool(int fd, off_t offset, const void *data,
-                                  size_t data_size));
+    ON_CALL(*this, GrowUsingPWrite)
+        .WillByDefault([this](int fd, uint64_t new_size) {
+          return real_icing_filesystem_.GrowUsingPWrite(fd, new_size);
+        });
 
-  MOCK_CONST_METHOD1(DataSync, bool(int fd));
+    ON_CALL(*this, Write)
+        .WillByDefault([this](int fd, const void *data, size_t data_size) {
+          return real_icing_filesystem_.Write(fd, data, data_size);
+        });
+    ON_CALL(*this, PWrite)
+        .WillByDefault(
+            [this](int fd, off_t offset, const void *data, size_t data_size) {
+              return real_icing_filesystem_.PWrite(fd, offset, data, data_size);
+            });
 
-  MOCK_CONST_METHOD2(RenameFile,
-                     bool(const char *old_name, const char *new_name));
+    ON_CALL(*this, DataSync).WillByDefault([this](int fd) {
+      return real_icing_filesystem_.DataSync(fd);
+    });
 
-  MOCK_CONST_METHOD2(SwapFiles, bool(const char *one, const char *two));
+    ON_CALL(*this, RenameFile)
+        .WillByDefault([this](const char *old_name, const char *new_name) {
+          return real_icing_filesystem_.RenameFile(old_name, new_name);
+        });
 
-  MOCK_CONST_METHOD1(CreateDirectory, bool(const char *dir_name));
+    ON_CALL(*this, SwapFiles)
+        .WillByDefault([this](const char *one, const char *two) {
+          return real_icing_filesystem_.SwapFiles(one, two);
+        });
 
-  MOCK_CONST_METHOD1(CreateDirectoryRecursively, bool(const char *dir_name));
+    ON_CALL(*this, CreateDirectory).WillByDefault([this](const char *dir_name) {
+      return real_icing_filesystem_.CreateDirectory(dir_name);
+    });
 
-  MOCK_CONST_METHOD2(CopyFile, bool(const char *src, const char *dst));
+    ON_CALL(*this, CreateDirectoryRecursively)
+        .WillByDefault([this](const char *dir_name) {
+          return real_icing_filesystem_.CreateDirectoryRecursively(dir_name);
+        });
 
-  MOCK_CONST_METHOD4(ComputeChecksum, bool(int fd, uint32_t *checksum,
-                                           uint64_t offset, uint64_t length));
+    ON_CALL(*this, CopyFile)
+        .WillByDefault([this](const char *src, const char *dst) {
+          return real_icing_filesystem_.CopyFile(src, dst);
+        });
 
-  MOCK_CONST_METHOD1(GetDiskUsage, uint64_t(const char *path));
+    ON_CALL(*this, ComputeChecksum)
+        .WillByDefault([this](int fd, uint32_t *checksum, uint64_t offset,
+                              uint64_t length) {
+          return real_icing_filesystem_.ComputeChecksum(fd, checksum, offset,
+                                                        length);
+        });
+
+    ON_CALL(*this, GetDiskUsage).WillByDefault([this](const char *path) {
+      return real_icing_filesystem_.GetDiskUsage(path);
+    });
+  }
+
+  MOCK_METHOD(bool, DeleteFile, (const char *file_name), (const, override));
+
+  MOCK_METHOD(bool, DeleteDirectory, (const char *dir_name), (const, override));
+
+  MOCK_METHOD(bool, DeleteDirectoryRecursively, (const char *dir_name),
+              (const, override));
+
+  MOCK_METHOD(bool, FileExists, (const char *file_name), (const, override));
+
+  MOCK_METHOD(bool, DirectoryExists, (const char *dir_name), (const, override));
+
+  MOCK_METHOD(int, GetBasenameIndex, (const char *file_name),
+              (const, override));
+
+  MOCK_METHOD(std::string, GetBasename, (const char *file_name),
+              (const, override));
+
+  MOCK_METHOD(std::string, GetDirname, (const char *file_name),
+              (const, override));
+
+  MOCK_METHOD(bool, ListDirectory,
+              (const char *dir_name, std::vector<std::string> *entries),
+              (const, override));
+
+  MOCK_METHOD(bool, GetMatchingFiles,
+              (const char *glob, std::vector<std::string> *matches),
+              (const, override));
+
+  MOCK_METHOD(int, OpenForWrite, (const char *file_name), (const, override));
+
+  MOCK_METHOD(int, OpenForAppend, (const char *file_name), (const, override));
+
+  MOCK_METHOD(int, OpenForRead, (const char *file_name), (const, override));
+
+  MOCK_METHOD(uint64_t, GetFileSize, (int fd), (const, override));
+
+  MOCK_METHOD(uint64_t, GetFileSize, (const char *filename), (const, override));
+
+  MOCK_METHOD(bool, Truncate, (int fd, uint64_t new_size), (const, override));
+
+  MOCK_METHOD(bool, Truncate, (const char *filename, uint64_t new_size),
+              (const, override));
+
+  MOCK_METHOD(bool, Grow, (int fd, uint64_t new_size), (const, override));
+
+  MOCK_METHOD(bool, GrowUsingPWrite, (int fd, uint64_t new_size),
+              (const, override));
+
+  MOCK_METHOD(bool, Write, (int fd, const void *data, size_t data_size),
+              (const, override));
+  MOCK_METHOD(bool, PWrite,
+              (int fd, off_t offset, const void *data, size_t data_size),
+              (const, override));
+
+  MOCK_METHOD(bool, DataSync, (int fd), (const, override));
+
+  MOCK_METHOD(bool, RenameFile, (const char *old_name, const char *new_name),
+              (const, override));
+
+  MOCK_METHOD(bool, SwapFiles, (const char *one, const char *two),
+              (const, override));
+
+  MOCK_METHOD(bool, CreateDirectory, (const char *dir_name), (const, override));
+
+  MOCK_METHOD(bool, CreateDirectoryRecursively, (const char *dir_name),
+              (const, override));
+
+  MOCK_METHOD(bool, CopyFile, (const char *src, const char *dst),
+              (const, override));
+
+  MOCK_METHOD(bool, ComputeChecksum,
+              (int fd, uint32_t *checksum, uint64_t offset, uint64_t length),
+              (const, override));
+
+  MOCK_METHOD(uint64_t, GetDiskUsage, (const char *path), (const, override));
+
+ private:
+  IcingFilesystem real_icing_filesystem_;
 };
 
 }  // namespace lib
