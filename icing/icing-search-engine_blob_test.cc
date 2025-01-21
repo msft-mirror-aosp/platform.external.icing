@@ -66,9 +66,9 @@ class TestIcingSearchEngine : public IcingSearchEngine {
 
 std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
 
-std::string GetTestBlobFileDir() {
-  return GetTestTempDir() + "/icing/blob_dir/blob_files";
-}
+std::string GetTestBlobDir() { return GetTestTempDir() + "/icing/blob_dir"; }
+
+std::string GetTestBlobFileDir() { return GetTestBlobDir() + "/blob_files"; }
 
 // This test is meant to cover all tests relating to IcingSearchEngine::Delete*.
 class IcingSearchEngineBlobTest : public testing::Test {
@@ -218,7 +218,7 @@ TEST_F(IcingSearchEngineBlobTest, WriteAndReadBlob) {
   }
 }
 
-TEST_F(IcingSearchEngineBlobTest, AbandonBlob) {
+TEST_F(IcingSearchEngineBlobTest, RemovePendingBlob) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
@@ -240,12 +240,50 @@ TEST_F(IcingSearchEngineBlobTest, AbandonBlob) {
       filesystem()->ListDirectory(GetTestBlobFileDir().c_str(), &file_names));
   ASSERT_THAT(file_names, SizeIs(1));
 
-  BlobProto abandon_blob_proto = icing.AbandonBlob(blob_handle);
-  ASSERT_THAT(abandon_blob_proto.status(), ProtoIsOk());
+  EXPECT_THAT(icing.RemoveBlob(blob_handle).status(), ProtoIsOk());
 
-  // Commit will return NOT_FOUND since the blob is abandoned.
+  // Commit will return NOT_FOUND since the blob is removed.
   BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
-  ASSERT_THAT(commit_blob_proto.status(),
+  EXPECT_THAT(commit_blob_proto.status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(
+      filesystem()->ListDirectory(GetTestBlobFileDir().c_str(), &file_names));
+  // The pending file is deleted.
+  EXPECT_THAT(file_names, IsEmpty());
+}
+
+TEST_F(IcingSearchEngineBlobTest, RemoveCommittedBlob) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_namespace_("namespace1");
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  blob_handle.set_digest((void*)digest.data(), digest.size());
+
+  BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(write_blob_proto.file_descriptor());
+    ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  }
+
+  // commit the blob
+  ASSERT_THAT(icing.CommitBlob(blob_handle).status(), ProtoIsOk());
+
+  std::vector<std::string> file_names;
+  ASSERT_TRUE(
+      filesystem()->ListDirectory(GetTestBlobFileDir().c_str(), &file_names));
+  ASSERT_THAT(file_names, SizeIs(1));
+
+  EXPECT_THAT(icing.RemoveBlob(blob_handle).status(), ProtoIsOk());
+
+  // Commit will return NOT_FOUND since the blob is removed.
+  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  EXPECT_THAT(commit_blob_proto.status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
 
   file_names = std::vector<std::string>();
@@ -509,10 +547,18 @@ TEST_F(IcingSearchEngineBlobTest, BlobOptimize) {
   std::string actual_data = std::string(buf.get(), buf.get() + size);
   EXPECT_EQ(expected_data, actual_data);
 
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(
+      filesystem()->ListDirectory(GetTestBlobDir().c_str(), &file_names));
+  int32_t cur_file_count = file_names.size();
   // Optimize remove the expired orphan blob.
-  ASSERT_THAT(icing2.Optimize().status(), ProtoIsOk());
+  EXPECT_THAT(icing2.Optimize().status(), ProtoIsOk());
   EXPECT_THAT(icing2.OpenReadBlob(blob_handle).status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
+  file_names = std::vector<std::string>();
+  ASSERT_TRUE(
+      filesystem()->ListDirectory(GetTestBlobDir().c_str(), &file_names));
+  EXPECT_THAT(file_names, SizeIs(cur_file_count));
 }
 
 TEST_F(IcingSearchEngineBlobTest, BlobOptimizeWithoutCommit) {

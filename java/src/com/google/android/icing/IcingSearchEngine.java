@@ -109,6 +109,13 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
+  public GetSchemaResultProto getSchemaForDatabase(@NonNull String database) {
+    return IcingSearchEngineUtils.byteArrayToGetSchemaResultProto(
+        icingSearchEngineImpl.getSchemaForDatabase(database));
+  }
+
+  @NonNull
+  @Override
   public GetSchemaTypeResultProto getSchemaType(@NonNull String schemaType) {
     return IcingSearchEngineUtils.byteArrayToGetSchemaTypeResultProto(
         icingSearchEngineImpl.getSchemaType(schemaType));
@@ -175,9 +182,9 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @NonNull
   @Override
-  public BlobProto abandonBlob(PropertyProto.BlobHandleProto blobHandle) {
+  public BlobProto removeBlob(PropertyProto.BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
-        icingSearchEngineImpl.abandonBlob(blobHandle.toByteArray()));
+        icingSearchEngineImpl.removeBlob(blobHandle.toByteArray()));
   }
 
   @NonNull

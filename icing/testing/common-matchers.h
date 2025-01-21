@@ -508,7 +508,10 @@ MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,
   return actual.id == expected_id && actual.path == expected_property_path &&
          actual.data_type == expected_property_config_proto.data_type() &&
          actual.value_type ==
-             expected_property_config_proto.joinable_config().value_type();
+             expected_property_config_proto.joinable_config().value_type() &&
+         actual.delete_propagation_type ==
+             expected_property_config_proto.joinable_config()
+                 .delete_propagation_type();
 }
 
 std::string StatusCodeToString(libtextclassifier3::StatusCode code);

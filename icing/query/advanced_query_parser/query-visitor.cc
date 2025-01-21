@@ -23,11 +23,13 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
@@ -36,6 +38,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
+#include "icing/index/iterator/doc-hit-info-iterator-match-score-expression.h"
 #include "icing/index/iterator/doc-hit-info-iterator-none.h"
 #include "icing/index/iterator/doc-hit-info-iterator-not.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
@@ -55,6 +58,8 @@
 #include "icing/query/query-results.h"
 #include "icing/schema/property-util.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/score-expression-util.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
@@ -294,6 +299,19 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert(
       {get_search_string_parameter_function.name(),
        std::move(get_search_string_parameter_function)});
+
+  // DocHitInfoIterator matchScoreExpression(std::string, double, double)
+  auto match_score_expression = [this](std::vector<PendingValue>&& args) {
+    return this->MatchScoreExpressionFunction(std::move(args));
+  };
+  Function match_score_expression_function =
+      Function::Create(DataType::kDocumentIterator, "matchScoreExpression",
+                       {Param(DataType::kString), Param(DataType::kDouble),
+                        Param(DataType::kDouble, Cardinality::kOptional)},
+                       std::move(match_score_expression))
+          .ValueOrDie();
+  registered_functions_.insert({match_score_expression_function.name(),
+                                std::move(match_score_expression_function)});
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
@@ -332,9 +350,10 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
   } else {
     QueryVisitor query_visitor(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
-        &schema_store_, &normalizer_, &tokenizer_, search_spec_,
-        filter_options_, needs_term_frequency_info_,
-        pending_property_restricts_, processing_not_, current_time_ms_);
+        &schema_store_, &normalizer_, &tokenizer_, join_children_fetcher_,
+        search_spec_, filter_options_, needs_term_frequency_info_,
+        &feature_flags_, pending_property_restricts_, processing_not_,
+        current_time_ms_);
     tree_root->Accept(&query_visitor);
     ICING_ASSIGN_OR_RETURN(query_result,
                            std::move(query_visitor).ConsumeResults());
@@ -468,6 +487,44 @@ QueryVisitor::GetSearchStringParameterFunction(
   QueryTerm text_value = {string_value, string_value, /*is_prefix_val=*/false};
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
                          ProduceTextTokenIterators(std::move(text_value)));
+  return PendingValue(std::move(iterator));
+}
+
+libtextclassifier3::StatusOr<PendingValue>
+QueryVisitor::MatchScoreExpressionFunction(std::vector<PendingValue>&& args) {
+  const std::string& scoring_expression_str =
+      args.at(0).string_val().ValueOrDie()->term;
+  libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
+      scoring_expression = score_expression_util::GetScoreExpression(
+          scoring_expression_str,
+          /*default_score=*/-std::numeric_limits<double>::infinity(),
+          SearchSpecProto::EmbeddingQueryMetricType::UNKNOWN, &document_store_,
+          &schema_store_, current_time_ms_, join_children_fetcher_,
+          /*embedding_query_results=*/nullptr, /*section_weights=*/nullptr,
+          /*bm25f_calculator=*/nullptr, /*schema_type_alias_map=*/nullptr,
+          &feature_flags_, &scoring_feature_types_enabled_);
+  if (!scoring_expression.ok()) {
+    return absl_ports::Annotate(
+        scoring_expression.status(),
+        absl_ports::StrCat(
+            "matchScoreExpression: Failed to handle the score expression ",
+            scoring_expression_str));
+  }
+  double low = args.at(1).double_val().ValueOrDie();
+  double high = std::numeric_limits<double>::infinity();
+  if (args.size() == 3) {
+    high = args.at(2).double_val().ValueOrDie();
+  }
+  if (low > high) {
+    return absl_ports::InvalidArgumentError(
+        "The lower bound cannot be greater than the upper bound.");
+  }
+
+  std::unique_ptr<DocHitInfoIterator> iterator =
+      std::make_unique<DocHitInfoIteratorMatchScoreExpression>(
+          document_store_.last_added_document_id(),
+          std::move(scoring_expression).ValueOrDie(), low, high);
+  features_.insert(kMatchScoreExpressionFunctionFeature);
   return PendingValue(std::move(iterator));
 }
 

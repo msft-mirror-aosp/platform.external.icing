@@ -95,6 +95,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] getSchemaForDatabase(@NonNull String database) {
+    throwIfClosed();
+    return nativeGetSchemaForDatabase(this, database);
+  }
+
+  @Nullable
   public byte[] getSchemaType(@NonNull String schemaType) {
     throwIfClosed();
     return nativeGetSchemaType(this, schemaType);
@@ -162,9 +168,9 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @NonNull
-  public byte[] abandonBlob(@NonNull byte[] blobHandleBytes) {
+  public byte[] removeBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
-    return nativeAbandonBlob(this, blobHandleBytes);
+    return nativeRemoveBlob(this, blobHandleBytes);
   }
 
   @NonNull
@@ -286,6 +292,9 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
 
+  private static native byte[] nativeGetSchemaForDatabase(
+      IcingSearchEngineImpl instance, String database);
+
   private static native byte[] nativeGetSchemaType(
       IcingSearchEngineImpl instance, String schemaType);
 
@@ -315,7 +324,7 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeOpenWriteBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
-  private static native byte[] nativeAbandonBlob(
+  private static native byte[] nativeRemoveBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeOpenReadBlob(

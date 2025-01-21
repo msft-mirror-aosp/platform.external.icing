@@ -254,6 +254,10 @@ CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
 // Find the existing blob handles in the given document and remove them from the
 // dead_blob_handles set. Those are the blob handles that are still in use.
 //
+// This method is flag-guarded by the flag enable_blob_store. If the flag is
+// disabled, the dead_blob_handles must be empty and this method will be a
+// no-op.
+//
 // The type_blob_map is a map from schema type to a set of blob property names.
 void RemoveAliveBlobHandles(
     const DocumentProto& document,
@@ -1236,10 +1240,10 @@ DocumentStore::InternalPut(DocumentProto&& document,
                          schema_type_id, expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
-    put_result.was_replacement = true;
     // The old document exists, copy over the usage scores and delete the old
     // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
+    put_result.old_document_id = old_document_id;
 
     ICING_RETURN_IF_ERROR(
         usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
@@ -1455,6 +1459,27 @@ std::optional<DocumentFilterData> DocumentStore::GetAliveDocumentFilterData(
   return GetNonExpiredDocumentFilterData(document_id, current_time_ms);
 }
 
+std::optional<DocumentFilterData>
+DocumentStore::GetNonDeletedDocumentFilterData(DocumentId document_id) const {
+  if (IsDeleted(document_id)) {
+    return std::nullopt;
+  }
+
+  auto filter_data_or = filter_cache_->GetCopy(document_id);
+  if (!filter_data_or.ok()) {
+    // This would only happen if document_id is out of range of the
+    // filter_cache, meaning we got some invalid document_id. Callers should
+    // already have checked that their document_id is valid or used
+    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
+    // document doesn't exist.
+    return std::nullopt;
+  }
+
+  // At this point, it's guaranteed that the document has not been deleted. It
+  // could still be expired, but the filter data is guaranteed to be valid here.
+  return std::move(filter_data_or).ValueOrDie();
+}
+
 bool DocumentStore::IsDeleted(DocumentId document_id) const {
   auto file_offset_or = document_id_mapper_->Get(document_id);
   if (!file_offset_or.ok()) {
@@ -1479,7 +1504,7 @@ DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id,
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
     // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
     // document doesn't exist.
     return std::nullopt;
   }
@@ -2130,18 +2155,23 @@ DocumentStore::OptimizeInto(
   UsageStore::UsageScores default_usage;
   OptimizeResult result;
   result.document_id_old_to_new.resize(document_cnt, kInvalidDocumentId);
-  result.dead_blob_handles = std::move(potentially_optimizable_blob_handles);
 
-  // Get the blob property map from the schema store.
-  auto type_blob_property_map_or = schema_store_->ConstructBlobPropertyMap();
-  if (num_documents() == 0) {
-    // If we fail to retrieve this map when there *are* documents in
-    // doc store, then something is seriously wrong. Return error.
-    return result;
-  }
+  result.dead_blob_handles = std::move(potentially_optimizable_blob_handles);
   std::unordered_map<std::string, std::vector<std::string>>
-      type_blob_property_map =
-          std::move(type_blob_property_map_or).ValueOrDie();
+      type_blob_property_map;
+  if (!result.dead_blob_handles.empty()) {
+    // Get the blob property map from the schema store.
+    if (num_documents() == 0) {
+      return result;
+    }
+    auto type_blob_property_map_or = schema_store_->ConstructBlobPropertyMap();
+    if (!type_blob_property_map_or.ok()) {
+      // If we fail to retrieve this map when there *are* documents in
+      // doc store, then something is seriously wrong. Return error.
+      return type_blob_property_map_or.status();
+    }
+    type_blob_property_map = std::move(type_blob_property_map_or).ValueOrDie();
+  }
 
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < document_cnt; document_id++) {
