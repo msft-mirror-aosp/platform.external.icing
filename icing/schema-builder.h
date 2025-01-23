@@ -50,11 +50,24 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
 constexpr TermMatchType::Code TERM_MATCH_PREFIX = TermMatchType::PREFIX;
+constexpr TermMatchType::Code TERM_MATCH_STEMMING = TermMatchType::STEMMING;
 
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_UNKNOWN =
     IntegerIndexingConfig::NumericMatchType::UNKNOWN;
 constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_RANGE =
     IntegerIndexingConfig::NumericMatchType::RANGE;
+
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_UNKNOWN =
+        EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_LINEAR_SEARCH =
+        EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
+constexpr EmbeddingIndexingConfig::QuantizationType::Code
+    QUANTIZATION_TYPE_NONE = EmbeddingIndexingConfig::QuantizationType::NONE;
+constexpr EmbeddingIndexingConfig::QuantizationType::Code
+    QUANTIZATION_TYPE_QUANTIZE_8_BIT =
+        EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT;
 
 constexpr PropertyConfigProto::DataType::Code TYPE_UNKNOWN =
     PropertyConfigProto::DataType::UNKNOWN;
@@ -70,11 +83,28 @@ constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
     PropertyConfigProto::DataType::BYTES;
 constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
     PropertyConfigProto::DataType::DOCUMENT;
+constexpr PropertyConfigProto::DataType::Code TYPE_VECTOR =
+    PropertyConfigProto::DataType::VECTOR;
+constexpr PropertyConfigProto::DataType::Code TYPE_BLOB_HANDLE =
+    PropertyConfigProto::DataType::BLOB_HANDLE;
 
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
     JoinableConfig::ValueType::NONE;
 constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_QUALIFIED_ID =
     JoinableConfig::ValueType::QUALIFIED_ID;
+
+constexpr JoinableConfig::DeletePropagationType::Code
+    DELETE_PROPAGATION_TYPE_NONE = JoinableConfig::DeletePropagationType::NONE;
+constexpr JoinableConfig::DeletePropagationType::Code
+    DELETE_PROPAGATION_TYPE_PROPAGATE_FROM =
+        JoinableConfig::DeletePropagationType::PROPAGATE_FROM;
+
+constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_ENABLED =
+    PropertyConfigProto::ScorableType::ENABLED;
+constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_DISABLED =
+    PropertyConfigProto::ScorableType::DISABLED;
+constexpr PropertyConfigProto::ScorableType::Code SCORABLE_TYPE_UNKNOWN =
+    PropertyConfigProto::ScorableType::UNKNOWN;
 
 class PropertyConfigBuilder {
  public:
@@ -104,12 +134,12 @@ class PropertyConfigBuilder {
 
   PropertyConfigBuilder& SetDataTypeJoinableString(
       JoinableConfig::ValueType::Code join_value_type,
-      TermMatchType::Code match_type = TERM_MATCH_UNKNOWN,
-      StringIndexingConfig::TokenizerType::Code tokenizer = TOKENIZER_NONE) {
+      JoinableConfig::DeletePropagationType::Code delete_propagation_type =
+          DELETE_PROPAGATION_TYPE_NONE) {
     property_.set_data_type(PropertyConfigProto::DataType::STRING);
     property_.mutable_joinable_config()->set_value_type(join_value_type);
-    property_.mutable_string_indexing_config()->set_term_match_type(match_type);
-    property_.mutable_string_indexing_config()->set_tokenizer_type(tokenizer);
+    property_.mutable_joinable_config()->set_delete_propagation_type(
+        delete_propagation_type);
     return *this;
   }
 
@@ -146,16 +176,43 @@ class PropertyConfigBuilder {
     return *this;
   }
 
+  PropertyConfigBuilder& SetDataTypeVector(
+      EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+          embedding_indexing_type,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+          EmbeddingIndexingConfig::QuantizationType::NONE) {
+    property_.set_data_type(PropertyConfigProto::DataType::VECTOR);
+    EmbeddingIndexingConfig* embedding_indexing_config =
+        property_.mutable_embedding_indexing_config();
+    embedding_indexing_config->set_embedding_indexing_type(
+        embedding_indexing_type);
+    embedding_indexing_config->set_quantization_type(quantization_type);
+    return *this;
+  }
+
   PropertyConfigBuilder& SetJoinable(
-      JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
+      JoinableConfig::ValueType::Code join_value_type,
+      JoinableConfig::DeletePropagationType::Code delete_propagation_type) {
     property_.mutable_joinable_config()->set_value_type(join_value_type);
-    property_.mutable_joinable_config()->set_propagate_delete(propagate_delete);
+    property_.mutable_joinable_config()->set_delete_propagation_type(
+        delete_propagation_type);
     return *this;
   }
 
   PropertyConfigBuilder& SetCardinality(
       PropertyConfigProto::Cardinality::Code cardinality) {
     property_.set_cardinality(cardinality);
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDescription(std::string description) {
+    property_.set_description(std::move(description));
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetScorableType(
+      PropertyConfigProto::ScorableType::Code scorable_type) {
+    property_.set_scorable_type(scorable_type);
     return *this;
   }
 
@@ -183,6 +240,16 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetVersion(int version) {
     type_config_.set_version(version);
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetDescription(std::string description) {
+    type_config_.set_description(std::move(description));
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetDatabase(std::string database) {
+    type_config_.set_database(std::move(database));
     return *this;
   }
 

@@ -15,11 +15,11 @@
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 // Run on a Linux workstation:
@@ -56,7 +56,7 @@ namespace {
 void BM_SegmentNoSpace(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
@@ -93,7 +93,7 @@ BENCHMARK(BM_SegmentNoSpace)
 void BM_SegmentWithSpaces(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
@@ -133,7 +133,7 @@ BENCHMARK(BM_SegmentWithSpaces)
 void BM_SegmentCJK(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
