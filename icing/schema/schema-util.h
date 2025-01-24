@@ -15,11 +15,11 @@
 #ifndef ICING_SCHEMA_SCHEMA_UTIL_H_
 #define ICING_SCHEMA_SCHEMA_UTIL_H_
 
-#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -186,8 +186,7 @@ class SchemaUtil {
   //   ALREADY_EXISTS for case 1 and 2
   //   INVALID_ARGUMENT for 3-15
   static libtextclassifier3::StatusOr<DependentMap> Validate(
-      const SchemaProto& schema, const FeatureFlags& feature_flags,
-      bool allow_circular_schema_definitions);
+      const SchemaProto& schema, const FeatureFlags& feature_flags);
 
   // Builds a transitive inheritance map.
   //

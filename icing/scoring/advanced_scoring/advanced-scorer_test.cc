@@ -167,8 +167,7 @@ class AdvancedScorerTest : public testing::Test {
             .Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        test_schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        test_schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -2168,8 +2167,7 @@ TEST_F(AdvancedScorerTest,
           .Build();
 
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   DocumentProto document_from_db1 =
       DocumentBuilder()
@@ -2554,8 +2552,7 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
           .Build();
 
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema_proto, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/true));
+      schema_proto, /*ignore_errors_and_delete_documents=*/true));
 
   DocumentProto document =
       DocumentBuilder()

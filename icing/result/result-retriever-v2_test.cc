@@ -157,8 +157,7 @@ class ResultRetrieverV2Test : public ::testing::Test {
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     num_total_hits_ = 0;

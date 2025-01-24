@@ -408,9 +408,7 @@ TYPED_TEST(NumericIndexIntegerTest, WildcardStorageQuery) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
@@ -1644,9 +1642,7 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -2026,9 +2022,7 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -2319,9 +2313,7 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
                                         .SetName("undesiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0

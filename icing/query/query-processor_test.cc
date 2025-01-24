@@ -282,8 +282,7 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   SearchSpecProto search_spec;
@@ -300,8 +299,7 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
@@ -341,8 +339,7 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -402,8 +399,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -458,8 +454,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -516,8 +511,7 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -572,8 +566,7 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -630,8 +623,7 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -691,8 +683,7 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -749,8 +740,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -811,8 +801,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -873,8 +862,7 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -949,8 +937,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1025,8 +1012,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1099,8 +1085,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1272,8 +1257,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1340,8 +1324,7 @@ TEST_F(QueryProcessorTest, TwoGroups) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1411,8 +1394,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1479,8 +1461,7 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1549,8 +1530,7 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1605,8 +1585,7 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1659,8 +1638,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1745,8 +1723,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1834,8 +1811,7 @@ TEST_F(QueryProcessorTest, WithoutTermFrequency) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -1935,8 +1911,7 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2003,8 +1978,7 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2071,8 +2045,7 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2140,8 +2113,7 @@ TEST_F(QueryProcessorTest, PropertyFilterForOneDocument) {
   // First and only indexed property, so it gets a section_id of 0
   int subject_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2213,8 +2185,7 @@ TEST_F(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
   int email_foo_section_id = 1;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2288,8 +2259,7 @@ TEST_F(QueryProcessorTest, PropertyFilterWithinSchemaType) {
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2381,8 +2351,7 @@ TEST_F(QueryProcessorTest, NestedPropertyFilter) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2446,8 +2415,7 @@ TEST_F(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2511,8 +2479,7 @@ TEST_F(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2569,8 +2536,7 @@ TEST_F(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2630,8 +2596,7 @@ TEST_F(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2696,38 +2661,40 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("message")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   // SectionIds are assigned in ascending order per schema type,
   // alphabetically.
@@ -2738,8 +2705,7 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
   int message_baz_section_id = 1;
   int message_foo_section_id = 2;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2788,13 +2754,13 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
   search_spec.set_term_match_type(term_match_type);
 
   // email has property filters for foo and baz properties
-  TypePropertyMask *email_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
   email_mask->set_schema_type("email");
   email_mask->add_paths("foo");
   email_mask->add_paths("baz");
 
   // message has property filters for bar and baz properties
-  TypePropertyMask *message_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* message_mask = search_spec.add_type_property_filters();
   message_mask->set_schema_type("message");
   message_mask->add_paths("bar");
   message_mask->add_paths("baz");
@@ -2825,38 +2791,40 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("message")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   // SectionIds are assigned in ascending order per schema type,
   // alphabetically.
@@ -2867,8 +2835,7 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   int message_baz_section_id = 1;
   int message_foo_section_id = 2;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -2918,13 +2885,13 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   search_spec.set_term_match_type(term_match_type);
 
   // email has property filters for foo and baz properties
-  TypePropertyMask *email_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
   email_mask->set_schema_type("email");
   email_mask->add_paths("foo");
   email_mask->add_paths("baz");
 
   // message has property filters for bar and baz properties
-  TypePropertyMask *message_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* message_mask = search_spec.add_type_property_filters();
   message_mask->set_schema_type("message");
   message_mask->add_paths("bar");
   message_mask->add_paths("baz");
@@ -2955,8 +2922,7 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // Arbitrary value, just has to be less than the document's creation
@@ -3020,8 +2986,7 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // Arbitrary value, just has to be greater than the document's creation
@@ -3095,8 +3060,7 @@ TEST_F(QueryProcessorTest, NumericFilter) {
   SectionId cost_section_id = 0;
   SectionId price_section_id = 1;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
@@ -3195,8 +3159,7 @@ TEST_F(QueryProcessorTest, NumericFilterWithoutEnablingFeatureFails) {
           .Build();
   SectionId price_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -3239,8 +3202,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   SectionId prop1_section_id = 0;
@@ -3365,8 +3327,7 @@ TEST_F(QueryProcessorTest, ParseAdvancedQueryShouldSetSearchStats) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -3418,8 +3379,7 @@ TEST_F(QueryProcessorTest, UriFiltersIsNotTheRightMostNode) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
                                            .SetKey("namespace", "uri1")
