@@ -121,8 +121,7 @@ class EmbeddingIndexTest : public Test {
                                                QUANTIZATION_TYPE_QUANTIZE_8_BIT)
                             .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build(),
-        /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        /*ignore_errors_and_delete_documents=*/false));
     ICING_ASSERT_OK(document_store_->Put(
         DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
     ICING_ASSERT_OK(document_store_->Put(

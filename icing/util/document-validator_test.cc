@@ -140,8 +140,7 @@ class DocumentValidatorTest : public ::testing::Test {
         schema_store_, SchemaStore::Create(&filesystem_, schema_dir_,
                                            &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     document_validator_ =
@@ -496,8 +495,7 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
       SchemaStore::Create(&filesystem_, custom_schema_dir, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  email_schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  email_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentValidator document_validator(schema_store.get());
@@ -530,8 +528,7 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
   // separately
   ASSERT_THAT(
       schema_store->SetSchema(email_and_conversation_schema,
-                              /*ignore_errors_and_delete_documents=*/false,
-                              /*allow_circular_schema_definitions=*/false),
+                              /*ignore_errors_and_delete_documents=*/false),
       IsOk());
 
   ICING_EXPECT_OK(document_validator.Validate(conversation));
