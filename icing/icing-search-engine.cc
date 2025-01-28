@@ -505,6 +505,19 @@ GetRankingStrategyFromScoringSpec(const ScoringSpecProto& scoring_spec) {
   return ScoringSpecProto::RankingStrategy::NONE;
 }
 
+// Calculates the time between the new optimize start time and the last optimize
+// run based on the times recorded in the OptimizeStatusProto.
+int64_t GetTimeSinceLastOptimizeMs(int64_t new_optimize_start_time_ms,
+                                   const OptimizeStatusProto& optimize_status) {
+  int64_t last_successful_optimize_run_time_ms =
+      optimize_status.last_successful_optimize_run_time_ms();
+  int64_t last_attemped_optimize_time =
+      optimize_status.last_attempted_optimize_run_time_ms();
+  return new_optimize_start_time_ms -
+         std::max(last_successful_optimize_run_time_ms,
+                  last_attemped_optimize_time);
+}
+
 }  // namespace
 
 IcingSearchEngine::IcingSearchEngine(const IcingSearchEngineOptions& options,
@@ -519,9 +532,12 @@ IcingSearchEngine::IcingSearchEngine(
     std::unique_ptr<const IcingFilesystem> icing_filesystem,
     std::unique_ptr<Clock> clock, std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
-      feature_flags_(options_.enable_scorable_properties(),
+      feature_flags_(options_.allow_circular_schema_definitions(),
+                     options_.enable_scorable_properties(),
                      options_.enable_embedding_quantization(),
-                     options_.enable_repeated_field_joins()),
+                     options_.enable_repeated_field_joins(),
+                     options_.enable_embedding_backup_generation(),
+                     options_.enable_schema_database()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -982,8 +998,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
   ICING_ASSIGN_OR_RETURN(
       schema_store_,
       SchemaStore::Create(filesystem_.get(), schema_store_dir, clock_.get(),
-                          &feature_flags_, options_.enable_schema_database(),
-                          initialize_stats));
+                          &feature_flags_, initialize_stats));
 
   return libtextclassifier3::Status::OK;
 }
@@ -1235,8 +1250,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   DestructibleFile marker_file(marker_filepath, filesystem_.get());
 
   auto set_schema_result_or = schema_store_->SetSchema(
-      std::move(new_schema), ignore_errors_and_delete_documents,
-      options_.allow_circular_schema_definitions());
+      std::move(new_schema), ignore_errors_and_delete_documents);
   if (!set_schema_result_or.ok()) {
     TransformStatus(set_schema_result_or.status(), result_status);
     return result_proto;
@@ -1969,10 +1983,58 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     return result_proto;
   }
 
+  int64_t optimize_start_time_ms = clock_->GetSystemTimeMilliseconds();
   OptimizeStatsProto* optimize_stats = result_proto.mutable_optimize_stats();
   ScopedTimer optimize_timer(
       clock_->GetNewTimer(),
       [optimize_stats](int64_t t) { optimize_stats->set_latency_ms(t); });
+
+  // Read the optimize status and assign previous_optimize_status. This is the
+  // time that we last ran optimize.
+  // previous_optimize_status will remain as nullptr if we have trouble reading
+  // the status or this is the first time that we've ever run.
+  std::unique_ptr<OptimizeStatusProto> previous_optimize_status;
+  std::string optimize_status_filename =
+      absl_ports::StrCat(options_.base_dir(), "/", kOptimizeStatusFilename);
+  FileBackedProto<OptimizeStatusProto> optimize_status_file(
+      *filesystem_, optimize_status_filename);
+  auto optimize_status_or = optimize_status_file.Read();
+  if (optimize_status_or.ok()) {
+    previous_optimize_status =
+        std::make_unique<OptimizeStatusProto>(*optimize_status_or.ValueOrDie());
+  }
+
+  if (options_.calculate_time_since_last_attempted_optimize()) {
+    // This is only initialized if we successfully read the status file. Skip
+    // this step if uninitialized.
+    if (previous_optimize_status != nullptr) {
+      int64_t time_since_last_optimize_ms = GetTimeSinceLastOptimizeMs(
+          optimize_start_time_ms, *previous_optimize_status);
+      optimize_stats->set_time_since_last_optimize_ms(
+          time_since_last_optimize_ms);
+      int64_t last_successful_optimize_run_time_ms =
+          previous_optimize_status->last_successful_optimize_run_time_ms();
+      optimize_stats->set_time_since_last_successful_optimize_ms(
+          optimize_start_time_ms - last_successful_optimize_run_time_ms);
+    }
+
+    // Copy the previous optimize status or initialize a default one if we
+    // failed to read it.
+    std::unique_ptr<OptimizeStatusProto> new_optimize_status =
+        previous_optimize_status != nullptr
+            ? std::make_unique<OptimizeStatusProto>(*previous_optimize_status)
+            : std::make_unique<OptimizeStatusProto>();
+
+    // Write the new optimize start time.
+    new_optimize_status->set_last_attempted_optimize_run_time_ms(
+        optimize_start_time_ms);
+    libtextclassifier3::Status write_status =
+        optimize_status_file.Write(std::move(new_optimize_status));
+    if (!write_status.ok()) {
+      ICING_LOG(ERROR) << "Failed to write optimize status:\n"
+                       << write_status.error_message();
+    }
+  }
 
   // Flushes data to disk before doing optimization
   auto status = InternalPersistToDisk(PersistType::FULL);
@@ -2125,25 +2187,25 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   optimize_stats->set_index_restoration_latency_ms(
       optimize_index_timer->GetElapsedMilliseconds());
 
-  // Read the optimize status to get the time that we last ran.
-  std::string optimize_status_filename =
-      absl_ports::StrCat(options_.base_dir(), "/", kOptimizeStatusFilename);
-  FileBackedProto<OptimizeStatusProto> optimize_status_file(
-      *filesystem_, optimize_status_filename);
-  auto optimize_status_or = optimize_status_file.Read();
-  int64_t current_time = clock_->GetSystemTimeMilliseconds();
-  if (optimize_status_or.ok()) {
-    // If we have trouble reading the status or this is the first time that
-    // we've ever run, don't set this field.
-    optimize_stats->set_time_since_last_optimize_ms(
-        current_time - optimize_status_or.ValueOrDie()
-                           ->last_successful_optimize_run_time_ms());
+  // Get the time since we last ran optimize using times recorded in the
+  // previous optimize status.
+  if (!options_.calculate_time_since_last_attempted_optimize()) {
+    if (previous_optimize_status) {
+      // This is only initialized if we successfully read the status. If we have
+      // trouble reading the status or this is the first time that we've ever
+      // run, don't set this field.
+      optimize_stats->set_time_since_last_optimize_ms(
+          optimize_start_time_ms -
+          previous_optimize_status->last_successful_optimize_run_time_ms());
+    }
   }
 
   // Update the status for this run and write it.
-  auto optimize_status = std::make_unique<OptimizeStatusProto>();
-  optimize_status->set_last_successful_optimize_run_time_ms(current_time);
-  auto write_status = optimize_status_file.Write(std::move(optimize_status));
+  auto new_optimize_status = std::make_unique<OptimizeStatusProto>();
+  new_optimize_status->set_last_successful_optimize_run_time_ms(
+      optimize_start_time_ms);
+  auto write_status =
+      optimize_status_file.Write(std::move(new_optimize_status));
   if (!write_status.ok()) {
     ICING_LOG(ERROR) << "Failed to write optimize status:\n"
                      << write_status.error_message();
@@ -2188,9 +2250,16 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   if (optimize_status_or.ok()) {
     // If we have trouble reading the status or this is the first time that
     // we've ever run, don't set this field.
-    result_proto.set_time_since_last_optimize_ms(
-        current_time - optimize_status_or.ValueOrDie()
-                           ->last_successful_optimize_run_time_ms());
+    int64_t time_since_last_optimize_ms;
+    if (options_.calculate_time_since_last_attempted_optimize()) {
+      time_since_last_optimize_ms = GetTimeSinceLastOptimizeMs(
+          current_time, *optimize_status_or.ValueOrDie());
+    } else {
+      time_since_last_optimize_ms =
+          current_time - optimize_status_or.ValueOrDie()
+                             ->last_successful_optimize_run_time_ms();
+    }
+    result_proto.set_time_since_last_optimize_ms(time_since_last_optimize_ms);
   }
 
   // Get stats from DocumentStore

@@ -184,8 +184,7 @@ std::unique_ptr<SchemaStore> CreateSchemaStore(
   SchemaProto schema;
   CreateFakeTypeConfig(schema.add_types());
   auto set_schema_status = schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false);
+      schema, /*ignore_errors_and_delete_documents=*/false);
 
   if (!set_schema_status.ok()) {
     ICING_LOG(ERROR) << set_schema_status.status().error_message();

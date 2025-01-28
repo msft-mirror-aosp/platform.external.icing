@@ -941,8 +941,7 @@ TEST_F(IcingSearchEngineInitializationTest,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
                             feature_flags_.get()));
     ICING_EXPECT_OK(schema_store->SetSchema(
-        new_schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        new_schema, /*ignore_errors_and_delete_documents=*/false));
   }  // Will persist new schema
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -4919,8 +4918,7 @@ TEST_F(IcingSearchEngineInitializationTest,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
                             feature_flags_.get()));
     ICING_EXPECT_OK(schema_store->SetSchema(
-        new_schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        new_schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   {
