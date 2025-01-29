@@ -15,15 +15,29 @@
 #include "icing/util/document-validator.h"
 
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
+static constexpr int32_t kSha256LengthBytes = 32;
 
 using PropertyConfigMap =
     std::unordered_map<std::string_view, const PropertyConfigProto*>;
@@ -121,6 +135,30 @@ libtextclassifier3::Status DocumentValidator::Validate(
     } else if (property_config.data_type() ==
                PropertyConfigProto::DataType::DOCUMENT) {
       value_size = property.document_values_size();
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::VECTOR) {
+      value_size = property.vector_values_size();
+      for (const PropertyProto::VectorProto& vector_value :
+           property.vector_values()) {
+        if (vector_value.values_size() == 0) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains empty vectors for key: (", document.namespace_(),
+              ", ", document.uri(), ")."));
+        }
+      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::BLOB_HANDLE) {
+      value_size = property.blob_handle_values_size();
+      for (const PropertyProto::BlobHandleProto& blob_handle_value :
+           property.blob_handle_values()) {
+        if (blob_handle_value.digest().size() != kSha256LengthBytes) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains non sha-256 blob digest for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
+        }
+      }
     }
 
     if (property_config.cardinality() ==
@@ -149,15 +187,19 @@ libtextclassifier3::Status DocumentValidator::Validate(
     // fail, we don't need to validate the extra documents.
     if (property_config.data_type() ==
         PropertyConfigProto::DataType::DOCUMENT) {
-      const std::string_view nested_type_expected =
-          property_config.schema_type();
+      ICING_ASSIGN_OR_RETURN(
+          const std::unordered_set<SchemaTypeId>* nested_type_ids_expected,
+          schema_store_->GetSchemaTypeIdsWithChildren(
+              property_config.schema_type()));
       for (const DocumentProto& nested_document : property.document_values()) {
-        if (nested_type_expected.compare(nested_document.schema()) != 0) {
+        libtextclassifier3::StatusOr<SchemaTypeId> nested_document_type_id_or =
+            schema_store_->GetSchemaTypeId(nested_document.schema());
+        if (!nested_document_type_id_or.ok() ||
+            nested_type_ids_expected->count(
+                nested_document_type_id_or.ValueOrDie()) == 0) {
           return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-              "Property '", property.name(), "' should have type '",
-              nested_type_expected,
-              "' but actual "
-              "value has type '",
+              "Property '", property.name(), "' should be type or subtype of '",
+              property_config.schema_type(), "' but actual value has type '",
               nested_document.schema(), "' for key: (", document.namespace_(),
               ", ", document.uri(), ")."));
         }
@@ -166,7 +208,7 @@ libtextclassifier3::Status DocumentValidator::Validate(
     }
   }
   if (num_required_properties_actual <
-      parsed_property_configs.num_required_properties) {
+      parsed_property_configs.required_properties.size()) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("One or more required fields missing for key: (",
                            document.namespace_(), ", ", document.uri(), ")."));

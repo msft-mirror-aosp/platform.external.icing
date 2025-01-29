@@ -14,7 +14,10 @@
 
 #include "icing/util/character-iterator.h"
 
+#include <string_view>
+
 #include "icing/util/i18n-utils.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {
@@ -32,7 +35,7 @@ int GetUTF8StartPosition(std::string_view text, int current_byte_index) {
 
 }  // namespace
 
-UChar32 CharacterIterator::GetCurrentChar() {
+UChar32 CharacterIterator::GetCurrentChar() const {
   if (cached_current_char_ == i18n_utils::kInvalidUChar32) {
     // Our indices point to the right character, we just need to read that
     // character. No need to worry about an error. If GetUChar32At fails, then
@@ -49,6 +52,8 @@ bool CharacterIterator::MoveToUtf8(int desired_utf8_index) {
 }
 
 bool CharacterIterator::AdvanceToUtf8(int desired_utf8_index) {
+  ResetToStartIfNecessary();
+
   if (desired_utf8_index > text_.length()) {
     // Enforce the requirement.
     return false;
@@ -120,6 +125,8 @@ bool CharacterIterator::MoveToUtf16(int desired_utf16_index) {
 }
 
 bool CharacterIterator::AdvanceToUtf16(int desired_utf16_index) {
+  ResetToStartIfNecessary();
+
   UChar32 uchar32 = cached_current_char_;
   while (utf16_index_ < desired_utf16_index) {
     uchar32 =
@@ -190,6 +197,8 @@ bool CharacterIterator::MoveToUtf32(int desired_utf32_index) {
 }
 
 bool CharacterIterator::AdvanceToUtf32(int desired_utf32_index) {
+  ResetToStartIfNecessary();
+
   UChar32 uchar32 = cached_current_char_;
   while (utf32_index_ < desired_utf32_index) {
     uchar32 =
@@ -247,6 +256,16 @@ bool CharacterIterator::RewindToUtf32(int desired_utf32_index) {
     --utf32_index_;
   }
   return true;
+}
+
+void CharacterIterator::ResetToStartIfNecessary() {
+  if (utf8_index_ < 0 || utf16_index_ < 0 || utf32_index_ < 0) {
+    utf8_index_ = 0;
+    utf16_index_ = 0;
+    utf32_index_ = 0;
+    cached_current_char_ =
+        i18n_utils::GetUChar32At(text_.data(), text_.length(), 0);
+  }
 }
 
 }  // namespace lib

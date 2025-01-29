@@ -18,8 +18,10 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_set>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -27,17 +29,22 @@
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/lite-index.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/main-index-merger.h"
 #include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
-#include "icing/util/crc32.h"
+#include "icing/store/suggestion-result-checker.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -65,11 +72,18 @@ namespace lib {
 class Index {
  public:
   struct Options {
-    explicit Options(const std::string& base_dir, uint32_t index_merge_size)
-        : base_dir(base_dir), index_merge_size(index_merge_size) {}
+    explicit Options(const std::string& base_dir, uint32_t index_merge_size,
+                     bool lite_index_sort_at_indexing,
+                     uint32_t lite_index_sort_size)
+        : base_dir(base_dir),
+          index_merge_size(index_merge_size),
+          lite_index_sort_at_indexing(lite_index_sort_at_indexing),
+          lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
+    bool lite_index_sort_at_indexing;
+    int32_t lite_index_sort_size;
   };
 
   // Creates an instance of Index in the directory pointed by file_dir.
@@ -82,6 +96,16 @@ class Index {
   static libtextclassifier3::StatusOr<std::unique_ptr<Index>> Create(
       const Options& options, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
+
+  // Reads magic from existing flash (main) index file header. We need this
+  // during Icing initialization phase to determine the version.
+  //
+  // Returns
+  //   Valid magic on success
+  //   NOT_FOUND if the lite index doesn't exist
+  //   INTERNAL on I/O error
+  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
+      const Filesystem* filesystem, const std::string& base_dir);
 
   // Clears all files created by the index. Returns OK if all files were
   // cleared.
@@ -105,6 +129,22 @@ class Index {
   libtextclassifier3::Status PersistToDisk() {
     ICING_RETURN_IF_ERROR(lite_index_->PersistToDisk());
     return main_index_->PersistToDisk();
+  }
+
+  // Updates all checksums in the index and returns the combined index checksum.
+  Crc32 UpdateChecksum() {
+    Crc32 lite_crc = lite_index_->UpdateChecksum();
+    Crc32 main_crc = main_index_->UpdateChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
+  // Calculates and returns the combined index checksum.
+  Crc32 GetChecksum() const {
+    Crc32 lite_crc = lite_index_->GetChecksum();
+    Crc32 main_crc = main_index_->GetChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
   }
 
   // Discard parts of the index if they contain data for document ids greater
@@ -138,13 +178,25 @@ class Index {
   }
 
   // Returns debug information for the index in out.
-  // verbosity <= 0, simplest debug information - just the lexicons and lite
-  //                 index.
-  // verbosity > 0, more detailed debug information including raw postings
-  //                lists.
-  void GetDebugInfo(int verbosity, std::string* out) const {
-    lite_index_->GetDebugInfo(verbosity, out);
-    main_index_->GetDebugInfo(verbosity, out);
+  // verbosity = BASIC, simplest debug information - just the lexicons and lite
+  //                    index.
+  // verbosity = DETAILED, more detailed debug information including raw
+  //                       postings lists.
+  IndexDebugInfoProto GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
+    IndexDebugInfoProto debug_info;
+    *debug_info.mutable_index_storage_info() = GetStorageInfo();
+    *debug_info.mutable_lite_index_info() =
+        lite_index_->GetDebugInfo(verbosity);
+    *debug_info.mutable_main_index_info() =
+        main_index_->GetDebugInfo(verbosity);
+    return debug_info;
+  }
+
+  void PublishQueryStats(QueryStatsProto* query_stats) const {
+    query_stats->set_lite_index_hit_buffer_byte_size(
+        lite_index_->GetHitBufferByteSize());
+    query_stats->set_lite_index_hit_buffer_unsorted_byte_size(
+        lite_index_->GetHitBufferUnsortedByteSize());
   }
 
   // Returns the byte size of the all the elements held in the index. This
@@ -169,29 +221,33 @@ class Index {
   IndexStorageInfoProto GetStorageInfo() const;
 
   // Create an iterator to iterate through all doc hit infos in the index that
-  // match the term. section_id_mask can be set to ignore hits from sections not
-  // listed in the mask. Eg. section_id_mask = 1U << 3; would only return hits
-  // that occur in section 3.
+  // match the term. term_start_index is the start index of the given term in
+  // the search query. unnormalized_term_length is the length of the given
+  // unnormalized term in the search query not listed in the mask.
+  // Eg. section_id_mask = 1U << 3; would only return hits that occur in
+  // section 3.
   //
   // Returns:
   //   unique ptr to a valid DocHitInfoIterator that matches the term
   //   INVALID_ARGUMENT if given an invalid term_match_type
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
-      const std::string& term, SectionIdMask section_id_mask,
-      TermMatchType::Code term_match_type);
+      const std::string& term, int term_start_index,
+      int unnormalized_term_length, SectionIdMask section_id_mask,
+      TermMatchType::Code term_match_type, bool need_hit_term_frequency = true);
 
   // Finds terms with the given prefix in the given namespaces. If
-  // 'namespace_ids' is empty, returns results from all the namespaces. The
-  // input prefix must be normalized, otherwise inaccurate results may be
-  // returned. Results are not sorted specifically and are in their original
-  // order. Number of results are no more than 'num_to_return'.
+  // 'namespace_ids' is empty, returns results from all the namespaces. Results
+  // are sorted in decreasing order of hit count. Number of results are no more
+  // than 'num_to_return'.
   //
   // Returns:
   //   A list of TermMetadata on success
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
-      int num_to_return);
+      const std::string& prefix, int num_to_return,
+      TermMatchType::Code scoring_match_type,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code rank_by,
+      const SuggestionResultChecker* suggestion_result_checker);
 
   // A class that can be used to add hits to the index.
   //
@@ -206,16 +262,16 @@ class Index {
     // TODO(b/141180665): Add nullptr checks for the raw pointers
     Editor(const TermIdCodec* term_id_codec, LiteIndex* lite_index,
            DocumentId document_id, SectionId section_id,
-           TermMatchType::Code term_match_type, NamespaceId namespace_id)
+           NamespaceId namespace_id)
         : term_id_codec_(term_id_codec),
           lite_index_(lite_index),
           document_id_(document_id),
-          term_match_type_(term_match_type),
           namespace_id_(namespace_id),
           section_id_(section_id) {}
 
     // Buffer the term in seen_tokens_.
-    libtextclassifier3::Status BufferTerm(const char* term);
+    libtextclassifier3::Status BufferTerm(std::string_view term,
+                                          TermMatchType::Code match_type);
     // Index all the terms stored in seen_tokens_.
     libtextclassifier3::Status IndexAllBufferedTerms();
 
@@ -223,18 +279,21 @@ class Index {
     // The Editor is able to store previously seen terms as TermIds. This is
     // is more efficient than a client doing this externally because TermIds are
     // not exposed to clients.
-    std::unordered_map<uint32_t, Hit::TermFrequency> seen_tokens_;
+    struct HitDetails {
+      TermMatchType::Code match_type;
+      Hit::TermFrequency term_frequency;
+    };
+    std::unordered_map<uint32_t, HitDetails> seen_tokens_;
     const TermIdCodec* term_id_codec_;
     LiteIndex* lite_index_;
     DocumentId document_id_;
-    TermMatchType::Code term_match_type_;
     NamespaceId namespace_id_;
     SectionId section_id_;
   };
   Editor Edit(DocumentId document_id, SectionId section_id,
-              TermMatchType::Code term_match_type, NamespaceId namespace_id) {
+              NamespaceId namespace_id) {
     return Editor(term_id_codec_.get(), lite_index_.get(), document_id,
-                  section_id, term_match_type, namespace_id);
+                  section_id, namespace_id);
   }
 
   bool WantsMerge() const { return lite_index_->WantsMerge(); }
@@ -253,8 +312,32 @@ class Index {
     ICING_RETURN_IF_ERROR(main_index_->AddHits(
         *term_id_codec_, std::move(outputs.backfill_map),
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
+    ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
     return lite_index_->Reset();
   }
+
+  // Whether the LiteIndex HitBuffer requires sorting. This is only true if
+  // Icing has enabled sorting during indexing time, and the HitBuffer's
+  // unsorted tail has exceeded the lite_index_sort_size.
+  bool LiteIndexNeedSort() const {
+    return options_.lite_index_sort_at_indexing &&
+           lite_index_->HasUnsortedHitsExceedingSortThreshold();
+  }
+
+  // Sorts the LiteIndex HitBuffer.
+  void SortLiteIndex() { lite_index_->SortHits(); }
+
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  // new_last_added_document_id will be used to update the last added document
+  // id in the lite index.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id);
 
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
@@ -267,7 +350,9 @@ class Index {
         filesystem_(filesystem) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
+      const std::string& prefix,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code rank_by,
+      const SuggestionResultChecker* suggestion_result_checker);
 
   std::unique_ptr<LiteIndex> lite_index_;
   std::unique_ptr<MainIndex> main_index_;

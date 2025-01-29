@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "icing/proto/document.pb.h"
 
@@ -78,11 +79,25 @@ class DocumentBuilder {
     return AddStringProperty(std::move(property_name), {string_values...});
   }
 
+  // Takes a property name and iterator of int64_t values.
+  template <typename InputIt>
+  DocumentBuilder& AddInt64Property(std::string property_name, InputIt first,
+                                    InputIt last) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (InputIt it = first; it != last; ++it) {
+      property->mutable_int64_values()->Add(*it);
+    }
+    return *this;
+  }
+
   // Takes a property name and any number of int64_t values.
   template <typename... V>
   DocumentBuilder& AddInt64Property(std::string property_name,
                                     V... int64_values) {
-    return AddInt64Property(std::move(property_name), {int64_values...});
+    std::initializer_list<int64_t> int64_values_list = {int64_values...};
+    return AddInt64Property(std::move(property_name), int64_values_list.begin(),
+                            int64_values_list.end());
   }
 
   // Takes a property name and any number of double values.
@@ -99,6 +114,14 @@ class DocumentBuilder {
     return AddBooleanProperty(std::move(property_name), {boolean_values...});
   }
 
+  // Takes a property name and any number of blob handle values.
+  template <typename... V>
+  DocumentBuilder& AddBlobHandleProperty(std::string property_name,
+                                         V... blob_handle_values) {
+    return AddBlobHandleProperty(std::move(property_name),
+                                 {blob_handle_values...});
+  }
+
   // Takes a property name and any number of bytes values.
   template <typename... V>
   DocumentBuilder& AddBytesProperty(std::string property_name,
@@ -110,6 +133,25 @@ class DocumentBuilder {
   DocumentBuilder& AddDocumentProperty(std::string property_name,
                                        V&&... document_values) {
     return AddDocumentProperty(std::move(property_name), {document_values...});
+  }
+
+  // Takes a property name and any number of vector values.
+  template <typename... V>
+  DocumentBuilder& AddVectorProperty(std::string property_name,
+                                     V... vector_values) {
+    return AddVectorProperty(std::move(property_name), {vector_values...});
+  }
+
+  // Takes a property name and a list of vector values.
+  DocumentBuilder& AddVectorProperty(
+      std::string property_name,
+      std::vector<PropertyProto::VectorProto> vector_values) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (PropertyProto::VectorProto vector_value : vector_values) {
+      property->mutable_vector_values()->Add(std::move(vector_value));
+    }
+    return *this;
   }
 
   DocumentProto Build() const { return document_; }
@@ -124,16 +166,6 @@ class DocumentBuilder {
     property->set_name(std::move(property_name));
     for (std::string_view string_value : string_values) {
       property->mutable_string_values()->Add(std::string(string_value));
-    }
-    return *this;
-  }
-
-  DocumentBuilder& AddInt64Property(
-      std::string property_name, std::initializer_list<int64_t> int64_values) {
-    auto property = document_.add_properties();
-    property->set_name(std::move(property_name));
-    for (int64_t int64_value : int64_values) {
-      property->mutable_int64_values()->Add(int64_value);
     }
     return *this;
   }
@@ -158,6 +190,19 @@ class DocumentBuilder {
     return *this;
   }
 
+  DocumentBuilder& AddBlobHandleProperty(
+      std::string property_name,
+      std::initializer_list<PropertyProto::BlobHandleProto>
+          blob_handle_values) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (PropertyProto::BlobHandleProto blob_handle_value :
+         blob_handle_values) {
+      property->mutable_blob_handle_values()->Add(std::move(blob_handle_value));
+    }
+    return *this;
+  }
+
   DocumentBuilder& AddBytesProperty(
       std::string property_name,
       std::initializer_list<std::string> bytes_values) {
@@ -176,6 +221,17 @@ class DocumentBuilder {
     property->set_name(std::move(property_name));
     for (DocumentProto document_value : document_values) {
       property->mutable_document_values()->Add(std::move(document_value));
+    }
+    return *this;
+  }
+
+  DocumentBuilder& AddVectorProperty(
+      std::string property_name,
+      std::initializer_list<PropertyProto::VectorProto> vector_values) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (PropertyProto::VectorProto vector_value : vector_values) {
+      property->mutable_vector_values()->Add(std::move(vector_value));
     }
     return *this;
   }
