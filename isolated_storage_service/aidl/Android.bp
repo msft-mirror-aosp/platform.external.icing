@@ -1,0 +1,24 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+aidl_interface {
+    name: "com.android.isolated_storage_service.aidl",
+    srcs: ["**/*.aidl"],
+    unstable: true,
+    flags: [
+        "-Werror",
+        "-Wno-mixed-oneway",
+    ],
+    backend: {
+        java: {
+            gen_rpc: true,
+            apex_available: ["com.android.appsearch"],
+        },
+        ndk: {
+            enabled: true,
+            apex_available: ["com.android.appsearch"],
+        },
+    },
+    min_sdk_version: "Tiramisu",
+}
