@@ -23,6 +23,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -33,11 +34,12 @@
 #include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -84,41 +86,43 @@ static constexpr JoinablePropertyId kQualifiedId2JoinablePropertyId = 1;
 
 const SectionMetadata kIndexableInteger1SectionMetadata(
     kIndexableInteger1SectionId, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
-    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kIndexableIntegerProperty1));
 
 const SectionMetadata kIndexableInteger2SectionMetadata(
     kIndexableInteger2SectionId, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
-    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kIndexableIntegerProperty2));
 
 const SectionMetadata kIndexableVector1SectionMetadata(
     kIndexableVector1SectionId, TYPE_VECTOR, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
     NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_LINEAR_SEARCH,
-    std::string(kIndexableVectorProperty1));
+    QUANTIZATION_TYPE_NONE, std::string(kIndexableVectorProperty1));
 
 const SectionMetadata kIndexableVector2SectionMetadata(
     kIndexableVector2SectionId, TYPE_VECTOR, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
     NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_LINEAR_SEARCH,
-    std::string(kIndexableVectorProperty2));
+    QUANTIZATION_TYPE_QUANTIZE_8_BIT, std::string(kIndexableVectorProperty2));
 
 const SectionMetadata kStringExactSectionMetadata(
     kStringExactSectionId, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
-    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kStringExactProperty));
 
 const SectionMetadata kStringPrefixSectionMetadata(
     kStringPrefixSectionId, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_PREFIX,
-    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kStringPrefixProperty));
 
 const JoinablePropertyMetadata kQualifiedId1JoinablePropertyMetadata(
     kQualifiedId1JoinablePropertyId, TYPE_STRING,
-    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId1));
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, DELETE_PROPAGATION_TYPE_PROPAGATE_FROM,
+    std::string(kQualifiedId1));
 
 const JoinablePropertyMetadata kQualifiedId2JoinablePropertyMetadata(
     kQualifiedId2JoinablePropertyId, TYPE_STRING,
-    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId2));
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, DELETE_PROPAGATION_TYPE_NONE,
+    std::string(kQualifiedId2));
 
 // Other non-indexable/joinable properties.
 constexpr std::string_view kUnindexedStringProperty = "unindexedString";
@@ -128,6 +132,7 @@ constexpr std::string_view kUnindexedVectorProperty = "unindexedVector";
 class TokenizedDocumentTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     test_dir_ = GetTestTempDir() + "/icing";
     schema_store_dir_ = test_dir_ + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
@@ -135,7 +140,7 @@ class TokenizedDocumentTest : public ::testing::Test {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -145,8 +150,8 @@ class TokenizedDocumentTest : public ::testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -181,7 +186,8 @@ class TokenizedDocumentTest : public ::testing::Test {
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName(kIndexableVectorProperty2)
-                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                               QUANTIZATION_TYPE_QUANTIZE_8_BIT)
                             .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kStringExactProperty)
@@ -196,17 +202,18 @@ class TokenizedDocumentTest : public ::testing::Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kQualifiedId1)
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kQualifiedId2)
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_NONE)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -223,6 +230,7 @@ class TokenizedDocumentTest : public ::testing::Test {
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
   std::string test_dir_;

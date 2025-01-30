@@ -15,15 +15,19 @@
 #include "icing/scoring/section-weights.h"
 
 #include <cfloat>
+#include <memory>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -39,13 +43,15 @@ class SectionWeightsTest : public testing::Test {
         schema_store_dir_(test_dir_ + "/schema_store") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     // Creates file directories
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaTypeConfigProto sender_schema =
         SchemaTypeConfigBuilder()
@@ -88,8 +94,7 @@ class SectionWeightsTest : public testing::Test {
         SchemaBuilder().AddType(sender_schema).AddType(email_schema).Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -100,6 +105,7 @@ class SectionWeightsTest : public testing::Test {
   SchemaStore *schema_store() { return schema_store_.get(); }
 
  private:
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const std::string test_dir_;
   const std::string schema_store_dir_;
   Filesystem filesystem_;

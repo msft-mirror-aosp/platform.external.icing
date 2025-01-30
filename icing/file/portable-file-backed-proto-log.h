@@ -116,14 +116,14 @@ class PortableFileBackedProtoLog {
     explicit Options(
         bool compress_in,
         const int32_t max_proto_size_in = constants::kMaxProtoSize,
-        const int32_t compression_level_in = kDeflateCompressionLevel)
+        const int32_t compression_level_in = kDefaultCompressionLevel)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
           compression_level(compression_level_in) {}
   };
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
-  static constexpr int kDeflateCompressionLevel = 3;
+  static constexpr int kDefaultCompressionLevel = 3;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the
@@ -390,8 +390,8 @@ class PortableFileBackedProtoLog {
   // }
   class Iterator {
    public:
-    Iterator(const Filesystem& filesystem, int fd, int64_t initial_offset,
-             int64_t file_size);
+    explicit Iterator(const Filesystem& filesystem, int fd,
+                      int64_t initial_offset, int64_t file_size);
 
     // Advances to the position of next proto whether it has been erased or not.
     //
@@ -402,7 +402,7 @@ class PortableFileBackedProtoLog {
     libtextclassifier3::Status Advance();
 
     // Returns the file offset of current proto.
-    int64_t GetOffset();
+    int64_t GetOffset() const;
 
    private:
     static constexpr int64_t kInvalidOffset = -1;
@@ -418,7 +418,7 @@ class PortableFileBackedProtoLog {
   // Returns an iterator of current proto log. The caller needs to keep the
   // proto log unchanged while using the iterator, otherwise unexpected
   // behaviors could happen.
-  Iterator GetIterator();
+  Iterator GetIterator() const;
 
   // Persists all changes since initialization or the last call to
   // PersistToDisk(). Any changes that aren't persisted may be lost if the
@@ -719,6 +719,11 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   if (header->GetHeaderChecksum() != header->CalculateHeaderChecksum()) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Invalid header checksum for: ", file_path));
+  }
+
+  if (header->GetRewindOffset() < kHeaderReservedBytes) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Invalid header rewind offset for: ", file_path));
   }
 
   if (header->GetFileFormatVersion() != Header::kFileFormatVersion) {
@@ -1130,13 +1135,13 @@ PortableFileBackedProtoLog<ProtoT>::Iterator::Advance() {
 }
 
 template <typename ProtoT>
-int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
+int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() const {
   return current_offset_;
 }
 
 template <typename ProtoT>
 typename PortableFileBackedProtoLog<ProtoT>::Iterator
-PortableFileBackedProtoLog<ProtoT>::GetIterator() {
+PortableFileBackedProtoLog<ProtoT>::GetIterator() const {
   return Iterator(*filesystem_, fd_.get(),
                   /*initial_offset=*/kHeaderReservedBytes, file_size_);
 }
