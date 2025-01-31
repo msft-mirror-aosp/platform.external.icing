@@ -60,6 +60,40 @@ cc_defaults {
     apex_available: ["com.android.appsearch"],
 }
 
+// Microdroid version of Icing has statically linked libz.
+cc_library_static {
+    name: "libicing.microdroid",
+    defaults: ["libicing_defaults"],
+    srcs: [
+        "icing/**/*.cc",
+    ],
+    exclude_srcs: [
+        "icing/**/*-test-*",
+        "icing/**/*-test.*",
+        "icing/**/*_test.cc",
+        "icing/**/*_benchmark.cc",
+        "icing/testing/**/*",
+        "icing/tokenization/reverse_jni/**/*",
+        "icing/tokenization/simple/**/*",
+        "icing/tools/**/*",
+        "icing/transform/map/**/*",
+        "icing/transform/simple/**/*",
+    ],
+    header_libs: ["jni_headers"],
+    static_libs: [
+        "icing-c-proto",
+        "libutf",
+        "libz",
+    ],
+    shared_libs: [
+        "libicu",
+        "liblog",
+        "libprotobuf-cpp-lite",
+    ],
+    version_script: "icing/jni.lds",
+    min_sdk_version: "Tiramisu",
+}
+
 // TODO(b/193244409): Use the filegroup libicing_test_common along with
 //                    libicing_defaults to build libicing.
 cc_library_shared {
