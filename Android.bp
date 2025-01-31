@@ -60,6 +60,28 @@ cc_defaults {
     apex_available: ["com.android.appsearch"],
 }
 
+cc_library_shared {
+    name: "libisolated_storage_service",
+    srcs: ["isolated_storage_service/payload/*.cc"],
+    shared_libs: [
+        "libbinder_ndk",
+        "libvm_payload#current",
+        "libprotobuf-cpp-lite",
+        "liblog",
+        "libicu",
+        "libbase",
+    ],
+    static_libs: [
+        "libicing.microdroid",
+        "icing-c-proto",
+        "libutf",
+        "libz",
+        "com.android.isolated_storage_service.aidl-ndk",
+    ],
+    min_sdk_version: "Tiramisu",
+    apex_available: ["com.android.appsearch"],
+}
+
 // Microdroid version of Icing has statically linked libz.
 cc_library_static {
     name: "libicing.microdroid",
