@@ -18,7 +18,7 @@
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 
 namespace icing {
@@ -26,18 +26,14 @@ namespace lib {
 
 namespace normalizer_factory {
 
-// Creates a normalizer. max_term_byte_size enforces the max size of text after
-// normalization, text will be truncated if exceeds the max size.
+// Creates a normalizer.
 //
 // Returns:
 //   A normalizer on success
-//   INVALID_ARGUMENT if max_term_byte_size <= 0
+//   INVALID_ARGUMENT if options.max_term_byte_size <= 0
 //   INTERNAL_ERROR on errors
 libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
-    int max_term_byte_size);
-
-// Returns the name of the normalizer being used.
-std::string_view GetNormalizerName();
+    const NormalizerOptions& options);
 
 }  // namespace normalizer_factory
 

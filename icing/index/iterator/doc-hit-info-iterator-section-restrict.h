@@ -17,12 +17,18 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
-#include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/section-restrict-data.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -35,28 +41,48 @@ namespace lib {
 // That class is meant to be applied to the root of a query tree and filter over
 // all results at the end. This class is more used in the limited scope of a
 // term or a small group of terms.
-class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
+class DocHitInfoIteratorSectionRestrict : public DocHitInfoLeafIterator {
  public:
   // Does not take any ownership, and all pointers must refer to valid objects
   // that outlive the one constructed.
   explicit DocHitInfoIteratorSectionRestrict(
-      std::unique_ptr<DocHitInfoIterator> delegate,
+      std::unique_ptr<DocHitInfoIterator> delegate, SectionRestrictData* data);
+
+  // Methods that apply section restrictions to all DocHitInfoLeafIterator nodes
+  // inside the provided iterator tree, and return the root of the tree
+  // afterwards. These methods do not take any ownership for the raw pointer
+  // parameters, which must refer to valid objects that outlive the iterator
+  // returned.
+  static std::unique_ptr<DocHitInfoIterator> ApplyRestrictions(
+      std::unique_ptr<DocHitInfoIterator> iterator,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      std::string_view target_section);
+      std::set<std::string> target_sections, int64_t current_time_ms);
+  static std::unique_ptr<DocHitInfoIterator> ApplyRestrictions(
+      std::unique_ptr<DocHitInfoIterator> iterator,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const SearchSpecProto& search_spec, int64_t current_time_ms);
+  static std::unique_ptr<DocHitInfoIterator> ApplyRestrictions(
+      std::unique_ptr<DocHitInfoIterator> iterator, SectionRestrictData* data);
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
 
   std::string ToString() const override;
 
-  // Note that the DocHitInfoIteratorSectionRestrict is the only iterator that
-  // should set filtering_section_mask, hence the received
-  // filtering_section_mask is ignored and the filtering_section_mask passed to
-  // the delegate will be set to hit_intersect_section_ids_mask_. This will
-  // allow to filter the matching sections in the delegate.
+  // Note that the DocHitInfoIteratorSectionRestrict can only be applied at
+  // DocHitInfoLeafIterator, which can be a term iterator or another
+  // DocHitInfoIteratorSectionRestrict.
+  //
+  // To filter the matching sections, filtering_section_mask should be set to
+  // doc_hit_info_.hit_section_ids_mask() held in the outermost
+  // DocHitInfoIteratorSectionRestrict, which is equal to the intersection of
+  // all hit_section_ids_mask in the DocHitInfoIteratorSectionRestrict chain,
+  // since for any two section restrict iterators chained together, the outer
+  // one's hit_section_ids_mask is always a subset of the inner one's
+  // hit_section_ids_mask.
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,
       SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
@@ -66,16 +92,14 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
     }
     delegate_->PopulateMatchedTermsStats(
         matched_terms_stats,
-        /*filtering_section_mask=*/hit_intersect_section_ids_mask_);
+        /*filtering_section_mask=*/filtering_section_mask &
+            doc_hit_info_.hit_section_ids_mask());
   }
 
  private:
   std::unique_ptr<DocHitInfoIterator> delegate_;
-  const DocumentStore& document_store_;
-  const SchemaStore& schema_store_;
-
-  // Ensure that this does not outlive the underlying string value.
-  std::string_view target_section_;
+  // Does not own.
+  SectionRestrictData* data_;
 };
 
 }  // namespace lib

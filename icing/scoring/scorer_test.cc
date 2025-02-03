@@ -14,23 +14,34 @@
 
 #include "icing/scoring/scorer.h"
 
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
+#include "icing/scoring/scorer-factory.h"
+#include "icing/scoring/scorer-test-utils.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -39,13 +50,7 @@ namespace lib {
 namespace {
 using ::testing::Eq;
 
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
-
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
-    PropertyConfigProto_Cardinality_Code_REQUIRED;
-
-class ScorerTest : public testing::Test {
+class ScorerTest : public ::testing::TestWithParam<ScorerTestingMode> {
  protected:
   ScorerTest()
       : test_dir_(GetTestTempDir() + "/icing"),
@@ -53,6 +58,7 @@ class ScorerTest : public testing::Test {
         schema_store_dir_(test_dir_ + "/schema_store") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
@@ -62,12 +68,19 @@ class ScorerTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock1_));
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock1_,
+                            feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock1_,
-                              schema_store_.get()));
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -80,7 +93,8 @@ class ScorerTest : public testing::Test {
                     .SetCardinality(CARDINALITY_REQUIRED)))
             .Build();
 
-    ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        test_email_schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -91,6 +105,8 @@ class ScorerTest : public testing::Test {
 
   DocumentStore* document_store() { return document_store_.get(); }
 
+  SchemaStore* schema_store() { return schema_store_.get(); }
+
   const FakeClock& fake_clock1() { return fake_clock1_; }
 
   const FakeClock& fake_clock2() { return fake_clock2_; }
@@ -99,7 +115,11 @@ class ScorerTest : public testing::Test {
     fake_clock1_.SetSystemTimeMilliseconds(new_time);
   }
 
- private:
+  SearchSpecProto::EmbeddingQueryMetricType::Code default_semantic_metric_type =
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT;
+  EmbeddingQueryResults empty_embedding_query_results;
+
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const std::string test_dir_;
   const std::string doc_store_dir_;
   const std::string schema_store_dir_;
@@ -111,7 +131,7 @@ class ScorerTest : public testing::Test {
 };
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64 timestamp_ms,
+                              int64_t timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);
@@ -121,17 +141,41 @@ UsageReport CreateUsageReport(std::string name_space, std::string uri,
   return usage_report;
 }
 
-TEST_F(ScorerTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-                             /*default_score=*/0, /*document_store=*/nullptr),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+TEST_P(ScorerTest, CreationWithNullDocumentStoreShouldFail) {
+  EXPECT_THAT(
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type,
+          /*document_store=*/nullptr, schema_store(),
+          fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentDoesntExist) {
+TEST_P(ScorerTest, CreationWithNullSchemaStoreShouldFail) {
+  EXPECT_THAT(
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          /*schema_store=*/nullptr, fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_P(ScorerTest, ShouldGetDefaultScoreIfDocumentDoesntExist) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-                     /*default_score=*/10, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam()),
+          /*default_score=*/10, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   // Non existent document id
   DocHitInfo docHitInfo = DocHitInfo(/*document_id_in=*/1);
@@ -139,67 +183,7 @@ TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentDoesntExist) {
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
 }
 
-TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentIsDeleted) {
-  // Creates a test document with a provided score
-  DocumentProto test_document = DocumentBuilder()
-                                    .SetKey("icing", "email/1")
-                                    .SetSchema("email")
-                                    .AddStringProperty("subject", "subject foo")
-                                    .SetScore(42)
-                                    .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             document_store()->Put(test_document));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-                     /*default_score=*/10, document_store()));
-
-  DocHitInfo docHitInfo = DocHitInfo(document_id);
-
-  // The document's score is returned
-  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(42));
-
-  // Delete the document and check that the caller-provided default score is
-  // returned
-  EXPECT_THAT(document_store()->Delete(document_id), IsOk());
-  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
-}
-
-TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentIsExpired) {
-  // Creates a test document with a provided score
-  int64_t creation_time = fake_clock1().GetSystemTimeMilliseconds();
-  int64_t ttl = 100;
-  DocumentProto test_document = DocumentBuilder()
-                                    .SetKey("icing", "email/1")
-                                    .SetSchema("email")
-                                    .AddStringProperty("subject", "subject foo")
-                                    .SetScore(42)
-                                    .SetCreationTimestampMs(creation_time)
-                                    .SetTtlMs(ttl)
-                                    .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             document_store()->Put(test_document));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-                     /*default_score=*/10, document_store()));
-
-  DocHitInfo docHitInfo = DocHitInfo(document_id);
-
-  // The document's score is returned since the document hasn't expired yet.
-  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(42));
-
-  // Expire the document and check that the caller-provided default score is
-  // returned
-  SetFakeClock1Time(creation_time + ttl + 10);
-  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
-}
-
-TEST_F(ScorerTest, ShouldGetDefaultDocumentScore) {
+TEST_P(ScorerTest, ShouldGetDefaultDocumentScore) {
   // Creates a test document with the default document score 0
   DocumentProto test_document =
       DocumentBuilder()
@@ -209,18 +193,24 @@ TEST_F(ScorerTest, ShouldGetDefaultDocumentScore) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-                     /*default_score=*/10, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam()),
+          /*default_score=*/10, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(0));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectDocumentScore) {
+TEST_P(ScorerTest, ShouldGetCorrectDocumentScore) {
   // Creates a test document with document score 5
   DocumentProto test_document =
       DocumentBuilder()
@@ -231,12 +221,18 @@ TEST_F(ScorerTest, ShouldGetCorrectDocumentScore) {
           .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(5));
@@ -244,7 +240,7 @@ TEST_F(ScorerTest, ShouldGetCorrectDocumentScore) {
 
 // See scoring-processor_test.cc and icing-search-engine_test.cc for better
 // Bm25F scoring tests.
-TEST_F(ScorerTest, QueryIteratorNullRelevanceScoreShouldReturnDefaultScore) {
+TEST_P(ScorerTest, QueryIteratorNullRelevanceScoreShouldReturnDefaultScore) {
   // Creates a test document with document score 5
   DocumentProto test_document =
       DocumentBuilder()
@@ -255,18 +251,24 @@ TEST_F(ScorerTest, QueryIteratorNullRelevanceScoreShouldReturnDefaultScore) {
           .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
-                     /*default_score=*/10, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam()),
+          /*default_score=*/10, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
+TEST_P(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
   // Creates test_document1 with fake timestamp1
   DocumentProto test_document1 =
       DocumentBuilder()
@@ -284,14 +286,22 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
           .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store()->Put(test_document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store()->Put(test_document2));
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   DocHitInfo docHitInfo1 = DocHitInfo(document_id1);
   DocHitInfo docHitInfo2 = DocHitInfo(document_id2);
@@ -301,7 +311,7 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
               Eq(fake_clock2().GetSystemTimeMilliseconds()));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
+TEST_P(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -310,22 +320,38 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
@@ -342,7 +368,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
+TEST_P(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -351,22 +377,38 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
@@ -383,7 +425,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
+TEST_P(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -392,22 +434,38 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
-                     /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT, GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
@@ -424,7 +482,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(1));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
+TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -433,25 +491,44 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE1_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE2_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE3_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
@@ -484,7 +561,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
+TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -493,25 +570,44 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE1_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE2_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE3_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
@@ -544,7 +640,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
-TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
+TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -553,25 +649,44 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE1_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE2_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE3_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
@@ -604,11 +719,16 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5000));
 }
 
-TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
+TEST_P(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
-                     /*default_score=*/3, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::NONE, GetParam()),
+          /*default_score=*/3, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   DocHitInfo docHitInfo1 = DocHitInfo(/*document_id_in=*/0);
   DocHitInfo docHitInfo2 = DocHitInfo(/*document_id_in=*/1);
@@ -618,8 +738,14 @@ TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
   EXPECT_THAT(scorer->GetScore(docHitInfo3), Eq(3));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer, Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
-                             /*default_score=*/111, document_store()));
+      scorer,
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::NONE, GetParam()),
+          /*default_score=*/111, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
 
   docHitInfo1 = DocHitInfo(/*document_id_in=*/4);
   docHitInfo2 = DocHitInfo(/*document_id_in=*/5);
@@ -629,7 +755,7 @@ TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
   EXPECT_THAT(scorer->GetScore(docHitInfo3), Eq(111));
 }
 
-TEST_F(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
+TEST_P(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
   DocumentProto test_document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -638,14 +764,21 @@ TEST_F(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store()->Put(test_document));
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer1,
-      Scorer::Create(
-          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
-          /*default_score=*/0, document_store()));
+      scorer_factory::Create(
+          CreateScoringSpecForRankingStrategy(
+              ScoringSpecProto::RankingStrategy::
+                  USAGE_TYPE1_LAST_USED_TIMESTAMP,
+              GetParam()),
+          /*default_score=*/0, default_semantic_metric_type, document_store(),
+          schema_store(), fake_clock1().GetSystemTimeMilliseconds(),
+          /*join_children_fetcher=*/nullptr, &empty_embedding_query_results,
+          feature_flags_.get()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   // Create usage report for the maximum allowable timestamp.
@@ -659,6 +792,10 @@ TEST_F(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(max_int_usage_timestamp_score));
 }
+
+INSTANTIATE_TEST_SUITE_P(ScorerTest, ScorerTest,
+                         testing::Values(ScorerTestingMode::kNormal,
+                                         ScorerTestingMode::kAdvanced));
 
 }  // namespace
 
