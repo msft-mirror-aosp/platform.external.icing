@@ -56,8 +56,13 @@ namespace lib {
 
 namespace {
 
-constexpr uint32_t kEmbeddingHitListMapperMaxSize =
-    128 * 1024 * 1024;  // 128 MiB;
+// The maximum size of the embedding hit list mmapper.
+// We use 64MiB for 32-bit platforms and 128MiB for 64-bit platforms.
+#ifdef ICING_ARCH_BIT_64
+  constexpr uint32_t kEmbeddingHitListMapperMaxSize = 128 * 1024 * 1024;
+#else
+  constexpr uint32_t kEmbeddingHitListMapperMaxSize = 64 * 1024 * 1024;
+#endif
 
 // The maximum length returned by encode_util::EncodeIntToCString is 5 for
 // uint32_t.

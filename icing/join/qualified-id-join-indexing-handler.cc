@@ -83,9 +83,6 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
   qualified_id_join_index_.set_last_added_document_id(document_id);
 
   switch (qualified_id_join_index_.version()) {
-    case QualifiedIdJoinIndex::Version::kV1:
-      ICING_RETURN_IF_ERROR(HandleV1(tokenized_document, document_id));
-      break;
     case QualifiedIdJoinIndex::Version::kV2:
       ICING_RETURN_IF_ERROR(HandleV2(tokenized_document, document_id));
       break;
@@ -100,39 +97,6 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
         index_timer->GetElapsedMilliseconds());
   }
 
-  return libtextclassifier3::Status::OK;
-}
-
-libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV1(
-    const TokenizedDocument& tokenized_document, DocumentId document_id) {
-  for (const JoinableProperty<std::string_view>& qualified_id_property :
-       tokenized_document.qualified_id_join_properties()) {
-    if (qualified_id_property.values.empty()) {
-      continue;
-    }
-
-    DocumentJoinIdPair document_join_id_pair(document_id,
-                                             qualified_id_property.metadata.id);
-    // Currently we only support single (non-repeated) joinable value under a
-    // property.
-    std::string_view ref_qualified_id_str = qualified_id_property.values[0];
-
-    // Attempt to parse qualified id string to make sure the format is
-    // correct.
-    if (!QualifiedId::Parse(ref_qualified_id_str).ok()) {
-      // Skip incorrect format of qualified id string to save disk space.
-      continue;
-    }
-
-    libtextclassifier3::Status status = qualified_id_join_index_.Put(
-        document_join_id_pair, ref_qualified_id_str);
-    if (!status.ok()) {
-      ICING_LOG(WARNING)
-          << "Failed to add data into qualified id join index due to: "
-          << status.error_message();
-      return status;
-    }
-  }
   return libtextclassifier3::Status::OK;
 }
 
