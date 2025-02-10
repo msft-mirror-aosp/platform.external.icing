@@ -118,8 +118,8 @@ constexpr int64_t kDefaultCreationTimestampMs = 1575492852000;
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
 
@@ -275,7 +275,10 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteWithDeletePropagation) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_delete_propagation_from(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
@@ -1063,7 +1066,10 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryWithDeletePropagation) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_delete_propagation_from(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());

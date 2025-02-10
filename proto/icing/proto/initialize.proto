@@ -64,15 +64,15 @@ message IcingSearchEngineFeatureInfoProto {
     // single database field at a time.
     FEATURE_SCHEMA_DATABASE = 5;
 
-    // Feature for flag IcingSearchEngineOptions::
-    // enable_qualified_id_join_index_v3_and_delete_propagate_from.
+    // Feature for flag
+    // IcingSearchEngineOptions::enable_qualified_id_join_index_v3.
     //
-    // This feature covers whether to enable the join index v3 and support
-    // delete propagation PROPAGATE_FROM. Once enabled, join index v3 will be
-    // rebuilt to replace v2, and deleteing a document will also delete its
-    // child document(s) which refer to it via a joinable property with delete
-    // propagation type PROPAGATE_FROM.
-    FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM = 6;
+    // This feature covers whether to enable the join index v3. Once enabled,
+    // join index v3 will be rebuilt to replace v2.
+    FEATURE_QUALIFIED_ID_JOIN_INDEX_V3 = 6;
+
+    // TODO(b/384947619): decide whether need to add a feature type for delete
+    // propagation.
   }
 
   // Whether the feature requires the document store to be rebuilt.
@@ -109,7 +109,7 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 29
+// Next tag: 32
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -265,8 +265,8 @@ message IcingSearchEngineOptions {
   // Whether to allow repeated fields to have a joinable value type.
   optional bool enable_repeated_field_joins = 24;
 
-  // Whether to use qualified id join index v3 and enable delete propagation
-  // PROPAGATE_FROM.
+  // DEPRECATED (separate them into 2 flags): whether to use qualified id join
+  // index v3 and enable delete propagation PROPAGATE_FROM.
   //
   // - If set to true, qualified id join index v3 will be created and delete
   //   propagation PROPAGATE_FROM will be enabled.
@@ -295,6 +295,25 @@ message IcingSearchEngineOptions {
   //
   // The default value is false.
   optional bool calculate_time_since_last_attempted_optimize = 28;
+
+  // Whether to use qualified id join index v3.
+  //
+  // If set to true, qualified id join index v3 will be created.
+  // Otherwise, qualified id join index v2 will be created.
+  optional bool enable_qualified_id_join_index_v3 = 29;
+
+  // Whether to enable delete propagation PROPAGATE_FROM.
+  //
+  // If set to true, enable_qualified_id_join_index_v3 must be also true
+  // (otherwise initialization will fail), and delete propagation PROPAGATE_FROM
+  // will be enabled.
+  // Otherwise, delete propagation will be disabled.
+  optional bool enable_delete_propagation_from = 30;
+
+  // Whether to enable soft index restoration.
+  // If set to true, then any error that occurs during index restoration will be
+  // ignored, and the failed document will be deleted.
+  optional bool enable_soft_index_restoration = 31;
 
   reserved 2, 20;
 }
