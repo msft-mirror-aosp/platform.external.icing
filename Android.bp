@@ -207,6 +207,7 @@ cc_test {
         "libprotobuf-cpp-lite",
         "libz",
     ],
+    apex_available: ["//apex_available:platform"],
 }
 
 // TODO(cassiewang): Add build rules and a TEST_MAPPING for cc_tests
