@@ -250,8 +250,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_embedding_quantization(true);
   icing_options.set_enable_blob_store(true);
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
 
@@ -471,6 +471,21 @@ TEST_F(IcingSearchEngineInitializationTest,
   IcingSearchEngine icing(options, GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       DeletePropagationEnabledAndJoinIndexV3DisabledReturnsInvalidArgument) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_qualified_id_join_index_v3(false);
+  icing_options.set_enable_delete_propagation_from(true);
+
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(initialize_result_proto.status().message(),
+              HasSubstr("Delete propagation is enabled but qualified id join "
+                        "index v3 is not enabled."));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, GoodCompressionLevelReturnsOk) {
@@ -728,6 +743,216 @@ TEST_F(IcingSearchEngineInitializationTest,
   // The successful init should have thrown out the marker file.
   std::string marker_filepath = GetTestBaseDir() + "/init_marker";
   ASSERT_FALSE(filesystem.FileExists(marker_filepath.c_str()));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       SoftIndexRestorationDisabledShouldFailIndexRestorationOnError) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_soft_index_restoration(false);
+
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "subject1")
+          .AddStringProperty("body", "body1")
+          .Build();
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "subject2")
+          .AddStringProperty("body", "body2")
+          .Build();
+
+  {
+    // 1. Create an index with a few documents.
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoIsOk());
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(0));
+    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  }
+
+  {
+    // 2. Manually replace ("namespace", "uri2") with a new DocumentProto
+    //    containing '\0' which fails to index.
+    FakeClock fake_clock;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+
+    DocumentProto email2_with_null_char =
+        DocumentBuilder()
+            .SetKey("namespace", "uri2")
+            .SetSchema("Email")
+            .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+            .AddStringProperty("subject", "subject2")
+            .AddStringProperty("body", std::string("body\0two", 8))
+            .Build();
+    ICING_ASSERT_OK(document_store->Put(email2_with_null_char));
+    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+
+    // 3. Delete the the term index and reinitialize an empty one to trigger
+    //    RestoreIndexIfNeeded.
+    std::string idx_subdir = GetIndexDir() + "/idx";
+    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(Index::Options(GetIndexDir(),
+                                     /*index_merge_size=*/100,
+                                     /*lite_index_sort_at_indexing=*/true,
+                                     /*lite_index_sort_size=*/50),
+                      filesystem(), icing_filesystem()));
+    ICING_ASSERT_OK(index->PersistToDisk());
+  }
+
+  // 4. Initialize IcingSearchEngine again. It should fail.
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(initialize_result.status().message(),
+              HasSubstr("Key cannot contain a null character '\\0'"));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       SoftIndexRestorationEnabledShouldIgnoreErrorsAndReturnWarningDataLoss) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_soft_index_restoration(true);
+
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "subject1")
+          .AddStringProperty("body", "body1")
+          .Build();
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "subject2")
+          .AddStringProperty("body", "body2")
+          .Build();
+
+  {
+    // 1. Create an index with a few documents.
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoIsOk());
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(0));
+    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  }
+
+  {
+    // 2. Manually replace ("namespace", "uri2") with a new DocumentProto
+    //    containing '\0' which fails to index.
+    FakeClock fake_clock;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+
+    DocumentProto email2_with_null_char =
+        DocumentBuilder()
+            .SetKey("namespace", "uri2")
+            .SetSchema("Email")
+            .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+            .AddStringProperty("subject", "subject2")
+            .AddStringProperty("body", std::string("body\0two", 8))
+            .Build();
+    ICING_ASSERT_OK(document_store->Put(email2_with_null_char));
+    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+
+    // 3. Delete the the term index and reinitialize an empty one to trigger
+    //    RestoreIndexIfNeeded.
+    std::string idx_subdir = GetIndexDir() + "/idx";
+    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(Index::Options(GetIndexDir(),
+                                     /*index_merge_size=*/100,
+                                     /*lite_index_sort_at_indexing=*/true,
+                                     /*lite_index_sort_size=*/50),
+                      filesystem(), icing_filesystem()));
+    ICING_ASSERT_OK(index->PersistToDisk());
+  }
+
+  // 4. Initialize IcingSearchEngine again. Should succeed and index should be
+  //    restored successfully even though document ("namespace", "uri2") will
+  //    cause an error during indexing. Soft index restoration mechanism should
+  //    skip the error and delete the document without failing initialization.
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(),
+              ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+
+  EXPECT_THAT(
+      initialize_result.initialize_stats().document_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  // Indices should be restored.
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+  EXPECT_THAT(initialize_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+
+  // ("namespace", "uri1") should be found.
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = email1;
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+  // ("namespace", "uri2") should be deleted.
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, RecoverFromMissingHeaderFile) {
@@ -6685,7 +6910,7 @@ TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
 
   {
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
+    options.set_enable_qualified_id_join_index_v3(
         enable_join_index_v3_flags.at(0));
     TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                                 std::make_unique<IcingFilesystem>(),
@@ -6699,7 +6924,7 @@ TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
   }
 
   // Create icing multiple times with different
-  // enable_qualified_id_join_index_v3_and_propagate_delete flags.
+  // enable_qualified_id_join_index_v3 flags.
   for (int i = 1; i < enable_join_index_v3_flags.size(); ++i) {
     bool flag_changed =
         enable_join_index_v3_flags[i] != enable_join_index_v3_flags[i - 1];
@@ -6707,7 +6932,7 @@ TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
     // Ensure that the qualified id join index is rebuilt if the flag is
     // changed.
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
+    options.set_enable_qualified_id_join_index_v3(
         enable_join_index_v3_flags[i]);
     TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                                 std::make_unique<IcingFilesystem>(),
