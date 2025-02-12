@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <memory>
+#include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -264,6 +265,15 @@ TEST_F(IcuNormalizerTest, SquaredCharsToASCII) {
 TEST_F(IcuNormalizerTest, FractionsToASCII) {
   EXPECT_THAT(normalizer_->NormalizeTerm("¼"), EqualsNormalizedTerm(" 1/4"));
   EXPECT_THAT(normalizer_->NormalizeTerm("⅚"), EqualsNormalizedTerm(" 5/6"));
+}
+
+TEST_F(IcuNormalizerTest, CorruptTerm) {
+  std::string_view empty_term = "";
+  EXPECT_THAT(normalizer_->NormalizeTerm(empty_term), EqualsNormalizedTerm(""));
+  std::string_view CGJ_term = "\u034F";
+  EXPECT_THAT(normalizer_->NormalizeTerm(CGJ_term), EqualsNormalizedTerm(""));
+  std::string_view null_term = "\0";
+  EXPECT_THAT(normalizer_->NormalizeTerm(null_term), EqualsNormalizedTerm(""));
 }
 
 TEST_F(IcuNormalizerTest, Truncate) {

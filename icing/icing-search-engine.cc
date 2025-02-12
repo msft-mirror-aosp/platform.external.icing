@@ -95,6 +95,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/util/clock.h"
@@ -287,7 +288,7 @@ CreateQualifiedIdJoinIndex(const Filesystem& filesystem,
                            std::string qualified_id_join_index_dir,
                            const IcingSearchEngineOptions& options,
                            const FeatureFlags& feature_flags) {
-  if (options.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
+  if (options.enable_qualified_id_join_index_v3()) {
     return QualifiedIdJoinIndexImplV3::Create(
         filesystem, std::move(qualified_id_join_index_dir), feature_flags);
   } else {
@@ -427,6 +428,21 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
   }
   status_proto->set_code(code);
   status_proto->set_message(internal_status.error_message());
+}
+
+// Prepares the document for indexing. This includes tokenization and dependency
+// enforcement.
+libtextclassifier3::StatusOr<TokenizedDocument> PrepareDocumentForIndexing(
+    const SchemaStore* schema_store,
+    const LanguageSegmenter* language_segmenter, DocumentProto&& document) {
+  ICING_ASSIGN_OR_RETURN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store, language_segmenter,
+                                std::move(document)));
+
+  // TODO(b/384947619): apply dependency enforcement.
+
+  return tokenized_document;
 }
 
 libtextclassifier3::Status RetrieveAndAddDocumentInfo(
@@ -660,6 +676,15 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
     initialize_stats->set_latency_ms(
         initialize_timer->GetElapsedMilliseconds());
     initialize_stats->set_num_documents(document_store_->num_documents());
+    return result_proto;
+  }
+
+  if (options_.enable_delete_propagation_from() &&
+      !options_.enable_qualified_id_join_index_v3()) {
+    result_status->set_code(StatusProto::INVALID_ARGUMENT);
+    result_status->set_message(
+        "Delete propagation is enabled but qualified id join index v3 is not "
+        "enabled.");
     return result_proto;
   }
 
@@ -1118,7 +1143,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause qualified_id_join_index_recovery_cause;
   if (document_store_derived_files_regenerated &&
-      !options_.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
+      !options_.enable_qualified_id_join_index_v3()) {
     // V2 qualified id join index depends on document store derived files, so we
     // have to rebuild it from scratch if
     // document_store_derived_files_regenerated is true.
@@ -1467,7 +1492,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     return result_proto;
   }
 
-  auto tokenized_document_or = TokenizedDocument::Create(
+  auto tokenized_document_or = PrepareDocumentForIndexing(
       schema_store_.get(), language_segmenter_.get(), std::move(document));
   if (!tokenized_document_or.ok()) {
     TransformStatus(tokenized_document_or.status(), result_status);
@@ -1912,11 +1937,19 @@ libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
     int64_t current_time_ms) {
   int propagated_child_docs_deleted = 0;
 
-  if (!options_.enable_qualified_id_join_index_v3_and_delete_propagate_from() ||
-      qualified_id_join_index_->version() !=
-          QualifiedIdJoinIndex::Version::kV3) {
-    // No-op if delete propagation is disabled or the join index is not v3.
+  if (!options_.enable_delete_propagation_from()) {
+    // No-op if delete propagation is disabled.
     return propagated_child_docs_deleted;
+  }
+
+  if (qualified_id_join_index_->version() !=
+      QualifiedIdJoinIndex::Version::kV3) {
+    // This should not happen since Icing should've failed initialization with
+    // delete propagation enabled and join index v3 disabled.
+    // But let's check it here again just in case.
+    return absl_ports::FailedPreconditionError(
+        "Delete propagation is enabled but qualified id join index v3 is not "
+        "used.");
   }
 
   // Create join processor to get propagated child documents to delete.
@@ -3103,6 +3136,8 @@ IcingSearchEngine::OptimizeDocumentStore(
 
 IcingSearchEngine::IndexRestorationResult
 IcingSearchEngine::RestoreIndexIfNeeded() {
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
   DocumentId last_stored_document_id =
       document_store_->last_added_document_id();
   if (last_stored_document_id == index_->last_added_document_id() &&
@@ -3150,6 +3185,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
   ICING_VLOG(1) << "Restoring index by replaying documents from document id "
                 << truncate_result.first_document_to_reindex
                 << " to document id " << last_stored_document_id;
+  std::unordered_set<DocumentId> failed_document_ids;
   libtextclassifier3::Status overall_status;
   for (DocumentId document_id = truncate_result.first_document_to_reindex;
        document_id <= last_stored_document_id; ++document_id) {
@@ -3171,41 +3207,64 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     }
     DocumentProto document(std::move(document_or).ValueOrDie());
 
+    libtextclassifier3::Status status;
     libtextclassifier3::StatusOr<TokenizedDocument> tokenized_document_or =
-        TokenizedDocument::Create(schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  std::move(document));
+        PrepareDocumentForIndexing(schema_store_.get(),
+                                   language_segmenter_.get(),
+                                   std::move(document));
     if (!tokenized_document_or.ok()) {
-      return {tokenized_document_or.status(),
-              truncate_result.index_needed_restoration,
-              truncate_result.integer_index_needed_restoration,
-              truncate_result.qualified_id_join_index_needed_restoration,
-              truncate_result.embedding_index_needed_restoration};
+      status = std::move(tokenized_document_or).status();
+    } else {
+      // No valid old_document_id should be used here since we're in recovery
+      // mode and there is no "existing document replacement/update".
+      status = index_processor.IndexDocument(
+          tokenized_document_or.ValueOrDie(), document_id,
+          /*old_document_id=*/kInvalidDocumentId);
     }
-    TokenizedDocument tokenized_document(
-        std::move(tokenized_document_or).ValueOrDie());
 
-    // No valid old_document_id should be used here since we're in recovery mode
-    // and there is no "existing document replacement/update".
-    libtextclassifier3::Status status =
-        index_processor.IndexDocument(tokenized_document, document_id,
-                                      /*old_document_id=*/kInvalidDocumentId);
     if (!status.ok()) {
-      if (!absl_ports::IsDataLoss(status)) {
-        // Real error. Stop recovering and pass it up.
-        return {status, truncate_result.index_needed_restoration,
+      if (!absl_ports::IsDataLoss(status) &&
+          !options_.enable_soft_index_restoration()) {
+        // Stop recovering and pass it up. Skip data loss error.
+        return {std::move(status), truncate_result.index_needed_restoration,
                 truncate_result.integer_index_needed_restoration,
                 truncate_result.qualified_id_join_index_needed_restoration,
                 truncate_result.embedding_index_needed_restoration};
       }
-      // FIXME: why can we skip data loss error here?
-      // Just a data loss. Keep trying to add the remaining docs, but report the
-      // data loss when we're done.
-      overall_status = status;
+
+      // Here, data loss error or soft index restoration is enabled.
+      // Soft index restoration: if failing to tokenize, enforce dependency or
+      // index the document, then log the error, add the document id into
+      // failed_document_ids (so we can delete it later), and continue
+      // restoration.
+      ICING_LOG(WARNING) << "Failed to restore index for document "
+                         << document_id << ": " << status.error_message();
+      if (options_.enable_soft_index_restoration()) {
+        failed_document_ids.insert(document_id);
+      }
+
+      // Set the overall status to data loss error.
+      overall_status = absl_ports::DataLossError(status.error_message());
     }
   }
 
-  return {overall_status, truncate_result.index_needed_restoration,
+  // Finally, delete all failed documents.
+  if (options_.enable_soft_index_restoration()) {
+    for (DocumentId document_id : failed_document_ids) {
+      libtextclassifier3::Status delete_status =
+          document_store_->Delete(document_id, current_time_ms);
+      if (!delete_status.ok()) {
+        // This is pretty dire (and, hopefully, unlikely). Log the error and
+        // skip it.
+        ICING_LOG(WARNING) << "Cannot delete document " << document_id
+                           << " that which failed to index: "
+                           << delete_status.error_message();
+      }
+    }
+    // TODO(b/384947619): apply delete propagation on these failed documents.
+  }
+
+  return {std::move(overall_status), truncate_result.index_needed_restoration,
           truncate_result.integer_index_needed_restoration,
           truncate_result.qualified_id_join_index_needed_restoration,
           truncate_result.embedding_index_needed_restoration};

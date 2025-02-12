@@ -254,6 +254,8 @@ IcuNormalizer::TermTransformer::Transform(const std::string_view term) const {
     ICING_LOG(WARNING) << "Failed to normalize UTF8 term: " << term;
     return {std::string(term)};
   }
+  // Resize the buffer to the desired length returned by utrans_transUChars().
+  utf16_term.resize(utf16_term_desired_length);
 
   auto utf8_term_or = i18n_utils::Utf16ToUtf8(utf16_term);
   if (!utf8_term_or.ok()) {
