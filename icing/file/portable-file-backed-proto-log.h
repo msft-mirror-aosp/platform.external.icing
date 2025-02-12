@@ -116,14 +116,14 @@ class PortableFileBackedProtoLog {
     explicit Options(
         bool compress_in,
         const int32_t max_proto_size_in = constants::kMaxProtoSize,
-        const int32_t compression_level_in = kDeflateCompressionLevel)
+        const int32_t compression_level_in = kDefaultCompressionLevel)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
           compression_level(compression_level_in) {}
   };
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
-  static constexpr int kDeflateCompressionLevel = 3;
+  static constexpr int kDefaultCompressionLevel = 3;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the

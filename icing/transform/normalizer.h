@@ -39,7 +39,10 @@ class Normalizer {
 
   // Normalizes the input term based on rules. See implementation classes for
   // specific transformation rules.
-  virtual std::string NormalizeTerm(std::string_view term) const = 0;
+  struct NormalizedTerm {
+    std::string text;
+  };
+  virtual NormalizedTerm NormalizeTerm(std::string_view term) const = 0;
 
   // Returns a CharacterIterator pointing to one past the end of the segment of
   // term that (once normalized) matches with normalized_term.
