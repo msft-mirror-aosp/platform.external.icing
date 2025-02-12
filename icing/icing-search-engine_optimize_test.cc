@@ -125,9 +125,9 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_enable_scorable_properties(true);
   icing_options.set_base_dir(GetTestBaseDir());
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
   icing_options.set_calculate_time_since_last_attempted_optimize(true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
 
