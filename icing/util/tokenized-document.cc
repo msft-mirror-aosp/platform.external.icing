@@ -14,16 +14,18 @@
 
 #include "icing/util/tokenized-document.h"
 
-#include <string>
+#include <memory>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/util/document-validator.h"
@@ -67,14 +69,20 @@ libtextclassifier3::StatusOr<std::vector<TokenizedSection>> Tokenize(
 TokenizedDocument::Create(const SchemaStore* schema_store,
                           const LanguageSegmenter* language_segmenter,
                           DocumentProto document) {
+  // Since there are many std::string_view objects pointing to the document
+  // proto, we should make sure DocumentProto has a fixed address. The simplest
+  // way is to use a unique_ptr.
+  auto document_ptr = std::make_unique<DocumentProto>(std::move(document));
+
   DocumentValidator validator(schema_store);
-  ICING_RETURN_IF_ERROR(validator.Validate(document));
+  ICING_RETURN_IF_ERROR(validator.Validate(*document_ptr));
 
   ICING_ASSIGN_OR_RETURN(SectionGroup section_group,
-                         schema_store->ExtractSections(document));
+                         schema_store->ExtractSections(*document_ptr));
 
-  ICING_ASSIGN_OR_RETURN(JoinablePropertyGroup joinable_property_group,
-                         schema_store->ExtractJoinableProperties(document));
+  ICING_ASSIGN_OR_RETURN(
+      JoinablePropertyGroup joinable_property_group,
+      schema_store->ExtractJoinableProperties(*document_ptr));
 
   // Tokenize string sections
   ICING_ASSIGN_OR_RETURN(
@@ -82,9 +90,10 @@ TokenizedDocument::Create(const SchemaStore* schema_store,
       Tokenize(schema_store, language_segmenter,
                section_group.string_sections));
 
-  return TokenizedDocument(std::move(document),
+  return TokenizedDocument(std::move(document_ptr),
                            std::move(tokenized_string_sections),
                            std::move(section_group.integer_sections),
+                           std::move(section_group.vector_sections),
                            std::move(joinable_property_group));
 }
 

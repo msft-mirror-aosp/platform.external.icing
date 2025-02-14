@@ -28,12 +28,13 @@ namespace lib {
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    PutDocumentStatsProto* put_document_stats) {
+    DocumentId old_document_id, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   for (auto& data_indexing_handler : data_indexing_handlers_) {
     ICING_RETURN_IF_ERROR(data_indexing_handler->Handle(
-        tokenized_document, document_id, recovery_mode_, put_document_stats));
+        tokenized_document, document_id, old_document_id, recovery_mode_,
+        put_document_stats));
   }
 
   if (put_document_stats != nullptr) {

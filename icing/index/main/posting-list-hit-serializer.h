@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_MAIN_POSTING_LIST_HIT_SERIALIZER_H_
 #define ICING_INDEX_MAIN_POSTING_LIST_HIT_SERIALIZER_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -23,6 +24,8 @@
 #include "icing/file/posting_list/posting-list-common.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
+#include "icing/legacy/index/icing-bit-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -32,6 +35,52 @@ namespace lib {
 class PostingListHitSerializer : public PostingListSerializer {
  public:
   static constexpr uint32_t kSpecialHitsSize = kNumSpecialData * sizeof(Hit);
+
+  struct DecodedHitInfo {
+    // The decoded hit value.
+    Hit::Value hit_value;
+
+    // Size of the encoded hit in bytes.
+    size_t encoded_size;
+  };
+
+  // Given the current hit value, encodes the next hit value for serialization
+  // in the posting list.
+  //
+  // The encoded value is the varint-encoded delta between next_hit_value and
+  // curr_hit_value.
+  // - We add 1 to this delta so as to avoid getting a delta value of 0.
+  // - This allows us to add duplicate hits with the same value, which is a
+  //   valid case if we need to store hits with different flags that belong in
+  //   the same section-id/doc-id combo.
+  // - We cannot have an encoded hit delta with a value of 0 as 0 is currently
+  //   used for padding the unused region in the posting list.
+  //
+  // REQUIRES: next_hit_value <= curr_hit_value AND
+  //           curr_hit_value - next_hit_value <
+  //              std::numeric_limits<Hit::Value>::max()
+  //
+  // RETURNS: next_hit_value's encoded length in bytes and writes the encoded
+  //          value directly into encoded_buf_out.
+  static size_t EncodeNextHitValue(Hit::Value next_hit_value,
+                                   Hit::Value curr_hit_value,
+                                   uint8_t* encoded_buf_out) {
+    uint64_t delta = curr_hit_value - next_hit_value + 1;
+    return VarInt::Encode(delta, encoded_buf_out);
+  }
+
+  // Given the current hit value, decodes the next hit value from an encoded
+  // byte array buffer.
+  //
+  // RETURNS: DecodedHitInfo containing the decoded hit value and the value's
+  //          encoded size in bytes.
+  static DecodedHitInfo DecodeNextHitValue(const uint8_t* encoded_buf_in,
+                                           Hit::Value curr_hit_value) {
+    uint64_t delta;
+    size_t delta_size = VarInt::Decode(encoded_buf_in, &delta);
+    Hit::Value hit_value = curr_hit_value + delta - 1;
+    return {hit_value, delta_size};
+  }
 
   uint32_t GetDataTypeBytes() const override { return sizeof(Hit); }
 
@@ -64,16 +113,6 @@ class PostingListHitSerializer : public PostingListSerializer {
   //       list.
   libtextclassifier3::Status PrependHit(PostingListUsed* posting_list_used,
                                         const Hit& hit) const;
-
-  // Prepend hits to the posting list. Hits should be sorted in descending order
-  // (as defined by the less than operator for Hit)
-  //
-  // Returns the number of hits that could be prepended to the posting list. If
-  // keep_prepended is true, whatever could be prepended is kept, otherwise the
-  // posting list is left in its original state.
-  template <class T, Hit (*GetHit)(const T&)>
-  uint32_t PrependHitArray(PostingListUsed* posting_list_used, const T* array,
-                           uint32_t num_hits, bool keep_prepended) const;
 
   // Retrieves the hits stored in the posting list.
   //
@@ -297,44 +336,22 @@ class PostingListHitSerializer : public PostingListSerializer {
       PostingListUsed* posting_list_used, const Hit& hit,
       uint32_t offset) const;
 
-  // If hit has a term frequency, consumes the term frequency at offset, updates
-  // hit to include the term frequency and updates offset to reflect that the
-  // term frequency has been consumed.
+  // If hit has the flags and/or term frequency field, consumes the flags and/or
+  // term frequency at offset, updates hit to include the flag and/or term
+  // frequency and updates offset to reflect that the flag and/or term frequency
+  // fields have been consumed.
   //
   // RETURNS:
   //   - OK, if successful
-  //   - INVALID_ARGUMENT if hit has a term frequency and offset +
-  //     sizeof(Hit::TermFrequency) >= posting_list_used->size_in_bytes()
-  libtextclassifier3::Status ConsumeTermFrequencyIfPresent(
+  //   - INVALID_ARGUMENT if hit has a flags and/or term frequency field and
+  //     offset + sizeof(Hit's flag) + sizeof(Hit's tf) >=
+  //     posting_list_used->size_in_bytes()
+  //     i.e. the posting list is not large enough to consume the hit's flags
+  //     and term frequency fields
+  libtextclassifier3::Status ConsumeFlagsAndTermFrequencyIfPresent(
       const PostingListUsed* posting_list_used, Hit* hit,
       uint32_t* offset) const;
 };
-
-// Inlined functions. Implementation details below. Avert eyes!
-template <class T, Hit (*GetHit)(const T&)>
-uint32_t PostingListHitSerializer::PrependHitArray(
-    PostingListUsed* posting_list_used, const T* array, uint32_t num_hits,
-    bool keep_prepended) const {
-  if (!IsPostingListValid(posting_list_used)) {
-    return 0;
-  }
-
-  // Prepend hits working backwards from array[num_hits - 1].
-  uint32_t i;
-  for (i = 0; i < num_hits; ++i) {
-    if (!PrependHit(posting_list_used, GetHit(array[num_hits - i - 1])).ok()) {
-      break;
-    }
-  }
-  if (i != num_hits && !keep_prepended) {
-    // Didn't fit. Undo everything and check that we have the same offset as
-    // before. PopFrontHits guarantees that it will remove all 'i' hits so long
-    // as there are at least 'i' hits in the posting list, which we know there
-    // are.
-    PopFrontHits(posting_list_used, /*num_hits=*/i);
-  }
-  return i;
-}
 
 }  // namespace lib
 }  // namespace icing

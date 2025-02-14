@@ -152,18 +152,25 @@ class BucketPostingListIterator {
       : pl_accessor_(std::move(pl_accessor)),
         should_retrieve_next_batch_(true) {}
 
+  struct AdvanceAndFilterResult {
+    libtextclassifier3::Status status = libtextclassifier3::Status::OK;
+    int32_t num_advance_calls = 0;
+    int32_t num_blocks_inspected = 0;
+  };
   // Advances to the next relevant data. The posting list of a bucket contains
   // keys within range [bucket.key_lower, bucket.key_upper], but some of them
   // may be out of [query_key_lower, query_key_upper], so when advancing we have
   // to filter out those non-relevant keys.
   //
   // Returns:
+  //   AdvanceAndFilterResult. status will be:
   //   - OK on success
   //   - RESOURCE_EXHAUSTED_ERROR if reaching the end (i.e. no more relevant
   //     data)
   //   - Any other PostingListIntegerIndexAccessor errors
-  libtextclassifier3::Status AdvanceAndFilter(int64_t query_key_lower,
-                                              int64_t query_key_upper) {
+  AdvanceAndFilterResult AdvanceAndFilter(int64_t query_key_lower,
+                                          int64_t query_key_upper) {
+    AdvanceAndFilterResult result;
     // Move curr_ until reaching a relevant data (i.e. key in range
     // [query_key_lower, query_key_upper])
     do {
@@ -173,12 +180,18 @@ class BucketPostingListIterator {
             curr_ >= cached_batch_integer_index_data_.cend();
       }
       if (should_retrieve_next_batch_) {
-        ICING_RETURN_IF_ERROR(GetNextDataBatch());
+        auto status = GetNextDataBatch();
+        if (!status.ok()) {
+          result.status = std::move(status);
+          return result;
+        }
+        ++result.num_blocks_inspected;
         should_retrieve_next_batch_ = false;
       }
+      ++result.num_advance_calls;
     } while (curr_->key() < query_key_lower || curr_->key() > query_key_upper);
 
-    return libtextclassifier3::Status::OK;
+    return result;
   }
 
   const BasicHit& GetCurrentBasicHit() const { return curr_->basic_hit(); }
@@ -223,7 +236,9 @@ class IntegerIndexStorageIterator : public NumericIndex<int64_t>::Iterator {
   explicit IntegerIndexStorageIterator(
       int64_t query_key_lower, int64_t query_key_upper,
       std::vector<std::unique_ptr<BucketPostingListIterator>>&& bucket_pl_iters)
-      : NumericIndex<int64_t>::Iterator(query_key_lower, query_key_upper) {
+      : NumericIndex<int64_t>::Iterator(query_key_lower, query_key_upper),
+        num_advance_calls_(0),
+        num_blocks_inspected_(0) {
     std::vector<BucketPostingListIterator*> bucket_pl_iters_raw_ptrs;
     for (std::unique_ptr<BucketPostingListIterator>& bucket_pl_itr :
          bucket_pl_iters) {
@@ -233,11 +248,15 @@ class IntegerIndexStorageIterator : public NumericIndex<int64_t>::Iterator {
       // Note: it is possible that the bucket iterator fails to advance for the
       // first round, because data could be filtered out by [query_key_lower,
       // query_key_upper]. In this case, just discard the iterator.
-      if (bucket_pl_itr->AdvanceAndFilter(query_key_lower, query_key_upper)
-              .ok()) {
+      BucketPostingListIterator::AdvanceAndFilterResult
+          advance_and_filter_result =
+              bucket_pl_itr->AdvanceAndFilter(query_key_lower, query_key_upper);
+      if (advance_and_filter_result.status.ok()) {
         bucket_pl_iters_raw_ptrs.push_back(bucket_pl_itr.get());
         bucket_pl_iters_.push_back(std::move(bucket_pl_itr));
       }
+      num_advance_calls_ += advance_and_filter_result.num_advance_calls;
+      num_blocks_inspected_ += advance_and_filter_result.num_blocks_inspected;
     }
 
     pq_ = std::priority_queue<BucketPostingListIterator*,
@@ -260,6 +279,12 @@ class IntegerIndexStorageIterator : public NumericIndex<int64_t>::Iterator {
 
   DocHitInfo GetDocHitInfo() const override { return doc_hit_info_; }
 
+  int32_t GetNumAdvanceCalls() const override { return num_advance_calls_; }
+
+  int32_t GetNumBlocksInspected() const override {
+    return num_blocks_inspected_;
+  }
+
  private:
   BucketPostingListIterator::Comparator comparator_;
 
@@ -281,6 +306,9 @@ class IntegerIndexStorageIterator : public NumericIndex<int64_t>::Iterator {
       pq_;
 
   DocHitInfo doc_hit_info_;
+
+  int32_t num_advance_calls_;
+  int32_t num_blocks_inspected_;
 };
 
 libtextclassifier3::Status IntegerIndexStorageIterator::Advance() {
@@ -300,7 +328,12 @@ libtextclassifier3::Status IntegerIndexStorageIterator::Advance() {
     do {
       doc_hit_info_.UpdateSection(
           bucket_itr->GetCurrentBasicHit().section_id());
-      advance_status = bucket_itr->AdvanceAndFilter(key_lower_, key_upper_);
+      BucketPostingListIterator::AdvanceAndFilterResult
+          advance_and_filter_result =
+              bucket_itr->AdvanceAndFilter(key_lower_, key_upper_);
+      advance_status = std::move(advance_and_filter_result.status);
+      num_advance_calls_ += advance_and_filter_result.num_advance_calls;
+      num_blocks_inspected_ += advance_and_filter_result.num_blocks_inspected;
     } while (advance_status.ok() &&
              bucket_itr->GetCurrentBasicHit().document_id() == document_id);
     if (advance_status.ok()) {
@@ -683,9 +716,11 @@ libtextclassifier3::Status IntegerIndexStorage::TransferIndex(
                              old_pl_accessor->GetNextDataBatch());
       while (!batch_old_data.empty()) {
         for (const IntegerIndexData& old_data : batch_old_data) {
+          DocumentId old_document_id = old_data.basic_hit().document_id();
           DocumentId new_document_id =
-              old_data.basic_hit().document_id() < document_id_old_to_new.size()
-                  ? document_id_old_to_new[old_data.basic_hit().document_id()]
+              old_document_id >= 0 &&
+                      old_document_id < document_id_old_to_new.size()
+                  ? document_id_old_to_new[old_document_id]
                   : kInvalidDocumentId;
           // Transfer the document id of the hit if the document is not deleted
           // or outdated.
@@ -823,6 +858,7 @@ IntegerIndexStorage::InitializeNewFiles(
   Info& info_ref = new_integer_index_storage->info();
   info_ref.magic = Info::kMagic;
   info_ref.num_data = 0;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_integer_index_storage->InitializeNewStorage());
@@ -880,6 +916,7 @@ IntegerIndexStorage::InitializeExistingFiles(
           std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
           std::move(sorted_buckets), std::move(unsorted_buckets),
           std::make_unique<FlashIndexStorage>(std::move(flash_index_storage))));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(integer_index_storage->InitializeExistingStorage());
 
@@ -914,9 +951,8 @@ IntegerIndexStorage::FlushDataIntoNewSortedBucket(
       Bucket(key_lower, key_upper, pl_id, data.size()));
 }
 
-libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -926,44 +962,59 @@ libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk(
     return absl_ports::InternalError(
         "Fail to persist FlashIndexStorage to disk");
   }
+  is_storage_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndexStorage::PersistMetadataToDisk(
-    bool force) {
+libtextclassifier3::Status IntegerIndexStorage::PersistMetadataToDisk() {
   // We can skip persisting metadata to disk only if both info and storage are
   // clean.
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   // Changes should have been applied to the underlying file when using
   // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
   // extra safety step to ensure they are written out.
-  return metadata_mmapped_file_->PersistToDisk();
-}
-
-libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::ComputeInfoChecksum(
-    bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file_->PersistToDisk());
+  is_info_dirty_ = false;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32>
-IntegerIndexStorage::ComputeStoragesChecksum(bool force) {
-  if (!force && !is_storage_dirty()) {
+IntegerIndexStorage::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
   // Compute crcs
   ICING_ASSIGN_OR_RETURN(Crc32 sorted_buckets_crc,
-                         sorted_buckets_->ComputeChecksum());
+                         sorted_buckets_->UpdateChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 unsorted_buckets_crc,
-                         unsorted_buckets_->ComputeChecksum());
+                         unsorted_buckets_->UpdateChecksum());
 
+  // TODO(b/259744228): implement and include flash_index_storage checksum
+  return Crc32(sorted_buckets_crc.Get() ^ unsorted_buckets_crc.Get());
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::GetInfoChecksum()
+    const {
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::GetStoragesChecksum()
+    const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  // Compute crcs
+  Crc32 sorted_buckets_crc = sorted_buckets_->GetChecksum();
+  Crc32 unsorted_buckets_crc = unsorted_buckets_->GetChecksum();
   // TODO(b/259744228): implement and include flash_index_storage checksum
   return Crc32(sorted_buckets_crc.Get() ^ unsorted_buckets_crc.Get());
 }

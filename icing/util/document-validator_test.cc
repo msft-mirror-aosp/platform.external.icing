@@ -15,10 +15,15 @@
 #include "icing/util/document-validator.h"
 
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -26,6 +31,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -42,6 +48,7 @@ constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
 constexpr char kPropertyRecipients[] = "recipients";
 constexpr char kPropertyNote[] = "note";
+constexpr char kPropertyNoteEmbedding[] = "noteEmbedding";
 // type and property names of Conversation
 constexpr char kTypeConversation[] = "Conversation";
 constexpr char kTypeConversationWithEmailNote[] = "ConversationWithEmailNote";
@@ -56,6 +63,8 @@ class DocumentValidatorTest : public ::testing::Test {
   DocumentValidatorTest() {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -92,6 +101,10 @@ class DocumentValidatorTest : public ::testing::Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyNote)
                                      .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyNoteEmbedding)
+                                     .SetDataType(TYPE_VECTOR)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .AddType(
                 SchemaTypeConfigBuilder()
@@ -124,11 +137,10 @@ class DocumentValidatorTest : public ::testing::Test {
     schema_dir_ = GetTestTempDir() + "/schema_store";
     ASSERT_TRUE(filesystem_.CreateDirectory(schema_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     document_validator_ =
@@ -146,6 +158,12 @@ class DocumentValidatorTest : public ::testing::Test {
   }
 
   DocumentBuilder SimpleEmailWithNoteBuilder() {
+    PropertyProto::VectorProto vector;
+    vector.add_values(0.1);
+    vector.add_values(0.2);
+    vector.add_values(0.3);
+    vector.set_model_signature("my_model");
+
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "email_with_note/1")
         .SetSchema(kTypeEmailWithNote)
@@ -153,7 +171,8 @@ class DocumentValidatorTest : public ::testing::Test {
         .AddStringProperty(kPropertyText, kDefaultString)
         .AddStringProperty(kPropertyRecipients, kDefaultString, kDefaultString,
                            kDefaultString)
-        .AddStringProperty(kPropertyNote, kDefaultString);
+        .AddStringProperty(kPropertyNote, kDefaultString)
+        .AddVectorProperty(kPropertyNoteEmbedding, vector);
   }
 
   DocumentBuilder SimpleConversationBuilder() {
@@ -166,6 +185,7 @@ class DocumentValidatorTest : public ::testing::Test {
                              SimpleEmailBuilder().Build());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::string schema_dir_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
@@ -472,10 +492,10 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
   // Set a schema with only the 'Email' type
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, custom_schema_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, custom_schema_dir, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  email_schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  email_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentValidator document_validator(schema_store.get());
@@ -508,8 +528,7 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
   // separately
   ASSERT_THAT(
       schema_store->SetSchema(email_and_conversation_schema,
-                              /*ignore_errors_and_delete_documents=*/false,
-                              /*allow_circular_schema_definitions=*/false),
+                              /*ignore_errors_and_delete_documents=*/false),
       IsOk());
 
   ICING_EXPECT_OK(document_validator.Validate(conversation));
@@ -595,6 +614,64 @@ TEST_F(DocumentValidatorTest, NegativeDocumentTtlMsInvalid) {
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("is negative")));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingZeroDimensionInvalid) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("my_model");
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  EXPECT_THAT(document_validator_->Validate(email),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("contains empty vectors")));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingEmptySignatureOk) {
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  vector.set_model_signature("");
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  ICING_EXPECT_OK(document_validator_->Validate(email));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingNoSignatureOk) {
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  ICING_EXPECT_OK(document_validator_->Validate(email));
 }
 
 }  // namespace
