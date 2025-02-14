@@ -48,10 +48,10 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -99,7 +99,7 @@ class IcingSearchEngineTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -128,6 +128,16 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .SetKey(std::move(name_space), std::move(uri))
       .SetSchema("Message")
       .AddStringProperty("body", "message body")
+      .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+      .Build();
+}
+
+DocumentProto CreateMessageDocument(std::string name_space, std::string uri,
+                                    std::string document_string) {
+  return DocumentBuilder()
+      .SetKey(std::move(name_space), std::move(uri))
+      .SetSchema("Message")
+      .AddStringProperty("body", document_string)
       .SetCreationTimestampMs(kDefaultCreationTimestampMs)
       .Build();
 }
@@ -225,6 +235,28 @@ TEST_F(IcingSearchEngineTest, GetDocument) {
   expected_get_result_proto.clear_document();
   ASSERT_THAT(icing.Get("wrong", "uri", GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, GetDocumentWithBadString) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Put and get for a document with a bad string
+  std::string name_space = "namespace";
+  std::string uri = "uri";
+  // Octal representation of hex: \x34F\x8F\xE2\x80\x8C\xC2\xA0 which is
+  // Unicode for CGJ ZWNJ NBSP
+  std::string bad_string = "\315\217\342\200\214\302\240";
+  DocumentProto document = CreateMessageDocument(name_space, uri, bad_string);
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document;
+  ASSERT_THAT(
+      icing.Get(name_space, uri, GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, GetDocumentProjectionEmpty) {

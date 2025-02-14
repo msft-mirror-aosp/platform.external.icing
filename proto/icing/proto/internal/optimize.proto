@@ -22,8 +22,13 @@ option objc_class_prefix = "ICNG";
 
 // A status that is saved internally in Icing to track information about how
 // often Optimize runs.
-// Next tag: 2
+// Next tag: 3
 message OptimizeStatusProto {
-  // The Epoch time at which the last successfuly optimize ran.
+  // The Epoch time at which the last successful optimize was completed.
   optional int64 last_successful_optimize_run_time_ms = 1;
+
+  // The Epoch time at which IcingSearchEngine::Optimize was last called. This
+  // captures the previous optimize run regardless of whether it was successful
+  // or not.
+  optional int64 last_attempted_optimize_run_time_ms = 2;
 }

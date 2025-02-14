@@ -22,7 +22,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
@@ -36,6 +38,7 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -53,6 +56,7 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     document1_ = DocumentBuilder()
                      .SetKey("namespace", "uri1")
@@ -89,22 +93,21 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
             .Build();
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema_, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema_, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -114,6 +117,7 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   const Filesystem filesystem_;

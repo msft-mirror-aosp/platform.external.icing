@@ -25,6 +25,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
@@ -41,6 +42,7 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 
@@ -55,13 +57,13 @@ using ::testing::IsEmpty;
 
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store) {
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
   return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store,
+      filesystem, base_dir, clock, schema_store, &feature_flags,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/true,
-      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
 
@@ -71,6 +73,7 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     test_document1_ =
         DocumentBuilder().SetKey("icing", "email/1").SetSchema("email").Build();
@@ -84,16 +87,15 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
             .AddType(SchemaTypeConfigBuilder().SetType("email"))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+                            schema_store_.get(), *feature_flags_));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -105,6 +107,7 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
@@ -238,6 +241,7 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     document1_namespace1_ = DocumentBuilder()
                                 .SetKey(namespace1_, "email/1")
@@ -261,16 +265,15 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
             .AddType(SchemaTypeConfigBuilder().SetType("email"))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+                            schema_store_.get(), *feature_flags_));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -282,6 +285,7 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
@@ -428,6 +432,7 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     document1_schema1_ = DocumentBuilder()
                              .SetKey("namespace", "1")
@@ -459,16 +464,15 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
                          .AddParentType(kSchema2))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+                            schema_store_.get(), *feature_flags_));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -480,6 +484,7 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
@@ -735,6 +740,7 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
 
     SchemaProto schema =
@@ -742,16 +748,15 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
             .AddType(SchemaTypeConfigBuilder().SetType(email_schema_))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+                            schema_store_.get(), *feature_flags_));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -763,6 +768,7 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
@@ -779,7 +785,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -812,7 +818,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -845,7 +851,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -879,7 +885,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -910,6 +916,7 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
   DocHitInfoIteratorFilterTest() : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     document1_namespace1_schema1_ = DocumentBuilder()
                                         .SetKey(namespace1_, "1")
@@ -948,16 +955,15 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
             .AddType(SchemaTypeConfigBuilder().SetType(schema2_))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+                            schema_store_.get(), *feature_flags_));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -969,6 +975,7 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
@@ -992,7 +999,7 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 

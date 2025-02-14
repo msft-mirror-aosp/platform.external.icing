@@ -21,6 +21,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
@@ -36,15 +37,17 @@
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/map/map-normalizer.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/snippet-helpers.h"
 #include "unicode/uloc.h"
 
@@ -76,13 +79,14 @@ std::vector<std::string_view> GetPropertyPaths(const SnippetProto& snippet) {
 class SnippetRetrieverTest : public testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     test_dir_ = GetTestTempDir() + "/icing";
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -95,8 +99,8 @@ class SnippetRetrieverTest : public testing::Test {
 
     // Setup the schema
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -114,11 +118,13 @@ class SnippetRetrieverTest : public testing::Test {
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
+
     ICING_ASSERT_OK_AND_ASSIGN(
         snippet_retriever_,
         SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -136,6 +142,7 @@ class SnippetRetrieverTest : public testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
   std::unique_ptr<SchemaStore> schema_store_;
@@ -1023,8 +1030,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestOneLevel) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1114,8 +1120,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevel) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1221,8 +1226,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelRepeated) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1336,8 +1340,7 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelSingleValue) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1610,8 +1613,7 @@ TEST_F(SnippetRetrieverTest, SnippettingVerbatimAscii) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1664,8 +1666,7 @@ TEST_F(SnippetRetrieverTest, SnippettingVerbatimCJK) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
       SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
@@ -1723,8 +1724,7 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822Ascii) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,
@@ -1799,8 +1799,7 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822CJK) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ICING_ASSERT_OK(schema_store_->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       snippet_retriever_,

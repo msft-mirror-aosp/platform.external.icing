@@ -15,6 +15,7 @@
 #include "icing/query/suggestion-processor.h"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -24,6 +25,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-index.h"
@@ -42,14 +44,16 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -82,6 +86,7 @@ class SuggestionProcessorTest : public Test {
         embedding_index_dir_(test_dir_ + "/embedding_index") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
@@ -95,24 +100,24 @@ class SuggestionProcessorTest : public Test {
       // setup doesn't do this.
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
@@ -127,7 +132,8 @@ class SuggestionProcessorTest : public Test {
         DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
+                               feature_flags_.get()));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -135,23 +141,25 @@ class SuggestionProcessorTest : public Test {
         language_segmenter_,
         language_segmenter_factory::Create(segmenter_options));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/1000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         suggestion_processor_,
         SuggestionProcessor::Create(
             index_.get(), numeric_index_.get(), embedding_index_.get(),
             language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-            schema_store_.get(), &fake_clock_));
+            schema_store_.get(), &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
       DocumentId document_id, SectionId section_id,
       TermMatchType::Code term_match_type, const std::string& token) {
     Index::Editor editor = index_->Edit(document_id, section_id,
-                                        term_match_type, /*namespace_id=*/0);
-    auto status = editor.BufferTerm(token.c_str());
+                                        /*namespace_id=*/0);
+    auto status = editor.BufferTerm(token, term_match_type);
     return status.ok() ? editor.IndexAllBufferedTerms() : status;
   }
 
@@ -161,6 +169,7 @@ class SuggestionProcessorTest : public Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
   const std::string store_dir_;
@@ -193,8 +202,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_And) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -242,8 +250,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -295,8 +302,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -350,8 +356,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_OrNary) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -419,8 +424,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -483,8 +487,7 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -520,8 +523,7 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -557,8 +559,7 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -611,8 +612,7 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -660,8 +660,7 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -724,8 +723,7 @@ TEST_F(SuggestionProcessorTest, SemanticSearchPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -774,8 +772,7 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're

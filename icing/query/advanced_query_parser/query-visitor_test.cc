@@ -31,6 +31,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-index.h"
@@ -59,17 +60,19 @@
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/embedding-test-utils.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
 #include <google/protobuf/repeated_field.h>
@@ -168,6 +171,7 @@ enum class QueryType {
 class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
@@ -189,24 +193,24 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
       // setup doesn't do this.
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &clock_, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, store_dir_, &clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, store_dir_, &clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_.c_str(),
@@ -222,10 +226,13 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
+                               feature_flags_.get()));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/1000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -253,8 +260,10 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
     QueryVisitor query_visitor(
         index_.get(), numeric_index_.get(), embedding_index_.get(),
         document_store_.get(), schema_store_.get(), normalizer_.get(),
-        tokenizer_.get(), search_spec, DocHitInfoIteratorFilter::Options(),
-        /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
+        tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
+        DocHitInfoIteratorFilter::Options(),
+        /*needs_term_frequency_info=*/true, feature_flags_.get(),
+        clock_.GetSystemTimeMilliseconds());
     root_node->Accept(&query_visitor);
     return std::move(query_visitor).ConsumeResults();
   }
@@ -303,6 +312,7 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
     }
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   std::string test_dir_;
@@ -724,8 +734,10 @@ TEST_P(QueryVisitorTest, NeverVisitedReturnsInvalid) {
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), embedding_index_.get(),
       document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), search_spec, DocHitInfoIteratorFilter::Options(),
-      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+      tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
+      DocHitInfoIteratorFilter::Options(),
+      /*needs_term_frequency_info=*/true, feature_flags_.get(),
+      clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -786,8 +798,7 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Index three documents:
   // - Doc0: ["-2", "-1", "1", "2"] and [-2, -1, 1, 2]
@@ -802,12 +813,12 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
   ICING_ASSERT_OK(editor->BufferKey(1));
   ICING_ASSERT_OK(editor->BufferKey(2));
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
-  Index::Editor term_editor = index_->Edit(
-      kDocumentId0, kSectionId1, TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(term_editor.BufferTerm("-2"));
-  ICING_ASSERT_OK(term_editor.BufferTerm("-1"));
-  ICING_ASSERT_OK(term_editor.BufferTerm("1"));
-  ICING_ASSERT_OK(term_editor.BufferTerm("2"));
+  Index::Editor term_editor =
+      index_->Edit(kDocumentId0, kSectionId1, /*namespace_id=*/0);
+  ICING_ASSERT_OK(term_editor.BufferTerm("-2", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(term_editor.BufferTerm("-1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(term_editor.BufferTerm("1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(term_editor.BufferTerm("2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(term_editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
@@ -821,9 +832,9 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId0);
   ICING_ASSERT_OK(editor->BufferKey(-1));
   ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
-  term_editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  term_editor = index_->Edit(kDocumentId2, kSectionId1,
                              /*namespace_id=*/0);
-  ICING_ASSERT_OK(term_editor.BufferTerm("2"));
+  ICING_ASSERT_OK(term_editor.BufferTerm("2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(term_editor.IndexAllBufferedTerms());
 
   // Translating MINUS chars that are interpreted as NOTs, this query would be
@@ -852,18 +863,18 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
   // Setup the index with docs 0, 1 and 2 holding the values "foo", "foo" and
   // "bar" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo");
@@ -899,18 +910,18 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
   // Setup the index with docs 0, 1 and 2 holding the values "foo", "foo" and
   // "bar" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo");
@@ -920,8 +931,10 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), embedding_index_.get(),
       document_store_.get(), schema_store_.get(), normalizer_.get(),
-      tokenizer_.get(), search_spec, DocHitInfoIteratorFilter::Options(),
-      /*needs_term_frequency_info=*/false, clock_.GetSystemTimeMilliseconds());
+      tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
+      DocHitInfoIteratorFilter::Options(),
+      /*needs_term_frequency_info=*/false, feature_flags_.get(),
+      clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -951,18 +964,18 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
   // Setup the index with docs 0, 1 and 2 holding the values "foo", "foo" and
   // "bar" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // An EXACT query for 'fo' won't match anything.
@@ -1012,21 +1025,21 @@ TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
   // Setup the index with docs 0, 1 and 2 holding the values ["foo", "ba"],
   // ["foo", "ba"] and ["bar", "fo"] respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("ba"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("ba", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("ba"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("ba", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("fo"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("fo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // An EXACT query for `ba?fo` will be lexed into a single TEXT token.
@@ -1068,18 +1081,18 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
   // Setup the index with docs 0, 1 and 2 holding the values "foo:bar(baz)",
   // "foo:bar(baz)" and "bar:baz(foo)" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar:baz(foo)"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar:baz(foo)", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("\"foo:bar(baz)\"");
@@ -1105,18 +1118,18 @@ TEST_P(QueryVisitorTest, SingleVerbatimTermPrefix) {
   // Setup the index with docs 0, 1 and 2 holding the values "foo:bar(baz)",
   // "foo:bar(abc)" and "bar:baz(foo)" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(abc)"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(abc)", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar:baz(foo)"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar:baz(foo)", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Query for `"foo:bar("*`. This should match docs 0 and 1.
@@ -1152,18 +1165,18 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingQuote) {
   // Setup the index with docs 0, 1 and 2 holding the values "foobary",
   // "foobar\" and "foobar"" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_EXACT, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar")"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar")", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // From the comment above, verbatim_term = `foobar"` and verbatim_query =
@@ -1195,19 +1208,19 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingEscape) {
   // Setup the index with docs 0, 1 and 2 holding the values "foobary",
   // "foobar\" and "foobar"" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_EXACT, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
   // From the comment above, verbatim_term = `foobar\`.
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar")"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar")", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Issue a query for the verbatim token `foobar\`.
@@ -1240,19 +1253,19 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
   // Setup the index with docs 0, 1 and 2 holding the values "foobary",
   // "foobar\" and "foobar"" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_EXACT, /*namespace_id=*/0);
+                                      /*namespace_id=*/0);
   // From the comment above, verbatim_term = `foobary`.
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\y)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\y)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Issue a query for the verbatim token `foobary`.
@@ -1304,20 +1317,20 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
   // Setup the index with docs 0, 1 and 2 holding the values "foobar\n",
   // `foobar\` and `foobar\n` respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_EXACT, /*namespace_id=*/0);
+                                      /*namespace_id=*/0);
   // From the comment above, verbatim_term = `foobar` + '\n'.
-  ICING_ASSERT_OK(editor.BufferTerm("foobar\n"));
+  ICING_ASSERT_OK(editor.BufferTerm("foobar\n", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
   // verbatim_term = `foobar\n`. This is distinct from the term added above.
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\n)"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\n)", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Issue a query for the verbatim token `foobar` + '\n'.
@@ -1363,20 +1376,20 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingComplex) {
   // Setup the index with docs 0, 1 and 2 holding the values `foo\"bar\nbaz"`,
   // `foo\\\"bar\\nbaz\"` and `foo\\"bar\\nbaz"` respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_EXACT, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\"bar\nbaz")"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\"bar\nbaz")", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
   // Add the verbatim_term from doc 0 but with all of the escapes left in
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\\\"bar\\nbaz\")"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\\\"bar\\nbaz\")", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
   // Add the verbatim_term from doc 0 but with the escapes for '\' chars left in
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\\"bar\\nbaz")"));
+  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\\"bar\\nbaz")", TERM_MATCH_EXACT));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Issue a query for the verbatim token `foo\"bar\nbaz"`.
@@ -1406,28 +1419,27 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("-foo");
@@ -1451,28 +1463,27 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("NOT foo");
@@ -1492,32 +1503,31 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Double negative could be rewritten as `(foo AND NOT bar) baz`
@@ -1541,32 +1551,31 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Simplifying:
@@ -1596,19 +1605,19 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
 
 TEST_P(QueryVisitorTest, ImplicitAndTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo bar");
@@ -1630,19 +1639,19 @@ TEST_P(QueryVisitorTest, ImplicitAndTerms) {
 
 TEST_P(QueryVisitorTest, ExplicitAndTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo AND bar");
@@ -1664,19 +1673,19 @@ TEST_P(QueryVisitorTest, ExplicitAndTerms) {
 
 TEST_P(QueryVisitorTest, OrTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("fo"));
-  ICING_ASSERT_OK(editor.BufferTerm("ba"));
+  ICING_ASSERT_OK(editor.BufferTerm("fo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("ba", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo OR bar");
@@ -1698,20 +1707,20 @@ TEST_P(QueryVisitorTest, OrTerms) {
 
 TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Should be interpreted like `foo (bar OR baz)`
@@ -1774,30 +1783,29 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("baz", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Should be interpreted like `foo ((NOT bar) OR baz)`
@@ -1841,8 +1849,7 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -1851,22 +1858,22 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo", /*property_restrict=*/"prop1");
@@ -1907,8 +1914,7 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -1918,22 +1924,22 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop3_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop3_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = R"(search("foo", createList("prop1", "prop2")))";
@@ -1966,8 +1972,7 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // "prop1" is a STRING token, which cannot be a property name.
   std::string query = CreateQuery(R"(("prop1":foo))");
@@ -1991,8 +1996,7 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2000,22 +2004,22 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo", /*property_restrict=*/"PROP1");
@@ -2051,8 +2055,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2061,22 +2064,22 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query =
@@ -2110,8 +2113,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2120,22 +2122,22 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("(prop1:foo)", /*property_restrict=*/"prop1");
@@ -2180,8 +2182,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2190,22 +2191,22 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("(prop2:foo)", /*property_restrict=*/"prop1");
@@ -2246,8 +2247,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2256,22 +2256,22 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Resulting queries:
@@ -2317,8 +2317,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2337,22 +2336,22 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Resulting queries:
@@ -2410,8 +2409,7 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2423,35 +2421,35 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("上班"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("上班", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(kDocumentId0, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId0, prop2_section_id,
                         /*namespace_id=*/0);
   if (IsCfStringTokenization()) {
-    ICING_ASSERT_OK(editor.BufferTerm("每"));
-    ICING_ASSERT_OK(editor.BufferTerm("天"));
+    ICING_ASSERT_OK(editor.BufferTerm("每", TERM_MATCH_PREFIX));
+    ICING_ASSERT_OK(editor.BufferTerm("天", TERM_MATCH_PREFIX));
   } else {
-    ICING_ASSERT_OK(editor.BufferTerm("每天"));
+    ICING_ASSERT_OK(editor.BufferTerm("每天", TERM_MATCH_PREFIX));
   }
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("上班"));
+  ICING_ASSERT_OK(editor.BufferTerm("上班", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop2_section_id,
                         /*namespace_id=*/0);
   if (IsCfStringTokenization()) {
-    ICING_ASSERT_OK(editor.BufferTerm("每"));
-    ICING_ASSERT_OK(editor.BufferTerm("天"));
+    ICING_ASSERT_OK(editor.BufferTerm("每", TERM_MATCH_PREFIX));
+    ICING_ASSERT_OK(editor.BufferTerm("天", TERM_MATCH_PREFIX));
   } else {
-    ICING_ASSERT_OK(editor.BufferTerm("每天"));
+    ICING_ASSERT_OK(editor.BufferTerm("每天", TERM_MATCH_PREFIX));
   }
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
@@ -2494,8 +2492,7 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2509,11 +2506,10 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(doc));
   DocumentId docid0 = put_result0.new_document_id;
-  Index::Editor editor =
-      index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  Index::Editor editor = index_->Edit(docid0, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 1: Contains 'val0', 'val1', 'val2' in 'prop1'. Should match.
@@ -2521,10 +2517,10 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(doc));
   DocumentId docid1 = put_result1.new_document_id;
-  editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid1, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 2: Contains 'val0', 'val1', 'val2' in 'prop2'. Shouldn't match.
@@ -2532,10 +2528,10 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(doc));
   DocumentId docid2 = put_result2.new_document_id;
-  editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid2, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 3: Contains 'val0' in 'prop0', 'val1' in 'prop1' etc. Should match.
@@ -2543,14 +2539,14 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(doc));
   DocumentId docid3 = put_result3.new_document_id;
-  editor = index_->Edit(docid3, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
+  editor = index_->Edit(docid3, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid3, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
+  editor = index_->Edit(docid3, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid3, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid3, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 4: Contains 'val1' in 'prop0', 'val2' in 'prop1', 'val0' in 'prop2'.
@@ -2559,14 +2555,14 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
                              document_store_->Put(doc));
   DocumentId docid4 = put_result4.new_document_id;
-  editor = index_->Edit(docid4, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
+  editor = index_->Edit(docid4, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid4, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
+  editor = index_->Edit(docid4, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Now issue a query with 'val1' restricted to 'prop1'. This should match only
@@ -2610,8 +2606,7 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2625,11 +2620,10 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(doc));
   DocumentId docid0 = put_result0.new_document_id;
-  Index::Editor editor =
-      index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  Index::Editor editor = index_->Edit(docid0, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 1: Contains 'val0', 'val1', 'val2' in 'prop1'. Shouldn't match.
@@ -2637,10 +2631,10 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(doc));
   DocumentId docid1 = put_result1.new_document_id;
-  editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid1, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 2: Contains 'val0', 'val1', 'val2' in 'prop2'. Should match.
@@ -2648,10 +2642,10 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(doc));
   DocumentId docid2 = put_result2.new_document_id;
-  editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid2, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 3: Contains 'val0' in 'prop0', 'val1' in 'prop1' etc. Should match.
@@ -2659,14 +2653,14 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
                              document_store_->Put(doc));
   DocumentId docid3 = put_result3.new_document_id;
-  editor = index_->Edit(docid3, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
+  editor = index_->Edit(docid3, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid3, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
+  editor = index_->Edit(docid3, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid3, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid3, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // - Doc 4: Contains 'val1' in 'prop0', 'val2' in 'prop1', 'val0' in 'prop2'.
@@ -2675,14 +2669,14 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
                              document_store_->Put(doc));
   DocumentId docid4 = put_result4.new_document_id;
-  editor = index_->Edit(docid4, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
+  editor = index_->Edit(docid4, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val1", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
+  editor = index_->Edit(docid4, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val2", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
+  editor = index_->Edit(docid4, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("val0", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Now issue a query with 'val1' restricted to 'prop1'. This should match only
@@ -2774,8 +2768,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2783,23 +2776,23 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
-  editor = index_->Edit(kDocumentId2, prop1_section_id, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, prop1_section_id,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string level_one_query = R"(search("foo", createList("prop1")) bar)";
@@ -2874,8 +2867,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -2893,65 +2885,64 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(doc));
   DocumentId docid0 = put_result0.new_document_id;
-  Index::Editor editor =
-      index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  Index::Editor editor = index_->Edit(kDocumentId0, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
   DocumentId docid1 = put_result1.new_document_id;
-  editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid1, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
   DocumentId docid2 = put_result2.new_document_id;
-  editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid2, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
   DocumentId docid3 = put_result3.new_document_id;
-  editor = index_->Edit(docid3, prop3_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid3, prop3_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result4,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
   DocumentId docid4 = put_result4.new_document_id;
-  editor = index_->Edit(docid4, prop4_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid4, prop4_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result5,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
   DocumentId docid5 = put_result5.new_document_id;
-  editor = index_->Edit(docid5, prop5_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid5, prop5_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result6,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
   DocumentId docid6 = put_result6.new_document_id;
-  editor = index_->Edit(docid6, prop6_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid6, prop6_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result7,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
   DocumentId docid7 = put_result7.new_document_id;
-  editor = index_->Edit(docid7, prop7_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid7, prop7_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // *If* nested function calls were allowed, then this would simplify as:
@@ -3036,8 +3027,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3055,65 +3045,64 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(doc));
   DocumentId docid0 = put_result0.new_document_id;
-  Index::Editor editor =
-      index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  Index::Editor editor = index_->Edit(kDocumentId0, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
   DocumentId docid1 = put_result1.new_document_id;
-  editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid1, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
   DocumentId docid2 = put_result2.new_document_id;
-  editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid2, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
   DocumentId docid3 = put_result3.new_document_id;
-  editor = index_->Edit(docid3, prop3_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid3, prop3_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result4,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
   DocumentId docid4 = put_result4.new_document_id;
-  editor = index_->Edit(docid4, prop4_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid4, prop4_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result5,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
   DocumentId docid5 = put_result5.new_document_id;
-  editor = index_->Edit(docid5, prop5_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid5, prop5_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result6,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
   DocumentId docid6 = put_result6.new_document_id;
-  editor = index_->Edit(docid6, prop6_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid6, prop6_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result7,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
   DocumentId docid7 = put_result7.new_document_id;
-  editor = index_->Edit(docid7, prop7_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid7, prop7_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // *If* nested function calls were allowed, then this would simplify as:
@@ -3177,8 +3166,7 @@ TEST_P(QueryVisitorTest, QueryStringParameterHandlesPunctuation) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type").AddProperty(prop))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3189,26 +3177,25 @@ TEST_P(QueryVisitorTest, QueryStringParameterHandlesPunctuation) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(doc));
   DocumentId docid0 = put_result0.new_document_id;
-  Index::Editor editor =
-      index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  Index::Editor editor = index_->Edit(kDocumentId0, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
   DocumentId docid1 = put_result1.new_document_id;
-  editor = index_->Edit(docid1, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  editor = index_->Edit(docid1, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
   DocumentId docid2 = put_result2.new_document_id;
-  editor = index_->Edit(docid2, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid2, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = "getSearchStringParameter(0)";
@@ -3296,8 +3283,7 @@ TEST_P(QueryVisitorTest, QueryStringParameterPropertyRestricts) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3310,32 +3296,31 @@ TEST_P(QueryVisitorTest, QueryStringParameterPropertyRestricts) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
                              document_store_->Put(doc));
   DocumentId docid0 = put_result0.new_document_id;
-  Index::Editor editor =
-      index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  Index::Editor editor = index_->Edit(docid0, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
   DocumentId docid1 = put_result1.new_document_id;
-  editor = index_->Edit(docid1, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  editor = index_->Edit(docid1, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid1, prop1_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
   DocumentId docid2 = put_result2.new_document_id;
-  editor = index_->Edit(docid2, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  editor = index_->Edit(docid2, prop0_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  editor = index_->Edit(docid2, prop2_id, ns_id);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = "prop0:getSearchStringParameter(0)";
@@ -3497,15 +3482,14 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 1 has the term "foo" and its schema DOESN'T have the url property.
@@ -3513,17 +3497,17 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
                                            .SetKey("ns", "uri1")
                                            .SetSchema("typeWithoutUrl")
                                            .Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 2 has the term "bar" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("typeWithUrl").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo propertyDefined(\"url\")");
@@ -3547,15 +3531,14 @@ TEST_P(QueryVisitorTest,
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 1 has the term "foo" and its schema DOESN'T have the url property.
@@ -3563,9 +3546,9 @@ TEST_P(QueryVisitorTest,
                                            .SetKey("ns", "uri1")
                                            .SetSchema("typeWithoutUrl")
                                            .Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Attempt to query a non-existent property.
@@ -3589,15 +3572,14 @@ TEST_P(QueryVisitorTest,
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 1 has the term "foo" and its schema DOESN'T have the url property.
@@ -3605,9 +3587,9 @@ TEST_P(QueryVisitorTest,
                                            .SetKey("ns", "uri1")
                                            .SetSchema("typeWithoutUrl")
                                            .Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   std::string query = CreateQuery("foo AND NOT propertyDefined(\"url\")");
@@ -3661,35 +3643,36 @@ TEST_P(QueryVisitorTest, HasPropertyFunctionReturnsMatchingDocuments) {
                                         .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and has the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("Simple").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId0,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.BufferTerm(
-      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str()));
+      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str(),
+      TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 1 has the term "foo" and doesn't have the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("Simple").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId0, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId0,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 2 has the term "bar" and has the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("Simple").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId0, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId2, kSectionId0,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.BufferTerm(
-      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str()));
+      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str(),
+      TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Test that `foo hasProperty("price")` matches document 0 only.
@@ -3727,25 +3710,25 @@ TEST_P(QueryVisitorTest,
                                         .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and has the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("Simple").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId0,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.BufferTerm(
-      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str()));
+      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str(),
+      TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Document 1 has the term "foo" and doesn't have the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("Simple").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId0, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId0,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Attempt to query a non-existent property.
@@ -3934,15 +3917,37 @@ TEST_F(QueryVisitorTest,
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+
   // Index two embedding vectors.
   PropertyProto::VectorProto vector0 =
       CreateVector("my_model", {0.1, 0.2, 0.3});
   PropertyProto::VectorProto vector1 =
       CreateVector("my_model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector0));
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId1), vector1));
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query that has a semantic score of 1 with vector0 and
@@ -4004,15 +4009,37 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+
   // Index two embedding vectors.
   PropertyProto::VectorProto vector0 =
       CreateVector("my_model", {0.1, 0.2, 0.3});
   PropertyProto::VectorProto vector1 =
       CreateVector("my_model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector0));
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId1), vector1));
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query that has a semantic score of 1 with vector0 and
@@ -4074,10 +4101,30 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+
   // Index a embedding vector.
   PropertyProto::VectorProto vector = CreateVector("my_model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector));
+      BasicHit(kSectionId0, kDocumentId0), vector, QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query that has:
@@ -4144,23 +4191,50 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop3")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+
   // Index 3 embedding vectors for document 0.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3})));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, -3})));
+      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId2, kDocumentId0),
-      CreateVector("my_model2", {-1, 2, 3, -4})));
+      CreateVector("my_model2", {-1, 2, 3, -4}), QUANTIZATION_TYPE_NONE));
   // Index 2 embedding vectors for document 1.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, 3})));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId1),
-      CreateVector("my_model2", {1, -2, 3, -4})));
+      CreateVector("my_model2", {1, -2, 3, -4}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create two embedding queries.
@@ -4265,17 +4339,39 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
 
 TEST_F(QueryVisitorTest,
        SemanticSearchFunctionMultipleQueriesScoresMergedRepeat) {
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+
   // Index 3 embedding vectors for document 0.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3})));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, -3})));
+      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE));
   // Index 2 embedding vectors for document 1.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, 3})));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create two embedding queries.
@@ -4359,23 +4455,45 @@ TEST_F(QueryVisitorTest,
 }
 
 TEST_F(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+
   // Index terms
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
+                                      /*namespace_id=*/0);
+  ICING_ASSERT_OK(editor.BufferTerm("foo", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+  editor = index_->Edit(kDocumentId1, kSectionId1,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
+  ICING_ASSERT_OK(editor.BufferTerm("bar", TERM_MATCH_PREFIX));
   ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 
   // Index embedding vectors
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3})));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, 3})));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query with semantic scores:
@@ -4469,8 +4587,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Create two documents.
   ICING_ASSERT_OK(document_store_->Put(
@@ -4480,16 +4597,16 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
   // Add embedding vectors into different sections for the two documents.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3})));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, 3})));
-  ICING_ASSERT_OK(
-      embedding_index_->BufferEmbedding(BasicHit(kSectionId0, kDocumentId1),
-                                        CreateVector("my_model1", {-1, 2, 3})));
-  ICING_ASSERT_OK(
-      embedding_index_->BufferEmbedding(BasicHit(kSectionId1, kDocumentId1),
-                                        CreateVector("my_model1", {1, 2, -3})));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId0, kDocumentId1),
+      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId1, kDocumentId1),
+      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query with semantic scores:
@@ -4532,6 +4649,199 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
       Pointee(UnorderedElementsAre(-2)));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+}
+
+TEST_F(QueryVisitorTest,
+       MatchScoreExpressionFunctionWithInvalidRangeReturnsInvalidArgument) {
+  // The expression is invalid, since low > high.
+  EXPECT_THAT(ProcessQuery("matchScoreExpression(\"1 + 1\", 10, -10)"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Floating point values are also checked.
+  EXPECT_THAT(ProcessQuery("matchScoreExpression(\"1 + 1\", 10.2, 10.1)"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // low == high is allowed.
+  EXPECT_THAT(ProcessQuery("matchScoreExpression(\"1 + 1\", 10.1, 10.1)"),
+              IsOk());
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionSimpleLowerBound) {
+  // Create two documents with different document scores.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .Build()));
+
+  // Test that `matchScoreExpression("this.documentScore()", 0)` matches
+  // all documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", 0)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0, kDocumentId1));
+
+  // Test that `matchScoreExpression("this.documentScore()", 2)` matches
+  // document 0 only.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", 2)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0));
+
+  // Test that `matchScoreExpression("this.documentScore()", 5)` matches
+  // no documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", 5)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionSimpleUpperBound) {
+  // Create two documents with different document scores.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .Build()));
+
+  // Test that `matchScoreExpression("this.documentScore()", -100, 100)` matches
+  // all documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery(
+          "matchScoreExpression(\"this.documentScore()\", -100, 100)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0, kDocumentId1));
+
+  // Test that `matchScoreExpression("this.documentScore()", -100, 2)` matches
+  // document 1 only.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", -100, 2)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId1));
+
+  // Test that `matchScoreExpression("this.documentScore()", -100, -1)` matches
+  // no documents.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_results,
+      ProcessQuery("matchScoreExpression(\"this.documentScore()\", -100, -1)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionComplex) {
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .SetCreationTimestampMs(1)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(2)
+                                           .SetCreationTimestampMs(2)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri2")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .SetCreationTimestampMs(3)
+                                           .Build()));
+
+  // Query with a complex score expression:
+  //   `pow(this.creationTimestamp(), 2) + this.documentScore() - 1`.
+  // The score of each document is:
+  // - document 0: 1 * 1 + 4 - 1 = 4
+  // - document 1: 2 * 2 + 2 - 1 = 5
+  // - document 2: 3 * 3 + 0 - 1 = 8
+  // Therefore, filtering with a range of [4.5, 7] will only match document 1.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery("matchScoreExpression(\"pow(this.creationTimestamp(), 2) + "
+                   "this.documentScore() - 1\", 4.5, 7)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId1));
+}
+
+TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionWithEvaluationErrors) {
+  // Create two documents with different document scores.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri0")
+                                           .SetSchema("Simple")
+                                           .SetScore(4)
+                                           .Build()));
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("Simple")
+                                           .SetScore(0)
+                                           .Build()));
+
+  // Test that documents with evaluation errors will be filtered out.
+  // Specifically, document1 will be filtered out because its document score is
+  // 0, and the expression `1 / 0` is an error.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults query_results,
+      ProcessQuery(
+          "matchScoreExpression(\"1 / this.documentScore()\", -10000, 10000)"));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kMatchScoreExpressionFunctionFeature,
+                                   kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0));
 }
 
 INSTANTIATE_TEST_SUITE_P(QueryVisitorTest, QueryVisitorTest,

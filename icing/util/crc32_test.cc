@@ -14,8 +14,13 @@
 
 #include "icing/util/crc32.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
+#include <string_view>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/portable/zlib.h"
@@ -100,6 +105,19 @@ TEST(Crc32Test, UpdateAtPosition) {
   // Wrong string length
   EXPECT_THAT(crc32_test.UpdateWithXor("12345", buf.size(), buf.size() - 1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(Crc32Test, InvalidParameters) {
+  Crc32 crc32_test{};
+  EXPECT_THAT(
+      crc32_test.UpdateWithXor("12345", /*full_data_size=*/-1, /*position=*/0),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      crc32_test.UpdateWithXor("12345", /*full_data_size=*/2, /*position=*/-1),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      crc32_test.UpdateWithXor("", /*full_data_size=*/-10, /*position=*/-10),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace
