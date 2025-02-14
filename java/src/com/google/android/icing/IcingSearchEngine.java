@@ -50,6 +50,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.UsageReport;
 
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Java wrapper to access {@link IcingSearchEngineImpl}.
@@ -273,7 +274,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
     return IcingSearchEngineImpl.setLoggingLevel((short) severity.getNumber(), verbosity);
   }
 
-  public static @NonNull String getLoggingTag() {
+  public static @Nullable String getLoggingTag() {
     return IcingSearchEngineImpl.getLoggingTag();
   }
 }
