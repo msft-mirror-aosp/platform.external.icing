@@ -15,14 +15,15 @@
 #ifndef ICING_SCHEMA_SCHEMA_UTIL_H_
 #define ICING_SCHEMA_SCHEMA_UTIL_H_
 
-#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 
 namespace icing {
@@ -95,6 +96,11 @@ class SchemaUtil {
     // field in the SchemaTypeConfigProto.
     std::unordered_set<std::string> schema_types_join_incompatible;
 
+    // Schema types that were changed in a way that was backwards compatible,
+    // but inconsistent with the old schema so that the scorable property cache
+    // needs to be re-generated.
+    std::unordered_set<std::string> schema_types_scorable_property_inconsistent;
+
     bool operator==(const SchemaDelta& other) const {
       return schema_types_deleted == other.schema_types_deleted &&
              schema_types_incompatible == other.schema_types_incompatible &&
@@ -104,7 +110,9 @@ class SchemaUtil {
              schema_types_index_incompatible ==
                  other.schema_types_index_incompatible &&
              schema_types_join_incompatible ==
-                 other.schema_types_join_incompatible;
+                 other.schema_types_join_incompatible &&
+             schema_types_scorable_property_inconsistent ==
+                 other.schema_types_scorable_property_inconsistent;
     }
   };
 
@@ -113,17 +121,17 @@ class SchemaUtil {
     std::unordered_map<std::string_view, const PropertyConfigProto*>
         property_config_map;
 
-    // Total number of properties that have an indexing config
-    int32_t num_indexed_properties = 0;
+    // Properties that have an indexing config
+    std::unordered_set<std::string_view> indexed_properties;
 
-    // Total number of properties that were REQUIRED
-    int32_t num_required_properties = 0;
+    // Properties that were REQUIRED
+    std::unordered_set<std::string_view> required_properties;
 
-    // Total number of properties that have joinable config
-    int32_t num_joinable_properties = 0;
+    // Properties that have joinable config
+    std::unordered_set<std::string_view> joinable_properties;
 
-    // Total number of properties that have DataType::DOCUMENT
-    int32_t num_nested_document_properties = 0;
+    // Properties that have DataType::DOCUMENT
+    std::unordered_set<std::string_view> nested_document_properties;
   };
 
   // This function validates:
@@ -163,6 +171,14 @@ class SchemaUtil {
   //  15. For DOCUMENT data types, if
   //      DocumentIndexingConfig.indexable_nested_properties_list is non-empty,
   //      DocumentIndexingConfig.index_nested_properties must be false.
+  //  16. Validate the PropertyConfigProtos.scorable_type:
+  //        - It can only be set to ENABLED for the following data types:
+  //            a. Int64
+  //            b. Double
+  //            c. Boolean
+  //        - Documment type can't be explicitly set to DISABLED OR
+  //          ENABLED. It is implicitly considered scorable if any of its or its
+  //          dependency's property is scorable.
   //
   // Returns:
   //   On success, a dependent map from each types to their dependent types
@@ -170,7 +186,7 @@ class SchemaUtil {
   //   ALREADY_EXISTS for case 1 and 2
   //   INVALID_ARGUMENT for 3-15
   static libtextclassifier3::StatusOr<DependentMap> Validate(
-      const SchemaProto& schema, bool allow_circular_schema_definitions);
+      const SchemaProto& schema, const FeatureFlags& feature_flags);
 
   // Builds a transitive inheritance map.
   //
@@ -215,6 +231,8 @@ class SchemaUtil {
   //      definition is now incompatible.
   //   4. The derived join index would be incompatible. This is held in
   //      `SchemaDelta.join_incompatible`.
+  //   5. The scorable properties of two schema are inconsistent. This is held
+  //      in `SchemaDelta.schema_types_scorable_property_inconsistent`.
   //
   // For case 1, the two schemas would result in an incompatible index if:
   //   1.1. The new SchemaProto has a different set of indexed properties than
@@ -242,13 +260,28 @@ class SchemaUtil {
   //        different set of joinable properties than it did in the old
   //        SchemaProto.
   //
+  // For case 5, a schema type is considered to have inconsistent scorable
+  // properties if it is present in both the old and new schemas, and that:
+  //   5.1. The schema type contains different sets of scorable properties in
+  //        the old and new schemas. It could be that:
+  //          a. The type contains scorable properties in the new schema, but
+  //             not in the old schema.
+  //          b. The type contains scorable properties in the old schema, but
+  //             not in the new schema.
+  //          c. The type contains scorable properties in both the old and new
+  //             schemas, but the set of properties are different.
+  //   5.2. The type has dependency on the types that are considered to have
+  //        inconsistent scorable properties, based on the new schema's
+  //        dependent map.
+  //
   // A property is defined by the combination of the
   // SchemaTypeConfig.schema_type and the PropertyConfigProto.property_name.
   //
   // Returns a SchemaDelta that captures the aforementioned differences.
   static const SchemaDelta ComputeCompatibilityDelta(
       const SchemaProto& old_schema, const SchemaProto& new_schema,
-      const DependentMap& new_schema_dependent_map);
+      const DependentMap& new_schema_dependent_map,
+      const FeatureFlags& feature_flags);
 
   // Validates the 'property_name' field.
   //   1. Can't be an empty string
@@ -293,6 +326,15 @@ class SchemaUtil {
       PropertyConfigProto::Cardinality::Code cardinality,
       std::string_view schema_type, std::string_view property_name);
 
+  // Validates the scorable_type of the given |property_config_proto|.
+  //
+  // Returns:
+  //   INVALID_ARGUMENT if any scorable_type is found to be set incorrectly.
+  //   OK on success
+  static libtextclassifier3::Status ValidateScorableType(
+      std::string_view schema_type,
+      const PropertyConfigProto& property_config_proto);
+
   // Checks that the 'string_indexing_config' satisfies the following rules:
   //   1. Only STRING data types can be indexed
   //   2. An indexed property must have a valid tokenizer type
@@ -319,7 +361,8 @@ class SchemaUtil {
       const JoinableConfig& config,
       PropertyConfigProto::DataType::Code data_type,
       PropertyConfigProto::Cardinality::Code cardinality,
-      std::string_view schema_type, std::string_view property_name);
+      std::string_view schema_type, std::string_view property_name,
+      const FeatureFlags& feature_flags);
 
   // Checks that the 'document_indexing_config' satisfies the following rule:
   //    1. If indexable_nested_properties is non-empty, index_nested_properties

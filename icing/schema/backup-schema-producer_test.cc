@@ -14,10 +14,12 @@
 
 #include "icing/schema/backup-schema-producer.h"
 
+#include <memory>
 #include <string>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/schema.pb.h"
@@ -26,7 +28,6 @@
 #include "icing/schema/schema-util.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
-#include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -39,12 +40,13 @@ using ::testing::Eq;
 using ::testing::Pointee;
 using ::testing::SizeIs;
 
-class BackupSchemaProducerTest : public ::testing::Test {
+class BackupSchemaProducerTest : public ::testing::TestWithParam<FeatureFlags> {
  protected:
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/icing";
     schema_store_dir_ = test_dir_ + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    feature_flags_ = std::make_unique<FeatureFlags>(GetParam());
   }
 
   void TearDown() override {
@@ -54,9 +56,10 @@ class BackupSchemaProducerTest : public ::testing::Test {
   Filesystem filesystem_;
   std::string test_dir_;
   std::string schema_store_dir_;
+  std::unique_ptr<FeatureFlags> feature_flags_;
 };
 
-TEST_F(BackupSchemaProducerTest, EmptySchema) {
+TEST_P(BackupSchemaProducerTest, EmptySchema) {
   SchemaProto empty;
   SchemaUtil::TypeConfigMap type_config_map;
   SchemaUtil::BuildTypeConfigMap(empty, &type_config_map);
@@ -68,14 +71,14 @@ TEST_F(BackupSchemaProducerTest, EmptySchema) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(empty,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(false));
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(empty, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(false));
 }
 
-TEST_F(BackupSchemaProducerTest, NoIndexedPropertySchema) {
+TEST_P(BackupSchemaProducerTest, NoIndexedPropertySchema) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -114,14 +117,14 @@ TEST_F(BackupSchemaProducerTest, NoIndexedPropertySchema) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(false));
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(false));
 }
 
-TEST_F(BackupSchemaProducerTest, RollbackCompatibleSchema) {
+TEST_P(BackupSchemaProducerTest, RollbackCompatibleSchema) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -162,14 +165,14 @@ TEST_F(BackupSchemaProducerTest, RollbackCompatibleSchema) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(false));
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(false));
 }
 
-TEST_F(BackupSchemaProducerTest, RemoveRfc822) {
+TEST_P(BackupSchemaProducerTest, RemoveRfc822) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
@@ -190,12 +193,11 @@ TEST_F(BackupSchemaProducerTest, RemoveRfc822) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
   SchemaProto expected_backup =
       SchemaBuilder()
@@ -205,10 +207,11 @@ TEST_F(BackupSchemaProducerTest, RemoveRfc822) {
                   .SetCardinality(CARDINALITY_OPTIONAL)
                   .SetDataType(TYPE_STRING)))
           .Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
 
-TEST_F(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
+TEST_P(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
   PropertyConfigBuilder indexed_string_property_builder =
       PropertyConfigBuilder()
           .SetCardinality(CARDINALITY_OPTIONAL)
@@ -251,12 +254,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
   PropertyConfigBuilder unindexed_string_property_builder =
       PropertyConfigBuilder()
@@ -287,10 +289,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
           .AddProperty(unindexed_string_property_builder.SetName("prop19"))
           .Build();
   SchemaProto expected_backup = SchemaBuilder().AddType(expected_type).Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
 
-TEST_F(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
+TEST_P(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
   PropertyConfigBuilder indexed_int_property_builder =
       PropertyConfigBuilder()
           .SetCardinality(CARDINALITY_OPTIONAL)
@@ -333,12 +336,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
   PropertyConfigBuilder unindexed_int_property_builder =
       PropertyConfigBuilder()
@@ -369,10 +371,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
           .AddProperty(unindexed_int_property_builder.SetName("prop19"))
           .Build();
   SchemaProto expected_backup = SchemaBuilder().AddType(expected_type).Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
 
-TEST_F(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
+TEST_P(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
   PropertyConfigBuilder indexed_string_property_builder =
       PropertyConfigBuilder()
           .SetCardinality(CARDINALITY_OPTIONAL)
@@ -418,12 +421,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
   PropertyConfigProto unindexed_document_property =
       PropertyConfigBuilder()
@@ -441,10 +443,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
           .Build();
   SchemaProto expected_backup =
       SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
 
-TEST_F(
+TEST_P(
     BackupSchemaProducerTest,
     MakeExtraDocumentIndexedPropertiesWithIndexableNestedPropertiesListUnindexed) {
   PropertyConfigBuilder indexed_string_property_builder =
@@ -504,12 +507,11 @@ TEST_F(
   ASSERT_THAT(schema_type_manager->section_manager().GetMetadataList("TypeA"),
               IsOkAndHolds(Pointee(SizeIs(18))));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
   PropertyConfigProto unindexed_document_property =
       PropertyConfigBuilder()
@@ -531,14 +533,17 @@ TEST_F(
           .Build();
   SchemaProto expected_backup =
       SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
 
-TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
+TEST_P(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
   PropertyConfigBuilder indexed_string_property_builder =
       PropertyConfigBuilder()
           .SetCardinality(CARDINALITY_OPTIONAL)
           .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  // Create a type with 16 indexed properties, one of which is an RFC822
+  // property.
   SchemaTypeConfigProto typeA =
       SchemaTypeConfigBuilder()
           .SetType("TypeA")
@@ -547,6 +552,7 @@ TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
           .AddProperty(indexed_string_property_builder.SetName("prop2"))
           .AddProperty(indexed_string_property_builder.SetName("prop3"))
           .AddProperty(indexed_string_property_builder.SetName("prop4"))
+          // "propRfc" takes the place of "prop5".
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("propRfc")
@@ -579,13 +585,14 @@ TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
       SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
+  // The RFC822 property should have been marked as unindexed first. This would
+  // leave only 15 indexed properties which is under the old limit of 16.
   SchemaTypeConfigProto expected_typeA =
       SchemaTypeConfigBuilder()
           .SetType("TypeA")
@@ -611,10 +618,11 @@ TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
           .AddProperty(indexed_string_property_builder.SetName("prop16"))
           .Build();
   SchemaProto expected_backup = SchemaBuilder().AddType(expected_typeA).Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
 
-TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
+TEST_P(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
   PropertyConfigBuilder indexed_string_property_builder =
       PropertyConfigBuilder()
           .SetCardinality(CARDINALITY_OPTIONAL)
@@ -677,12 +685,11 @@ TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
   ASSERT_THAT(schema_type_manager->section_manager().GetMetadataList("TypeA"),
               IsOkAndHolds(Pointee(SizeIs(26))));
 
+  BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
-      BackupSchemaProducer backup_producer,
-      BackupSchemaProducer::Create(schema,
-                                   schema_type_manager->section_manager()));
-  EXPECT_THAT(backup_producer.is_backup_necessary(), Eq(true));
-  SchemaProto backup = std::move(backup_producer).Produce();
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
 
   PropertyConfigBuilder unindexed_string_property_builder =
       PropertyConfigBuilder()
@@ -728,8 +735,228 @@ TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
           .Build();
   SchemaProto expected_backup =
       SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();
-  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
 }
+
+TEST_P(BackupSchemaProducerTest,
+       EmbeddingBackupDisabledDoesNotRemoveEmbeddingProperty) {
+  if (feature_flags_->enable_embedding_backup_generation()) {
+    GTEST_SKIP() << "enable_embedding_backup_generation is enabled. Skipping.";
+  }
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("prop1")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeVector(EmbeddingIndexingConfig::
+                                         EmbeddingIndexingType::LINEAR_SEARCH)))
+          .Build();
+
+  SchemaUtil::TypeConfigMap type_config_map;
+  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
+                                                 /*maximum_size_bytes=*/10000));
+  ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+
+  BackupSchemaProducer backup_producer(feature_flags_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(false));
+}
+
+TEST_P(BackupSchemaProducerTest, RemoveEmbeddingProperty) {
+  if (!feature_flags_->enable_embedding_backup_generation()) {
+    GTEST_SKIP() << "enable_embedding_backup_generation is disabled. Skipping.";
+  }
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("prop1")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeVector(EmbeddingIndexingConfig::
+                                         EmbeddingIndexingType::LINEAR_SEARCH)))
+          .Build();
+
+  SchemaUtil::TypeConfigMap type_config_map;
+  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
+                                                 /*maximum_size_bytes=*/10000));
+  ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+
+  BackupSchemaProducer backup_producer(feature_flags_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
+
+  // The Embedding Property should have been removed from the backup schema.
+  SchemaProto expected_backup =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA"))
+          .Build();
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
+}
+
+// Even REQUIRED embedding properties should be removed.
+TEST_P(BackupSchemaProducerTest, RemoveRequiredEmbeddingProperty) {
+  if (!feature_flags_->enable_embedding_backup_generation()) {
+    GTEST_SKIP() << "enable_embedding_backup_generation is disabled. Skipping.";
+  }
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("prop1")
+                  .SetCardinality(CARDINALITY_REQUIRED)
+                  .SetDataTypeVector(EmbeddingIndexingConfig::
+                                         EmbeddingIndexingType::LINEAR_SEARCH)))
+          .Build();
+
+  SchemaUtil::TypeConfigMap type_config_map;
+  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
+                                                 /*maximum_size_bytes=*/10000));
+  ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+
+  BackupSchemaProducer backup_producer(feature_flags_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
+
+  // The Embedding Property should have been removed from the backup schema.
+  SchemaProto expected_backup =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA"))
+          .Build();
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
+}
+
+// Embedding properties consume an indexed property id. We should remove them
+// first to minimize the number of indexed properties that we have to mark as
+// unindexed.
+TEST_P(BackupSchemaProducerTest, RemoveEmbeddingPropertyFirst) {
+  if (!feature_flags_->enable_embedding_backup_generation()) {
+    GTEST_SKIP() << "enable_embedding_backup_generation is disabled. Skipping.";
+  }
+
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  // Create a type with 16 indexed properties, one of which is an embedding
+  // property.
+  SchemaTypeConfigProto typeA =
+      SchemaTypeConfigBuilder()
+          .SetType("TypeA")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(indexed_string_property_builder.SetName("prop1"))
+          .AddProperty(indexed_string_property_builder.SetName("prop2"))
+          .AddProperty(indexed_string_property_builder.SetName("prop3"))
+          .AddProperty(indexed_string_property_builder.SetName("prop4"))
+          // "propEmbed" takes the place of "prop5".
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propEmbed")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeVector(EmbeddingIndexingConfig::
+                                         EmbeddingIndexingType::LINEAR_SEARCH))
+          .AddProperty(indexed_string_property_builder.SetName("prop6"))
+          .AddProperty(indexed_string_property_builder.SetName("prop7"))
+          .AddProperty(indexed_string_property_builder.SetName("prop8"))
+          .AddProperty(indexed_string_property_builder.SetName("prop9"))
+          .AddProperty(indexed_string_property_builder.SetName("prop10"))
+          .AddProperty(indexed_string_property_builder.SetName("prop11"))
+          .AddProperty(indexed_string_property_builder.SetName("prop12"))
+          .AddProperty(indexed_string_property_builder.SetName("prop13"))
+          .AddProperty(indexed_string_property_builder.SetName("prop14"))
+          .AddProperty(indexed_string_property_builder.SetName("prop15"))
+          .AddProperty(indexed_string_property_builder.SetName("prop16"))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(typeA).Build();
+
+  SchemaUtil::TypeConfigMap type_config_map;
+  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
+                                                 /*maximum_size_bytes=*/10000));
+  ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+
+  BackupSchemaProducer backup_producer(feature_flags_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      BackupSchemaProducer::BackupSchemaResult result,
+      backup_producer.Produce(schema, schema_type_manager->section_manager()));
+  EXPECT_THAT(result.backup_schema_produced, Eq(true));
+
+  // The Embedding Property should have been removed from the backup schema.
+  // This would leave only 15 indexed properties which is under the old limit of
+  // 16. All remaining properties should remain indexed.
+  SchemaTypeConfigProto expected_typeA =
+      SchemaTypeConfigBuilder()
+          .SetType("TypeA")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(indexed_string_property_builder.SetName("prop1"))
+          .AddProperty(indexed_string_property_builder.SetName("prop2"))
+          .AddProperty(indexed_string_property_builder.SetName("prop3"))
+          .AddProperty(indexed_string_property_builder.SetName("prop4"))
+          .AddProperty(indexed_string_property_builder.SetName("prop6"))
+          .AddProperty(indexed_string_property_builder.SetName("prop7"))
+          .AddProperty(indexed_string_property_builder.SetName("prop8"))
+          .AddProperty(indexed_string_property_builder.SetName("prop9"))
+          .AddProperty(indexed_string_property_builder.SetName("prop10"))
+          .AddProperty(indexed_string_property_builder.SetName("prop11"))
+          .AddProperty(indexed_string_property_builder.SetName("prop12"))
+          .AddProperty(indexed_string_property_builder.SetName("prop13"))
+          .AddProperty(indexed_string_property_builder.SetName("prop14"))
+          .AddProperty(indexed_string_property_builder.SetName("prop15"))
+          .AddProperty(indexed_string_property_builder.SetName("prop16"))
+          .Build();
+  SchemaProto expected_backup = SchemaBuilder().AddType(expected_typeA).Build();
+  EXPECT_THAT(result.backup_schema,
+              portable_equals_proto::EqualsProto(expected_backup));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BackupSchemaProducerTest, BackupSchemaProducerTest,
+    testing::Values(FeatureFlags(/*allow_circular_schema_definitions=*/true,
+                                 /*enable_scorable_properties=*/true,
+                                 /*enable_embedding_quantization=*/true,
+                                 /*enable_repeated_field_joins=*/true,
+                                 /*enable_embedding_backup_generation=*/false,
+                                 /*enable_schema_database=*/true),
+                    FeatureFlags(/*allow_circular_schema_definitions=*/true,
+                                 /*enable_scorable_properties=*/true,
+                                 /*enable_embedding_quantization=*/true,
+                                 /*enable_repeated_field_joins=*/true,
+                                 /*enable_embedding_backup_generation=*/true,
+                                 /*enable_schema_database=*/true)));
 
 }  // namespace
 

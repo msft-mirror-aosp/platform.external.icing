@@ -48,9 +48,34 @@ constexpr Feature kVerbatimSearchFeature =
 constexpr Feature kListFilterQueryLanguageFeature =
     "LIST_FILTER_QUERY_LANGUAGE";  // Features#LIST_FILTER_QUERY_LANGUAGE
 
+// This feature relates to the use of the "hasProperty(property_path)" function.
+constexpr Feature kHasPropertyFunctionFeature =
+    "HAS_PROPERTY_FUNCTION";  // Features#HAS_PROPERTY_FUNCTION
+
+// This feature relates to the use of embedding searches in the advanced query
+// language. Ex. `semanticSearch(getEmbeddingParameter(0), 0.5, 1, "COSINE")`.
+//
+// Deprecated: This feature is not necessary. The availability of this feature
+// is already controlled by the existence of the embedding_query_vectors in the
+// SearchSpecProto. This API was never publicly released in Jetpack or Android,
+// so it should be safe to delete once all google3 references are removed.
+constexpr Feature kEmbeddingSearchFeatureDeprecated =
+    "EMBEDDING_SEARCH";  // Features#EMBEDDING_SEARCH
+
+// This feature relates to the use of the
+// "matchScoreExpression(scoring_expression, low, high)" function.
+//
+// Features#MATCH_SCORE_EXPRESSION_FUNCTION
+constexpr Feature kMatchScoreExpressionFunctionFeature =
+    "MATCH_SCORE_EXPRESSION_FUNCTION";
+
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
-  return {kNumericSearchFeature, kVerbatimSearchFeature,
-          kListFilterQueryLanguageFeature};
+  return {kNumericSearchFeature,
+          kVerbatimSearchFeature,
+          kListFilterQueryLanguageFeature,
+          kHasPropertyFunctionFeature,
+          kEmbeddingSearchFeatureDeprecated,
+          kMatchScoreExpressionFunctionFeature};
 }
 
 }  // namespace lib

@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <limits>
+
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
@@ -24,13 +27,15 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "unicode/uloc.h"
 
@@ -72,10 +77,11 @@ using ::testing::SizeIs;
 void BM_SnippetOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string schema_dir = base_dir + "/schema";
   Filesystem filesystem;
@@ -87,11 +93,10 @@ void BM_SnippetOneProperty(benchmark::State& state) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
+  NormalizerOptions normalizer_options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
   std::unique_ptr<Normalizer> normalizer =
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max())
-          .ValueOrDie();
-
+      normalizer_factory::Create(normalizer_options).ValueOrDie();
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type1").AddProperty(
@@ -103,10 +108,9 @@ void BM_SnippetOneProperty(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   auto snippet_retriever =
       SnippetRetriever::Create(schema_store.get(), language_segmenter.get(),
@@ -201,10 +205,11 @@ BENCHMARK(BM_SnippetOneProperty)
 void BM_SnippetRfcOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
         GetTestFilePath("icing/icu.dat")));
   }
 
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string schema_dir = base_dir + "/schema";
   Filesystem filesystem;
@@ -216,10 +221,10 @@ void BM_SnippetRfcOneProperty(benchmark::State& state) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
+  NormalizerOptions normalizer_options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
   std::unique_ptr<Normalizer> normalizer =
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max())
-          .ValueOrDie();
+      normalizer_factory::Create(normalizer_options).ValueOrDie();
 
   SchemaProto schema =
       SchemaBuilder()
@@ -232,10 +237,9 @@ void BM_SnippetRfcOneProperty(benchmark::State& state) {
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, schema_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   auto snippet_retriever =
       SnippetRetriever::Create(schema_store.get(), language_segmenter.get(),

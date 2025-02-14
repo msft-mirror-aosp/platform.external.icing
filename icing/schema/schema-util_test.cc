@@ -14,13 +14,15 @@
 
 #include "icing/schema/schema-util.h"
 
-#include <initializer_list>
-#include <string>
+#include <memory>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
@@ -45,7 +47,14 @@ constexpr char kEmailType[] = "EmailMessage";
 constexpr char kMessageType[] = "Text";
 constexpr char kPersonType[] = "Person";
 
-class SchemaUtilTest : public ::testing::TestWithParam<bool> {};
+class SchemaUtilTest : public ::testing::TestWithParam<FeatureFlags> {
+ protected:
+  void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetParam());
+  }
+
+  std::unique_ptr<FeatureFlags> feature_flags_;
+};
 
 TEST_P(SchemaUtilTest, DependentGraphAlphabeticalOrder) {
   // Create a schema with the following dependent relation:
@@ -124,7 +133,7 @@ TEST_P(SchemaUtilTest, DependentGraphAlphabeticalOrder) {
                            .AddType(type_f)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, testing::SizeIs(5));
   EXPECT_THAT(
       d_map["F"],
@@ -232,7 +241,7 @@ TEST_P(SchemaUtilTest, DependentGraphReverseAlphabeticalOrder) {
                            .AddType(type_a)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, testing::SizeIs(5));
   EXPECT_THAT(
       d_map["F"],
@@ -339,7 +348,7 @@ TEST_P(SchemaUtilTest, DependentGraphMixedOrder) {
                            .AddType(type_d)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, testing::SizeIs(5));
   EXPECT_THAT(
       d_map["F"],
@@ -392,13 +401,13 @@ TEST_P(SchemaUtilTest, TopLevelCycleIndexableTrueInvalid) {
           .Build();
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
 
 TEST_P(SchemaUtilTest, TopLevelCycleIndexableFalseNotJoinableOK) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -429,7 +438,7 @@ TEST_P(SchemaUtilTest, TopLevelCycleIndexableFalseNotJoinableOK) {
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
   // Assert Validate status is OK and check dependent map
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(1));
   EXPECT_THAT(d_map["B"],
               UnorderedElementsAre(
@@ -473,13 +482,13 @@ TEST_P(SchemaUtilTest, MultiLevelCycleIndexableTrueInvalid) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs((libtextclassifier3::StatusCode::INVALID_ARGUMENT),
                        HasSubstr("Invalid cycle")));
 }
 
 TEST_P(SchemaUtilTest, MultiLevelCycleIndexableFalseNotJoinableOK) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -517,12 +526,12 @@ TEST_P(SchemaUtilTest, MultiLevelCycleIndexableFalseNotJoinableOK) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::OK));
 }
 
 TEST_P(SchemaUtilTest, MultiLevelCycleDependentMapOk) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -564,7 +573,7 @@ TEST_P(SchemaUtilTest, MultiLevelCycleDependentMapOk) {
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
   // Assert Validate status is OK and check dependent map
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(3));
   EXPECT_THAT(
       d_map["A"],
@@ -636,13 +645,13 @@ TEST_P(SchemaUtilTest, NestedCycleIndexableTrueInvalid) {
                            .AddType(type_c)
                            .AddType(type_d)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
 
 TEST_P(SchemaUtilTest, NestedCycleIndexableFalseNotJoinableOK) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -705,7 +714,7 @@ TEST_P(SchemaUtilTest, NestedCycleIndexableFalseNotJoinableOK) {
                            .Build();
   // Assert Validate status is OK and check dependent map
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(3));
   EXPECT_THAT(d_map["B"],
               UnorderedElementsAre(
@@ -780,7 +789,7 @@ TEST_P(SchemaUtilTest, MultiplePathsAnyPathContainsCycleIsInvalid) {
                            .AddType(type_c)
                            .AddType(type_b)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -850,12 +859,12 @@ TEST_P(SchemaUtilTest, MultipleCycles_anyCycleIndexableTrueInvalid) {
                            .AddType(type_b)
                            .AddType(type_a)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_P(SchemaUtilTest, CycleWithSameTypedProps_allPropsIndexableFalseIsOK) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -892,7 +901,7 @@ TEST_P(SchemaUtilTest, CycleWithSameTypedProps_allPropsIndexableFalseIsOK) {
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
   // Assert Validate status is OK and check dependent map
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(2));
   EXPECT_THAT(
       d_map["A"],
@@ -938,7 +947,7 @@ TEST_P(SchemaUtilTest, CycleWithSameTypedProps_anyPropIndexableTrueIsInvalid) {
           .Build();
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -986,13 +995,13 @@ TEST_P(SchemaUtilTest, CycleWithJoinablePropertyNotAllowed) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
 
 TEST_P(SchemaUtilTest, NonNestedJoinablePropOutsideCycleOK) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -1039,7 +1048,7 @@ TEST_P(SchemaUtilTest, NonNestedJoinablePropOutsideCycleOK) {
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
   // Assert Validate status is OK and check dependent map
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(2));
   EXPECT_THAT(d_map["B"],
               UnorderedElementsAre(
@@ -1114,7 +1123,7 @@ TEST_P(SchemaUtilTest, DirectNestedJoinablePropOutsideCycleNotAllowed) {
                            .AddType(type_c)
                            .AddType(type_d)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -1187,7 +1196,7 @@ TEST_P(SchemaUtilTest, TransitiveNestedJoinablePropOutsideCycleNotAllowed) {
                            .AddType(type_d)
                            .AddType(type_e)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -1261,7 +1270,7 @@ TEST_P(SchemaUtilTest,
                            .AddType(type_d)
                            .AddType(type_e)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -1357,7 +1366,7 @@ TEST_P(SchemaUtilTest, ComplexCycleWithJoinablePropertyNotAllowed) {
                            .AddType(type_e)
                            .AddType(type_f)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -1449,13 +1458,13 @@ TEST_P(SchemaUtilTest, ComplexCycleWithIndexableTrueNotAllowed) {
                            .AddType(type_e)
                            .AddType(type_f)
                            .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
 
 TEST_P(SchemaUtilTest, InheritanceAndNestedTypeRelations_noCycle) {
-  if (GetParam() != true) {
+  if (GetParam().allow_circular_schema_definitions() != true) {
     GTEST_SKIP() << "This is an invalid cycle if circular schema definitions "
                     "are not allowed.";
   }
@@ -1524,7 +1533,7 @@ TEST_P(SchemaUtilTest, InheritanceAndNestedTypeRelations_noCycle) {
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(3));
   // Both A-B and A-C are inheritance relations.
   EXPECT_THAT(d_map["A"],
@@ -1617,7 +1626,7 @@ TEST_P(SchemaUtilTest, InheritanceAndNestedTypeRelations_nestedTypeCycle) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -1683,7 +1692,7 @@ TEST_P(SchemaUtilTest, InheritanceAndNestedTypeRelations_inheritanceCycle) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("inherits from itself")));
 }
@@ -1721,7 +1730,7 @@ TEST_P(SchemaUtilTest, NonExistentType) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1762,7 +1771,7 @@ TEST_P(SchemaUtilTest, SingleTypeIsBothDirectAndIndirectDependent) {
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(2));
   EXPECT_THAT(d_map["A"],
               UnorderedElementsAre(
@@ -1789,7 +1798,7 @@ TEST_P(SchemaUtilTest, SimpleInheritance) {
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(1));
   EXPECT_THAT(d_map["A"], UnorderedElementsAre(Pair("B", IsEmpty())));
 
@@ -1820,7 +1829,7 @@ TEST_P(SchemaUtilTest, SingleInheritanceTypeIsBothDirectAndIndirectChild) {
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(2));
   EXPECT_THAT(d_map["A"],
               UnorderedElementsAre(Pair("B", IsEmpty()), Pair("C", IsEmpty())));
@@ -1865,7 +1874,7 @@ TEST_P(SchemaUtilTest, ComplexInheritance) {
                            .AddType(type_f)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(3));
   EXPECT_THAT(d_map["A"],
               UnorderedElementsAre(Pair("B", IsEmpty()), Pair("C", IsEmpty()),
@@ -1902,7 +1911,7 @@ TEST_P(SchemaUtilTest, InheritanceCycle) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1911,7 +1920,7 @@ TEST_P(SchemaUtilTest, SelfInheritance) {
       SchemaTypeConfigBuilder().SetType("A").AddParentType("A").Build();
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1927,7 +1936,7 @@ TEST_P(SchemaUtilTest, NonExistentParentType) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1951,7 +1960,7 @@ TEST_P(SchemaUtilTest, SimpleInheritanceWithNestedType) {
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(2));
   // Nested-type dependency and inheritance dependencies are not transitive.
   EXPECT_THAT(d_map["A"], UnorderedElementsAre(Pair("B", IsEmpty())));
@@ -2023,7 +2032,7 @@ TEST_P(SchemaUtilTest, ComplexInheritanceWithNestedType) {
                            .AddType(type_f)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(3));
   EXPECT_THAT(
       d_map["A"],
@@ -2065,13 +2074,13 @@ TEST_P(SchemaUtilTest, InheritanceWithNestedTypeCycle) {
       SchemaTypeConfigBuilder().SetType("B").AddParentType("A").Build();
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_P(SchemaUtilTest, EmptySchemaProtoIsValid) {
   SchemaProto schema;
-  ICING_ASSERT_OK(SchemaUtil::Validate(schema, GetParam()));
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema, *feature_flags_));
 }
 
 TEST_P(SchemaUtilTest, Valid_Nested) {
@@ -2097,7 +2106,7 @@ TEST_P(SchemaUtilTest, Valid_Nested) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  ICING_ASSERT_OK(SchemaUtil::Validate(schema, GetParam()));
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema, *feature_flags_));
 }
 
 TEST_P(SchemaUtilTest, ClearedPropertyConfigsIsValid) {
@@ -2106,13 +2115,13 @@ TEST_P(SchemaUtilTest, ClearedPropertyConfigsIsValid) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType(kEmailType))
           .Build();
-  ICING_ASSERT_OK(SchemaUtil::Validate(schema, GetParam()));
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema, *feature_flags_));
 }
 
 TEST_P(SchemaUtilTest, ClearedSchemaTypeIsInvalid) {
   SchemaProto schema =
       SchemaBuilder().AddType(SchemaTypeConfigBuilder()).Build();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2120,7 +2129,7 @@ TEST_P(SchemaUtilTest, EmptySchemaTypeIsInvalid) {
   SchemaProto schema =
       SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("")).Build();
 
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2130,7 +2139,7 @@ TEST_P(SchemaUtilTest, AnySchemaTypeOk) {
                                "abc123!@#$%^&*()_-+=[{]}|\\;:'\",<.>?你好"))
                            .Build();
 
-  ICING_ASSERT_OK(SchemaUtil::Validate(schema, GetParam()));
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema, *feature_flags_));
 }
 
 TEST_P(SchemaUtilTest, ClearedPropertyNameIsInvalid) {
@@ -2144,7 +2153,7 @@ TEST_P(SchemaUtilTest, ClearedPropertyNameIsInvalid) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   schema.mutable_types(0)->mutable_properties(0)->clear_property_name();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2159,7 +2168,7 @@ TEST_P(SchemaUtilTest, EmptyPropertyNameIsInvalid) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2174,7 +2183,7 @@ TEST_P(SchemaUtilTest, NonAlphanumericPropertyNameIsInvalid) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2189,7 +2198,7 @@ TEST_P(SchemaUtilTest, AlphanumericPropertyNameOk) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  ICING_ASSERT_OK(SchemaUtil::Validate(schema, GetParam()));
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema, *feature_flags_));
 }
 
 TEST_P(SchemaUtilTest, DuplicatePropertyNameIsInvalid) {
@@ -2206,7 +2215,7 @@ TEST_P(SchemaUtilTest, DuplicatePropertyNameIsInvalid) {
                                         .SetDataType(TYPE_STRING)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::ALREADY_EXISTS));
 }
 
@@ -2221,7 +2230,7 @@ TEST_P(SchemaUtilTest, ClearedDataTypeIsInvalid) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   schema.mutable_types(0)->mutable_properties(0)->clear_data_type();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2237,7 +2246,7 @@ TEST_P(SchemaUtilTest, UnknownDataTypeIsInvalid) {
                           .SetDataType(PropertyConfigProto::DataType::UNKNOWN)
                           .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2252,7 +2261,7 @@ TEST_P(SchemaUtilTest, ClearedCardinalityIsInvalid) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   schema.mutable_types(0)->mutable_properties(0)->clear_cardinality();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2266,7 +2275,7 @@ TEST_P(SchemaUtilTest, UnknownCardinalityIsInvalid) {
                                         .SetDataType(TYPE_STRING)
                                         .SetCardinality(CARDINALITY_UNKNOWN)))
           .Build();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2280,7 +2289,7 @@ TEST_P(SchemaUtilTest, ClearedPropertySchemaTypeIsInvalid) {
                                         .SetDataType(TYPE_DOCUMENT)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2297,7 +2306,7 @@ TEST_P(SchemaUtilTest, Invalid_EmptyPropertySchemaType) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -2314,7 +2323,7 @@ TEST_P(SchemaUtilTest, NoMatchingSchemaTypeIsInvalid) {
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  ASSERT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  ASSERT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Undefined 'schema_type'")));
 }
@@ -2351,7 +2360,8 @@ TEST_P(SchemaUtilTest, NewOptionalPropertyIsCompatible) {
   schema_delta.schema_types_changed_fully_compatible.insert(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  old_schema, new_schema_with_optional, no_dependents_map),
+                  old_schema, new_schema_with_optional, no_dependents_map,
+                  *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2387,7 +2397,8 @@ TEST_P(SchemaUtilTest, NewRequiredPropertyIsIncompatible) {
   schema_delta.schema_types_incompatible.emplace(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  old_schema, new_schema_with_required, no_dependents_map),
+                  old_schema, new_schema_with_required, no_dependents_map,
+                  *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2422,8 +2433,8 @@ TEST_P(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2456,7 +2467,8 @@ TEST_P(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/less_restrictive_schema,
-                  /*new_schema=*/more_restrictive_schema, no_dependents_map),
+                  /*new_schema=*/more_restrictive_schema, no_dependents_map,
+                  *feature_flags_),
               Eq(incompatible_schema_delta));
 
   // We can have the new schema be less restrictive, OPTIONAL->REPEATED;
@@ -2465,7 +2477,8 @@ TEST_P(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
       kEmailType);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/more_restrictive_schema,
-                  /*new_schema=*/less_restrictive_schema, no_dependents_map),
+                  /*new_schema=*/less_restrictive_schema, no_dependents_map,
+                  *feature_flags_),
               Eq(compatible_schema_delta));
 }
 
@@ -2495,8 +2508,8 @@ TEST_P(SchemaUtilTest, DifferentDataTypeIsIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2557,11 +2570,119 @@ TEST_P(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   SchemaUtil::DependentMap dependents_map = {
       {kMessageType, {{kEmailType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
-      old_schema, new_schema, dependents_map);
+      old_schema, new_schema, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
   EXPECT_THAT(actual.schema_types_incompatible,
               testing::ElementsAre(kEmailType));
   EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfRequiredFieldsCanBeIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property1")
+                               .SetDataType(TYPE_STRING)
+                               // Changing required to optional should be fine
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property2")
+                               .SetDataType(TYPE_STRING)
+                               // Adding a new required property is incompatible
+                               .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
+  EXPECT_THAT(delta.schema_types_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
+  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_index_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
+  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_join_incompatible,
+              testing::ElementsAre(kEmailType));
 }
 
 TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
@@ -2596,13 +2717,13 @@ TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_unindexed_property, schema_with_indexed_property,
-                  no_dependents_map),
+                  no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 
   // New schema lost an indexed string property.
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_indexed_property, schema_with_unindexed_property,
-                  no_dependents_map),
+                  no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2639,8 +2760,8 @@ TEST_P(SchemaUtilTest, AddingNewIndexedStringPropertyMakesIndexIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2676,8 +2797,8 @@ TEST_P(SchemaUtilTest,
           .Build();
 
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map)
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_)
                   .schema_types_index_incompatible,
               IsEmpty());
 }
@@ -2712,13 +2833,13 @@ TEST_P(SchemaUtilTest, ChangingIndexedIntegerPropertiesMakesIndexIncompatible) {
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_unindexed_property, schema_with_indexed_property,
-                  no_dependents_map),
+                  no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 
   // New schema lost an indexed integer property.
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_indexed_property, schema_with_unindexed_property,
-                  no_dependents_map),
+                  no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2752,8 +2873,8 @@ TEST_P(SchemaUtilTest, AddingNewIndexedIntegerPropertyMakesIndexIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -2786,8 +2907,162 @@ TEST_P(SchemaUtilTest,
           .Build();
 
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map)
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_)
+                  .schema_types_index_incompatible,
+              IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
+  SchemaProto schema_with_indexed_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto schema_with_unindexed_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property")
+                               .SetDataTypeVector(EMBEDDING_INDEXING_UNKNOWN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+
+  // New schema gained a new indexed vector property.
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_unindexed_property, schema_with_indexed_property,
+                  no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+
+  // New schema lost an indexed vector property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_indexed_property, schema_with_unindexed_property,
+                  no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, ChangingQuantizationTypeMakesIndexIncompatible) {
+  SchemaProto schema_with_unquantized_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto schema_with_quantized_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(
+      SchemaUtil::ComputeCompatibilityDelta(schema_with_quantized_property,
+                                            schema_with_unquantized_property,
+                                            no_dependents_map, *feature_flags_),
+      Eq(schema_delta));
+
+  EXPECT_THAT(
+      SchemaUtil::ComputeCompatibilityDelta(schema_with_unquantized_property,
+                                            schema_with_quantized_property,
+                                            no_dependents_map, *feature_flags_),
+      Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, AddingNewIndexedVectorPropertyMakesIndexIncompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewEmbeddingProperty")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest,
+       AddingNewNonIndexedVectorPropertyShouldRemainIndexCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("NewProperty")
+                               .SetDataTypeVector(EMBEDDING_INDEXING_UNKNOWN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_)
                   .schema_types_index_incompatible,
               IsEmpty());
 }
@@ -2840,7 +3115,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
@@ -2897,7 +3172,7 @@ TEST_P(
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
@@ -2949,7 +3224,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
@@ -3013,12 +3288,11 @@ TEST_P(SchemaUtilTest, DeletingIndexedDocumentPropertyIsIncompatible) {
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
-TEST_P(SchemaUtilTest,
-       DeletingNonIndexedDocumentPropertyIsIncompatible) {
+TEST_P(SchemaUtilTest, DeletingNonIndexedDocumentPropertyIsIncompatible) {
   SchemaTypeConfigProto nested_schema =
       SchemaTypeConfigBuilder()
           .SetType(kEmailType)
@@ -3077,7 +3351,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
@@ -3149,7 +3423,7 @@ TEST_P(SchemaUtilTest, ChangingIndexedDocumentPropertyIsIncompatible) {
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
@@ -3220,7 +3494,7 @@ TEST_P(SchemaUtilTest, ChangingNonIndexedDocumentPropertyIsIncompatible) {
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta result_schema_delta =
       SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                            dependents_map);
+                                            dependents_map, *feature_flags_);
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
@@ -3254,16 +3528,18 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesMakesJoinIncompatible) {
 
   // New schema gained a new joinable property.
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  schema_with_non_joinable_property,
-                  schema_with_joinable_property, no_dependents_map),
-              Eq(expected_schema_delta));
+  EXPECT_THAT(
+      SchemaUtil::ComputeCompatibilityDelta(schema_with_non_joinable_property,
+                                            schema_with_joinable_property,
+                                            no_dependents_map, *feature_flags_),
+      Eq(expected_schema_delta));
 
   // New schema lost a joinable property.
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  schema_with_joinable_property,
-                  schema_with_non_joinable_property, no_dependents_map),
-              Eq(expected_schema_delta));
+  EXPECT_THAT(
+      SchemaUtil::ComputeCompatibilityDelta(schema_with_joinable_property,
+                                            schema_with_non_joinable_property,
+                                            no_dependents_map, *feature_flags_),
+      Eq(expected_schema_delta));
 }
 
 TEST_P(SchemaUtilTest, AddingNewJoinablePropertyMakesJoinIncompatible) {
@@ -3299,8 +3575,8 @@ TEST_P(SchemaUtilTest, AddingNewJoinablePropertyMakesJoinIncompatible) {
   SchemaUtil::SchemaDelta expected_schema_delta;
   expected_schema_delta.schema_types_join_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(expected_schema_delta));
 }
 
@@ -3335,10 +3611,44 @@ TEST_P(SchemaUtilTest, AddingNewNonJoinablePropertyShouldRemainJoinCompatible) {
           .Build();
 
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map)
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_)
                   .schema_types_join_incompatible,
               IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               DELETE_PROPAGATION_TYPE_NONE)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Configure new schema with delete propagation type PROPAGATE_FROM
+  SchemaProto new_schema_with_optional =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_changed_fully_compatible.insert("MyType");
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema_with_optional, no_dependents_map,
+                  *feature_flags_),
+              Eq(schema_delta));
 }
 
 TEST_P(SchemaUtilTest, AddingTypeIsCompatible) {
@@ -3376,8 +3686,8 @@ TEST_P(SchemaUtilTest, AddingTypeIsCompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_new.insert(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -3417,8 +3727,8 @@ TEST_P(SchemaUtilTest, DeletingTypeIsNoted) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_deleted.emplace(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependents_map),
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
 
@@ -3456,7 +3766,7 @@ TEST_P(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
   schema_delta.schema_types_index_incompatible.emplace(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
-      old_schema, new_schema, no_dependents_map);
+      old_schema, new_schema, no_dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -3504,14 +3814,16 @@ TEST_P(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   schema_delta.schema_types_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
-      no_nested_index_schema, nested_index_schema, dependents_map);
+      no_nested_index_schema, nested_index_schema, dependents_map,
+      *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 
   // Going from index_nested_properties=true to index_nested_properties=false
   // should also make kPersonType index_incompatible. kEmailType should be
   // unaffected.
   actual = SchemaUtil::ComputeCompatibilityDelta(
-      nested_index_schema, no_nested_index_schema, dependents_map);
+      nested_index_schema, no_nested_index_schema, dependents_map,
+      *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -3566,14 +3878,14 @@ TEST_P(SchemaUtilTest, AddOrDropIndexableNestedProperties_IndexIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
-  SchemaUtil::SchemaDelta actual =
-      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      schema_1, schema_2, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 
   // Adding some indexable_nested_properties should also make kPersonType
   // index_incompatible. kEmailType should be unaffected.
-  actual =
-      SchemaUtil::ComputeCompatibilityDelta(schema_2, schema_1, dependents_map);
+  actual = SchemaUtil::ComputeCompatibilityDelta(
+      schema_2, schema_1, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -3629,8 +3941,8 @@ TEST_P(SchemaUtilTest, ChangingIndexableNestedProperties_IndexIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
-  SchemaUtil::SchemaDelta actual =
-      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      schema_1, schema_2, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -3685,8 +3997,8 @@ TEST_P(SchemaUtilTest, IndexableNestedPropertiesFullSet_IndexIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
-  SchemaUtil::SchemaDelta actual =
-      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      schema_1, schema_2, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -3742,10 +4054,296 @@ TEST_P(SchemaUtilTest,
   // no effect on schema compatibility.
   SchemaUtil::SchemaDelta schema_delta;
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
-  SchemaUtil::SchemaDelta actual =
-      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      schema_1, schema_2, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
   EXPECT_THAT(actual.schema_types_index_incompatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SchemasWithConsistentScorableProperties) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("score")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_scorable_property_inconsistent,
+              UnorderedElementsAre());
+}
+
+TEST_P(SchemaUtilTest,
+       SchemaDeltaScorablePropertyInconsistent_SchemaTypeRemovedInNewSchema) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataType(TYPE_STRING)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("frequencyScore")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // New schema removes "person" type.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataType(TYPE_STRING)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_scorable_property_inconsistent,
+              UnorderedElementsAre());
+}
+
+TEST_P(SchemaUtilTest,
+       SchemaDeltaScorablePropertyInconsistent_SchemaTypeAddedInNewSchema) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataType(TYPE_STRING)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("frequencyScore")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // New schema adds "person" type.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataType(TYPE_STRING)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("frequencyScore")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("frequencyScore")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_scorable_property_inconsistent,
+              UnorderedElementsAre());
+}
+
+TEST_P(SchemaUtilTest,
+       SchemaDeltaScorablePropertyInconsistent_AddScorableProperties) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("title")
+                  .SetDataType(TYPE_STRING)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  // New schema adds "score" as scorable_type ENABLED from type "email".
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_scorable_property_inconsistent,
+              UnorderedElementsAre("email"));
+}
+
+TEST_P(SchemaUtilTest,
+       SchemaDeltaScorablePropertyInconsistent_RemovesAllScorableProperties) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // New schema marks "score" as scorable_type DISABLED from type "email".
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_DISABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_scorable_property_inconsistent,
+              UnorderedElementsAre("email"));
+}
+
+TEST_P(SchemaUtilTest,
+       SchemaDeltaScorablePropertyInconsistent_DifferentScorablePropertyNames) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score1")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score2")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score2")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("score3")
+                                        .SetDataType(TYPE_DOUBLE)
+                                        .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_scorable_property_inconsistent,
+              UnorderedElementsAre("email"));
+}
+
+TEST_P(SchemaUtilTest,
+       SchemaDeltaScorablePropertyInconsistent_ReportParentTypes) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("scoreA")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // The new schema's type 'person' has inconsistent scorable property with
+  // the old schema.
+  //
+  // The dependence map of the new schema:
+  //   personalContext -> gmail -> person
+  //   message -> person
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("scoreB")
+                  .SetDataType(TYPE_DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("sender")
+                  .SetDataTypeDocument("person",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("gmail").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("sender")
+                  .SetDataTypeDocument("person",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("personalContext")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("mailData")
+                                        .SetDataTypeDocument(
+                                            "gmail",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(
+      schema_delta.schema_types_scorable_property_inconsistent,
+      UnorderedElementsAre("person", "gmail", "personalContext", "message"));
 }
 
 TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
@@ -3759,7 +4357,7 @@ TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
           .Build();
 
   // Error if we don't set a term match type
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we set a term match type
@@ -3770,7 +4368,7 @@ TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
                        .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
@@ -3784,7 +4382,7 @@ TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
           .Build();
 
   // Error if we don't set a tokenizer type
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we set a tokenizer type
@@ -3795,7 +4393,7 @@ TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
                        .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
@@ -3807,12 +4405,12 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_INT64)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
   // Error if data type is not STRING for qualified id joinable value type.
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we set STRING as the data type.
@@ -3822,14 +4420,22 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
        ValidateJoinablePropertyShouldNotHaveRepeatedCardinality) {
+  // We need to explicitly override enable_repeated_field_joins to false.
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      GetParam().allow_circular_schema_definitions(),
+      /*enable_scorable_properties=*/true,
+      /*enable_embedding_quantization=*/true,
+      /*enable_repeated_field_joins=*/false,
+      /*enable_embedding_backup_generation=*/true,
+      /*enable_schema_database=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -3837,12 +4443,12 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
 
   // Error if using REPEATED cardinality for joinable property.
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we use OPTIONAL cardinality with joinable property.
@@ -3852,10 +4458,10 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_OPTIONAL)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 
   // Passes once we use REQUIRED cardinality with joinable property.
   schema = SchemaBuilder()
@@ -3864,10 +4470,10 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 
   // Passes once we use REPEATED cardinality with non-joinable property.
   schema = SchemaBuilder()
@@ -3876,10 +4482,35 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
+}
+
+TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
+  // We need to explicitly override enable_repeated_field_joins to true.
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      GetParam().allow_circular_schema_definitions(),
+      /*enable_scorable_properties=*/true,
+      /*enable_embedding_quantization=*/true,
+      /*enable_repeated_field_joins=*/true,
+      /*enable_embedding_backup_generation=*/true,
+      /*enable_schema_database=*/true);
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               DELETE_PROPAGATION_TYPE_NONE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Error if using REPEATED cardinality for joinable property.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
@@ -3891,13 +4522,13 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                               /*propagate_delete=*/true)
+                               DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
   // Error if enabling delete propagation with non qualified id joinable value
   // type.
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we set qualified id joinable value type with delete propagation
@@ -3908,10 +4539,10 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/true)
+                                    DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 
   // Passes once we disable delete propagation.
   schema = SchemaBuilder()
@@ -3920,10 +4551,10 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
@@ -3938,7 +4569,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -3953,7 +4584,7 @@ TEST_P(SchemaUtilTest,
                                        /*index_nested_properties=*/false)
                   .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we use non-REPEATED cardinality for "C.b", i.e. the dependency
@@ -3965,7 +4596,7 @@ TEST_P(SchemaUtilTest,
                        .SetName("Foo")
                        .SetDataType(TYPE_STRING)
                        .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                    /*propagate_delete=*/false)
+                                    DELETE_PROPAGATION_TYPE_NONE)
                        .SetCardinality(CARDINALITY_OPTIONAL)))
                .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
                    PropertyConfigBuilder()
@@ -3980,7 +4611,7 @@ TEST_P(SchemaUtilTest,
                                             /*index_nested_properties=*/false)
                        .SetCardinality(CARDINALITY_OPTIONAL)))
                .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(
@@ -3996,7 +4627,7 @@ TEST_P(
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("B")
@@ -4011,7 +4642,7 @@ TEST_P(
                                .SetName("Bar")
                                .SetDataType(TYPE_STRING)
                                .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                            /*propagate_delete=*/false)
+                                            DELETE_PROPAGATION_TYPE_NONE)
                                .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
               PropertyConfigBuilder()
@@ -4023,7 +4654,7 @@ TEST_P(
 
   // Passes since nested schema type with REPEATED cardinality doesn't have
   // joinable property.
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
@@ -4042,7 +4673,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("B")
@@ -4059,7 +4690,7 @@ TEST_P(SchemaUtilTest,
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we use non-REPEATED cardinality for "B.a2", i.e. the dependency
@@ -4076,7 +4707,7 @@ TEST_P(SchemaUtilTest,
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("B")
@@ -4093,7 +4724,7 @@ TEST_P(SchemaUtilTest,
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
@@ -4115,7 +4746,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4144,7 +4775,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 
   // Fails once we change any of edge to REPEATED cardinality.
   //           B
@@ -4163,7 +4794,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4192,7 +4823,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   //           B
@@ -4211,7 +4842,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4240,7 +4871,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   //           B
@@ -4259,7 +4890,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4288,7 +4919,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   //           B
@@ -4307,7 +4938,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                   .SetName("Foo")
                   .SetDataType(TYPE_STRING)
                   .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                               /*propagate_delete=*/false)
+                               DELETE_PROPAGATION_TYPE_NONE)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
               PropertyConfigBuilder()
@@ -4336,7 +4967,7 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -4371,7 +5002,7 @@ TEST_P(SchemaUtilTest,
       ->mutable_document_indexing_config()
       ->clear_indexable_nested_properties_list();
 
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
@@ -4405,7 +5036,7 @@ TEST_P(SchemaUtilTest,
       ->mutable_document_indexing_config()
       ->clear_indexable_nested_properties_list();
 
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest,
@@ -4435,7 +5066,7 @@ TEST_P(SchemaUtilTest,
   outerSchemaType->mutable_properties(0)
       ->mutable_document_indexing_config()
       ->set_index_nested_properties(false);
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest, InvalidDocumentIndexingConfigFields) {
@@ -4467,7 +5098,7 @@ TEST_P(SchemaUtilTest, InvalidDocumentIndexingConfigFields) {
       ->mutable_document_indexing_config()
       ->add_indexable_nested_properties_list("prop");
 
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -4491,7 +5122,7 @@ TEST_P(SchemaUtilTest, MultipleReferencesToSameNestedSchemaOk) {
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
 
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
 }
 
 TEST_P(SchemaUtilTest, InvalidSelfReference) {
@@ -4508,7 +5139,7 @@ TEST_P(SchemaUtilTest, InvalidSelfReference) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -4532,7 +5163,7 @@ TEST_P(SchemaUtilTest, InvalidSelfReferenceEvenWithOtherProperties) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -4564,7 +5195,7 @@ TEST_P(SchemaUtilTest, InvalidInfiniteLoopTwoDegrees) {
           .Build();
 
   // Two degrees of referencing: A -> B -> A
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -4605,7 +5236,7 @@ TEST_P(SchemaUtilTest, InvalidInfiniteLoopThreeDegrees) {
           .Build();
 
   // Three degrees of referencing: A -> B -> C -> A
-  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Invalid cycle")));
 }
@@ -4625,7 +5256,7 @@ TEST_P(SchemaUtilTest, ChildMissingOptionalAndRepeatedPropertiesNotOk) {
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema, GetParam()),
+      SchemaUtil::Validate(schema, *feature_flags_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("Property text is not present in child type")));
 }
@@ -4645,7 +5276,7 @@ TEST_P(SchemaUtilTest, ChildMissingRequiredPropertyNotOk) {
 
   SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema, GetParam()),
+      SchemaUtil::Validate(schema, *feature_flags_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("Property text is not present in child type")));
 }
@@ -4710,7 +5341,7 @@ TEST_P(SchemaUtilTest, ChildCompatiblePropertyOk) {
                            .AddType(artist_type)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(3));
   EXPECT_THAT(d_map["Message"],
               UnorderedElementsAre(Pair("ArtistMessage", IsEmpty())));
@@ -4776,7 +5407,7 @@ TEST_P(SchemaUtilTest, ChildIncompatibleCardinalityPropertyNotOk) {
                            .AddType(artist_type)
                            .Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema, GetParam()),
+      SchemaUtil::Validate(schema, *feature_flags_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("Property person from child type ArtistMessage is not "
                          "compatible to the parent type Message.")));
@@ -4832,7 +5463,7 @@ TEST_P(SchemaUtilTest, ChildIncompatibleDataTypePropertyNotOk) {
                            .AddType(artist_type)
                            .Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema, GetParam()),
+      SchemaUtil::Validate(schema, *feature_flags_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("Property text from child type ArtistMessage is not "
                          "compatible to the parent type Message.")));
@@ -4889,7 +5520,7 @@ TEST_P(SchemaUtilTest, ChildIncompatibleDocumentTypePropertyNotOk) {
                            .AddType(artist_type)
                            .Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema, GetParam()),
+      SchemaUtil::Validate(schema, *feature_flags_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("Property person from child type ArtistMessage is not "
                          "compatible to the parent type Message.")));
@@ -4947,7 +5578,7 @@ TEST_P(SchemaUtilTest, ChildCompatibleMultipleParentPropertyOk) {
                            .AddType(email_message_type)
                            .Build();
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
-                             SchemaUtil::Validate(schema, GetParam()));
+                             SchemaUtil::Validate(schema, *feature_flags_));
   EXPECT_THAT(d_map, SizeIs(2));
   EXPECT_THAT(d_map["Email"],
               UnorderedElementsAre(Pair("EmailMessage", IsEmpty())));
@@ -5003,7 +5634,7 @@ TEST_P(SchemaUtilTest, ChildIncompatibleMultipleParentPropertyNotOk) {
                             .AddType(email_message_type1)
                             .Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema1, GetParam()),
+      SchemaUtil::Validate(schema1, *feature_flags_),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr(
                    "Property sender is not present in child type EmailMessage, "
@@ -5032,7 +5663,7 @@ TEST_P(SchemaUtilTest, ChildIncompatibleMultipleParentPropertyNotOk) {
                             .AddType(email_message_type2)
                             .Build();
   EXPECT_THAT(
-      SchemaUtil::Validate(schema2, GetParam()),
+      SchemaUtil::Validate(schema2, *feature_flags_),
       StatusIs(
           libtextclassifier3::StatusCode::INVALID_ARGUMENT,
           HasSubstr(
@@ -5040,9 +5671,165 @@ TEST_P(SchemaUtilTest, ChildIncompatibleMultipleParentPropertyNotOk) {
               "but it is defined in the parent type Message.")));
 }
 
+TEST_P(SchemaUtilTest, ValidateScorableType_EnabledForSupportedDataTypes) {
+  SchemaTypeConfigProto type_int64 =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(SchemaBuilder().AddType(type_int64).Build(),
+                                   *feature_flags_),
+              StatusIs(libtextclassifier3::StatusCode::OK));
+
+  SchemaTypeConfigProto type_double =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetDataType(TYPE_DOUBLE))
+          .Build();
+
+  EXPECT_THAT(SchemaUtil::Validate(SchemaBuilder().AddType(type_double).Build(),
+                                   *feature_flags_),
+              StatusIs(libtextclassifier3::StatusCode::OK));
+
+  SchemaTypeConfigProto type_boolean =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetDataType(TYPE_BOOLEAN))
+          .Build();
+
+  EXPECT_THAT(
+      SchemaUtil::Validate(SchemaBuilder().AddType(type_boolean).Build(),
+                           *feature_flags_),
+      StatusIs(libtextclassifier3::StatusCode::OK));
+}
+
+TEST_P(SchemaUtilTest, ValidateScorableType_EnabledForUnsupportedDataTypes) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetDataType(TYPE_STRING))
+          .Build();
+  EXPECT_THAT(
+      SchemaUtil::Validate(SchemaBuilder().AddType(type_a).Build(),
+                           *feature_flags_),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("Field 'scorable_type' cannot be enabled for data "
+                         "type 'STRING' for schema property 'A.c'")));
+}
+
+TEST_P(SchemaUtilTest,
+       ValidateScorableType_CannotBeExplicitlyEnabledForDocumentType) {
+  SchemaTypeConfigProto message_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kMessageType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop")
+                           .SetDataType(TYPE_INT64)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetCardinality(CARDINALITY_REPEATED))
+          .Build();
+
+  SchemaTypeConfigProto type_document =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataTypeDocument(kMessageType,
+                                       /*index_nested_properties=*/true))
+          .Build();
+
+  EXPECT_THAT(
+      SchemaUtil::Validate(
+          SchemaBuilder().AddType(type_document).AddType(message_type).Build(),
+          *feature_flags_),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("Field 'scorable_type' shouldn't be explicitly "
+                         "set for data type DOCUMENT")));
+}
+
+TEST_P(SchemaUtilTest,
+       ValidateScorableType_CannotBeExplicitlyDisabledForDocumentType) {
+  SchemaTypeConfigProto message_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kMessageType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop")
+                           .SetDataType(TYPE_INT64)
+                           .SetScorableType(SCORABLE_TYPE_ENABLED)
+                           .SetCardinality(CARDINALITY_REPEATED))
+          .Build();
+
+  SchemaTypeConfigProto type_document =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetScorableType(SCORABLE_TYPE_DISABLED)
+                  .SetDataTypeDocument(kMessageType,
+                                       /*index_nested_properties=*/true))
+          .Build();
+
+  EXPECT_THAT(
+      SchemaUtil::Validate(
+          SchemaBuilder().AddType(type_document).AddType(message_type).Build(),
+          *feature_flags_),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("Field 'scorable_type' shouldn't be explicitly "
+                         "set for data type DOCUMENT")));
+}
+
+TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetScorableType(SCORABLE_TYPE_DISABLED)
+                           .SetDataType(TYPE_STRING))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(SchemaBuilder().AddType(type_b).Build(),
+                                   *feature_flags_),
+              StatusIs(libtextclassifier3::StatusCode::OK));
+}
+
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
-    testing::Values(/*allow_circular_schema_definitions=*/true, false));
+    testing::Values(FeatureFlags(
+                        /*enable_circular_schema_definitions=*/false,
+                        /*enable_scorable_properties=*/true,
+                        /*enable_embedding_quantization=*/true,
+                        /*enable_repeated_field_joins=*/true,
+                        /*enable_embedding_backup_generation=*/true,
+                        /*enable_schema_database=*/true),
+                    FeatureFlags(
+                        /*enable_circular_schema_definitions=*/true,
+                        /*enable_scorable_properties=*/true,
+                        /*enable_embedding_quantization=*/true,
+                        /*enable_repeated_field_joins=*/true,
+                        /*enable_embedding_backup_generation=*/true,
+                        /*enable_schema_database=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;
