@@ -45,7 +45,6 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/schema/backup-schema-producer.h"
 #include "icing/schema/joinable-property.h"
-#include "icing/schema/property-util.h"
 #include "icing/schema/schema-property-iterator.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
@@ -253,7 +252,7 @@ libtextclassifier3::Status SchemaStore::Header::PersistToDisk() {
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const FeatureFlags* feature_flags,
-    bool enable_schema_database, InitializeStatsProto* initialize_stats) {
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(feature_flags);
@@ -262,17 +261,15 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     return absl_ports::FailedPreconditionError(
         "Schema store base directory does not exist!");
   }
-  std::unique_ptr<SchemaStore> schema_store =
-      std::unique_ptr<SchemaStore>(new SchemaStore(
-          filesystem, base_dir, clock, feature_flags, enable_schema_database));
+  std::unique_ptr<SchemaStore> schema_store = std::unique_ptr<SchemaStore>(
+      new SchemaStore(filesystem, base_dir, clock, feature_flags));
   ICING_RETURN_IF_ERROR(schema_store->Initialize(initialize_stats));
   return schema_store;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const FeatureFlags* feature_flags, SchemaProto schema,
-    bool enable_schema_database) {
+    const Clock* clock, const FeatureFlags* feature_flags, SchemaProto schema) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(feature_flags);
@@ -281,9 +278,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     return absl_ports::FailedPreconditionError(
         "Schema store base directory does not exist!");
   }
-  std::unique_ptr<SchemaStore> schema_store =
-      std::unique_ptr<SchemaStore>(new SchemaStore(
-          filesystem, base_dir, clock, feature_flags, enable_schema_database));
+  std::unique_ptr<SchemaStore> schema_store = std::unique_ptr<SchemaStore>(
+      new SchemaStore(filesystem, base_dir, clock, feature_flags));
   ICING_RETURN_IF_ERROR(schema_store->Initialize(std::move(schema)));
   return schema_store;
 }
@@ -465,15 +461,13 @@ SchemaStore::HandleOverlaySchemaForVersionChange(
 }
 
 SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
-                         const Clock* clock, const FeatureFlags* feature_flags,
-                         bool enable_schema_database)
+                         const Clock* clock, const FeatureFlags* feature_flags)
     : filesystem_(filesystem),
       base_dir_(std::move(base_dir)),
       clock_(clock),
       feature_flags_(feature_flags),
       schema_file_(std::make_unique<FileBackedProto<SchemaProto>>(
-          *filesystem, MakeSchemaFilename(base_dir_))),
-      enable_schema_database_(enable_schema_database) {}
+          *filesystem, MakeSchemaFilename(base_dir_))) {}
 
 SchemaStore::~SchemaStore() {
   if (has_schema_successfully_set_ && schema_file_ != nullptr &&
@@ -628,14 +622,13 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
   ICING_RETURN_IF_ERROR(BuildInMemoryCache());
 
   if (create_overlay_if_necessary) {
+    BackupSchemaProducer producer(feature_flags_);
     ICING_ASSIGN_OR_RETURN(
-        BackupSchemaProducer producer,
-        BackupSchemaProducer::Create(*schema_proto,
-                                     schema_type_manager_->section_manager()));
+        BackupSchemaProducer::BackupSchemaResult backup_result,
+        producer.Produce(*schema_proto,
+                         schema_type_manager_->section_manager()));
 
-    if (producer.is_backup_necessary()) {
-      SchemaProto base_schema = std::move(producer).Produce();
-
+    if (backup_result.backup_schema_produced) {
       // The overlay schema should be written to the overlay file location.
       overlay_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
           *filesystem_, MakeOverlaySchemaFilename(base_dir_));
@@ -644,7 +637,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
 
       // The base schema should be written to the original file
       auto base_schema_ptr =
-          std::make_unique<SchemaProto>(std::move(base_schema));
+          std::make_unique<SchemaProto>(std::move(backup_result.backup_schema));
       ICING_RETURN_IF_ERROR(schema_file_->Write(std::move(base_schema_ptr)));
 
       // LINT.IfChange(min_overlay_version_compatibility)
@@ -835,17 +828,14 @@ libtextclassifier3::StatusOr<SchemaProto> SchemaStore::GetSchema(
 // SetSchema(SchemaProto&& new_schema)
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(const SchemaProto& new_schema,
-                       bool ignore_errors_and_delete_documents,
-                       bool allow_circular_schema_definitions) {
-  return SetSchema(SchemaProto(new_schema), ignore_errors_and_delete_documents,
-                   allow_circular_schema_definitions);
+                       bool ignore_errors_and_delete_documents) {
+  return SetSchema(SchemaProto(new_schema), ignore_errors_and_delete_documents);
 }
 
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
-                       bool ignore_errors_and_delete_documents,
-                       bool allow_circular_schema_definitions) {
-  if (enable_schema_database_) {
+                       bool ignore_errors_and_delete_documents) {
+  if (feature_flags_->enable_schema_database()) {
     // Step 1: (Only required if schema database is enabled)
     // Do some preliminary checks on the new schema before formal validation and
     // delta computation. This checks that:
@@ -862,8 +852,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
     if (absl_ports::IsNotFound(schema_proto.status())) {
       // Case 1: No preexisting schema for this database.
       return SetInitialSchemaForDatabase(std::move(new_schema),
-                                         ignore_errors_and_delete_documents,
-                                         allow_circular_schema_definitions);
+                                         ignore_errors_and_delete_documents);
     }
 
     if (!schema_proto.ok()) {
@@ -875,8 +864,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
     // for this database.
     const SchemaProto& old_schema = schema_proto.ValueOrDie();
     return SetSchemaWithDatabaseOverride(std::move(new_schema), old_schema,
-                                         ignore_errors_and_delete_documents,
-                                         allow_circular_schema_definitions);
+                                         ignore_errors_and_delete_documents);
   }
 
   // Get the full schema if schema database is disabled.
@@ -884,8 +872,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
   if (absl_ports::IsNotFound(schema_proto.status())) {
     // Case 1: No preexisting schema
     return SetInitialSchemaForDatabase(std::move(new_schema),
-                                       ignore_errors_and_delete_documents,
-                                       allow_circular_schema_definitions);
+                                       ignore_errors_and_delete_documents);
   }
 
   if (!schema_proto.ok()) {
@@ -896,18 +883,15 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
   // Case 3: At this point, we're guaranteed that we have an existing schema
   const SchemaProto& old_schema = *schema_proto.ValueOrDie();
   return SetSchemaWithDatabaseOverride(std::move(new_schema), old_schema,
-                                       ignore_errors_and_delete_documents,
-                                       allow_circular_schema_definitions);
+                                       ignore_errors_and_delete_documents);
 }
 
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
 SchemaStore::SetInitialSchemaForDatabase(
-    SchemaProto new_schema, bool ignore_errors_and_delete_documents,
-    bool allow_circular_schema_definitions) {
+    SchemaProto new_schema, bool ignore_errors_and_delete_documents) {
   SetSchemaResult result;
 
-  ICING_RETURN_IF_ERROR(SchemaUtil::Validate(
-      new_schema, *feature_flags_, allow_circular_schema_definitions));
+  ICING_RETURN_IF_ERROR(SchemaUtil::Validate(new_schema, *feature_flags_));
 
   result.success = true;
   for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
@@ -928,8 +912,7 @@ SchemaStore::SetInitialSchemaForDatabase(
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
 SchemaStore::SetSchemaWithDatabaseOverride(
     SchemaProto new_schema, const SchemaProto& old_schema,
-    bool ignore_errors_and_delete_documents,
-    bool allow_circular_schema_definitions) {
+    bool ignore_errors_and_delete_documents) {
   // Assume we can set the schema unless proven otherwise.
   SetSchemaResult result;
   result.success = true;
@@ -944,10 +927,8 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   //
   // Validate the new schema and compute the delta between the old and new
   // schema.
-  ICING_ASSIGN_OR_RETURN(
-      SchemaUtil::DependentMap new_dependent_map,
-      SchemaUtil::Validate(new_schema, *feature_flags_,
-                           allow_circular_schema_definitions));
+  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependentMap new_dependent_map,
+                         SchemaUtil::Validate(new_schema, *feature_flags_));
   SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, new_dependent_map, *feature_flags_);
 
@@ -1060,8 +1041,7 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<SchemaStore> new_schema_store,
       SchemaStore::Create(filesystem_, temp_schema_store_dir.dir(), clock_,
-                          feature_flags_, std::move(new_schema),
-                          enable_schema_database_));
+                          feature_flags_, std::move(new_schema)));
 
   // Then we swap the new schema file + new derived files with the old files.
   if (!filesystem_->SwapFiles(base_dir_.c_str(),
@@ -1371,7 +1351,7 @@ libtextclassifier3::StatusOr<std::string> SchemaStore::ValidateAndGetDatabase(
     const SchemaProto& new_schema) const {
   std::string database;
 
-  if (!enable_schema_database_ || new_schema.types().empty()) {
+  if (!feature_flags_->enable_schema_database() || new_schema.types().empty()) {
     return database;
   }
 
@@ -1410,7 +1390,7 @@ libtextclassifier3::StatusOr<std::string> SchemaStore::ValidateAndGetDatabase(
 libtextclassifier3::StatusOr<SchemaProto>
 SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     SchemaProto input_database_schema) const {
-  if (!enable_schema_database_) {
+  if (!feature_flags_->enable_schema_database()) {
     // If the schema database is not enabled, the input schema is already the
     // full schema, so we don't need to do any merges.
     return input_database_schema;

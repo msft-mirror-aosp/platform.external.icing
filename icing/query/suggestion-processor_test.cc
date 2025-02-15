@@ -202,8 +202,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_And) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -251,8 +250,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -304,8 +302,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -359,8 +356,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_OrNary) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -428,8 +424,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -492,8 +487,7 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -529,8 +523,7 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -566,8 +559,7 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -620,8 +612,7 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -669,8 +660,7 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -733,8 +723,7 @@ TEST_F(SuggestionProcessorTest, SemanticSearchPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
@@ -783,8 +772,7 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're

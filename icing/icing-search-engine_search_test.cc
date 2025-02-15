@@ -137,8 +137,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_scorable_properties(true);
   icing_options.set_enable_embedding_quantization(true);
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
 
