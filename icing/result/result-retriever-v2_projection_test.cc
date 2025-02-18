@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <vector>
 
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -35,14 +38,17 @@
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -60,10 +66,11 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -72,10 +79,13 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
+
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -178,20 +188,19 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
                          .Build())
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -218,6 +227,7 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
     return kInvalidSectionId;
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
@@ -265,8 +275,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -277,8 +288,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -359,8 +371,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -378,8 +391,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -471,8 +485,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -490,8 +505,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -586,8 +602,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -605,8 +622,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -694,8 +712,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -706,8 +725,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -775,8 +795,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -787,8 +808,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -857,8 +879,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -869,8 +892,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -944,8 +968,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -955,8 +980,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1031,8 +1057,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1042,8 +1069,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1120,8 +1148,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1131,8 +1160,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1222,8 +1252,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                   .AddStringProperty("emailAddress", "mr.body123@gmail.com")
                   .Build())
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1233,8 +1264,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1328,8 +1360,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                   .AddStringProperty("emailAddress", "mr.body123@gmail.com")
                   .Build())
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1339,8 +1372,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1422,8 +1456,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(person_document));
+  DocumentId person_document_id = put_result1.new_document_id;
 
   // 2. Add two Email documents
   DocumentProto email_document1 =
@@ -1435,8 +1470,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id1,
+
+  ICING_ASSERT_OK_AND_ASSIGN(put_result1,
                              document_store_->Put(email_document1));
+  DocumentId email_document_id1 = put_result1.new_document_id;
 
   DocumentProto email_document2 =
       DocumentBuilder()
@@ -1447,8 +1484,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(email_document2));
+  DocumentId email_document_id2 = put_result2.new_document_id;
 
   // 3. Setup the joined scored results.
   std::vector<SectionId> person_hit_section_ids = {
@@ -1568,8 +1606,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1579,8 +1618,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           .AddStringProperty("name", "Joe Artist")
           .AddStringProperty("emailAddress", "artist@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1653,8 +1693,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1664,8 +1705,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           .AddStringProperty("name", "Joe Musician")
           .AddStringProperty("emailAddress", "Musician@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1738,8 +1780,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                .SetSchema("Artist")
                                .AddStringProperty("name", "Joe Artist")
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document));
+  DocumentId document_id = put_result.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1798,8 +1841,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store_->Put(document_one));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
       DocumentBuilder()
@@ -1809,8 +1853,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           .AddStringProperty("name", "Joe Artist")
           .AddStringProperty("emailAddress", "artist@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              document_store_->Put(document_two));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1891,8 +1936,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
                                .AddStringProperty("phoneNumber", "12345")
                                .AddStringProperty("phoneModel", "pixel")
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              document_store_->Put(document));
+  DocumentId document_id = put_result.new_document_id;
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {

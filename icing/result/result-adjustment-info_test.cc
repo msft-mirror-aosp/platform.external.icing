@@ -14,11 +14,13 @@
 
 #include "icing/result/result-adjustment-info.h"
 
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
@@ -28,6 +30,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -49,9 +52,10 @@ class ResultAdjustmentInfoTest : public testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -59,8 +63,7 @@ class ResultAdjustmentInfoTest : public testing::Test {
             .AddType(SchemaTypeConfigBuilder().SetType("Phone"))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
   }
 
@@ -68,6 +71,7 @@ class ResultAdjustmentInfoTest : public testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<SchemaStore> schema_store_;

@@ -17,29 +17,29 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/transform/map/map-normalizer.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
 namespace normalizer_factory {
 
-// Creates a map-based normalizer. max_term_byte_size enforces the max size of
-// text after normalization, text will be truncated if exceeds the max size.
+// Creates a map-based normalizer.
 //
 // Returns:
 //   A normalizer on success
-//   INVALID_ARGUMENT if max_term_byte_size <= 0
+//   INVALID_ARGUMENT_ERROR if options.max_term_byte_size <= 0
 //   INTERNAL_ERROR on errors
 libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
-    int max_term_byte_size) {
-  if (max_term_byte_size <= 0) {
+    const NormalizerOptions& options) {
+  if (options.max_term_byte_size <= 0) {
     return absl_ports::InvalidArgumentError(
-        "max_term_byte_size must be greater than zero.");
+        "normalizer_max_term_byte_size must be greater than zero.");
   }
 
-  return std::make_unique<MapNormalizer>(max_term_byte_size);
+  return std::make_unique<MapNormalizer>(
+      options.max_term_byte_size);
 }
 
 }  // namespace normalizer_factory
