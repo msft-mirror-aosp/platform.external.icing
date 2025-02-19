@@ -94,8 +94,7 @@ class ScorerTest : public ::testing::TestWithParam<ScorerTestingMode> {
             .Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        test_email_schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        test_email_schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {

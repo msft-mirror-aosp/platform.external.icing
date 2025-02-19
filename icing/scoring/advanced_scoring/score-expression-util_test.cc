@@ -95,8 +95,7 @@ class ScoreExpressionUtilTest : public testing::Test {
             .Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        std::move(test_schema), /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        std::move(test_schema), /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {

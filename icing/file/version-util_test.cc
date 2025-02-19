@@ -36,10 +36,13 @@ namespace version_util {
 
 namespace {
 
+using ::testing::Contains;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Not;
+using ::testing::Property;
 
 IcingSearchEngineVersionProto MakeTestVersionProto(
     const VersionInfo& version_info,
@@ -1032,8 +1035,7 @@ INSTANTIATE_TEST_SUITE_P(
         // - Existing version 5, max_version 5
         // - Existing enabled features = {}
         // - Current version = 5
-        // - Current enabled features =
-        //   {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM}
+        // - Current enabled features = {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3}
         //
         // - Result: rebuild qualified id join index
         VersionUtilDerivedFilesRebuildTestParam(
@@ -1041,7 +1043,7 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{},
             /*curr_version_in=*/5, /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::
-                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM},
+                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
@@ -1053,7 +1055,7 @@ INSTANTIATE_TEST_SUITE_P(
 
         // - Existing version 5, max_version 5
         // - Existing enabled features =
-        //   {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM}
+        //   {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3}
         // - Current version = 5
         // - Current enabled features = {}
         //
@@ -1062,7 +1064,7 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/5, /*max_version_in=*/5,
             /*existing_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::
-                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM},
+                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3},
             /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
             /*expected_derived_files_rebuild_result_in=*/
             DerivedFilesRebuildResult(
@@ -1276,20 +1278,18 @@ TEST(VersionUtilTest,
                   /*needs_embedding_index_rebuild_in=*/false)));
 }
 
-TEST(
-    VersionUtilTest,
-    GetFeatureDerivedFilesRebuildResult_featureQualifiedIdJoinIndexV3AndDeletePropagateFrom) {
-  EXPECT_THAT(
-      GetFeatureDerivedFilesRebuildResult(
-          IcingSearchEngineFeatureInfoProto::
-              FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM),
-      Eq(DerivedFilesRebuildResult(
-          /*needs_document_store_derived_files_rebuild_in=*/false,
-          /*needs_schema_store_derived_files_rebuild_in=*/false,
-          /*needs_term_index_rebuild_in=*/false,
-          /*needs_integer_index_rebuild_in=*/false,
-          /*needs_qualified_id_join_index_rebuild_in=*/true,
-          /*needs_embedding_index_rebuild_in=*/false)));
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureQualifiedIdJoinIndexV3) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::
+                      FEATURE_QUALIFIED_ID_JOIN_INDEX_V3),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/true,
+                  /*needs_embedding_index_rebuild_in=*/false)));
 }
 
 TEST(VersionUtilTest, SchemaDatabaseMigrationRequired) {
@@ -1336,6 +1336,34 @@ TEST(VersionUtilTest, SchemaDatabaseMigrationNotRequired) {
   EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
 }
 
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_enabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_qualified_id_join_index_v3(true);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                        IcingSearchEngineFeatureInfoProto::
+                            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3)));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_disabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_qualified_id_join_index_v3(false);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Not(Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                            IcingSearchEngineFeatureInfoProto::
+                                FEATURE_QUALIFIED_ID_JOIN_INDEX_V3))));
+}
+
 class VersionUtilFeatureProtoTest
     : public ::testing::TestWithParam<
           IcingSearchEngineFeatureInfoProto::FlaggedFeatureType> {};
@@ -1373,8 +1401,7 @@ INSTANTIATE_TEST_SUITE_P(
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
         IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE,
-        IcingSearchEngineFeatureInfoProto::
-            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM));
+        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
 
 }  // namespace
 

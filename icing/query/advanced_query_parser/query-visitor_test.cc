@@ -798,8 +798,7 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Index three documents:
   // - Doc0: ["-2", "-1", "1", "2"] and [-2, -1, 1, 2]
@@ -1420,8 +1419,7 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1465,8 +1463,7 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1506,8 +1503,7 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1555,8 +1551,7 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1788,8 +1783,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1855,8 +1849,7 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -1921,8 +1914,7 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -1980,8 +1972,7 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // "prop1" is a STRING token, which cannot be a property name.
   std::string query = CreateQuery(R"(("prop1":foo))");
@@ -2005,8 +1996,7 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2065,8 +2055,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2124,8 +2113,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2194,8 +2182,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2260,8 +2247,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2331,8 +2317,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2424,8 +2409,7 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2508,8 +2492,7 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2623,8 +2606,7 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2786,8 +2768,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
@@ -2886,8 +2867,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3047,8 +3027,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3187,8 +3166,7 @@ TEST_P(QueryVisitorTest, QueryStringParameterHandlesPunctuation) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type").AddProperty(prop))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3305,8 +3283,7 @@ TEST_P(QueryVisitorTest, QueryStringParameterPropertyRestricts) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
@@ -3505,8 +3482,7 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
@@ -3555,8 +3531,7 @@ TEST_P(QueryVisitorTest,
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
@@ -3597,8 +3572,7 @@ TEST_P(QueryVisitorTest,
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
@@ -3669,8 +3643,7 @@ TEST_P(QueryVisitorTest, HasPropertyFunctionReturnsMatchingDocuments) {
                                         .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and has the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
@@ -3737,8 +3710,7 @@ TEST_P(QueryVisitorTest,
                                         .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Document 0 has the term "foo" and has the "price" property.
   ICING_ASSERT_OK(document_store_->Put(
@@ -3961,8 +3933,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   ICING_ASSERT_OK(document_store_->Put(
@@ -4054,8 +4025,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   ICING_ASSERT_OK(document_store_->Put(
@@ -4147,8 +4117,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
 
@@ -4243,8 +4212,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   ICING_ASSERT_OK(document_store_->Put(
@@ -4387,8 +4355,7 @@ TEST_F(QueryVisitorTest,
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   ICING_ASSERT_OK(document_store_->Put(
@@ -4504,8 +4471,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   ICING_ASSERT_OK(document_store_->Put(
@@ -4621,8 +4587,7 @@ TEST_F(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
                                             EMBEDDING_INDEXING_LINEAR_SEARCH)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
 
   // Create two documents.
   ICING_ASSERT_OK(document_store_->Put(
@@ -4707,8 +4672,7 @@ TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionSimpleLowerBound) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
                                            .SetKey("ns", "uri0")
                                            .SetSchema("Simple")
@@ -4759,8 +4723,7 @@ TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionSimpleUpperBound) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
                                            .SetKey("ns", "uri0")
                                            .SetSchema("Simple")
@@ -4811,8 +4774,7 @@ TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionComplex) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
                                            .SetKey("ns", "uri0")
                                            .SetSchema("Simple")
@@ -4856,8 +4818,7 @@ TEST_F(QueryVisitorTest, MatchScoreExpressionFunctionWithEvaluationErrors) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Simple"))
           .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
                                            .SetKey("ns", "uri0")
                                            .SetSchema("Simple")

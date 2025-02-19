@@ -243,8 +243,7 @@ class DocumentStoreTest
         schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
@@ -817,8 +816,7 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -960,8 +958,7 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -1060,8 +1057,7 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -1121,8 +1117,7 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      new_schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      new_schema, /*ignore_errors_and_delete_documents=*/true));
 
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2966,8 +2961,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
             .AddType(SchemaTypeConfigBuilder().SetType("message"))
             .Build();
     ICING_EXPECT_OK(schema_store->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                                schema_store->GetSchemaTypeId("email"));
@@ -3037,8 +3031,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3100,8 +3093,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3164,8 +3156,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
                .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3216,8 +3207,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -3271,8 +3261,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
       PropertyConfigProto::Cardinality::REQUIRED);
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -3303,8 +3292,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -3352,8 +3340,7 @@ TEST_P(DocumentStoreTest,
 
   ICING_EXPECT_OK(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -3383,8 +3370,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3447,8 +3433,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/false,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3500,8 +3485,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -3557,8 +3541,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -3590,8 +3573,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -3640,8 +3622,7 @@ TEST_P(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -4510,8 +4491,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -4569,8 +4549,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
           .AddType(email_type_config)
           .Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
@@ -4631,8 +4610,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -4690,8 +4668,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
           .AddType(email_type_config)
           .Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
@@ -4743,8 +4720,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentProto docWithBody =
@@ -4814,8 +4790,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
 
   {
@@ -4867,8 +4842,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentProto docWithBody =
@@ -4938,8 +4912,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
 
   {
@@ -4988,8 +4961,7 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
                           feature_flags_.get()));
 
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // Create dst directory that we'll initialize the DocumentStore over.
@@ -5121,8 +5093,7 @@ TEST_P(DocumentStoreTest, GetDebugInfo) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5484,8 +5455,7 @@ TEST_P(DocumentStoreTest, PutDocumentWithNoScorablePropertiesInSchema) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5576,8 +5546,7 @@ TEST_P(DocumentStoreTest, PutDocumentWithScorablePropertyThenRead) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5734,8 +5703,7 @@ TEST_P(DocumentStoreTest, ReadScorablePropertyAfterOptimization) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5850,8 +5818,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -5887,8 +5854,7 @@ TEST_P(DocumentStoreTest,
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
                              schema_store->GetSchemaTypeId("Person"));
@@ -5926,8 +5892,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -5965,8 +5930,7 @@ TEST_P(DocumentStoreTest,
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
                              schema_store->GetSchemaTypeId("Person"));
@@ -6006,8 +5970,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -6054,8 +6017,7 @@ TEST_P(DocumentStoreTest,
           .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId person_schema_type_id,
                              schema_store->GetSchemaTypeId("Person"));

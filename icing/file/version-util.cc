@@ -383,7 +383,7 @@ DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
           /*needs_embedding_index_rebuild=*/false);
     }
     case IcingSearchEngineFeatureInfoProto::
-        FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM: {
+        FEATURE_QUALIFIED_ID_JOIN_INDEX_V3: {
       return DerivedFilesRebuildResult(
           /*needs_document_store_derived_files_rebuild=*/false,
           /*needs_schema_store_derived_files_rebuild=*/false,
@@ -466,11 +466,10 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
   }
-  // QualifiedIdJoinIndex V3 and delete propagation type PROPAGATE_FROM feature
-  if (options.enable_qualified_id_join_index_v3_and_delete_propagate_from()) {
+  // QualifiedIdJoinIndex V3 feature
+  if (options.enable_qualified_id_join_index_v3()) {
     enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::
-            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3_AND_DELETE_PROPAGATE_FROM));
+        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
   }
 }
 
