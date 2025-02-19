@@ -14,14 +14,19 @@
 
 #include "icing/file/version-util.h"
 
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage-header.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/proto/initialize.pb.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -31,20 +36,42 @@ namespace version_util {
 
 namespace {
 
+using ::testing::Contains;
 using ::testing::Eq;
+using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Not;
+using ::testing::Property;
+
+IcingSearchEngineVersionProto MakeTestVersionProto(
+    const VersionInfo& version_info,
+    const std::unordered_set<
+        IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>& features_set) {
+  IcingSearchEngineVersionProto version_proto;
+  version_proto.set_version(version_info.version);
+  version_proto.set_max_version(version_info.max_version);
+
+  auto* enabled_features = version_proto.mutable_enabled_features();
+  for (const auto& feature : features_set) {
+    enabled_features->Add(GetFeatureInfoProto(feature));
+  }
+  return version_proto;
+}
 
 struct VersionUtilReadVersionTestParam {
-  std::optional<VersionInfo> existing_version_info;
+  std::optional<VersionInfo> existing_v1_version_info;
+  std::optional<VersionInfo> existing_v2_version_info;
   std::optional<int> existing_flash_index_magic;
   VersionInfo expected_version_info;
 
   explicit VersionUtilReadVersionTestParam(
-      std::optional<VersionInfo> existing_version_info_in,
+      std::optional<VersionInfo> existing_v1_version_info_in,
+      std::optional<VersionInfo> existing_v2_version_info_in,
       std::optional<int> existing_flash_index_magic_in,
       VersionInfo expected_version_info_in)
-      : existing_version_info(std::move(existing_version_info_in)),
+      : existing_v1_version_info(std::move(existing_v1_version_info_in)),
+        existing_v2_version_info(std::move(existing_v2_version_info_in)),
         existing_flash_index_magic(std::move(existing_flash_index_magic_in)),
         expected_version_info(std::move(expected_version_info_in)) {}
 };
@@ -54,7 +81,6 @@ class VersionUtilReadVersionTest
  protected:
   void SetUp() override {
     base_dir_ = GetTestTempDir() + "/version_util_test";
-    version_file_path_ = base_dir_ + "/version";
     index_path_ = base_dir_ + "/index";
 
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()));
@@ -68,19 +94,28 @@ class VersionUtilReadVersionTest
 
   Filesystem filesystem_;
   std::string base_dir_;
-  std::string version_file_path_;
   std::string index_path_;
 };
 
 TEST_P(VersionUtilReadVersionTest, ReadVersion) {
   const VersionUtilReadVersionTestParam& param = GetParam();
+  IcingSearchEngineVersionProto dummy_version_proto;
 
-  // Prepare version file and flash index file.
-  if (param.existing_version_info.has_value()) {
-    ICING_ASSERT_OK(WriteVersion(filesystem_, version_file_path_,
-                                 param.existing_version_info.value()));
+  if (param.existing_v1_version_info.has_value()) {
+    ICING_ASSERT_OK(WriteV1Version(filesystem_, base_dir_,
+                                   param.existing_v1_version_info.value()));
+  }
+  if (param.existing_v2_version_info.has_value()) {
+    dummy_version_proto = MakeTestVersionProto(
+        param.existing_v2_version_info.value(),
+        {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR,
+         IcingSearchEngineFeatureInfoProto::UNKNOWN});
+    ICING_ASSERT_OK(WriteV2Version(
+        filesystem_, base_dir_,
+        std::make_unique<IcingSearchEngineVersionProto>(dummy_version_proto)));
   }
 
+  // Prepare flash index file.
   if (param.existing_flash_index_magic.has_value()) {
     HeaderBlock header_block(&filesystem_, /*block_size=*/4096);
     header_block.header()->magic = param.existing_flash_index_magic.value();
@@ -94,10 +129,22 @@ TEST_P(VersionUtilReadVersionTest, ReadVersion) {
     ASSERT_TRUE(header_block.Write(sfd.get()));
   }
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      VersionInfo version_info,
-      ReadVersion(filesystem_, version_file_path_, index_path_));
-  EXPECT_THAT(version_info, Eq(param.expected_version_info));
+  ICING_ASSERT_OK_AND_ASSIGN(IcingSearchEngineVersionProto version_proto,
+                             ReadVersion(filesystem_, base_dir_, index_path_));
+  if (param.existing_v2_version_info.has_value() &&
+      param.expected_version_info.version ==
+          param.existing_v2_version_info.value().version) {
+    EXPECT_THAT(version_proto,
+                portable_equals_proto::EqualsProto(dummy_version_proto));
+  } else {
+    // We're returning the version from v1 version file, or an invalid version.
+    // version_proto.enabled_features should be empty in this case.
+    EXPECT_THAT(version_proto.version(),
+                Eq(param.expected_version_info.version));
+    EXPECT_THAT(version_proto.max_version(),
+                Eq(param.expected_version_info.max_version));
+    EXPECT_THAT(version_proto.enabled_features(), IsEmpty());
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -107,7 +154,8 @@ INSTANTIATE_TEST_SUITE_P(
         // - Flash index doesn't exist
         // - Result: version -1, max_version -1 (invalid)
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::nullopt,
+            /*existing_v1_version_info_in=*/std::nullopt,
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/std::nullopt,
             /*expected_version_info_in=*/
             VersionInfo(/*version_in=*/-1, /*max_version=*/-1)),
@@ -116,7 +164,8 @@ INSTANTIATE_TEST_SUITE_P(
         // - Flash index exists with version 0 magic
         // - Result: version 0, max_version 0
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::nullopt,
+            /*existing_v1_version_info_in=*/std::nullopt,
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/
             std::make_optional<int>(kVersionZeroFlashIndexMagic),
             /*expected_version_info_in=*/
@@ -126,65 +175,157 @@ INSTANTIATE_TEST_SUITE_P(
         // - Flash index exists with non version 0 magic
         // - Result: version -1, max_version -1 (invalid)
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::nullopt,
+            /*existing_v1_version_info_in=*/std::nullopt,
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/
             std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
             /*expected_version_info_in=*/
             VersionInfo(/*version_in=*/-1, /*max_version=*/-1)),
 
-        // - Version file exists
+        // - Version file v1 exists
         // - Flash index doesn't exist
         // - Result: version -1, max_version 1 (invalid)
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::make_optional<VersionInfo>(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
                 /*version_in=*/1, /*max_version=*/1),
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/std::nullopt,
             /*expected_version_info_in=*/
             VersionInfo(/*version_in=*/-1, /*max_version=*/1)),
 
-        // - Version file exists: version 1, max_version 1
+        // - Version file v1 exists: version 1, max_version 1
         // - Flash index exists with version 0 magic
         // - Result: version 0, max_version 1
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::make_optional<VersionInfo>(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
                 /*version_in=*/1, /*max_version=*/1),
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/
             std::make_optional<int>(kVersionZeroFlashIndexMagic),
             /*expected_version_info_in=*/
             VersionInfo(/*version_in=*/0, /*max_version=*/1)),
 
-        // - Version file exists: version 2, max_version 3
+        // - Version file v1 exists: version 2, max_version 3
         // - Flash index exists with version 0 magic
         // - Result: version 0, max_version 3
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::make_optional<VersionInfo>(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
                 /*version_in=*/2, /*max_version=*/3),
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/
             std::make_optional<int>(kVersionZeroFlashIndexMagic),
             /*expected_version_info_in=*/
             VersionInfo(/*version_in=*/0, /*max_version=*/3)),
 
-        // - Version file exists: version 1, max_version 1
+        // - Version file v1 exists: version 1, max_version 1
         // - Flash index exists with non version 0 magic
         // - Result: version 1, max_version 1
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::make_optional<VersionInfo>(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
                 /*version_in=*/1, /*max_version=*/1),
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/
             std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
             /*expected_version_info_in=*/
             VersionInfo(/*version_in=*/1, /*max_version=*/1)),
 
-        // - Version file exists: version 2, max_version 3
+        // - Version file v1 exists: version 2, max_version 3
         // - Flash index exists with non version 0 magic
         // - Result: version 2, max_version 3
         VersionUtilReadVersionTestParam(
-            /*existing_version_info_in=*/std::make_optional<VersionInfo>(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
                 /*version_in=*/2, /*max_version=*/3),
+            /*existing_v2_version_info_in=*/std::nullopt,
             /*existing_flash_index_magic_in=*/
             std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
             /*expected_version_info_in=*/
-            VersionInfo(/*version_in=*/2, /*max_version=*/3))));
+            VersionInfo(/*version_in=*/2, /*max_version=*/3)),
+
+        // - Version file v1 exists: version 2, max_version 4
+        // - Version file v2 exists: version 4, max_version 4
+        // - Flash index exists with non version 0 magic
+        // - Result: version -1, max_version 4
+        VersionUtilReadVersionTestParam(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
+                /*version_in=*/2, /*max_version=*/4),
+            /*existing_v2_version_info_in=*/
+            std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_flash_index_magic_in=*/
+            std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
+            /*expected_version_info_in=*/
+            VersionInfo(/*version_in=*/-1, /*max_version=*/4)),
+
+        // - Version file v1 exists: version 4, max_version 4
+        // - Version file v2 exists: version 4, max_version 4
+        // - Flash index exists with version 0 magic
+        // - Result: version -1, max_version 4
+        VersionUtilReadVersionTestParam(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_v2_version_info_in=*/
+            std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_flash_index_magic_in=*/
+            std::make_optional<int>(kVersionZeroFlashIndexMagic),
+            /*expected_version_info_in=*/
+            VersionInfo(/*version_in=*/-1, /*max_version=*/4)),
+
+        // - Version file v1 exists: version 4, max_version 4
+        // - Version file v2 exists: version 4, max_version 4
+        // - Flash index exists with non version 0 magic
+        // - Result: version 4, max_version 4
+        VersionUtilReadVersionTestParam(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_v2_version_info_in=*/
+            std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_flash_index_magic_in=*/
+            std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
+            /*expected_version_info_in=*/
+            VersionInfo(/*version_in=*/4, /*max_version=*/4)),
+
+        // - Version file v1 exists: version 4, max_version 4
+        // - Version file v2 does not exist
+        // - Flash index exists with non version 0 magic
+        // - Result: version -1, max_version 4
+        VersionUtilReadVersionTestParam(
+            /*existing_v1_version_info_in=*/std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_v2_version_info_in=*/std::nullopt,
+            /*existing_flash_index_magic_in=*/
+            std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
+            /*expected_version_info_in=*/
+            VersionInfo(/*version_in=*/-1, /*max_version=*/4)),
+
+        // - Version file v1 does not exist
+        // - Version file v2 exists: version 4, max_version 4
+        // - Flash index exists with non version 0 magic
+        // - Result: version -1, max_version -1
+        VersionUtilReadVersionTestParam(
+            /*existing_v1_version_info_in=*/std::nullopt,
+            /*existing_v2_version_info_in=*/
+            std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_flash_index_magic_in=*/
+            std::make_optional<int>(kVersionZeroFlashIndexMagic + 1),
+            /*expected_version_info_in=*/
+            VersionInfo(/*version_in=*/-1, /*max_version=*/-1)),
+
+        // - Version file v1 doesn't exist
+        // - Version file v2 exists: version 4, max_version 4
+        // - Flash index doesn't exist
+        // - Result: version -1, max_version -1 (invalid since flash index
+        //   doesn't exist)
+        VersionUtilReadVersionTestParam(
+            /*existing_v1_version_info_in=*/std::nullopt,
+            /*existing_v2_version_info_in=*/
+            std::make_optional<VersionInfo>(
+                /*version_in=*/4, /*max_version=*/4),
+            /*existing_flash_index_magic_in=*/std::nullopt,
+            /*expected_version_info_in=*/
+            VersionInfo(/*version_in=*/-1, /*max_version=*/-1))));
 
 struct VersionUtilStateChangeTestParam {
   VersionInfo existing_version_info;
@@ -387,7 +528,552 @@ INSTANTIATE_TEST_SUITE_P(
         VersionUtilStateChangeTestParam(
             /*existing_version_info_in=*/VersionInfo(3, 4),
             /*curr_version_in=*/2,
-            /*expected_state_change_in=*/StateChange::kRollBack)));
+            /*expected_state_change_in=*/StateChange::kRollBack),
+
+        // - version 3, max_version 3
+        // - Current version = 4
+        // - Result: upgrade
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(3, 3),
+            /*curr_version_in=*/4,
+            /*expected_state_change_in=*/StateChange::kUpgrade),
+
+        // - version 4, max_version 4
+        // - Current version = 3
+        // - Result: rollback
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(4, 4),
+            /*curr_version_in=*/3,
+            /*expected_state_change_in=*/StateChange::kRollBack),
+
+        // - version 4, max_version 5
+        // - Current version = 4
+        // - Result: compatible
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(4, 5),
+            /*curr_version_in=*/4,
+            /*expected_state_change_in=*/StateChange::kCompatible),
+
+        // - version 3, max_version 4
+        // - Current version = 5
+        // - Result: rollforward
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(3, 4),
+            /*curr_version_in=*/5,
+            /*expected_state_change_in=*/StateChange::kRollForward),
+
+        // - version 3, max_version 3
+        // - Current version = 5
+        // - Result: upgrade
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(3, 3),
+            /*curr_version_in=*/5,
+            /*expected_state_change_in=*/StateChange::kUpgrade),
+
+        // - version 4, max_version 5
+        // - Current version = 5
+        // - Result: rollforward
+        VersionUtilStateChangeTestParam(
+            /*existing_version_info_in=*/VersionInfo(4, 5),
+            /*curr_version_in=*/5,
+            /*expected_state_change_in=*/StateChange::kRollForward)));
+
+struct VersionUtilDerivedFilesRebuildTestParam {
+  int32_t existing_version;
+  int32_t max_version;
+  std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+      existing_enabled_features;
+  int32_t curr_version;
+  std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+      curr_enabled_features;
+  DerivedFilesRebuildResult expected_derived_files_rebuild_result;
+
+  explicit VersionUtilDerivedFilesRebuildTestParam(
+      int32_t existing_version_in, int32_t max_version_in,
+      std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+          existing_enabled_features_in,
+      int32_t curr_version_in,
+      std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+          curr_enabled_features_in,
+      DerivedFilesRebuildResult expected_derived_files_rebuild_result_in)
+      : existing_version(existing_version_in),
+        max_version(max_version_in),
+        existing_enabled_features(std::move(existing_enabled_features_in)),
+        curr_version(curr_version_in),
+        curr_enabled_features(std::move(curr_enabled_features_in)),
+        expected_derived_files_rebuild_result(
+            std::move(expected_derived_files_rebuild_result_in)) {}
+};
+
+class VersionUtilDerivedFilesRebuildTest
+    : public ::testing::TestWithParam<VersionUtilDerivedFilesRebuildTestParam> {
+};
+
+TEST_P(VersionUtilDerivedFilesRebuildTest,
+       CalculateRequiredDerivedFilesRebuild) {
+  const VersionUtilDerivedFilesRebuildTestParam& param = GetParam();
+
+  EXPECT_THAT(CalculateRequiredDerivedFilesRebuild(
+                  /*prev_version_proto=*/MakeTestVersionProto(
+                      VersionInfo(param.existing_version, param.max_version),
+                      param.existing_enabled_features),
+                  /*curr_version_proto=*/
+                  MakeTestVersionProto(
+                      VersionInfo(param.curr_version, param.max_version),
+                      param.curr_enabled_features)),
+              Eq(param.expected_derived_files_rebuild_result));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    VersionUtilDerivedFilesRebuildTest, VersionUtilDerivedFilesRebuildTest,
+    testing::Values(
+        // - Existing version -1, max_version -1 (invalid)
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild everything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/-1, /*max_version_in=*/-1,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version -1, max_version 2 (invalid)
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild everything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/-1, /*max_version_in=*/-1,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 3, max_version 3 (pre v2 version check)
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: don't rebuild anything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/3, /*max_version_in=*/3,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 3, max_version 3 (pre v2 version check)
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
+        //
+        // - Result: rebuild term index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/3, /*max_version_in=*/3,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 3, max_version 3 (pre v2 version check)
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/3, /*max_version_in=*/3,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: don't rebuild anything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: 4 -> 5 upgrade -- don't rebuild anything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 4, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: Rollforward -- rebuild everything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: Rollback -- rebuild everything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
+        //
+        // - Result: rebuild term index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                               FEATURE_EMBEDDING_QUANTIZATION}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                               FEATURE_EMBEDDING_QUANTIZATION}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild term index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                                FEATURE_EMBEDDING_QUANTIZATION}
+        // - Current version = 4
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {FEATURE_EMBEDDING_INDEX,
+        //                                FEATURE_EMBEDDING_QUANTIZATION}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_EMBEDDING_INDEX}
+        //
+        // - Result: rebuild embedding index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+             IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
+            /*curr_version_in=*/4, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 4, max_version 4
+        // - Existing enabled features = {UNKNOWN}
+        // - Current version = 4
+        // - Current enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
+        //
+        // - Result: rebuild everything
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/4, /*max_version_in=*/4,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::UNKNOWN}, /*curr_version_in=*/4,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/true,
+                /*needs_schema_store_derived_files_rebuild_in=*/true,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/true,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/true)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_HAS_PROPERTY_OPERATOR}
+        //
+        // - Result: rebuild term index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/true,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_SCHEMA_DATABASE}
+        //
+        // - Result: no rebuild
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features =
+        //   {FEATURE_QUALIFIED_ID_JOIN_INDEX_V3}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_result_in=*/
+            DerivedFilesRebuildResult(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
   EXPECT_THAT(
@@ -420,6 +1106,10 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesVersionZeroRollForward) {
   // (2 -> 0), 0 -> 1
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 2), /*curr_version=*/1),
               IsTrue());
+
+  // (5 -> 0), 0 -> 5
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(0, 5), /*curr_version=*/5),
+              IsTrue());
 }
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollBack) {
@@ -434,6 +1124,10 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollBack) {
   // (3 -> 2), 2 -> 1
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(2, 3), /*curr_version=*/1),
               IsTrue());
+
+  // (5 -> 4), 4 -> 3
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(4, 5), /*curr_version=*/3),
+              IsTrue());
 }
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollForward) {
@@ -447,6 +1141,10 @@ TEST(VersionUtilTest, ShouldRebuildDerivedFilesRollForward) {
 
   // (3 -> 1), 1 -> 2
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(1, 3), /*curr_version=*/2),
+              IsTrue());
+
+  // (5 -> 4), 4 -> 5
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(4, 5), /*curr_version=*/5),
               IsTrue());
 }
 
@@ -475,7 +1173,235 @@ TEST(VersionUtilTest, Upgrade) {
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
                                         /*curr_version=*/kVersionThree),
               IsFalse());
+
+  // kVersionThree -> kVersionFour.
+  EXPECT_THAT(
+      ShouldRebuildDerivedFiles(VersionInfo(kVersionThree, kVersionThree),
+                                /*curr_version=*/kVersionFour),
+      IsFalse());
+
+  // kVersionTwo -> kVersionFour
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionTwo, kVersionTwo),
+                                        /*curr_version=*/kVersionFour),
+              IsFalse());
+
+  // kVersionOne -> kVersionFour.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
+                                        /*curr_version=*/kVersionFour),
+              IsFalse());
+
+  // kVersionFour -> kVersionFive.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionFour, kVersionFour),
+                                        /*curr_version=*/kVersionFive),
+              IsFalse());
+
+  // kVersionThree -> kVersionFive.
+  EXPECT_THAT(
+      ShouldRebuildDerivedFiles(VersionInfo(kVersionThree, kVersionThree),
+                                /*curr_version=*/kVersionFive),
+      IsFalse());
+
+  // kVersionTwo -> kVersionFour
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionTwo, kVersionTwo),
+                                        /*curr_version=*/kVersionFive),
+              IsFalse());
+
+  // kVersionOne -> kVersionFour.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
+                                        /*curr_version=*/kVersionFive),
+              IsFalse());
 }
+
+TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildResult_unknown) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::UNKNOWN),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild_in=*/true,
+                  /*needs_schema_store_derived_files_rebuild_in=*/true,
+                  /*needs_term_index_rebuild_in=*/true,
+                  /*needs_integer_index_rebuild_in=*/true,
+                  /*needs_qualified_id_join_index_rebuild_in=*/true,
+                  /*needs_embedding_index_rebuild_in=*/true)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureHasPropertyOperator) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildResult(
+          IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR),
+      Eq(DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/true,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/false,
+          /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureEmbeddingIndex) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/false,
+                  /*needs_embedding_index_rebuild_in=*/true)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureEmbeddingQuantization) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildResult(
+          IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION),
+      Eq(DerivedFilesRebuildResult(
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/false,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/false,
+          /*needs_embedding_index_rebuild_in=*/true)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureSchemaDatabase) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/false,
+                  /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildResult_featureQualifiedIdJoinIndexV3) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+                  IcingSearchEngineFeatureInfoProto::
+                      FEATURE_QUALIFIED_ID_JOIN_INDEX_V3),
+              Eq(DerivedFilesRebuildResult(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/true,
+                  /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest, SchemaDatabaseMigrationRequired) {
+  // Migration is required if the previous version is less than the version at
+  // which the database field is introduced.
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(kSchemaDatabaseVersion - 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion - 1);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  EXPECT_TRUE(SchemaDatabaseMigrationRequired(previous_version_proto));
+
+  // Migration is required if the schema database feature was not enabled in the
+  // previous version.
+  previous_version_proto.set_version(kSchemaDatabaseVersion);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion);
+  previous_version_proto.mutable_enabled_features()->Clear();
+  // Add a feature that is not the schema database feature.
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR);
+  EXPECT_TRUE(SchemaDatabaseMigrationRequired(previous_version_proto));
+
+  previous_version_proto.set_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.mutable_enabled_features()->Clear();
+  EXPECT_TRUE(SchemaDatabaseMigrationRequired(previous_version_proto));
+}
+
+TEST(VersionUtilTest, SchemaDatabaseMigrationNotRequired) {
+  // Migration is not required if previous version is >= the version at which
+  // the schema database is introduced and the schema database feature was
+  // enabled in the previous version.
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(kSchemaDatabaseVersion);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
+
+  previous_version_proto.set_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE);
+  EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_enabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_qualified_id_join_index_v3(true);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                        IcingSearchEngineFeatureInfoProto::
+                            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3)));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_disabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_qualified_id_join_index_v3(false);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Not(Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                            IcingSearchEngineFeatureInfoProto::
+                                FEATURE_QUALIFIED_ID_JOIN_INDEX_V3))));
+}
+
+class VersionUtilFeatureProtoTest
+    : public ::testing::TestWithParam<
+          IcingSearchEngineFeatureInfoProto::FlaggedFeatureType> {};
+
+TEST_P(VersionUtilFeatureProtoTest, GetFeatureInfoProto) {
+  IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature_type =
+      GetParam();
+  DerivedFilesRebuildResult rebuild_result =
+      GetFeatureDerivedFilesRebuildResult(feature_type);
+
+  IcingSearchEngineFeatureInfoProto feature_info =
+      GetFeatureInfoProto(feature_type);
+  EXPECT_THAT(feature_info.feature_type(), Eq(feature_type));
+
+  EXPECT_THAT(feature_info.needs_document_store_rebuild(),
+              Eq(rebuild_result.needs_document_store_derived_files_rebuild));
+  EXPECT_THAT(feature_info.needs_schema_store_rebuild(),
+              Eq(rebuild_result.needs_schema_store_derived_files_rebuild));
+  EXPECT_THAT(feature_info.needs_term_index_rebuild(),
+              Eq(rebuild_result.needs_term_index_rebuild));
+  EXPECT_THAT(feature_info.needs_integer_index_rebuild(),
+              Eq(rebuild_result.needs_integer_index_rebuild));
+  EXPECT_THAT(feature_info.needs_qualified_id_join_index_rebuild(),
+              Eq(rebuild_result.needs_qualified_id_join_index_rebuild));
+  EXPECT_THAT(feature_info.needs_embedding_index_rebuild(),
+              Eq(rebuild_result.needs_embedding_index_rebuild));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    VersionUtilFeatureProtoTest, VersionUtilFeatureProtoTest,
+    testing::Values(
+        IcingSearchEngineFeatureInfoProto::UNKNOWN,
+        IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR,
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES,
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE,
+        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
 
 }  // namespace
 

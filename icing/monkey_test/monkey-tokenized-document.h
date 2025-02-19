@@ -26,6 +26,7 @@ namespace lib {
 struct MonkeyTokenizedSection {
   std::string path;
   std::vector<std::string> token_sequence;
+  std::vector<PropertyProto::VectorProto> embedding_vectors;
 };
 
 struct MonkeyTokenizedDocument {

@@ -84,6 +84,90 @@ TEST(EncodeUtilTest, MultipleValidEncodedCStringIntConversionsAreReversible) {
               Eq("Youtube"));
 }
 
+TEST(EncodeUtilTest, EncodeStringToCString) {
+  std::string digest;
+  digest.push_back(0b00000000);  // '\0'
+  digest.push_back(0b00000001);  // '\1'
+  digest.push_back(0b00000010);  // '\2'
+  digest.push_back(0b00000011);  // '\3'
+  digest.push_back(0b00000100);  // '\4'
+  digest.push_back(0b00000101);  // '\5'
+  digest.push_back(0b00000110);  // '\6'
+  digest.push_back(0b00000111);  // '\7'
+  digest.push_back(0b00001000);  // '\8'
+  digest.push_back(0b00001001);  // '\9'
+  std::string encoded_digest;
+  // 1 + first 7 bits from '\0'
+  encoded_digest.push_back(0b10000000);
+  // 1 + last 1 bit from '\0' + first 6 bits from '\1'
+  encoded_digest.push_back(0b10000000);
+  // 1 + last 2 bits from '\1' + first 5 bits from '\2'
+  encoded_digest.push_back(0b10100000);
+  // 1 + last 3 bits from '\2' + first 4 bits from '\3'
+  encoded_digest.push_back(0b10100000);
+  // 1 + last 4 bits from '\3' + first 3 bits from '\4'
+  encoded_digest.push_back(0b10011000);
+  // 1 + last 5 bits from '\4' + first 2 bits from '\5'
+  encoded_digest.push_back(0b10010000);
+  // 1 + last 6 bits from '\5' + first 1 bits from '\6'
+  encoded_digest.push_back(0b10001010);
+  // 1 + last 7 bits from '\6'
+  encoded_digest.push_back(0b10000110);
+  // 1 + first 7 bits from '\7'
+  encoded_digest.push_back(0b10000011);
+  // 1 + last 1 bit from '\7' + first 6 bits from '\8'
+  encoded_digest.push_back(0b11000010);
+  // 1 + last 2 bit from '\8' + first 5 bits from '\9'
+  encoded_digest.push_back(0b10000001);
+  // 1 + last 3 bit from '\9' + filled with 0s
+  encoded_digest.push_back(0b10010000);
+
+  EXPECT_THAT(EncodeStringToCString(digest), Eq(encoded_digest));
+}
+
+TEST(EncodeUtilTest, EncodeEmptyStringToCString) {
+  std::string digest;
+  std::string encoded_digest;
+
+  EXPECT_THAT(EncodeStringToCString(digest), Eq(encoded_digest));
+}
+
+TEST(EncodeUtilTest, EncodeMiddle0ByteStringToCStringConversions) {
+  std::string digest;
+  digest.push_back(0b00000001);  // '\1'
+  digest.push_back(0b00000010);  // '\2'
+  digest.push_back(0b00000011);  // '\3'
+  digest.push_back(0b00000000);  // '\0'
+  digest.push_back(0b00000100);  // '\4'
+  digest.push_back(0b00000101);  // '\5'
+  digest.push_back(0b00000110);  // '\6'
+  std::string encoded_digest;
+  // 1 + first 7 bits from '\1'
+  encoded_digest.push_back(0b10000000);
+  // 1 + last 1 bit from '\1' + first 6 bits from '\2'
+  encoded_digest.push_back(0b11000000);
+  // 1 + last 2 bits from '\2' + first 5 bits from '\3'
+  encoded_digest.push_back(0b11000000);
+  // 1 + last 3 bits from '\3' + first 4 bits from '\0'
+  encoded_digest.push_back(0b10110000);
+  // 1 + last 4 bits from '\0' + first 3 bits from '\4'
+  encoded_digest.push_back(0b10000000);
+  // 1 + last 5 bits from '\4' + first 2 bits from '\5'
+  encoded_digest.push_back(0b10010000);
+  // 1 + last 6 bits from '\5' + first 1 bits from '\6'
+  encoded_digest.push_back(0b10001010);
+  // 1 + last 7 bits from '\6'
+  encoded_digest.push_back(0b10000110);
+
+  EXPECT_THAT(EncodeStringToCString(digest), Eq(encoded_digest));
+}
+
+TEST(EncodeUtilTest, Encode32BytesDigestToCStringLength) {
+  std::string digest(32, 0b00000000);
+  // 37 = ceil(32 / 7.0 * 8.0)
+  EXPECT_THAT(EncodeStringToCString(digest).size(), Eq(37));
+}
+
 }  // namespace
 
 }  // namespace encode_util

@@ -36,7 +36,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/testing/common-matchers.h"
@@ -161,10 +161,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, InitializeNewFiles) {
 
 TEST_F(QualifiedIdJoinIndexImplV2Test,
        InitializationShouldFailWithoutPersistToDiskOrDestruction) {
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/12);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/56);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/78);
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/78);
 
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -175,14 +175,16 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
   // Insert some data.
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-      /*ref_namespace_fingerprint_ids=*/{id2, id1}));
+      /*ref_namespace_id_uri_fingerprints=*/{id2, id1}));
   ICING_ASSERT_OK(index->PersistToDisk());
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/3, /*joinable_property_id=*/10, /*document_id=*/6,
-      /*ref_namespace_fingerprint_ids=*/{id3}));
+      /*ref_namespace_id_uri_fingerprints=*/{id3}));
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
-      /*ref_namespace_fingerprint_ids=*/{id4}));
+      /*ref_namespace_id_uri_fingerprints=*/{id4}));
+  // GetChecksum should succeed without updating the checksum.
+  ICING_EXPECT_OK(index->GetChecksum());
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
@@ -192,11 +194,11 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test,
-       InitializationShouldSucceedWithPersistToDisk) {
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/12);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/56);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/78);
+       InitializationShouldSucceedWithUpdateChecksums) {
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/78);
 
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -207,13 +209,64 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
   // Insert some data.
   ICING_ASSERT_OK(index1->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-      /*ref_namespace_fingerprint_ids=*/{id2, id1}));
+      /*ref_namespace_id_uri_fingerprints=*/{id2, id1}));
   ICING_ASSERT_OK(index1->Put(
       /*schema_type_id=*/3, /*joinable_property_id=*/10, /*document_id=*/6,
-      /*ref_namespace_fingerprint_ids=*/{id3}));
+      /*ref_namespace_id_uri_fingerprints=*/{id3}));
   ICING_ASSERT_OK(index1->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
-      /*ref_namespace_fingerprint_ids=*/{id4}));
+      /*ref_namespace_id_uri_fingerprints=*/{id4}));
+  ASSERT_THAT(index1, Pointee(SizeIs(4)));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // synced correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, index1->GetChecksum());
+  EXPECT_THAT(index1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(index1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> index2,
+      QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
+                                         /*pre_mapping_fbv=*/false));
+  EXPECT_THAT(index2, Pointee(SizeIs(4)));
+  EXPECT_THAT(
+      GetJoinData(*index2, /*schema_type_id=*/2, /*joinable_property_id=*/1),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/12, /*join_info=*/id4),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/5, /*join_info=*/id2),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/5, /*join_info=*/id1))));
+  EXPECT_THAT(
+      GetJoinData(*index2, /*schema_type_id=*/3, /*joinable_property_id=*/10),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/6, /*join_info=*/id3))));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV2Test,
+       InitializationShouldSucceedWithPersistToDisk) {
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/78);
+
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> index1,
+      QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
+                                         /*pre_mapping_fbv=*/false));
+
+  // Insert some data.
+  ICING_ASSERT_OK(index1->Put(
+      /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
+      /*ref_namespace_id_uri_fingerprints=*/{id2, id1}));
+  ICING_ASSERT_OK(index1->Put(
+      /*schema_type_id=*/3, /*joinable_property_id=*/10, /*document_id=*/6,
+      /*ref_namespace_id_uri_fingerprints=*/{id3}));
+  ICING_ASSERT_OK(index1->Put(
+      /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
+      /*ref_namespace_id_uri_fingerprints=*/{id4}));
   ASSERT_THAT(index1, Pointee(SizeIs(4)));
 
   // After calling PersistToDisk, all checksums should be recomputed and synced
@@ -228,26 +281,24 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
   EXPECT_THAT(index2, Pointee(SizeIs(4)));
   EXPECT_THAT(
       GetJoinData(*index2, /*schema_type_id=*/2, /*joinable_property_id=*/1),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/12, /*join_info=*/id4),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/5, /*join_info=*/id2),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/5, /*join_info=*/id1))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/12, /*join_info=*/id4),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/5, /*join_info=*/id2),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/5, /*join_info=*/id1))));
   EXPECT_THAT(
       GetJoinData(*index2, /*schema_type_id=*/3, /*joinable_property_id=*/10),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/6, /*join_info=*/id3))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/6, /*join_info=*/id3))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test,
        InitializationShouldSucceedAfterDestruction) {
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/12);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/56);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/78);
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/78);
 
   {
     // Create new qualified id join index
@@ -259,13 +310,13 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     // Insert some data.
     ICING_ASSERT_OK(index->Put(
         /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-        /*ref_namespace_fingerprint_ids=*/{id2, id1}));
+        /*ref_namespace_id_uri_fingerprints=*/{id2, id1}));
     ICING_ASSERT_OK(index->Put(
         /*schema_type_id=*/3, /*joinable_property_id=*/10, /*document_id=*/6,
-        /*ref_namespace_fingerprint_ids=*/{id3}));
+        /*ref_namespace_id_uri_fingerprints=*/{id3}));
     ICING_ASSERT_OK(index->Put(
         /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
-        /*ref_namespace_fingerprint_ids=*/{id4}));
+        /*ref_namespace_id_uri_fingerprints=*/{id4}));
     ASSERT_THAT(index, Pointee(SizeIs(4)));
   }
 
@@ -281,18 +332,16 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     EXPECT_THAT(index, Pointee(SizeIs(4)));
     EXPECT_THAT(
         GetJoinData(*index, /*schema_type_id=*/2, /*joinable_property_id=*/1),
-        IsOkAndHolds(
-            ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                            /*document_id=*/12, /*join_info=*/id4),
-                        DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                            /*document_id=*/5, /*join_info=*/id2),
-                        DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                            /*document_id=*/5, /*join_info=*/id1))));
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/12, /*join_info=*/id4),
+                                 DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/5, /*join_info=*/id2),
+                                 DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/5, /*join_info=*/id1))));
     EXPECT_THAT(
         GetJoinData(*index, /*schema_type_id=*/3, /*joinable_property_id=*/10),
-        IsOkAndHolds(
-            ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                /*document_id=*/6, /*join_info=*/id3))));
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            /*document_id=*/6, /*join_info=*/id3))));
   }
 }
 
@@ -306,9 +355,8 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
                                            /*pre_mapping_fbv=*/false));
     ICING_ASSERT_OK(index->Put(
         /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/1,
-                                        /*fingerprint=*/12)}));
+        /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/12)}));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -334,8 +382,8 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
         metadata_buffer.get() +
         QualifiedIdJoinIndexImplV2::kInfoMetadataBufferOffset);
     info->magic += kCorruptedValueOffset;
-    crcs->component_crcs.info_crc = info->ComputeChecksum().Get();
-    crcs->all_crc = crcs->component_crcs.ComputeChecksum().Get();
+    crcs->component_crcs.info_crc = info->GetChecksum().Get();
+    crcs->all_crc = crcs->component_crcs.GetChecksum().Get();
     ASSERT_THAT(filesystem_.PWrite(
                     metadata_sfd.get(), /*offset=*/0, metadata_buffer.get(),
                     QualifiedIdJoinIndexImplV2::kMetadataFileSize),
@@ -359,10 +407,9 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
         QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
                                            /*pre_mapping_fbv=*/false));
     ICING_ASSERT_OK(index->Put(
-        /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/1,
-                                        /*fingerprint=*/12)}));
+        /*schema_type_id=*/2, /*joinable_property_id=*/1,
+        /*document_id=*/5, /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/12)}));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -409,10 +456,9 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
         QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
                                            /*pre_mapping_fbv=*/false));
     ICING_ASSERT_OK(index->Put(
-        /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/1,
-                                        /*fingerprint=*/12)}));
+        /*schema_type_id=*/2, /*joinable_property_id=*/1,
+        /*document_id=*/5, /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/12)}));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -461,10 +507,9 @@ TEST_F(
         QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
                                            /*pre_mapping_fbv=*/false));
     ICING_ASSERT_OK(index->Put(
-        /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-        /*ref_namespace_fingerprint_ids=*/
-        {NamespaceFingerprintIdentifier(/*namespace_id=*/1,
-                                        /*fingerprint=*/12)}));
+        /*schema_type_id=*/2, /*joinable_property_id=*/1,
+        /*document_id=*/5, /*ref_namespace_id_uri_fingerprints=*/
+        {NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/12)}));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -478,10 +523,10 @@ TEST_F(
         PersistentHashMapKeyMapper<PostingListIdentifier>::Create(
             filesystem_, std::move(mapper_working_path),
             /*pre_mapping_fbv=*/false));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->UpdateChecksum());
     ICING_ASSERT_OK(mapper->Put("foo", PostingListIdentifier::kInvalid));
     ICING_ASSERT_OK(mapper->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, mapper->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, mapper->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -494,7 +539,7 @@ TEST_F(
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, InvalidPut) {
-  NamespaceFingerprintIdentifier id(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceIdFingerprint id(/*namespace_id=*/1, /*fingerprint=*/12);
 
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -504,15 +549,15 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, InvalidPut) {
 
   EXPECT_THAT(
       index->Put(/*schema_type_id=*/-1, /*joinable_property_id=*/1,
-                 /*document_id=*/5, /*ref_namespace_fingerprint_ids=*/{id}),
+                 /*document_id=*/5, /*ref_namespace_id_uri_fingerprints=*/{id}),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(
       index->Put(/*schema_type_id=*/2, /*joinable_property_id=*/-1,
-                 /*document_id=*/5, /*ref_namespace_fingerprint_ids=*/{id}),
+                 /*document_id=*/5, /*ref_namespace_id_uri_fingerprints=*/{id}),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(index->Put(/*schema_type_id=*/2, /*joinable_property_id=*/1,
                          /*document_id=*/kInvalidDocumentId,
-                         /*ref_namespace_fingerprint_ids=*/{id}),
+                         /*ref_namespace_id_uri_fingerprints=*/{id}),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -544,7 +589,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/5,
-                 /*ref_namespace_fingerprint_ids=*/{}),
+                 /*ref_namespace_id_uri_fingerprints=*/{}),
       IsOk());
   EXPECT_THAT(index, Pointee(IsEmpty()));
 
@@ -561,10 +606,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/3, /*fingerprint=*/12);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/2, /*fingerprint=*/56);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/0, /*fingerprint=*/78);
+  NamespaceIdFingerprint id1(/*namespace_id=*/3, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/2, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/0, /*fingerprint=*/78);
 
   {
     // Create new qualified id join index
@@ -575,28 +620,28 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
 
     EXPECT_THAT(
         index->Put(schema_type_id, joinable_property_id, /*document_id=*/5,
-                   /*ref_namespace_fingerprint_ids=*/{id2, id1}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id2, id1}),
         IsOk());
     EXPECT_THAT(
         index->Put(schema_type_id, joinable_property_id, /*document_id=*/6,
-                   /*ref_namespace_fingerprint_ids=*/{id3}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id3}),
         IsOk());
     EXPECT_THAT(
         index->Put(schema_type_id, joinable_property_id, /*document_id=*/12,
-                   /*ref_namespace_fingerprint_ids=*/{id4}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id4}),
         IsOk());
     EXPECT_THAT(index, Pointee(SizeIs(4)));
 
-    EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
-                IsOkAndHolds(ElementsAre(
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/12, /*join_info=*/id4),
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/6, /*join_info=*/id3),
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/5, /*join_info=*/id1),
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/5, /*join_info=*/id2))));
+    EXPECT_THAT(
+        GetJoinData(*index, schema_type_id, joinable_property_id),
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/12, /*join_info=*/id4),
+                                 DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/6, /*join_info=*/id3),
+                                 DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/5, /*join_info=*/id1),
+                                 DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                     /*document_id=*/5, /*join_info=*/id2))));
     EXPECT_THAT(GetJoinData(*index, schema_type_id + 1, joinable_property_id),
                 IsOkAndHolds(IsEmpty()));
     EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id + 1),
@@ -611,16 +656,16 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
       QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
                                          /*pre_mapping_fbv=*/false));
   EXPECT_THAT(index, Pointee(SizeIs(4)));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/12, /*join_info=*/id4),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/6, /*join_info=*/id3),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/5, /*join_info=*/id1),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/5, /*join_info=*/id2))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id, joinable_property_id),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/12, /*join_info=*/id4),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/6, /*join_info=*/id3),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/5, /*join_info=*/id1),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/5, /*join_info=*/id2))));
   EXPECT_THAT(GetJoinData(*index, schema_type_id + 1, joinable_property_id),
               IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id + 1),
@@ -635,10 +680,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
   JoinablePropertyId joinable_property_id1 = 1;
   JoinablePropertyId joinable_property_id2 = 10;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/3, /*fingerprint=*/12);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/2, /*fingerprint=*/56);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/0, /*fingerprint=*/78);
+  NamespaceIdFingerprint id1(/*namespace_id=*/3, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/2, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/0, /*fingerprint=*/78);
 
   {
     // Create new qualified id join index
@@ -649,38 +694,38 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
 
     EXPECT_THAT(
         index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/5,
-                   /*ref_namespace_fingerprint_ids=*/{id1}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id1}),
         IsOk());
     EXPECT_THAT(
         index->Put(schema_type_id1, joinable_property_id2, /*document_id=*/5,
-                   /*ref_namespace_fingerprint_ids=*/{id2}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id2}),
         IsOk());
     EXPECT_THAT(
         index->Put(schema_type_id2, joinable_property_id1, /*document_id=*/12,
-                   /*ref_namespace_fingerprint_ids=*/{id3}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id3}),
         IsOk());
     EXPECT_THAT(
         index->Put(schema_type_id2, joinable_property_id2, /*document_id=*/12,
-                   /*ref_namespace_fingerprint_ids=*/{id4}),
+                   /*ref_namespace_id_uri_fingerprints=*/{id4}),
         IsOk());
     EXPECT_THAT(index, Pointee(SizeIs(4)));
 
-    EXPECT_THAT(GetJoinData(*index, schema_type_id1, joinable_property_id1),
-                IsOkAndHolds(ElementsAre(
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/5, /*join_info=*/id1))));
-    EXPECT_THAT(GetJoinData(*index, schema_type_id1, joinable_property_id2),
-                IsOkAndHolds(ElementsAre(
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/5, /*join_info=*/id2))));
-    EXPECT_THAT(GetJoinData(*index, schema_type_id2, joinable_property_id1),
-                IsOkAndHolds(ElementsAre(
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/12, /*join_info=*/id3))));
-    EXPECT_THAT(GetJoinData(*index, schema_type_id2, joinable_property_id2),
-                IsOkAndHolds(ElementsAre(
-                    DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                        /*document_id=*/12, /*join_info=*/id4))));
+    EXPECT_THAT(
+        GetJoinData(*index, schema_type_id1, joinable_property_id1),
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            /*document_id=*/5, /*join_info=*/id1))));
+    EXPECT_THAT(
+        GetJoinData(*index, schema_type_id1, joinable_property_id2),
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            /*document_id=*/5, /*join_info=*/id2))));
+    EXPECT_THAT(
+        GetJoinData(*index, schema_type_id2, joinable_property_id1),
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            /*document_id=*/12, /*join_info=*/id3))));
+    EXPECT_THAT(
+        GetJoinData(*index, schema_type_id2, joinable_property_id2),
+        IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            /*document_id=*/12, /*join_info=*/id4))));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -691,22 +736,22 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
       QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
                                          /*pre_mapping_fbv=*/false));
   EXPECT_THAT(index, Pointee(SizeIs(4)));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id1, joinable_property_id1),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/5, /*join_info=*/id1))));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id1, joinable_property_id2),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/5, /*join_info=*/id2))));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id2, joinable_property_id1),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/12, /*join_info=*/id3))));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id2, joinable_property_id2),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/12, /*join_info=*/id4))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id1, joinable_property_id1),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/5, /*join_info=*/id1))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id1, joinable_property_id2),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/5, /*join_info=*/id2))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id2, joinable_property_id1),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/12, /*join_info=*/id3))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id2, joinable_property_id2),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/12, /*join_info=*/id4))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, SetLastAddedDocumentId) {
@@ -758,34 +803,34 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Optimize) {
   JoinablePropertyId joinable_property_id1 = 11;
   JoinablePropertyId joinable_property_id2 = 15;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/2, /*fingerprint=*/101);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/3, /*fingerprint=*/102);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/4, /*fingerprint=*/103);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/0, /*fingerprint=*/104);
-  NamespaceFingerprintIdentifier id5(/*namespace_id=*/0, /*fingerprint=*/105);
-  NamespaceFingerprintIdentifier id6(/*namespace_id=*/1, /*fingerprint=*/106);
-  NamespaceFingerprintIdentifier id7(/*namespace_id=*/3, /*fingerprint=*/107);
-  NamespaceFingerprintIdentifier id8(/*namespace_id=*/2, /*fingerprint=*/108);
+  NamespaceIdFingerprint id1(/*namespace_id=*/2, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/3, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/4, /*fingerprint=*/103);
+  NamespaceIdFingerprint id4(/*namespace_id=*/0, /*fingerprint=*/104);
+  NamespaceIdFingerprint id5(/*namespace_id=*/0, /*fingerprint=*/105);
+  NamespaceIdFingerprint id6(/*namespace_id=*/1, /*fingerprint=*/106);
+  NamespaceIdFingerprint id7(/*namespace_id=*/3, /*fingerprint=*/107);
+  NamespaceIdFingerprint id8(/*namespace_id=*/2, /*fingerprint=*/108);
 
   EXPECT_THAT(
       index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/3,
-                 /*ref_namespace_fingerprint_ids=*/{id1, id2, id3}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id1, id2, id3}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id2, joinable_property_id2, /*document_id=*/5,
-                 /*ref_namespace_fingerprint_ids=*/{id4}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id4}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id2, joinable_property_id2, /*document_id=*/8,
-                 /*ref_namespace_fingerprint_ids=*/{id5, id6}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id5, id6}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/13,
-                 /*ref_namespace_fingerprint_ids=*/{id7}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id7}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/21,
-                 /*ref_namespace_fingerprint_ids=*/{id8}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id8}),
       IsOk());
   index->set_last_added_document_id(21);
 
@@ -822,15 +867,14 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Optimize) {
   //   - old_doc_id=3, old_ref_namespace_id=2: NOT FOUND
   //
   // For new_doc_id=0, it should reorder due to posting list restriction.
-  EXPECT_THAT(
-      GetJoinData(*index, schema_type_id1, joinable_property_id1),
-      IsOkAndHolds(ElementsAre(
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/2, /*fingerprint=*/102)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/0, /*fingerprint=*/103)))));
+  EXPECT_THAT(GetJoinData(*index, schema_type_id1, joinable_property_id1),
+              IsOkAndHolds(ElementsAre(
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/2, /*fingerprint=*/102)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/103)))));
 
   // 2) schema_type_id2, joinable_property_id2:
   //   - old_doc_id=8, old_ref_namespace_id=1: NOT FOUND
@@ -839,32 +883,30 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Optimize) {
   //   - old_doc_id=5, old_ref_namespace_id=0: NOT FOUND
   EXPECT_THAT(
       GetJoinData(*index, schema_type_id2, joinable_property_id2),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/1, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/1, /*fingerprint=*/105)))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/1, /*join_info=*/NamespaceIdFingerprint(
+              /*namespace_id=*/1, /*fingerprint=*/105)))));
 
   // Verify Put API should work normally after Optimize().
-  NamespaceFingerprintIdentifier id9(/*namespace_id=*/1, /*fingerprint=*/109);
+  NamespaceIdFingerprint id9(/*namespace_id=*/1, /*fingerprint=*/109);
   EXPECT_THAT(
       index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/99,
-                 /*ref_namespace_fingerprint_ids=*/{id9}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id9}),
       IsOk());
   index->set_last_added_document_id(99);
 
   EXPECT_THAT(index, Pointee(SizeIs(4)));
   EXPECT_THAT(index->last_added_document_id(), Eq(99));
-  EXPECT_THAT(
-      GetJoinData(*index, schema_type_id1, joinable_property_id1),
-      IsOkAndHolds(ElementsAre(
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/99, /*join_info=*/id9),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/2, /*fingerprint=*/102)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/0, /*fingerprint=*/103)))));
+  EXPECT_THAT(GetJoinData(*index, schema_type_id1, joinable_property_id1),
+              IsOkAndHolds(ElementsAre(
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/99, /*join_info=*/id9),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/2, /*fingerprint=*/102)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/103)))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDocumentIdChange) {
@@ -878,32 +920,32 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDocumentIdChange) {
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/101);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/102);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/103);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/104);
-  NamespaceFingerprintIdentifier id5(/*namespace_id=*/1, /*fingerprint=*/105);
-  NamespaceFingerprintIdentifier id6(/*namespace_id=*/1, /*fingerprint=*/106);
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/103);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/104);
+  NamespaceIdFingerprint id5(/*namespace_id=*/1, /*fingerprint=*/105);
+  NamespaceIdFingerprint id6(/*namespace_id=*/1, /*fingerprint=*/106);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/3,
-                 /*ref_namespace_fingerprint_ids=*/{id1, id2}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id1, id2}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/5,
-                 /*ref_namespace_fingerprint_ids=*/{id3}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id3}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/8,
-                 /*ref_namespace_fingerprint_ids=*/{id4}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id4}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/13,
-                 /*ref_namespace_fingerprint_ids=*/{id5}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id5}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/21,
-                 /*ref_namespace_fingerprint_ids=*/{id6}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id6}),
       IsOk());
   index->set_last_added_document_id(21);
 
@@ -932,39 +974,39 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDocumentIdChange) {
   // - old_doc_id=5, join_info=id3: NOT FOUND
   // - old_doc_id=3, join_info=id2: become doc_id=0, join_info=id2
   // - old_doc_id=3, join_info=id1: become doc_id=0, join_info=id1
-  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/2, /*join_info=*/id6),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/1, /*join_info=*/id5),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/0, /*join_info=*/id2),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/0, /*join_info=*/id1))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id, joinable_property_id),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/2, /*join_info=*/id6),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/1, /*join_info=*/id5),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/0, /*join_info=*/id2),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/0, /*join_info=*/id1))));
 
   // Verify Put API should work normally after Optimize().
-  NamespaceFingerprintIdentifier id7(/*namespace_id=*/1, /*fingerprint=*/107);
+  NamespaceIdFingerprint id7(/*namespace_id=*/1, /*fingerprint=*/107);
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/99,
-                 /*ref_namespace_fingerprint_ids=*/{id7}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id7}),
       IsOk());
   index->set_last_added_document_id(99);
 
   EXPECT_THAT(index, Pointee(SizeIs(5)));
   EXPECT_THAT(index->last_added_document_id(), Eq(99));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
-              IsOkAndHolds(ElementsAre(
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/99, /*join_info=*/id7),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/2, /*join_info=*/id6),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/1, /*join_info=*/id5),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/0, /*join_info=*/id2),
-                  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                      /*document_id=*/0, /*join_info=*/id1))));
+  EXPECT_THAT(
+      GetJoinData(*index, schema_type_id, joinable_property_id),
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/99, /*join_info=*/id7),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/2, /*join_info=*/id6),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/1, /*join_info=*/id5),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/0, /*join_info=*/id2),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/0, /*join_info=*/id1))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeOutOfRangeDocumentId) {
@@ -977,11 +1019,11 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeOutOfRangeDocumentId) {
 
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
-  NamespaceFingerprintIdentifier id(/*namespace_id=*/1, /*fingerprint=*/101);
+  NamespaceIdFingerprint id(/*namespace_id=*/1, /*fingerprint=*/101);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/99,
-                 /*ref_namespace_fingerprint_ids=*/{id}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id}),
       IsOk());
   index->set_last_added_document_id(99);
 
@@ -1014,32 +1056,32 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllDocuments) {
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/101);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/102);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/103);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/104);
-  NamespaceFingerprintIdentifier id5(/*namespace_id=*/1, /*fingerprint=*/105);
-  NamespaceFingerprintIdentifier id6(/*namespace_id=*/1, /*fingerprint=*/106);
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/103);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/104);
+  NamespaceIdFingerprint id5(/*namespace_id=*/1, /*fingerprint=*/105);
+  NamespaceIdFingerprint id6(/*namespace_id=*/1, /*fingerprint=*/106);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/3,
-                 /*ref_namespace_fingerprint_ids=*/{id1, id2}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id1, id2}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/5,
-                 /*ref_namespace_fingerprint_ids=*/{id3}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id3}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/8,
-                 /*ref_namespace_fingerprint_ids=*/{id4}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id4}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/13,
-                 /*ref_namespace_fingerprint_ids=*/{id5}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id5}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/21,
-                 /*ref_namespace_fingerprint_ids=*/{id6}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id6}),
       IsOk());
   index->set_last_added_document_id(21);
 
@@ -1074,36 +1116,36 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChange) {
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/3, /*fingerprint=*/101);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/5, /*fingerprint=*/102);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/4, /*fingerprint=*/103);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/0, /*fingerprint=*/104);
-  NamespaceFingerprintIdentifier id5(/*namespace_id=*/2, /*fingerprint=*/105);
-  NamespaceFingerprintIdentifier id6(/*namespace_id=*/1, /*fingerprint=*/106);
+  NamespaceIdFingerprint id1(/*namespace_id=*/3, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/5, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/4, /*fingerprint=*/103);
+  NamespaceIdFingerprint id4(/*namespace_id=*/0, /*fingerprint=*/104);
+  NamespaceIdFingerprint id5(/*namespace_id=*/2, /*fingerprint=*/105);
+  NamespaceIdFingerprint id6(/*namespace_id=*/1, /*fingerprint=*/106);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/2,
-                 /*ref_namespace_fingerprint_ids=*/{id1}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id1}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/3,
-                 /*ref_namespace_fingerprint_ids=*/{id2}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id2}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/5,
-                 /*ref_namespace_fingerprint_ids=*/{id3}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id3}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/8,
-                 /*ref_namespace_fingerprint_ids=*/{id4}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id4}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/13,
-                 /*ref_namespace_fingerprint_ids=*/{id5}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id5}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/21,
-                 /*ref_namespace_fingerprint_ids=*/{id6}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id6}),
       IsOk());
   index->set_last_added_document_id(21);
 
@@ -1135,49 +1177,47 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChange) {
   // - id3 (old_namespace_id=4): NOT FOUND
   // - id2 (old_namespace_id=5): new_namespace_id=0 (document_id = 3)
   // - id1 (old_namespace_id=3): new_namespace_id=1 (document_id = 2)
-  EXPECT_THAT(
-      GetJoinData(*index, schema_type_id, joinable_property_id),
-      IsOkAndHolds(ElementsAre(
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/21, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/3, /*fingerprint=*/106)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/8, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/2, /*fingerprint=*/104)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/3, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/0, /*fingerprint=*/102)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/2, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/1, /*fingerprint=*/101)))));
+  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
+              IsOkAndHolds(ElementsAre(
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/21, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/3, /*fingerprint=*/106)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/8, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/2, /*fingerprint=*/104)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/3, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/102)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/2, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/1, /*fingerprint=*/101)))));
 
   // Verify Put API should work normally after Optimize().
-  NamespaceFingerprintIdentifier id7(/*namespace_id=*/1, /*fingerprint=*/107);
+  NamespaceIdFingerprint id7(/*namespace_id=*/1, /*fingerprint=*/107);
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/99,
-                 /*ref_namespace_fingerprint_ids=*/{id7}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id7}),
       IsOk());
   index->set_last_added_document_id(99);
 
   EXPECT_THAT(index, Pointee(SizeIs(5)));
   EXPECT_THAT(index->last_added_document_id(), Eq(99));
-  EXPECT_THAT(
-      GetJoinData(*index, schema_type_id, joinable_property_id),
-      IsOkAndHolds(ElementsAre(
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/99, /*join_info=*/id7),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/21, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/3, /*fingerprint=*/106)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/8, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/2, /*fingerprint=*/104)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/3, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/0, /*fingerprint=*/102)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/2, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/1, /*fingerprint=*/101)))));
+  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
+              IsOkAndHolds(ElementsAre(
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/99, /*join_info=*/id7),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/21, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/3, /*fingerprint=*/106)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/8, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/2, /*fingerprint=*/104)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/3, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/102)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/2, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/1, /*fingerprint=*/101)))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChangeShouldReorder) {
@@ -1191,18 +1231,18 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChangeShouldReorder) {
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/0, /*fingerprint=*/101);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/102);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/2, /*fingerprint=*/103);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/104);
+  NamespaceIdFingerprint id1(/*namespace_id=*/0, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/2, /*fingerprint=*/103);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/104);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/0,
-                 /*ref_namespace_fingerprint_ids=*/{id1, id2, id3}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id1, id2, id3}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/1,
-                 /*ref_namespace_fingerprint_ids=*/{id4}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id4}),
       IsOk());
   index->set_last_added_document_id(1);
 
@@ -1228,21 +1268,20 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChangeShouldReorder) {
   // - id1 (old_namespace_id=0): new_namespace_id=2 (document_id = 0)
   //
   // Should reorder to [id4, id1, id3, id2] due to posting list restriction.
-  EXPECT_THAT(
-      GetJoinData(*index, schema_type_id, joinable_property_id),
-      IsOkAndHolds(ElementsAre(
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/1, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/0, /*fingerprint=*/104)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/2, /*fingerprint=*/101)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/1, /*fingerprint=*/103)),
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, /*join_info=*/NamespaceFingerprintIdentifier(
-                  /*namespace_id=*/0, /*fingerprint=*/102)))));
+  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
+              IsOkAndHolds(ElementsAre(
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/1, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/104)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/2, /*fingerprint=*/101)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/1, /*fingerprint=*/103)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/102)))));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeOutOfRangeNamespaceId) {
@@ -1255,11 +1294,11 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeOutOfRangeNamespaceId) {
 
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
-  NamespaceFingerprintIdentifier id(/*namespace_id=*/99, /*fingerprint=*/101);
+  NamespaceIdFingerprint id(/*namespace_id=*/99, /*fingerprint=*/101);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/0,
-                 /*ref_namespace_fingerprint_ids=*/{id}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id}),
       IsOk());
   index->set_last_added_document_id(0);
 
@@ -1292,21 +1331,21 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllNamespaces) {
   SchemaTypeId schema_type_id = 2;
   JoinablePropertyId joinable_property_id = 1;
 
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/0, /*fingerprint=*/101);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/102);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/2, /*fingerprint=*/103);
+  NamespaceIdFingerprint id1(/*namespace_id=*/0, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/2, /*fingerprint=*/103);
 
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/0,
-                 /*ref_namespace_fingerprint_ids=*/{id1}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id1}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/1,
-                 /*ref_namespace_fingerprint_ids=*/{id2}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id2}),
       IsOk());
   EXPECT_THAT(
       index->Put(schema_type_id, joinable_property_id, /*document_id=*/2,
-                 /*ref_namespace_fingerprint_ids=*/{id3}),
+                 /*ref_namespace_id_uri_fingerprints=*/{id3}),
       IsOk());
   index->set_last_added_document_id(3);
 
@@ -1331,10 +1370,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllNamespaces) {
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, Clear) {
-  NamespaceFingerprintIdentifier id1(/*namespace_id=*/1, /*fingerprint=*/12);
-  NamespaceFingerprintIdentifier id2(/*namespace_id=*/1, /*fingerprint=*/34);
-  NamespaceFingerprintIdentifier id3(/*namespace_id=*/1, /*fingerprint=*/56);
-  NamespaceFingerprintIdentifier id4(/*namespace_id=*/1, /*fingerprint=*/78);
+  NamespaceIdFingerprint id1(/*namespace_id=*/1, /*fingerprint=*/12);
+  NamespaceIdFingerprint id2(/*namespace_id=*/1, /*fingerprint=*/34);
+  NamespaceIdFingerprint id3(/*namespace_id=*/1, /*fingerprint=*/56);
+  NamespaceIdFingerprint id4(/*namespace_id=*/1, /*fingerprint=*/78);
 
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1344,13 +1383,13 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Clear) {
   // Insert some data.
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/5,
-      /*ref_namespace_fingerprint_ids=*/{id2, id1}));
+      /*ref_namespace_id_uri_fingerprints=*/{id2, id1}));
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/3, /*joinable_property_id=*/10, /*document_id=*/6,
-      /*ref_namespace_fingerprint_ids=*/{id3}));
+      /*ref_namespace_id_uri_fingerprints=*/{id3}));
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/12,
-      /*ref_namespace_fingerprint_ids=*/{id4}));
+      /*ref_namespace_id_uri_fingerprints=*/{id4}));
   ASSERT_THAT(index, Pointee(SizeIs(4)));
   index->set_last_added_document_id(12);
   ASSERT_THAT(index->last_added_document_id(), Eq(12));
@@ -1370,22 +1409,21 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Clear) {
   // Join index should be able to work normally after Clear().
   ICING_ASSERT_OK(index->Put(
       /*schema_type_id=*/2, /*joinable_property_id=*/1, /*document_id=*/20,
-      /*ref_namespace_fingerprint_ids=*/{id4, id2, id1, id3}));
+      /*ref_namespace_id_uri_fingerprints=*/{id4, id2, id1, id3}));
   index->set_last_added_document_id(20);
 
   EXPECT_THAT(index, Pointee(SizeIs(4)));
   EXPECT_THAT(index->last_added_document_id(), Eq(20));
   EXPECT_THAT(
       GetJoinData(*index, /*schema_type_id=*/2, /*joinable_property_id=*/1),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id4),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id3),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id2),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id1))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id4),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id3),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id2),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id1))));
 
   ICING_ASSERT_OK(index->PersistToDisk());
   index.reset();
@@ -1397,15 +1435,14 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Clear) {
   EXPECT_THAT(index->last_added_document_id(), Eq(20));
   EXPECT_THAT(
       GetJoinData(*index, /*schema_type_id=*/2, /*joinable_property_id=*/1),
-      IsOkAndHolds(
-          ElementsAre(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id4),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id3),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id2),
-                      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-                          /*document_id=*/20, /*join_info=*/id1))));
+      IsOkAndHolds(ElementsAre(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id4),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id3),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id2),
+                               DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                   /*document_id=*/20, /*join_info=*/id1))));
 }
 
 }  // namespace

@@ -34,14 +34,31 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 7
+// Next tag: 9
 message SchemaTypeConfigProto {
-  // REQUIRED: Named type that uniquely identifies the structured, logical
-  // schema being defined.
+  // REQUIRED: Named type that identifies the structured, logical schema being
+  // defined.
   //
   // Recommended format: Human readable string that's one of the types defined
   // in http://schema.org. Eg: DigitalDocument, Message, Person, etc.
   optional string schema_type = 1;
+
+  // OPTIONAL: A natural language description of the SchemaTypeConfigProto.
+  //
+  // This string is not used by Icing in any way. It simply exists to allow
+  // users to store semantic information about the SchemaTypeConfigProto for
+  // future retrieval.
+  optional string description = 7;
+
+  // OPTIONAL: Identifies a database that the schema type belongs to. This
+  // groups schema types that are related to each other, which is useful for
+  // setting or retrieving a subset of schema types. If unset, the schema type
+  // will be considered as part of the default empty database group.
+  //
+  // NOTE: Only schemas from one database can be set in a single SetSchema call.
+  // Please use multiple SetSchema calls if you want to set schemas across
+  // multiple databases.
+  optional string database = 8;
 
   // List of all properties that are supported by Documents of this type.
   // An Document should never have properties that are not listed here.
@@ -87,6 +104,14 @@ message StringIndexingConfig {
   // Content in this property should be returned for queries that are either
   // exact matches or query matches of the tokens appearing in this property.
   // Ex. A property with "fool" *should* match a query for "foo".
+  //
+  // TermMatchType.Code=STEMMING
+  // Content in this property should also be returned for queries that are stems
+  // of the tokens appearing in this property.
+  // Ex. A property with "running" *should* match a query for "run".
+  //
+  // TODO: b/344915547 - Refactor this to be a repeated field so that clients
+  // can choose multiple fuzzy match types.
   optional TermMatchType.Code term_match_type = 1;
 
   message TokenizerType {
@@ -177,9 +202,47 @@ message IntegerIndexingConfig {
   optional NumericMatchType.Code numeric_match_type = 1;
 }
 
+// Describes how a vector property should be indexed.
+// Next tag: 3
+message EmbeddingIndexingConfig {
+  // OPTIONAL: Indicates how the vector contents of this property should be
+  // matched.
+  //
+  // The default value is UNKNOWN.
+  message EmbeddingIndexingType {
+    enum Code {
+      // Contents in this property will not be indexed. Useful if the vector
+      // property type is not indexable.
+      UNKNOWN = 0;
+
+      // Contents in this property will be indexed for linear search.
+      LINEAR_SEARCH = 1;
+    }
+  }
+  optional EmbeddingIndexingType.Code embedding_indexing_type = 1;
+
+  // OPTIONAL: Indicates whether the vector contents of this property should be
+  // quantized. Quantization can reduce the size of the embedding search index,
+  // potentially leading to faster embedding search due to lower I/O bandwidth.
+  //
+  // Quantization is usually very reliable and in most cases will have a
+  // negligible impact on recall. Using quantization is strongly recommended.
+  //
+  // The default value is NONE.
+  message QuantizationType {
+    enum Code {
+      // Contents in this property will not be quantized.
+      NONE = 0;
+      // Contents in this property will be quantized to 8 bits.
+      QUANTIZE_8_BIT = 1;
+    }
+  }
+  optional QuantizationType.Code quantization_type = 2;
+}
+
 // Describes how a property can be used to join this document with another
 // document. See JoinSpecProto (in search.proto) for more details.
-// Next tag: 3
+// Next tag: 4
 message JoinableConfig {
   // OPTIONAL: Indicates what joinable type the content value of this property
   // is.
@@ -199,16 +262,31 @@ message JoinableConfig {
   }
   optional ValueType.Code value_type = 1;
 
-  // If the parent document a child document is joined to is deleted, delete the
-  // child document as well. This will only apply to children joined through
-  // QUALIFIED_ID, other (future) joinable value types won't use it.
-  optional bool propagate_delete = 2 [default = false];
+  // OPTIONAL: Indicates how to propagate the deletion between the document and
+  // the (referenced) joinable document.
+  //
+  // The default value is NONE.
+  //
+  // If delete propagation is enabled (i.e. not NONE), then value_type must be
+  // QUALIFIED_ID.
+  message DeletePropagationType {
+    enum Code {
+      // No delete propagation.
+      NONE = 0;
+
+      // Propagate delete from the referenced document to the doucument.
+      PROPAGATE_FROM = 1;
+    }
+  }
+  optional DeletePropagationType.Code delete_propagation_type = 3;
+
+  reserved 2;
 }
 
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 9
+// Next tag: 12
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -218,6 +296,13 @@ message PropertyConfigProto {
   // Eg: 'author' for http://schema.org/DigitalDocument.
   // Eg: 'address' for http://schema.org/Place.
   optional string property_name = 1;
+
+  // OPTIONAL: A natural language description of the property.
+  //
+  // This string is not used by Icing in any way. It simply exists to allow
+  // users to store semantic information about the PropertyConfigProto for
+  // future retrieval.
+  optional string description = 9;
 
   // REQUIRED: Physical data-types of the contents of the property.
   message DataType {
@@ -238,6 +323,12 @@ message PropertyConfigProto {
       // a hierarchical Document schema. Any property using this data_type
       // MUST have a valid 'schema_type'.
       DOCUMENT = 6;
+
+      // A list of floats. Vector type is used for embedding searches.
+      VECTOR = 7;
+
+      // A handle to uniquely identify a large blob of data.
+      BLOB_HANDLE = 8;
     }
   }
   optional DataType.Code data_type = 2;
@@ -299,6 +390,31 @@ message PropertyConfigProto {
   // - The property itself and any upper-level (nested doc) property should
   //   contain at most one element (i.e. Cardinality is OPTIONAL or REQUIRED).
   optional JoinableConfig joinable_config = 8;
+
+  // OPTIONAL: Describes how vector properties should be indexed. Vector
+  // properties that do not set the indexing config will not be indexed.
+  optional EmbeddingIndexingConfig embedding_indexing_config = 10;
+
+  // OPTIONAL: Describes how a property can be used to for scoring.
+  //
+  // The ScorableType should only be enabled for the following data types:
+  // - INT64
+  // - DOUBLE
+  // - BOOLEAN
+  message ScorableType {
+    enum Code {
+      // This value should not be used on purpose.
+      // It will be treated as DISABLED in icing.
+      UNKNOWN = 0;
+
+      // Property is disabled for scoring.
+      DISABLED = 1;
+
+      // Property is enabled for scoring.
+      ENABLED = 2;
+    }
+  }
+  optional ScorableType.Code scorable_type = 11;
 }
 
 // List of all supported types constitutes the schema used by Icing.

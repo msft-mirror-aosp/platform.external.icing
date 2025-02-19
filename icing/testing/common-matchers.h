@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,7 @@
 #include "icing/proto/status.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
 
@@ -49,6 +51,17 @@ MATCHER_P2(EqualsToken, type, text, "") {
     *result_listener << IcingStringUtil::StringPrintf(
         "(Expected: type=%d, text=\"%s\". Actual: type=%d, text=\"%s\")", type,
         text, arg.type, arg_string.c_str());
+    return false;
+  }
+  return true;
+}
+
+MATCHER_P(EqualsNormalizedTerm, text, "") {
+  std::string arg_string(arg.text.data(), arg.text.length());
+  if (arg.text != text) {
+    *result_listener << IcingStringUtil::StringPrintf(
+        "(Expected: text=\"%s\". Actual: text=\"%s\")", text,
+        arg_string.c_str());
     return false;
   }
   return true;
@@ -102,6 +115,26 @@ MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
          actual.num_leaf_advance_calls_no_index ==
              num_leaf_advance_calls_no_index &&
          actual.num_blocks_inspected == num_blocks_inspected;
+}
+
+// Used to match a DocumentAssociatedScoreData
+MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
+           creation_timestamp_ms, length_in_tokens,
+           has_valid_scorable_property_cache_index, "") {
+  bool expected_has_valid_scorable_property_cache_index =
+      arg.scorable_property_cache_index() != -1;
+  return arg.corpus_id() == corpus_id &&
+         arg.document_score() == document_score &&
+         arg.creation_timestamp_ms() == creation_timestamp_ms &&
+         arg.length_in_tokens() == length_in_tokens &&
+         expected_has_valid_scorable_property_cache_index ==
+             has_valid_scorable_property_cache_index;
+}
+
+// Used to match a ScorablePropertyManager::ScorablePropertyInfo
+MATCHER_P2(EqualsScorablePropertyInfo, property_path, data_type, "") {
+  const ScorablePropertyManager::ScorablePropertyInfo& actual = arg;
+  return actual.property_path == property_path && actual.data_type == data_type;
 }
 
 struct ExtractTermFrequenciesResult {
@@ -199,9 +232,19 @@ class ScoredDocumentHitEqualComparator {
  public:
   bool operator()(const ScoredDocumentHit& lhs,
                   const ScoredDocumentHit& rhs) const {
+    bool additional_scores_match = true;
+    if (lhs.additional_scores() != nullptr &&
+        rhs.additional_scores() != nullptr) {
+      additional_scores_match =
+          *lhs.additional_scores() == *rhs.additional_scores();
+    } else {
+      additional_scores_match =
+          lhs.additional_scores() == rhs.additional_scores();
+    }
     return lhs.document_id() == rhs.document_id() &&
            lhs.hit_section_id_mask() == rhs.hit_section_id_mask() &&
-           std::fabs(lhs.score() - rhs.score()) < 1e-6;
+           std::fabs(lhs.score() - rhs.score()) < 1e-6 &&
+           additional_scores_match;
   }
 };
 
@@ -277,7 +320,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_index_incompatible_by_name ==
           expected.schema_types_index_incompatible_by_name &&
       actual.schema_types_join_incompatible_by_name ==
-          expected.schema_types_join_incompatible_by_name) {
+          expected.schema_types_join_incompatible_by_name &&
+      actual.schema_types_scorable_property_inconsistent_by_id ==
+          expected.schema_types_scorable_property_inconsistent_by_id) {
     return true;
   }
 
@@ -448,7 +493,13 @@ MATCHER_P3(EqualsSectionMetadata, expected_id, expected_property_path,
                  .term_match_type() &&
          actual.numeric_match_type ==
              expected_property_config_proto.integer_indexing_config()
-                 .numeric_match_type();
+                 .numeric_match_type() &&
+         actual.embedding_indexing_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .embedding_indexing_type() &&
+         actual.quantization_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .quantization_type();
 }
 
 MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,
@@ -457,7 +508,10 @@ MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,
   return actual.id == expected_id && actual.path == expected_property_path &&
          actual.data_type == expected_property_config_proto.data_type() &&
          actual.value_type ==
-             expected_property_config_proto.joinable_config().value_type();
+             expected_property_config_proto.joinable_config().value_type() &&
+         actual.delete_propagation_type ==
+             expected_property_config_proto.joinable_config()
+                 .delete_propagation_type();
 }
 
 std::string StatusCodeToString(libtextclassifier3::StatusCode code);
@@ -574,6 +628,18 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   }
   return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
                             actual_copy, result_listener);
+}
+
+MATCHER_P(EqualsHit, expected_hit, "") {
+  const Hit& actual = arg;
+  return actual.value() == expected_hit.value() &&
+         actual.flags() == expected_hit.flags() &&
+         actual.term_frequency() == expected_hit.term_frequency();
+}
+
+MATCHER(EqualsHit, "") {
+  return ExplainMatchResult(EqualsHit(std::get<1>(arg)), std::get<0>(arg),
+                            result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status

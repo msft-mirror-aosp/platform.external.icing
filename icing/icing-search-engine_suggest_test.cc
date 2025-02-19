@@ -46,10 +46,10 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -92,7 +92,7 @@ class IcingSearchEngineSuggestTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -1550,15 +1550,8 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_InvalidPrefixTest) {
       SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    EXPECT_THAT(response.status(), ProtoIsOk());
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  } else {
-    EXPECT_THAT(response.status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  }
+  EXPECT_THAT(response.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(response.suggestions(), IsEmpty());
 
   // TODO(b/208654892): Update handling for hyphens to only consider it a hyphen
   // within a TEXT token (rather than a MINUS token) when surrounded on both
@@ -1572,28 +1565,14 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_InvalidPrefixTest) {
   // Search for "f:"
   suggestion_spec.set_prefix("f:");
   response = icing.SearchSuggestions(suggestion_spec);
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    EXPECT_THAT(response.status(), ProtoIsOk());
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  } else {
-    EXPECT_THAT(response.status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  }
+  EXPECT_THAT(response.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(response.suggestions(), IsEmpty());
 
   // Search for "OR OR - :"
   suggestion_spec.set_prefix("OR OR - :");
   response = icing.SearchSuggestions(suggestion_spec);
-  if (SearchSpecProto::default_instance().search_type() ==
-      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
-    EXPECT_THAT(response.status(), ProtoIsOk());
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  } else {
-    EXPECT_THAT(response.status(),
-                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-    EXPECT_THAT(response.suggestions(), IsEmpty());
-  }
+  EXPECT_THAT(response.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(response.suggestions(), IsEmpty());
 }
 
 }  // namespace

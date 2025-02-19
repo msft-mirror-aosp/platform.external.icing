@@ -42,6 +42,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/constants.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -83,7 +84,7 @@ class FileBackedProtoLog {
     // Must specify values for options.
     Options() = delete;
     explicit Options(bool compress_in,
-                     const int32_t max_proto_size_in = kMaxProtoSize)
+                     const int32_t max_proto_size_in = constants::kMaxProtoSize)
         : compress(compress_in), max_proto_size(max_proto_size_in) {}
   };
 
@@ -284,15 +285,6 @@ class FileBackedProtoLog {
   // protos we support.
   static constexpr uint8_t kProtoMagic = 0x5C;
 
-  // Our internal max for protos.
-  //
-  // WARNING: Changing this to a larger number may invalidate our assumption
-  // that that proto size can safely be stored in the last 3 bytes of the proto
-  // header.
-  static constexpr int kMaxProtoSize = (1 << 24) - 1;  // 16MiB
-  static_assert(kMaxProtoSize <= 0x00FFFFFF,
-                "kMaxProtoSize doesn't fit in 3 bytes");
-
   // Chunks of the file to mmap at a time, so we don't mmap the entire file.
   // Only used on 32-bit devices
   static constexpr int kMmapChunkSize = 4 * 1024 * 1024;  // 4MiB
@@ -326,7 +318,7 @@ FileBackedProtoLog<ProtoT>::Create(const Filesystem* filesystem,
 
   // Since we store the proto_size in 3 bytes, we can only support protos of up
   // to 16MiB.
-  if (options.max_proto_size > kMaxProtoSize) {
+  if (options.max_proto_size > constants::kMaxProtoSize) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "options.max_proto_size must be under 16MiB, was %d",
         options.max_proto_size));
