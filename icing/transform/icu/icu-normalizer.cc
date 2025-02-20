@@ -24,6 +24,7 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -121,8 +122,9 @@ IcuNormalizer::IcuNormalizer(
     : term_transformer_(std::move(term_transformer)),
       max_term_byte_size_(max_term_byte_size) {}
 
-std::string IcuNormalizer::NormalizeTerm(const std::string_view term) const {
-  std::string normalized_text;
+Normalizer::NormalizedTerm IcuNormalizer::NormalizeTerm(
+    const std::string_view term) const {
+  NormalizedTerm normalized_text = {""};
 
   if (term.empty()) {
     return normalized_text;
@@ -138,17 +140,19 @@ std::string IcuNormalizer::NormalizeTerm(const std::string_view term) const {
   // Normalize the prefix that can be transformed into ASCII.
   // This is a faster method to normalize Latin terms.
   NormalizeLatinResult result = NormalizeLatin(normalizer2, term);
-  normalized_text = std::move(result.text);
+  normalized_text.text = std::move(result.text);
   if (result.end_pos < term.length()) {
     // Some portion of term couldn't be normalized via NormalizeLatin. Use
     // term_transformer to handle this portion.
     std::string_view rest_term = term.substr(result.end_pos);
-    absl_ports::StrAppend(&normalized_text,
-                          term_transformer_->Transform(rest_term));
+    TermTransformer::TransformResult transform_result =
+        term_transformer_->Transform(rest_term);
+    absl_ports::StrAppend(&normalized_text.text,
+                          transform_result.transformed_term);
   }
 
-  if (normalized_text.length() > max_term_byte_size_) {
-    i18n_utils::SafeTruncateUtf8(&normalized_text, max_term_byte_size_);
+  if (normalized_text.text.length() > max_term_byte_size_) {
+    i18n_utils::SafeTruncateUtf8(&normalized_text.text, max_term_byte_size_);
   }
 
   return normalized_text;
@@ -208,12 +212,12 @@ IcuNormalizer::TermTransformer::~TermTransformer() {
   }
 }
 
-std::string IcuNormalizer::TermTransformer::Transform(
-    const std::string_view term) const {
+IcuNormalizer::TermTransformer::TransformResult
+IcuNormalizer::TermTransformer::Transform(const std::string_view term) const {
   auto utf16_term_or = i18n_utils::Utf8ToUtf16(term);
   if (!utf16_term_or.ok()) {
     ICING_VLOG(0) << "Failed to convert UTF8 term '" << term << "' to UTF16";
-    return std::string(term);
+    return {std::string(term)};
   }
   std::u16string utf16_term = std::move(utf16_term_or).ValueOrDie();
   UErrorCode status = U_ZERO_ERROR;
@@ -248,15 +252,18 @@ std::string IcuNormalizer::TermTransformer::Transform(
   if (U_FAILURE(status)) {
     // Failed to transform, return its original form.
     ICING_LOG(WARNING) << "Failed to normalize UTF8 term: " << term;
-    return std::string(term);
+    return {std::string(term)};
   }
+  // Resize the buffer to the desired length returned by utrans_transUChars().
+  utf16_term.resize(utf16_term_desired_length);
 
   auto utf8_term_or = i18n_utils::Utf16ToUtf8(utf16_term);
   if (!utf8_term_or.ok()) {
     ICING_VLOG(0) << "Failed to convert UTF16 term '" << term << "' to UTF8";
-    return std::string(term);
+    return {std::string(term)};
   }
-  return std::move(utf8_term_or).ValueOrDie();
+  std::string utf8_term = std::move(utf8_term_or).ValueOrDie();
+  return {std::move(utf8_term)};
 }
 
 bool IcuNormalizer::FindNormalizedLatinMatchEndPosition(

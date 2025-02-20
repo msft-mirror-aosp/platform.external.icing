@@ -18,7 +18,6 @@
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer.h"
@@ -39,21 +38,6 @@ namespace tokenizer_factory {
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>>
 CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
                         const LanguageSegmenter* lang_segmenter);
-
-// All the supported query tokenizer types
-enum QueryTokenizerType { RAW_QUERY = 0 };
-
-// Factory function to create a query Tokenizer which does not take ownership of
-// any input components, and all pointers must refer to valid objects that
-// outlive the created Tokenizer instance.
-//
-// Returns:
-//   A tokenizer on success
-//   FAILED_PRECONDITION on any null pointer input
-//   INVALID_ARGUMENT if tokenizer type is invalid
-libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>> CreateQueryTokenizer(
-    QueryTokenizerType query_tokenizer_type,
-    const LanguageSegmenter* lang_segmenter);
 
 }  // namespace tokenizer_factory
 

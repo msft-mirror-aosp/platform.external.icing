@@ -1,0 +1,143 @@
+// Copyright 2024 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package icing.lib;
+
+option java_package = "com.google.android.icing.internal.proto";
+option java_multiple_files = true;
+option objc_class_prefix = "ICNG";
+
+// Message that contains the data payload of a scorable property.
+//
+// Next tag: 4
+message ScorablePropertyProto {
+  // The following three fields should be treated as oneof.
+  repeated int64 int64_values = 1 [packed = true];
+  repeated double double_values = 2 [packed = true];
+  repeated bool boolean_values = 3 [packed = true];
+}
+
+// Message that contains a set of scorable properties derived from a document
+// proto. This will be stored in the icing document store to allow faster
+// access of scorable properties during the scoring/ranking phase.
+//
+// Use icing::lib::scorable_property_set.h to build/interpret this proto.
+//
+// See go/appsearch-docjoin-dd for the design doc.
+//
+// Next tag: 2
+message ScorablePropertySetProto {
+  // The order of the properties in this proto should match the lexicographical
+  // order of the scorable properties paths in the schema proto.
+  //
+  // All values under a property path will be merged into a list.
+  //
+  // For example, if you have a schema like:
+  //   SchemaBuilder()
+  //     .AddType(
+  //       SchemaTypeConfigBuilder()
+  //         .setType('person')
+  //           .AddProperty('name')                 // not scorable
+  //           .AddProperty('age')                  // scorable
+  //           .AddProperty('address')              // not scorable
+  //           .AddProperty('income'))              // scorable
+  //     .AddType(
+  //       SchemaTypeConfigBuilder()
+  //         .setType('email')
+  //           .AddProperty('subject')              // not scorable
+  //           .AddProperty('importance')           // scorable
+  //           .AddProperty('title')                // not scorable
+  //           .AddProperty('score')                // scorable
+  //           .AddDocumentProperty('receiver'))    // scorable, person type
+  //           .AddDocumentProperty('sender'))      // scorable, person type
+  //
+  // And an email document like:
+  //   Document email_document {
+  //     schema: 'email'
+  //     properties: {
+  //       name: 'subject'
+  //       string_values: 'foo'
+  //     }
+  //     properties: {
+  //       name: 'score'
+  //       double_values: [1.5, 2.5, 3.5]
+  //     }
+  //     properties: {
+  //       name: 'receiver
+  //       document_values: {
+  //         properties: {
+  //           name: 'age'
+  //           int64_values: [30]
+  //         }
+  //         properties: {
+  //           name: 'income'
+  //           double_values: [10000, 20000]
+  //         }
+  //         properties: {
+  //           name: 'isStarred'
+  //           boolean_values: [true]
+  //         }
+  //       }
+  //       document_values: {
+  //         properties: {
+  //           name: 'age'
+  //           int64_values: [40]
+  //         }
+  //         properties: {
+  //           name: 'income'
+  //           double_values: [30000, 40000]
+  //         }
+  //         properties: {
+  //           name: 'isStarred'
+  //           boolean_values: [false]
+  //         }
+  //       }
+  //     }
+  //   }
+  //
+  // When email_document is put into the icing document store, the following
+  // proto will be generated and stored in icing:
+  // {
+  //   # For the 'importance' property
+  //   properties: {}
+  //   # For the 'receiver.age' property
+  //   properties: {
+  //     int64_values: [30, 40]
+  //   }
+  //   # For the 'receiver.income' property
+  //   properties: {
+  //     double_values: [10000, 20000, 30000, 40000]
+  //   }
+  //   # For the 'receiver.isStarred' property
+  //   properties: {
+  //     boolean_values: [true, false]
+  //   }
+  //   # For the 'score' property
+  //   properties: {
+  //     double_values: [1.5, 2.5, 3.5]
+  //   }
+  //   # For the 'sender.age' property
+  //   properties: {}
+  //   # For the 'sender.income' property
+  //   properties: {}
+  //   # For the 'sender.isStarred' property
+  //   properties: {}
+  // }
+  //
+  // During the scoring/ranking phase, the implicit property order can be used
+  // to lookup the property's name from the schema store.
+  repeated ScorablePropertyProto properties = 1;
+}

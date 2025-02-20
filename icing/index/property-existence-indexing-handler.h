@@ -63,6 +63,9 @@ class PropertyExistenceIndexingHandler {
   // - kPropertyExistenceTokenPrefix + "propC"
   // - kPropertyExistenceTokenPrefix + "propC.propD"
   //
+  // Parameter old_document_id is unused since there is no need to migrate data
+  // from old_document_id to (new) document_id.
+  //
   /// Returns:
   //   - OK on success
   //   - RESOURCE_EXHAUSTED_ERROR if the index is full and can't add anymore
@@ -70,6 +73,7 @@ class PropertyExistenceIndexingHandler {
   //   - INTERNAL_ERROR if any other errors occur.
   libtextclassifier3::Status Handle(const TokenizedDocument& tokenized_document,
                                     DocumentId document_id,
+                                    DocumentId /*old_document_id*/ _,
                                     PutDocumentStatsProto* put_document_stats);
 
  private:
