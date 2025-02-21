@@ -52,7 +52,7 @@ class Status {
   Status();
 
   // Make a Status from the specified error and message.
-  Status(StatusCode error, const std::string& error_message);
+  Status(StatusCode error, std::string error_message);
 
   // Some pre-defined Status objects
   static const Status& OK;

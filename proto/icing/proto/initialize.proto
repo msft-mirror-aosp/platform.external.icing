@@ -109,7 +109,35 @@ message IcingSearchEngineVersionProto {
   repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
 }
 
-// Next tag: 32
+// This proto is used by the marker file to record information about the last
+// incomplete operation that was performed on Icing.
+// - Usually the marker file is required for a complex operation which is
+//   sensitive to power loss or crash.
+// - The marker file is created before the complex operation and flushed to disk
+//   with essential information. It is deleted after the operation is completed.
+// - If the marker file is present during initialization, then it means the
+//   last operation was not completed due to power loss or crash.
+//
+// Next tag: 2
+message IcingSearchEngineMarkerProto {
+  // Next tag: 3
+  message OperationType {
+    enum Code {
+      // This value should never purposely be used. This is used for backwards
+      // compatibility reasons.
+      UNKNOWN = 0;
+
+      // SetSchema operation.
+      SET_SCHEMA = 1;
+
+      // Optimize operation.
+      OPTIMIZE = 2;
+    }
+  }
+  optional OperationType.Code operation_type = 1;
+}
+
+// Next tag: 34
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -314,6 +342,20 @@ message IcingSearchEngineOptions {
   // If set to true, then any error that occurs during index restoration will be
   // ignored, and the failed document will be deleted.
   optional bool enable_soft_index_restoration = 31;
+
+  // Whether to enable marker file for optimize API.
+  // If set to true, then a general marker file will be created before any
+  // optimize operation is performed, and deleted after the operation is
+  // completed. This is to ensure that the optimize operation is not interrupted
+  // by power loss or crash.
+  optional bool enable_marker_file_for_optimize = 32;
+
+  // Whether to manage blob files.
+  // If set to true, then Icing will manage blob files and all APIs will return
+  // valid FileDescriptors. If false, then Icing will only manage blob metadata
+  // and will return the names of the files to be created and managed by the
+  // caller.
+  optional bool manage_blob_files = 33 [default = true];
 
   reserved 2, 20;
 }

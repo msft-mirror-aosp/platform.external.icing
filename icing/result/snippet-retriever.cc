@@ -135,8 +135,7 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       // matched query term must be either equal to or a prefix of the token's
       // text. Therefore, the match must end at the end of the matched query
       // term.
-      CharacterIterator verbatim_match_end =
-          CharacterIterator(token.text, 0, 0, 0);
+      CharacterIterator verbatim_match_end(token.text);
       verbatim_match_end.AdvanceToUtf8(match_query_term.length());
       return verbatim_match_end;
     }
@@ -209,12 +208,12 @@ class TokenMatcher {
   // token.text that matches a query term. Note that the utf* indices will be
   // in relation to token.text's start.
   //
-  // If there is no match, then it will construct a CharacterIterator with all
-  // of its indices set to -1.
+  // If there is no match, then it will return an invalid CharacterIterator
+  // instance.
   //
   // Ex. With an exact matcher, query terms=["foo","bar"] and token.text="bar",
   // Matches will return a CharacterIterator(u8:3, u16:3, u32:3).
-  virtual CharacterIterator Matches(Token token) const = 0;
+  virtual CharacterIterator Matches(const Token& token) const = 0;
 };
 
 class TokenMatcherExact : public TokenMatcher {
@@ -227,7 +226,7 @@ class TokenMatcherExact : public TokenMatcher {
         restricted_query_terms_(restricted_query_terms),
         normalizer_(normalizer) {}
 
-  CharacterIterator Matches(Token token) const override {
+  CharacterIterator Matches(const Token& token) const override {
     Normalizer::NormalizedTerm normalized_term =
         NormalizeToken(normalizer_, token);
     auto itr = unrestricted_query_terms_.find(normalized_term.text);
@@ -239,7 +238,7 @@ class TokenMatcherExact : public TokenMatcher {
       return FindMatchEnd(normalizer_, token, *itr);
     }
 
-    return CharacterIterator(token.text, -1, -1, -1);
+    return CharacterIterator();
   }
 
  private:
@@ -258,7 +257,7 @@ class TokenMatcherPrefix : public TokenMatcher {
         restricted_query_terms_(restricted_query_terms),
         normalizer_(normalizer) {}
 
-  CharacterIterator Matches(Token token) const override {
+  CharacterIterator Matches(const Token& token) const override {
     Normalizer::NormalizedTerm normalized_term =
         NormalizeToken(normalizer_, token);
     for (const std::string& query_term : unrestricted_query_terms_) {
@@ -275,7 +274,7 @@ class TokenMatcherPrefix : public TokenMatcher {
         return FindMatchEnd(normalizer_, token, query_term);
       }
     }
-    return CharacterIterator(token.text, -1, -1, -1);
+    return CharacterIterator();
   }
 
  private:
@@ -326,7 +325,7 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowStart(
 CharacterIterator IncludeTrailingPunctuation(
     std::string_view value, CharacterIterator window_end_exclusive,
     int window_end_max_exclusive_utf32) {
-  size_t max_search_index = value.length() - 1;
+  int max_search_index = static_cast<int>(value.length()) - 1;
   while (window_end_exclusive.utf8_index() <= max_search_index &&
          window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
     int char_len = 0;
@@ -522,9 +521,9 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
       for (int i = 0; i < batch_tokens.size(); ++i) {
         const Token& token = batch_tokens.at(i);
         CharacterIterator submatch_end = matcher->Matches(token);
-        // If the token matched a query term, then submatch_end will point to an
-        // actual position within token.text.
-        if (submatch_end.utf8_index() == -1) {
+        // If the token didn't match, then we will get an invalid iterator
+        // instance.
+        if (!submatch_end.is_valid()) {
           continue;
         }
         // As snippet matching may move iterator around, we save a reset

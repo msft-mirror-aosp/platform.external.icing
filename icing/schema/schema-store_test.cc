@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
@@ -57,6 +58,7 @@ using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::Not;
 using ::testing::Pair;
 using ::testing::Pointee;
@@ -763,7 +765,7 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
               IsOkAndHolds(EqualsProto(db2_schema)));
 }
 
-TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesPreservesSchemaTypeIds) {
+TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -843,51 +845,38 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesPreservesSchemaTypeIds) {
                              schema_store->GetSchema());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
 
-  // Reset db2 with the types reordered. The expected full schema will be
-  // different, but the SchemaTypeIds for db1 and db3 should not change.
-  db2_schema =
+  // Reset db2 with the types reordered. This should not change the existing
+  // schema in any way.
+  SchemaProto reordered_db2_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("db2_message")
                        .SetDatabase("db2"))
           .AddType(
               SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .Build();
-  expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
           .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  // Only db2's schema type ids should change.
-  result.old_schema_type_ids_changed.insert(2);
-  result.old_schema_type_ids_changed.insert(3);
-  EXPECT_THAT(
-      schema_store->SetSchema(db2_schema,
-                              /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult> actual_result =
+      schema_store->SetSchema(reordered_db2_schema,
+                              /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(actual_result, IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(actual_result.ValueOrDie().old_schema_type_ids_changed,
+              IsEmpty());
 
   // Check the schema
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
   EXPECT_THAT(schema_store->GetSchema("db1"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
-              IsOkAndHolds(EqualsProto(db2_schema)));
+
+  libtextclassifier3::StatusOr<SchemaProto> actual_db2_schema =
+      schema_store->GetSchema("db2");
+  EXPECT_THAT(actual_db2_schema, IsOkAndHolds(EqualsProto(db2_schema)));
+  EXPECT_THAT(actual_db2_schema.ValueOrDie(),
+              Not(EqualsProto(reordered_db2_schema)));
+
   EXPECT_THAT(schema_store->GetSchema("db3"),
               IsOkAndHolds(EqualsProto(db3_schema)));
 }
@@ -1628,25 +1617,43 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 
   // Reorder the types
-  schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
-               .AddType(SchemaTypeConfigBuilder().SetType("email"))
-               .Build();
+  SchemaProto reordered_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .Build();
 
-  // Since we assign SchemaTypeIds based on order in the SchemaProto, this will
-  // cause SchemaTypeIds to change
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
-  result.old_schema_type_ids_changed.emplace(0);  // Old SchemaTypeId of "email"
-  result.old_schema_type_ids_changed.emplace(
-      1);  // Old SchemaTypeId of "message"
+  // Set the compatible schema and verify with GetSchema
+  if (feature_flags_->enable_schema_database()) {
+    // Setting reordered types is a no-op for the new set schema after schema
+    // database is enabled. So everything should be the same as before.
+    result = SchemaStore::SetSchemaResult();
+    result.success = true;
+    EXPECT_THAT(
+        schema_store->SetSchema(reordered_schema,
+                                /*ignore_errors_and_delete_documents=*/false),
+        IsOkAndHolds(EqualsSetSchemaResult(result)));
 
-  // Set the compatible schema
-  EXPECT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
-  EXPECT_THAT(*actual_schema, EqualsProto(schema));
+    ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+    EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  } else {
+    // Since we assign SchemaTypeIds based on order in the SchemaProto, this
+    // will
+    // cause SchemaTypeIds to change
+    result = SchemaStore::SetSchemaResult();
+    result.success = true;
+    result.old_schema_type_ids_changed.emplace(
+        0);  // Old SchemaTypeId of "email"
+    result.old_schema_type_ids_changed.emplace(
+        1);  // Old SchemaTypeId of "message"
+
+    // Set the compatible schema
+    EXPECT_THAT(schema_store->SetSchema(
+                    schema, /*ignore_errors_and_delete_documents=*/false),
+                IsOkAndHolds(EqualsSetSchemaResult(result)));
+    ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+    EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  }
 }
 
 TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
