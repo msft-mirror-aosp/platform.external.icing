@@ -24,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 16
+// Next tag: 17
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -41,7 +41,8 @@ message InitializeStatsProto {
     // Data in index is inconsistent with ground truth.
     INCONSISTENT_WITH_GROUND_TRUTH = 2;
 
-    // Changes were made to the schema, but possibly not fully applied to the
+    // Changes were made to the schema, but the marker file remains in the
+    // filesystem indicating that changes possibly were not fully applied to the
     // document store and the index - requiring a recovery.
     SCHEMA_CHANGES_OUT_OF_SYNC = 3;
 
@@ -60,6 +61,18 @@ message InitializeStatsProto {
     // Change detected in Icing's feature flags since last initialization that
     // requires recovery.
     FEATURE_FLAG_CHANGED = 8;
+
+    // Changes were made by an incomplete complex operation, which caused marker
+    // file to remain in the filesystem - requiring a recovery.
+    //
+    // Note: Icing is unable to interpret the information from the marker file
+    // due to some reasons, so the OUT_OF_SYNC reason is UNKNOWN.
+    UNKNOWN_OUT_OF_SYNC = 9;
+
+    // Changes were made by optimize, but the marker file remains in the
+    // filesystem indicating that optimize possibly was not fully applied to the
+    // document store and the index - requiring a recovery.
+    OPTIMIZE_OUT_OF_SYNC = 10;
   }
 
   // Possible recovery causes for document store:
@@ -134,6 +147,9 @@ message InitializeStatsProto {
   // - INVALID_ARGUMENT
   // - INTERNAL
   optional StatusProto initialize_icu_data_status = 15;
+
+  // Number of documents that failed to be reindexed during index restoration.
+  optional int32 num_failed_reindexed_documents = 16;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().

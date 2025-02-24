@@ -40,6 +40,7 @@
 #include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -628,6 +629,15 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   }
   return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
                             actual_copy, result_listener);
+}
+
+MATCHER_P4(EqualsCharacterIterator, expected_text, expected_utf8_index,
+           expected_utf16_index, expected_utf32_index, "") {
+  const CharacterIterator& actual = arg;
+  return actual.text() == expected_text &&
+         actual.utf8_index() == expected_utf8_index &&
+         actual.utf16_index() == expected_utf16_index &&
+         actual.utf32_index() == expected_utf32_index;
 }
 
 MATCHER_P(EqualsHit, expected_hit, "") {
