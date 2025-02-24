@@ -1405,6 +1405,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   ICING_VLOG(1) << "Writing document to document store";
 
   PutResultProto result_proto;
+  result_proto.set_uri(document.uri());
+
   StatusProto* result_status = result_proto.mutable_status();
   PutDocumentStatsProto* put_document_stats =
       result_proto.mutable_put_document_stats();
@@ -1451,6 +1453,11 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   IndexProcessor index_processor(
       std::move(data_indexing_handlers_or).ValueOrDie(), clock_.get());
 
+  // TODO(b/397769319): Currently, we may do a merge in the middle of a
+  // PutBatch. It might be better behavior to instead:
+  // - only merge before the last document if the LiteIndex is actually full
+  // - merge on the last document if the LiteIndex is full or wants_merge (lower
+  //   threshold)
   auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, old_document_id, put_document_stats);
   // Getting an internal error from the index could possibly mean that the index
