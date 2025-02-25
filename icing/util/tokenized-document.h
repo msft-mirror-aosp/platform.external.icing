@@ -16,11 +16,14 @@
 #define ICING_STORE_TOKENIZED_DOCUMENT_H_
 
 #include <cstdint>
-#include <string>
+#include <memory>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -44,30 +47,53 @@ class TokenizedDocument {
       const SchemaStore* schema_store,
       const LanguageSegmenter* language_segmenter, DocumentProto document);
 
-  const DocumentProto& document() const { return document_; }
+  const DocumentProto& document() const { return *document_; }
 
-  int32_t num_tokens() const {
-    int32_t num_tokens = 0;
-    for (const TokenizedSection& section : tokenized_sections_) {
-      num_tokens += section.token_sequence.size();
+  int32_t num_string_tokens() const {
+    int32_t num_string_tokens = 0;
+    for (const TokenizedSection& section : tokenized_string_sections_) {
+      num_string_tokens += section.token_sequence.size();
     }
-    return num_tokens;
+    return num_string_tokens;
   }
 
-  const std::vector<TokenizedSection>& sections() const {
-    return tokenized_sections_;
+  const std::vector<TokenizedSection>& tokenized_string_sections() const {
+    return tokenized_string_sections_;
+  }
+
+  const std::vector<Section<int64_t>>& integer_sections() const {
+    return integer_sections_;
+  }
+
+  const std::vector<Section<PropertyProto::VectorProto>>& vector_sections()
+      const {
+    return vector_sections_;
+  }
+
+  const std::vector<JoinableProperty<std::string_view>>&
+  qualified_id_join_properties() const {
+    return joinable_property_group_.qualified_id_properties;
   }
 
  private:
   // Use TokenizedDocument::Create() to instantiate.
-  explicit TokenizedDocument(DocumentProto document);
+  explicit TokenizedDocument(
+      std::unique_ptr<DocumentProto> document,
+      std::vector<TokenizedSection>&& tokenized_string_sections,
+      std::vector<Section<int64_t>>&& integer_sections,
+      std::vector<Section<PropertyProto::VectorProto>>&& vector_sections,
+      JoinablePropertyGroup&& joinable_property_group)
+      : document_(std::move(document)),
+        tokenized_string_sections_(std::move(tokenized_string_sections)),
+        integer_sections_(std::move(integer_sections)),
+        vector_sections_(std::move(vector_sections)),
+        joinable_property_group_(std::move(joinable_property_group)) {}
 
-  DocumentProto document_;
-  std::vector<TokenizedSection> tokenized_sections_;
-
-  libtextclassifier3::Status Tokenize(
-      const SchemaStore* schema_store,
-      const LanguageSegmenter* language_segmenter);
+  std::unique_ptr<DocumentProto> document_;
+  std::vector<TokenizedSection> tokenized_string_sections_;
+  std::vector<Section<int64_t>> integer_sections_;
+  std::vector<Section<PropertyProto::VectorProto>> vector_sections_;
+  JoinablePropertyGroup joinable_property_group_;
 };
 
 }  // namespace lib
