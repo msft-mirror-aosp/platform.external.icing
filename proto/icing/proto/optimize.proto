@@ -23,7 +23,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Optimize
-// Next tag: 3
+// Next tag: 4
 message OptimizeResultProto {
   // Status code can be one of:
   //   OK
@@ -36,6 +36,11 @@ message OptimizeResultProto {
   optional StatusProto status = 1;
 
   optional OptimizeStatsProto optimize_stats = 2;
+
+  // If Icing does not manage blob files, this field will be the list of blob
+  // file names that should be removed. Otherwise, this field will be empty.
+  repeated string blob_file_names_to_remove = 3;
+
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.
 }

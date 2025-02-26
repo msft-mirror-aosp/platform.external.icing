@@ -15,7 +15,7 @@
 #ifndef ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
 #define ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
 
-#include <string_view>
+#include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 
@@ -23,26 +23,22 @@ namespace icing {
 namespace lib {
 namespace absl_ports {
 
-libtextclassifier3::Status CancelledError(std::string_view error_message);
-libtextclassifier3::Status UnknownError(std::string_view error_message);
-libtextclassifier3::Status InvalidArgumentError(std::string_view error_message);
-libtextclassifier3::Status DeadlineExceededError(
-    std::string_view error_message);
-libtextclassifier3::Status NotFoundError(std::string_view error_message);
-libtextclassifier3::Status AlreadyExistsError(std::string_view error_message);
-libtextclassifier3::Status PermissionDeniedError(
-    std::string_view error_message);
-libtextclassifier3::Status ResourceExhaustedError(
-    std::string_view error_message);
-libtextclassifier3::Status FailedPreconditionError(
-    std::string_view error_message);
-libtextclassifier3::Status AbortedError(std::string_view error_message);
-libtextclassifier3::Status OutOfRangeError(std::string_view error_message);
-libtextclassifier3::Status UnimplementedError(std::string_view error_message);
-libtextclassifier3::Status InternalError(std::string_view error_message);
-libtextclassifier3::Status UnavailableError(std::string_view error_message);
-libtextclassifier3::Status DataLossError(std::string_view error_message);
-libtextclassifier3::Status UnauthenticatedError(std::string_view error_message);
+libtextclassifier3::Status CancelledError(std::string error_message);
+libtextclassifier3::Status UnknownError(std::string error_message);
+libtextclassifier3::Status InvalidArgumentError(std::string error_message);
+libtextclassifier3::Status DeadlineExceededError(std::string error_message);
+libtextclassifier3::Status NotFoundError(std::string error_message);
+libtextclassifier3::Status AlreadyExistsError(std::string error_message);
+libtextclassifier3::Status PermissionDeniedError(std::string error_message);
+libtextclassifier3::Status ResourceExhaustedError(std::string error_message);
+libtextclassifier3::Status FailedPreconditionError(std::string error_message);
+libtextclassifier3::Status AbortedError(std::string error_message);
+libtextclassifier3::Status OutOfRangeError(std::string error_message);
+libtextclassifier3::Status UnimplementedError(std::string error_message);
+libtextclassifier3::Status InternalError(std::string error_message);
+libtextclassifier3::Status UnavailableError(std::string error_message);
+libtextclassifier3::Status DataLossError(std::string error_message);
+libtextclassifier3::Status UnauthenticatedError(std::string error_message);
 
 bool IsCancelled(const libtextclassifier3::Status& status);
 bool IsUnknown(const libtextclassifier3::Status& status);

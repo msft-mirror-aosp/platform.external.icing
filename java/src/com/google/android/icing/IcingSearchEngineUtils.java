@@ -17,6 +17,7 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -154,6 +155,22 @@ public final class IcingSearchEngineUtils {
       return PutResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
+    }
+  }
+
+  @NonNull
+  public static BatchPutResultProto byteArrayToPutResultProtos(@Nullable byte[] putResultsBytes) {
+    if (putResultsBytes == null) {
+      Log.e(TAG, "Received null PutResultProtos from native.");
+      // TODO(b/394875109) Or we should create a proto with error status?
+      return BatchPutResultProto.getDefaultInstance();
+    }
+
+    try {
+      return BatchPutResultProto.parseFrom(putResultsBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing PutResultProtos.", e);
+      return BatchPutResultProto.getDefaultInstance();
     }
   }
 
