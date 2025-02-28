@@ -16,19 +16,27 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-terms.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
@@ -40,10 +48,23 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::AnyOf;
+using ::testing::Contains;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+using ::testing::Key;
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
+
+constexpr DocumentId kDocumentId0 = 0;
+constexpr DocumentId kDocumentId1 = 1;
+constexpr DocumentId kDocumentId2 = 2;
+constexpr DocumentId kDocumentId3 = 3;
+
+constexpr SearchSpecProto::EmbeddingQueryMetricType::Code
+    EMBEDDING_METRIC_DOT_PRODUCT =
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT;
+constexpr SearchSpecProto::EmbeddingQueryMetricType::Code
+    EMBEDDING_METRIC_COSINE = SearchSpecProto::EmbeddingQueryMetricType::COSINE;
 
 class ResultAdjustmentInfoTest : public testing::Test {
  protected:
@@ -78,9 +99,15 @@ class ResultAdjustmentInfoTest : public testing::Test {
   FakeClock fake_clock_;
 };
 
-SearchSpecProto CreateSearchSpec(TermMatchType::Code match_type) {
+SearchSpecProto CreateSearchSpec(
+    TermMatchType::Code match_type,
+    const std::vector<PropertyProto::VectorProto>& embedding_query_vectors,
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) {
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(match_type);
+  search_spec.mutable_embedding_query_vectors()->Add(
+      embedding_query_vectors.begin(), embedding_query_vectors.end());
+  search_spec.set_embedding_query_metric_type(metric_type);
   return search_spec;
 }
 
@@ -100,30 +127,383 @@ ResultSpecProto CreateResultSpec(
 }
 
 TEST_F(ResultAdjustmentInfoTest,
-       ShouldConstructSnippetContextAccordingToSpecs) {
+       ShouldConstructSnippetContextAccordingToSpecs_snippetAll) {
   ResultSpecProto result_spec =
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
   result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(true);
 
   SectionRestrictQueryTermsMap query_terms_map;
   query_terms_map.emplace("term1", std::unordered_set<std::string>());
 
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model1", {1, -2, -4}),
+      CreateVector("my_model2", {1, -2, 3, -4}),
+      CreateVector("my_model3", {0.1, -0.2, 0.3}),
+      CreateVector("my_model1", {1, -2, -5})};
+  SearchSpecProto search_spec =
+      CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
+                       EMBEDDING_METRIC_DOT_PRODUCT);
+
+  EmbeddingQueryResults embedding_query_results;
+  EmbeddingMatchInfos& info_query0_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  EmbeddingMatchInfos& info_query1_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
+  EmbeddingMatchInfos& info_query1_doc1 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+  EmbeddingMatchInfos& info_query0_doc2 =
+      embedding_query_results
+          .result_infos[/*query_index=*/0][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId2];
+  info_query0_doc2.AppendScore(5.25);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+  info_query0_doc2.AppendScore(1.33);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/4);
+  EmbeddingMatchInfos& info_query1_doc3 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId3];
+  info_query1_doc3.AppendScore(3.25);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  info_query1_doc3.AppendScore(2.33);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/2);
+
   ResultAdjustmentInfo result_adjustment_info(
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      schema_store_.get(), query_terms_map);
+      search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      schema_store_.get(),
+      embedding_query_results, /*documents_to_snippet_hint=*/
+      {kDocumentId0, kDocumentId1, kDocumentId2, kDocumentId3},
+      query_terms_map);
+  const SnippetContext& snippet_context =
+      result_adjustment_info.snippet_context;
+
+  // Snippet context should be derived from the specs above.
+  EXPECT_THAT(snippet_context.query_terms, Contains(Key("term1")));
+
+  EXPECT_THAT(snippet_context.embedding_query_vector_metadata_map,
+              UnorderedElementsAre(
+                  Pair(3, UnorderedElementsAre(
+                              Pair("my_model1", UnorderedElementsAre(0, 3)),
+                              Pair("my_model3", UnorderedElementsAre(2)))),
+                  Pair(4, UnorderedElementsAre(
+                              Pair("my_model2", UnorderedElementsAre(1))))));
+
+  // Check embedding match info map -- this should contain all match infos.
+  // Document 0
+  EXPECT_THAT(
+      snippet_context.embedding_match_info_map,
+      Contains(Pair(kDocumentId0,
+                    UnorderedElementsAre(
+                        EqualsEmbeddingMatchInfoEntry(
+                            SnippetContext::EmbeddingMatchInfoEntry(
+                                /*score_in=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
+                                /*position=*/0, /*query_vector_index=*/0,
+                                /*section_id=*/0)),
+                        EqualsEmbeddingMatchInfoEntry(
+                            SnippetContext::EmbeddingMatchInfoEntry(
+                                /*score=*/1.7, EMBEDDING_METRIC_DOT_PRODUCT,
+                                /*position=*/3, /*query_vector_index=*/0,
+                                /*section_id=*/0)),
+                        EqualsEmbeddingMatchInfoEntry(
+                            SnippetContext::EmbeddingMatchInfoEntry(
+                                /*score=*/2, EMBEDDING_METRIC_DOT_PRODUCT,
+                                /*position=*/0, /*query_vector_index=*/1,
+                                /*section_id=*/0)),
+                        EqualsEmbeddingMatchInfoEntry(
+                            SnippetContext::EmbeddingMatchInfoEntry(
+                                /*score=*/3.3, EMBEDDING_METRIC_DOT_PRODUCT,
+                                /*position=*/1, /*query_vector_index=*/0,
+                                /*section_id=*/1)),
+                        EqualsEmbeddingMatchInfoEntry(
+                            SnippetContext::EmbeddingMatchInfoEntry(
+                                /*score=*/1.7, EMBEDDING_METRIC_DOT_PRODUCT,
+                                /*position=*/2, /*query_vector_index=*/1,
+                                /*section_id=*/3))))));
+  // Document 1
+  EXPECT_THAT(snippet_context.embedding_match_info_map,
+              Contains(Pair(kDocumentId1,
+                            UnorderedElementsAre(EqualsEmbeddingMatchInfoEntry(
+                                SnippetContext::EmbeddingMatchInfoEntry(
+                                    /*score=*/6.66, EMBEDDING_METRIC_COSINE,
+                                    /*position=*/0, /*query_vector_index=*/1,
+                                    /*section_id=*/1))))));
+  // Document 2
+  EXPECT_THAT(
+      snippet_context.embedding_match_info_map,
+      Contains(Pair(
+          kDocumentId2,
+          UnorderedElementsAre(
+              EqualsEmbeddingMatchInfoEntry(
+                  SnippetContext::EmbeddingMatchInfoEntry(
+                      /*score=*/5.25, EMBEDDING_METRIC_COSINE,
+                      /*position=*/0, /*query_vector_index=*/0,
+                      /*section_id=*/1)),
+              EqualsEmbeddingMatchInfoEntry(
+                  SnippetContext::EmbeddingMatchInfoEntry(
+                      /*score=*/1.33, EMBEDDING_METRIC_COSINE, /*position=*/4,
+                      /*query_vector_index=*/0, /*section_id=*/1))))));
+  // Document 3
+  EXPECT_THAT(
+      snippet_context.embedding_match_info_map,
+      Contains(Pair(
+          kDocumentId3,
+          UnorderedElementsAre(EqualsEmbeddingMatchInfoEntry(
+                                   SnippetContext::EmbeddingMatchInfoEntry(
+                                       /*score=*/3.25, EMBEDDING_METRIC_COSINE,
+                                       /*position=*/1, /*query_vector_index=*/1,
+                                       /*section_id=*/1)),
+                               EqualsEmbeddingMatchInfoEntry(
+                                   SnippetContext::EmbeddingMatchInfoEntry(
+                                       /*score=*/2.33, EMBEDDING_METRIC_COSINE,
+                                       /*position=*/2, /*query_vector_index=*/1,
+                                       /*section_id=*/1))))));
+
+  EXPECT_THAT(snippet_context.snippet_spec,
+              EqualsProto(result_spec.snippet_spec()));
+  EXPECT_THAT(snippet_context.match_type, Eq(TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(5));
+}
+
+TEST_F(
+    ResultAdjustmentInfoTest,
+    ShouldConstructSnippetContextAccordingToSpecs_hitsEmbeddingSnippetLimit) {
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(1);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(2);
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(true);
+
+  SectionRestrictQueryTermsMap query_terms_map;
+  query_terms_map.emplace("term1", std::unordered_set<std::string>());
+
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model1", {1, -2, -4}),
+      CreateVector("my_model2", {1, -2, 3, -4}),
+      CreateVector("my_model3", {0.1, -0.2, 0.3}),
+      CreateVector("my_model1", {1, -2, -5})};
+  SearchSpecProto search_spec =
+      CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
+                       EMBEDDING_METRIC_DOT_PRODUCT);
+
+  EmbeddingQueryResults embedding_query_results;
+  EmbeddingMatchInfos& info_query0_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  EmbeddingMatchInfos& info_query1_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
+  EmbeddingMatchInfos& info_query1_doc1 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+  EmbeddingMatchInfos& info_query0_doc2 =
+      embedding_query_results
+          .result_infos[/*query_index=*/0][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId2];
+  info_query0_doc2.AppendScore(5.25);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+  info_query0_doc2.AppendScore(1.33);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/4);
+  EmbeddingMatchInfos& info_query1_doc3 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId3];
+  info_query1_doc3.AppendScore(3.25);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  info_query1_doc3.AppendScore(2.33);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/2);
+
+  ResultAdjustmentInfo result_adjustment_info(
+      search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      schema_store_.get(), embedding_query_results,
+      /*documents_to_snippet_hint=*/{kDocumentId0}, query_terms_map);
   const SnippetContext snippet_context = result_adjustment_info.snippet_context;
 
   // Snippet context should be derived from the specs above.
-  EXPECT_TRUE(
-      result_adjustment_info.snippet_context.query_terms.find("term1") !=
-      result_adjustment_info.snippet_context.query_terms.end());
-  EXPECT_THAT(result_adjustment_info.snippet_context.snippet_spec,
+  EXPECT_THAT(snippet_context.query_terms, Contains(Key("term1")));
+
+  EXPECT_THAT(snippet_context.embedding_query_vector_metadata_map,
+              UnorderedElementsAre(
+                  Pair(3, UnorderedElementsAre(
+                              Pair("my_model1", UnorderedElementsAre(0, 3)),
+                              Pair("my_model3", UnorderedElementsAre(2)))),
+                  Pair(4, UnorderedElementsAre(
+                              Pair("my_model2", UnorderedElementsAre(1))))));
+
+  // Check embedding match info map
+  // Should only contain Document 0, with only the top 2 matches per property.
+  EXPECT_THAT(
+      snippet_context.embedding_match_info_map,
+      UnorderedElementsAre(Pair(
+          kDocumentId0, UnorderedElementsAre(
+                            EqualsEmbeddingMatchInfoEntry(
+                                SnippetContext::EmbeddingMatchInfoEntry(
+                                    /*score=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
+                                    /*position=*/0, /*query_vector_index=*/0,
+                                    /*section_id=*/0)),
+                            EqualsEmbeddingMatchInfoEntry(
+                                SnippetContext::EmbeddingMatchInfoEntry(
+                                    /*score=*/2, EMBEDDING_METRIC_DOT_PRODUCT,
+                                    /*position=*/0, /*query_vector_index=*/1,
+                                    /*section_id=*/0)),
+                            EqualsEmbeddingMatchInfoEntry(
+                                SnippetContext::EmbeddingMatchInfoEntry(
+                                    /*score=*/3.3, EMBEDDING_METRIC_DOT_PRODUCT,
+                                    /*position=*/1, /*query_vector_index=*/0,
+                                    /*section_id=*/1)),
+                            EqualsEmbeddingMatchInfoEntry(
+                                SnippetContext::EmbeddingMatchInfoEntry(
+                                    /*score=*/1.7, EMBEDDING_METRIC_DOT_PRODUCT,
+                                    /*position=*/2, /*query_vector_index=*/1,
+                                    /*section_id=*/3))))));
+
+  EXPECT_THAT(snippet_context.snippet_spec,
               EqualsProto(result_spec.snippet_spec()));
-  EXPECT_THAT(result_adjustment_info.snippet_context.match_type,
-              Eq(TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(snippet_context.match_type, Eq(TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(1));
+}
+
+TEST_F(
+    ResultAdjustmentInfoTest,
+    ShouldConstructSnippetContextAccordingToSpecs_getEmbeddingMatchInfoFalse) {
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(false);
+
+  SectionRestrictQueryTermsMap query_terms_map;
+  query_terms_map.emplace("term1", std::unordered_set<std::string>());
+
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model1", {1, -2, -4}),
+      CreateVector("my_model2", {1, -2, 3, -4})};
+  SearchSpecProto search_spec =
+      CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
+                       EMBEDDING_METRIC_DOT_PRODUCT);
+  EmbeddingQueryResults embedding_query_results;
+  EmbeddingMatchInfos& info_query0_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  EmbeddingMatchInfos& info_query1_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
+  EmbeddingMatchInfos& info_query1_doc1 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+
+  ResultAdjustmentInfo result_adjustment_info(
+      search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      schema_store_.get(), embedding_query_results,
+      /*documents_to_snippet_hint=*/{kDocumentId0, kDocumentId1},
+      query_terms_map);
+  const SnippetContext snippet_context = result_adjustment_info.snippet_context;
+
+  // Snippet context should be derived from the specs above.
+  EXPECT_THAT(snippet_context.query_terms, Contains(Key("term1")));
+  EXPECT_THAT(snippet_context.snippet_spec,
+              EqualsProto(result_spec.snippet_spec()));
+  EXPECT_THAT(snippet_context.embedding_query_vector_metadata_map, IsEmpty());
+  EXPECT_THAT(result_adjustment_info.snippet_context.embedding_match_info_map,
+              IsEmpty());
+  EXPECT_THAT(snippet_context.match_type, Eq(TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(5));
+}
+
+TEST_F(
+    ResultAdjustmentInfoTest,
+    ShouldConstructSnippetContextAccordingToSpecs_emptyEmbeddingQueryResults) {
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(false);
+
+  SectionRestrictQueryTermsMap query_terms_map;
+  query_terms_map.emplace("term1", std::unordered_set<std::string>());
+
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model1", {1, -2, -4}),
+      CreateVector("my_model2", {1, -2, 3, -4})};
+  SearchSpecProto search_spec =
+      CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
+                       EMBEDDING_METRIC_DOT_PRODUCT);
+
+  ResultAdjustmentInfo result_adjustment_info(
+      search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      schema_store_.get(), EmbeddingQueryResults(),
+      /*documents_to_snippet_hint=*/{kDocumentId0, kDocumentId1},
+      query_terms_map);
+  const SnippetContext snippet_context = result_adjustment_info.snippet_context;
+
+  // Snippet context should be derived from the specs above.
+  EXPECT_THAT(snippet_context.snippet_spec,
+              EqualsProto(result_spec.snippet_spec()));
+  EXPECT_THAT(result_adjustment_info.snippet_context
+                  .embedding_query_vector_metadata_map,
+              IsEmpty());
+  EXPECT_THAT(result_adjustment_info.snippet_context.embedding_match_info_map,
+              IsEmpty());
+  EXPECT_THAT(snippet_context.match_type, Eq(TermMatchType::EXACT_ONLY));
   EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(5));
 }
 
@@ -135,19 +515,60 @@ TEST_F(ResultAdjustmentInfoTest, NoSnippetingShouldReturnNull) {
   result_spec.mutable_snippet_spec()->set_num_to_snippet(0);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
   result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(true);
 
   SectionRestrictQueryTermsMap query_terms_map;
   query_terms_map.emplace("term1", std::unordered_set<std::string>());
 
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model1", {1, -2, -4}),
+      CreateVector("my_model2", {1, -2, 3, -4})};
+  SearchSpecProto search_spec =
+      CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
+                       SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  EmbeddingQueryResults embedding_query_results;
+  EmbeddingMatchInfos& info_query0_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  EmbeddingMatchInfos& info_query1_doc0 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
+  EmbeddingMatchInfos& info_query1_doc1 =
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+
   ResultAdjustmentInfo result_adjustment_info(
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      schema_store_.get(), query_terms_map);
+      search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      schema_store_.get(), embedding_query_results,
+      /*documents_to_snippet_hint=*/{kDocumentId0, kDocumentId1},
+      query_terms_map);
 
   EXPECT_THAT(result_adjustment_info.snippet_context.query_terms, IsEmpty());
   EXPECT_THAT(
       result_adjustment_info.snippet_context.snippet_spec,
       EqualsProto(ResultSpecProto::SnippetSpecProto::default_instance()));
+  EXPECT_THAT(result_adjustment_info.snippet_context
+                  .embedding_query_vector_metadata_map,
+              IsEmpty());
+  EXPECT_THAT(result_adjustment_info.snippet_context.embedding_match_info_map,
+              IsEmpty());
   EXPECT_THAT(result_adjustment_info.snippet_context.match_type,
               TermMatchType::UNKNOWN);
   EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(0));
@@ -174,9 +595,12 @@ TEST_F(ResultAdjustmentInfoTest,
   wildcard_type_property_mask->add_paths("wild.card");
 
   ResultAdjustmentInfo result_adjustment_info(
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateSearchSpec(TermMatchType::EXACT_ONLY,
+                       /*embedding_query_vectors=*/{},
+                       SearchSpecProto::EmbeddingQueryMetricType::UNKNOWN),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      schema_store_.get(),
+      schema_store_.get(), EmbeddingQueryResults(),
+      /*documents_to_snippet_hint=*/{kDocumentId0, kDocumentId1},
       /*query_terms=*/{});
 
   ProjectionTree email_projection_tree =

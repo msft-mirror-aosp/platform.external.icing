@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 34
+// Next tag: 35
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -356,6 +356,10 @@ message IcingSearchEngineOptions {
   // and will return the names of the files to be created and managed by the
   // caller.
   optional bool manage_blob_files = 33 [default = true];
+
+  // Whether to release the backup schema file instance in the schema-store if
+  // the overlay exists.
+  optional bool release_backup_schema_file_if_overlay_present = 34;
 
   reserved 2, 20;
 }

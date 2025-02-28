@@ -153,6 +153,7 @@ class CombinedTokenizerTest : public ::testing::Test {
         QueryResults parsed_query,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::NONE,
+            /*get_embedding_match_info=*/false,
             /*current_time_ms=*/0, /*search_stats=*/nullptr));
 
     std::vector<std::string> query_terms;
@@ -252,8 +253,7 @@ TEST_F(CombinedTokenizerTest, Negation) {
   const std::string_view kQueryText = "\\-foo \\-bar \\-baz";
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<std::string> query_terms,
                              GetQueryTerms(kQueryText));
-  EXPECT_THAT(query_terms,
-              UnorderedElementsAre("foo", "bar", "baz"));
+  EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar", "baz"));
 }
 
 // TODO(b/254874614): Handle colon word breaks in ICU 72+
@@ -292,7 +292,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
 
     const std::string_view kQueryText = "foo\\:bar";
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<std::string> query_terms,
-                              GetQueryTerms(kQueryText));
+                               GetQueryTerms(kQueryText));
     EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar"));
 
     constexpr std::string_view kText2 = "foo:bar:baz";
@@ -302,8 +302,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
     EXPECT_THAT(indexing_terms, ElementsAre("foo", "bar", "baz"));
 
     const std::string_view kQueryText2 = "foo\\:bar\\:baz";
-    ICING_ASSERT_OK_AND_ASSIGN(query_terms,
-                              GetQueryTerms(kQueryText2));
+    ICING_ASSERT_OK_AND_ASSIGN(query_terms, GetQueryTerms(kQueryText2));
     EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar", "baz"));
   } else {
     constexpr std::string_view kText = "foo:bar";
