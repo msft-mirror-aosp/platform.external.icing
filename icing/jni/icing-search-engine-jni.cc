@@ -14,7 +14,6 @@
 
 #include <jni.h>
 
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -33,7 +32,6 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
 #include <google/protobuf/message_lite.h>
 
 namespace {
@@ -180,6 +178,31 @@ jbyteArray nativePut(JNIEnv* env, jclass clazz, jobject object,
       icing->Put(std::move(document_proto));
 
   return SerializeProtoToJniByteArray(env, put_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchPut(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray put_document_request_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PutDocumentRequest put_document_request;
+  if (!ParseProtoFromJniByteArray(env, put_document_request_bytes,
+                                  &put_document_request)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse DocumentProto in nativePut";
+    return nullptr;
+  }
+
+  icing::lib::BatchPutResultProto batch_put_result_proto;
+  for (icing::lib::DocumentProto& document_proto :
+       *(put_document_request.mutable_documents())) {
+    batch_put_result_proto.mutable_put_result_protos()->Add(
+        icing->Put(std::move(document_proto)));
+  }
+
+  return SerializeProtoToJniByteArray(env, batch_put_result_proto);
 }
 
 jbyteArray nativeGet(JNIEnv* env, jclass clazz, jobject object,
@@ -572,8 +595,6 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       env->GetFieldID(java_class, "nativePointer", "J");
 
   // Register your class' native methods.
-  // TODO(b/629896095): Add blob methods pre-register here when g3 JNI build
-  // pick up the blob APIs.
   static const JNINativeMethod methods[] = {
       {"nativeCreate", "([B)J", reinterpret_cast<void*>(nativeCreate)},
       {"nativeDestroy", "(Lcom/google/android/icing/IcingSearchEngineImpl;)V",
@@ -595,6 +616,11 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
        reinterpret_cast<void*>(nativeGetSchemaType)},
       {"nativePut", "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativePut)},
+      // TODO(b/394875109): uncomment when Jetpack library is updated with this
+      // change and syned to google3.
+      // {"nativeBatchPut",
+      //  "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+      //  reinterpret_cast<void*>(nativeBatchPut)},
       {"nativeGet",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/"
        "String;Ljava/lang/String;[B)[B",

@@ -18,13 +18,16 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/marker-file.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
@@ -72,6 +75,13 @@ using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::Lt;
 using ::testing::Return;
+
+// - Before we only created a marker file for set schema.
+// - Now, we switch to a general marker file for different operations that are
+//   sensitive to power loss or crash.
+// - In order to make the change compatible with old versions for possible
+//   AppSearch mainline rollback, let's keep the old marker file name.
+constexpr std::string_view kGeneralMarkerFilename = "set_schema_marker";
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -128,6 +138,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_calculate_time_since_last_attempted_optimize(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_marker_file_for_optimize(true);
   return icing_options;
 }
 
@@ -2462,6 +2473,61 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
                 ElementsAre(ranking_score_doc2));
   }
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, OptimizeShouldCreateMarkerFile) {
+  std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Marker file remains on disk only if any crash or power loss occurs during
+  // Optimize. In order to test the behavior of the marker file creation, we
+  // need to mock the filesystem to intentionally skip the marker file deletion
+  // upon destruction of the marker file object.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem, DeleteFile(Eq(marker_file_path)))
+      .WillByDefault(Return(true));
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Marker file should not exist before Optimize.
+  ASSERT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  EXPECT_TRUE(filesystem()->FileExists(marker_file_path.c_str()));
+  std::unique_ptr<IcingSearchEngineMarkerProto> marker_proto =
+      MarkerFile::Postmortem(*filesystem(), marker_file_path);
+  EXPECT_THAT(marker_proto->operation_type(),
+              Eq(IcingSearchEngineMarkerProto::OperationType::OPTIMIZE));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       OptimizeShouldNotCreateMarkerFileWhenFlagDisabled) {
+  std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Marker file remains on disk only if any crash or power loss occurs during
+  // Optimize. In order to test the behavior of the marker file creation, we
+  // need to mock the filesystem to intentionally skip the marker file deletion
+  // upon destruction of the marker file object.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem, DeleteFile(Eq(marker_file_path)))
+      .WillByDefault(Return(true));
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_marker_file_for_optimize(false);
+  TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Marker file should not exist before Optimize.
+  ASSERT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Marker file should not be created during Optimize.
+  EXPECT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
 }
 
 }  // namespace

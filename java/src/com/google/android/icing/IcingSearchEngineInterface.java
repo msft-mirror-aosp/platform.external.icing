@@ -1,5 +1,6 @@
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
@@ -19,6 +20,7 @@ import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PropertyProto;
+import com.google.android.icing.proto.PutDocumentRequest;
 import com.google.android.icing.proto.PutResultProto;
 import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
@@ -74,6 +76,9 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Puts the document. */
   PutResultProto put(DocumentProto document);
+
+  /** Puts a number of documents. */
+  BatchPutResultProto batchPut(PutDocumentRequest documents);
 
   /**
    * Gets the document.
