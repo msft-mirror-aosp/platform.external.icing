@@ -133,9 +133,9 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
@@ -244,9 +244,9 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
@@ -358,9 +358,9 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
@@ -466,9 +466,9 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);

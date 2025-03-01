@@ -120,8 +120,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_enable_schema_database(true);
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
 

@@ -73,8 +73,7 @@ class ResultStateV2Test : public ::testing::Test {
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
     doc_store_base_dir_ = GetTestTempDir() + "/document_store";
     filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());

@@ -42,7 +42,6 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-type-manager.h"
-#include "icing/schema/schema-util.h"
 #include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
@@ -267,7 +266,6 @@ class SchemaStore {
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const FeatureFlags* feature_flags,
-      bool enable_schema_database = false,
       InitializeStatsProto* initialize_stats = nullptr);
 
   // Migrates schema files (backup v.s. new schema) according to version state
@@ -340,11 +338,9 @@ class SchemaStore {
   //   - INVALID_ARGUMENT_ERROR if the schema is invalid, or if the schema types
   //     are from multiple databases (once schema database is enabled).
   libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
-      const SchemaProto& new_schema, bool ignore_errors_and_delete_documents,
-      bool allow_circular_schema_definitions);
+      const SchemaProto& new_schema, bool ignore_errors_and_delete_documents);
   libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
-      SchemaProto&& new_schema, bool ignore_errors_and_delete_documents,
-      bool allow_circular_schema_definitions);
+      SchemaProto&& new_schema, bool ignore_errors_and_delete_documents);
 
   // Get the SchemaTypeConfigProto of schema_type name.
   //
@@ -579,13 +575,12 @@ class SchemaStore {
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock, const FeatureFlags* feature_flags, SchemaProto schema,
-      bool enable_schema_database);
+      const Clock* clock, const FeatureFlags* feature_flags,
+      SchemaProto schema);
 
   // Use SchemaStore::Create instead.
   explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,
-                       const Clock* clock, const FeatureFlags* feature_flags,
-                       bool enable_schema_database);
+                       const Clock* clock, const FeatureFlags* feature_flags);
 
   // Deletes the overlay schema and ensures that the Header is correctly set.
   //
@@ -722,8 +717,7 @@ class SchemaStore {
   //   - INVALID_ARGUMENT_ERROR if the schema is invalid.
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetInitialSchemaForDatabase(SchemaProto new_schema,
-                              bool ignore_errors_and_delete_documents,
-                              bool allow_circular_schema_definitions);
+                              bool ignore_errors_and_delete_documents);
 
   // Sets the schema for a database, overriding any existing schema for that
   // database.
@@ -744,8 +738,7 @@ class SchemaStore {
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetSchemaWithDatabaseOverride(SchemaProto new_schema,
                                 const SchemaProto& old_schema,
-                                bool ignore_errors_and_delete_documents,
-                                bool allow_circular_schema_definitions);
+                                bool ignore_errors_and_delete_documents);
 
   // Initial validation on the SchemaProto for SetSchema. This is intended as a
   // preliminary check before any expensive operations are performed during
@@ -855,14 +848,6 @@ class SchemaStore {
   std::unique_ptr<ScorablePropertyManager> scorable_property_manager_;
 
   std::unique_ptr<Header> header_;
-
-  // Whether to use the database field for the schema.
-  //
-  // This is a temporary flag to control the rollout of the schema database. It
-  // affects the `SetSchema` and `GetSchema(std::string database)` methods.
-  // TODO - b/337913932: Remove this flag once the schema database is fully
-  // rolled out.
-  bool enable_schema_database_ = false;
 };
 
 }  // namespace lib

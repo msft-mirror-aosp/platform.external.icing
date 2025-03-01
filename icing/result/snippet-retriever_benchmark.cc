@@ -110,8 +110,7 @@ void BM_SnippetOneProperty(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   auto snippet_retriever =
       SnippetRetriever::Create(schema_store.get(), language_segmenter.get(),
@@ -240,8 +239,7 @@ void BM_SnippetRfcOneProperty(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   auto snippet_retriever =
       SnippetRetriever::Create(schema_store.get(), language_segmenter.get(),
