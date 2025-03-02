@@ -209,6 +209,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -365,6 +366,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -506,6 +508,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -647,6 +650,7 @@ void BM_QueryHiragana(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {

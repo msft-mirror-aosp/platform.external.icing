@@ -352,8 +352,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
         &schema_store_, &normalizer_, &tokenizer_, join_children_fetcher_,
         search_spec_, filter_options_, needs_term_frequency_info_,
-        &feature_flags_, pending_property_restricts_, processing_not_,
-        current_time_ms_);
+        get_embedding_match_info_, &feature_flags_, pending_property_restricts_,
+        processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);
     ICING_ASSIGN_OR_RETURN(query_result,
                            std::move(query_visitor).ConsumeResults());
@@ -462,14 +462,14 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   }
 
   // Create and return iterator.
-  EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
-      &embedding_query_results_.result_scores[vector_index][metric_type];
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map =
+      &embedding_query_results_.result_infos[vector_index][metric_type];
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<DocHitInfoIterator> iterator,
       DocHitInfoIteratorEmbedding::Create(
           &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, score_map, &embedding_index_, &document_store_, &schema_store_,
-          current_time_ms_));
+          high, get_embedding_match_info_, info_map, &embedding_index_,
+          &document_store_, &schema_store_, current_time_ms_));
   return PendingValue(std::move(iterator));
 }
 
