@@ -27,6 +27,7 @@ java_library {
     static_libs: [
         "icing-java-proto-lite",
         "libprotobuf-java-lite",
+        "jspecify",
     ],
     libs: [
         "androidx.annotation_annotation",

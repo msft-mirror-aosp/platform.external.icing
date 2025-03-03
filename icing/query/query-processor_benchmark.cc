@@ -166,8 +166,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -305,8 +304,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -462,8 +460,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -604,8 +601,7 @@ void BM_QueryHiragana(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,

@@ -721,6 +721,11 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
         absl_ports::StrCat("Invalid header checksum for: ", file_path));
   }
 
+  if (header->GetRewindOffset() < kHeaderReservedBytes) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Invalid header rewind offset for: ", file_path));
+  }
+
   if (header->GetFileFormatVersion() != Header::kFileFormatVersion) {
     // If this changes, we might need to handle a migration rather than throwing
     // an error.

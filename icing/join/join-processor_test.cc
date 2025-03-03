@@ -179,8 +179,7 @@ class JoinProcessorTest : public ::testing::Test {
 
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()),
