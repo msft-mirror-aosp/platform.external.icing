@@ -772,8 +772,8 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
         uint32_t embedding_index,
         embedding_index_arg->EvaluateDouble(DocHitInfo(),
                                             /*query_it=*/nullptr));
-    if (embedding_query_results->GetScoreMap(embedding_index, metric_type) ==
-        nullptr) {
+    if (embedding_query_results->GetMatchInfoMap(embedding_index,
+                                                 metric_type) == nullptr) {
       return absl_ports::InvalidArgumentError(absl_ports::StrCat(
           "The embedding query index ", std::to_string(embedding_index),
           " with metric type ",

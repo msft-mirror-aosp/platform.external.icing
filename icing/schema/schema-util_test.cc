@@ -4435,7 +4435,8 @@ TEST_P(SchemaUtilTest,
       /*enable_embedding_quantization=*/true,
       /*enable_repeated_field_joins=*/false,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true);
+      /*enable_schema_database=*/true,
+      /*release_backup_schema_file_if_overlay_present=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4496,7 +4497,8 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_embedding_quantization=*/true,
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true);
+      /*enable_schema_database=*/true,
+      /*release_backup_schema_file_if_overlay_present=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5816,20 +5818,23 @@ TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
 
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
-    testing::Values(FeatureFlags(
-                        /*enable_circular_schema_definitions=*/false,
-                        /*enable_scorable_properties=*/true,
-                        /*enable_embedding_quantization=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true),
-                    FeatureFlags(
-                        /*enable_circular_schema_definitions=*/true,
-                        /*enable_scorable_properties=*/true,
-                        /*enable_embedding_quantization=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true)));
+    testing::Values(
+        FeatureFlags(
+            /*enable_circular_schema_definitions=*/false,
+            /*enable_scorable_properties=*/true,
+            /*enable_embedding_quantization=*/true,
+            /*enable_repeated_field_joins=*/true,
+            /*enable_embedding_backup_generation=*/true,
+            /*enable_schema_database=*/true,
+            /*release_backup_schema_file_if_overlay_present=*/true),
+        FeatureFlags(
+            /*enable_circular_schema_definitions=*/true,
+            /*enable_scorable_properties=*/true,
+            /*enable_embedding_quantization=*/true,
+            /*enable_repeated_field_joins=*/true,
+            /*enable_embedding_backup_generation=*/true,
+            /*enable_schema_database=*/true,
+            /*release_backup_schema_file_if_overlay_present=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;
