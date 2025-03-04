@@ -17,12 +17,13 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -33,6 +34,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
@@ -61,8 +63,11 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/icu-data-file-helper.h"
+#include "icing/util/logging.h"
 #include "icing/util/scorable_property_set.h"
 #include "unicode/uloc.h"
 
@@ -3148,11 +3153,12 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
               Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
-  // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
+  // Add a new schema type. Since SchemaTypeId is assigned based on order,
   // this should change the SchemaTypeIds.
   schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
+               .AddType(SchemaTypeConfigBuilder().SetType("newType"))
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
+               .AddType(SchemaTypeConfigBuilder().SetType("message"))
                .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(
@@ -3423,11 +3429,12 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
               Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
-  // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
+  // Add a new schema type. Since SchemaTypeId is assigned based on order,
   // this should change the SchemaTypeIds.
   schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
+               .AddType(SchemaTypeConfigBuilder().SetType("newType"))
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
+               .AddType(SchemaTypeConfigBuilder().SetType("message"))
                .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(

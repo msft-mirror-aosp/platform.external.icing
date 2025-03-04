@@ -29,6 +29,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -112,11 +113,19 @@ using ::testing::EndsWith;
 using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::IsTrue;
 using ::testing::Matcher;
 using ::testing::Ne;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
+
+// - Before we only created a marker file for set schema.
+// - Now, we switch to a general marker file for different operations that are
+//   sensitive to power loss or crash.
+// - In order to make the change compatible with old versions for possible
+//   AppSearch mainline rollback, let's keep the old marker file name.
+constexpr std::string_view kGeneralMarkerFilename = "set_schema_marker";
 
 constexpr std::string_view kIpsumText =
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla convallis "
@@ -252,6 +261,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_blob_store(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_marker_file_for_optimize(true);
   return icing_options;
 }
 
@@ -750,13 +760,28 @@ TEST_F(IcingSearchEngineInitializationTest,
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
   icing_options.set_enable_soft_index_restoration(false);
 
+  // Create a schema with indexable integer property "timestamp".
+  SchemaProto email_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
   DocumentProto email1 =
       DocumentBuilder()
           .SetKey("namespace", "uri1")
           .SetSchema("Email")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .AddStringProperty("subject", "subject1")
-          .AddStringProperty("body", "body1")
           .Build();
   DocumentProto email2 =
       DocumentBuilder()
@@ -764,7 +789,7 @@ TEST_F(IcingSearchEngineInitializationTest,
           .SetSchema("Email")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .AddStringProperty("subject", "subject2")
-          .AddStringProperty("body", "body2")
+          .AddInt64Property("timestamp", 123)
           .Build();
 
   {
@@ -774,65 +799,32 @@ TEST_F(IcingSearchEngineInitializationTest,
     ASSERT_THAT(init_result.status(), ProtoIsOk());
     ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
                 Eq(0));
-    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(email_schema).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
   }
 
-  {
-    // 2. Manually replace ("namespace", "uri2") with a new DocumentProto
-    //    containing '\0' which fails to index.
-    FakeClock fake_clock;
-    ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
-                            feature_flags_.get()));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
-    std::unique_ptr<DocumentStore> document_store =
-        std::move(create_result.document_store);
+  // 2. Delete integer index to trigger index restoration.
+  ASSERT_TRUE(
+      filesystem()->DeleteDirectoryRecursively(GetIntegerIndexDir().c_str()));
 
-    DocumentProto email2_with_null_char =
-        DocumentBuilder()
-            .SetKey("namespace", "uri2")
-            .SetSchema("Email")
-            .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-            .AddStringProperty("subject", "subject2")
-            .AddStringProperty("body", std::string("body\0two", 8))
-            .Build();
-    ICING_ASSERT_OK(document_store->Put(email2_with_null_char));
-    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+  // 3. Mock filesystem to fail creating "timestamp" integer index storage.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem,
+          CreateDirectory(HasSubstr(GetIntegerIndexDir() + "/timestamp")))
+      .WillByDefault(Return(false));
 
-    // 3. Delete the the term index and reinitialize an empty one to trigger
-    //    RestoreIndexIfNeeded.
-    std::string idx_subdir = GetIndexDir() + "/idx";
-    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str()));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<Index> index,
-        Index::Create(Index::Options(GetIndexDir(),
-                                     /*index_merge_size=*/100,
-                                     /*lite_index_sort_at_indexing=*/true,
-                                     /*lite_index_sort_size=*/50),
-                      filesystem(), icing_filesystem()));
-    ICING_ASSERT_OK(index->PersistToDisk());
-  }
-
-  // 4. Initialize IcingSearchEngine again. It should fail.
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  // 4. Initialize IcingSearchEngine again with the mock filesystem. When
+  //    indexing document "uri2", it will fail to create "timestamp" integer
+  //    index storage and fail initialization.
+  TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
 
   InitializeResultProto initialize_result = icing.Initialize();
-  EXPECT_THAT(initialize_result.status(),
-              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(initialize_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
   EXPECT_THAT(initialize_result.status().message(),
-              HasSubstr("Key cannot contain a null character '\\0'"));
+              HasSubstr("Failed to create directory"));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -840,13 +832,28 @@ TEST_F(IcingSearchEngineInitializationTest,
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
   icing_options.set_enable_soft_index_restoration(true);
 
+  // Create a schema with indexable integer property "timestamp".
+  SchemaProto email_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
   DocumentProto email1 =
       DocumentBuilder()
           .SetKey("namespace", "uri1")
           .SetSchema("Email")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .AddStringProperty("subject", "subject1")
-          .AddStringProperty("body", "body1")
           .Build();
   DocumentProto email2 =
       DocumentBuilder()
@@ -854,7 +861,7 @@ TEST_F(IcingSearchEngineInitializationTest,
           .SetSchema("Email")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .AddStringProperty("subject", "subject2")
-          .AddStringProperty("body", "body2")
+          .AddInt64Property("timestamp", 123)
           .Build();
 
   {
@@ -864,62 +871,30 @@ TEST_F(IcingSearchEngineInitializationTest,
     ASSERT_THAT(init_result.status(), ProtoIsOk());
     ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
                 Eq(0));
-    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(email_schema).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
   }
 
-  {
-    // 2. Manually replace ("namespace", "uri2") with a new DocumentProto
-    //    containing '\0' which fails to index.
-    FakeClock fake_clock;
-    ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
-                            feature_flags_.get()));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
-    std::unique_ptr<DocumentStore> document_store =
-        std::move(create_result.document_store);
+  // 2. Delete integer index to trigger index restoration.
+  ASSERT_TRUE(
+      filesystem()->DeleteDirectoryRecursively(GetIntegerIndexDir().c_str()));
 
-    DocumentProto email2_with_null_char =
-        DocumentBuilder()
-            .SetKey("namespace", "uri2")
-            .SetSchema("Email")
-            .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-            .AddStringProperty("subject", "subject2")
-            .AddStringProperty("body", std::string("body\0two", 8))
-            .Build();
-    ICING_ASSERT_OK(document_store->Put(email2_with_null_char));
-    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+  // 3. Mock filesystem to fail creating "timestamp" integer index storage.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem,
+          CreateDirectory(HasSubstr(GetIntegerIndexDir() + "/timestamp")))
+      .WillByDefault(Return(false));
 
-    // 3. Delete the the term index and reinitialize an empty one to trigger
-    //    RestoreIndexIfNeeded.
-    std::string idx_subdir = GetIndexDir() + "/idx";
-    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str()));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<Index> index,
-        Index::Create(Index::Options(GetIndexDir(),
-                                     /*index_merge_size=*/100,
-                                     /*lite_index_sort_at_indexing=*/true,
-                                     /*lite_index_sort_size=*/50),
-                      filesystem(), icing_filesystem()));
-    ICING_ASSERT_OK(index->PersistToDisk());
-  }
-
-  // 4. Initialize IcingSearchEngine again. Should succeed and index should be
-  //    restored successfully even though document ("namespace", "uri2") will
-  //    cause an error during indexing. Soft index restoration mechanism should
-  //    skip the error and delete the document without failing initialization.
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  // 4. Initialize IcingSearchEngine again with the mock filesystem. When
+  //    indexing document "uri2", it will fail to create "timestamp" integer
+  //    index storage, but soft index restoration mechanism should skip the
+  //    error and delete the document without failing initialization.
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
 
   InitializeResultProto initialize_result = icing.Initialize();
   EXPECT_THAT(initialize_result.status(),
@@ -929,17 +904,23 @@ TEST_F(IcingSearchEngineInitializationTest,
       initialize_result.initialize_stats().document_store_recovery_cause(),
       Eq(InitializeStatsProto::NONE));
   // Indices should be restored.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().index_restoration_latency_ms(),
+      Eq(10));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().num_failed_reindexed_documents(),
+      Eq(1));
   EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result.initialize_stats().integer_index_restoration_cause(),
       Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
   EXPECT_THAT(initialize_result.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
-              Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result.initialize_stats().embedding_index_restoration_cause(),
-      Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+      Eq(InitializeStatsProto::NONE));
 
   // ("namespace", "uri1") should be found.
   GetResultProto expected_get_result_proto;
@@ -1153,11 +1134,15 @@ TEST_F(IcingSearchEngineInitializationTest,
                     .SetCardinality(CARDINALITY_OPTIONAL))
             .Build();
 
-    // Write the marker file
+    // Write the general marker file
+    auto marker_proto = std::make_unique<IcingSearchEngineMarkerProto>();
+    marker_proto->set_operation_type(
+        IcingSearchEngineMarkerProto::OperationType::SET_SCHEMA);
     std::string marker_filepath =
-        absl_ports::StrCat(options.base_dir(), "/set_schema_marker");
-    ScopedFd sfd(filesystem()->OpenForWrite(marker_filepath.c_str()));
-    ASSERT_TRUE(sfd.is_valid());
+        absl_ports::StrCat(options.base_dir(), "/", kGeneralMarkerFilename);
+    FileBackedProto<IcingSearchEngineMarkerProto> marker_file(*filesystem(),
+                                                              marker_filepath);
+    ICING_ASSERT_OK(marker_file.Write(std::move(marker_proto)));
 
     // Write the new schema
     FakeClock fake_clock;
@@ -1230,6 +1215,152 @@ TEST_F(IcingSearchEngineInitializationTest,
                    ResultSpecProto::default_instance());
   EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_google::protobuf));
+}
+
+TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "test")
+          .AddInt64Property("indexableInteger", 456)
+          .Build();
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  {
+    // Initialize and put document1.
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  }
+
+  {
+    // Manually merge lite index into main index. All hits for "fake_type/0"
+    // will be moved into main index.
+    Index::Options options(GetIndexDir(), /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(options, filesystem(), icing_filesystem()));
+    ICING_ASSERT_OK(index->Merge());
+    ICING_ASSERT_OK(index->PersistToDisk());
+  }
+
+  {
+    // Initialize again and put document2. All hits for "fake_type/1" will be
+    // added into lite index.
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+    // Delete document1.
+    ASSERT_THAT(icing.Delete(document1.namespace_(), document1.uri()).status(),
+                ProtoIsOk());
+  }
+
+  {
+    FakeClock fake_clock;
+
+    // Simulate optimize where power is lost after document store is optimized,
+    // but indices are not.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock,
+                            feature_flags_.get()));
+
+    std::string doc_store_dir = GetDocumentDir();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(filesystem(), doc_store_dir, &fake_clock,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+
+    std::string temp_doc_store_dir = doc_store_dir + "_temp";
+    ASSERT_THAT(filesystem()->CreateDirectory(temp_doc_store_dir.c_str()),
+                IsTrue());
+    ICING_ASSERT_OK(document_store->OptimizeInto(temp_doc_store_dir,
+                                                 lang_segmenter_.get(),
+                                                 /*expired_blob_handles=*/{}));
+    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+    document_store.reset();
+
+    ASSERT_THAT(filesystem()->SwapFiles(doc_store_dir.c_str(),
+                                        temp_doc_store_dir.c_str()),
+                IsTrue());
+
+    // Write the general marker file
+    auto marker_proto = std::make_unique<IcingSearchEngineMarkerProto>();
+    marker_proto->set_operation_type(
+        IcingSearchEngineMarkerProto::OperationType::OPTIMIZE);
+    std::string marker_filepath =
+        absl_ports::StrCat(options.base_dir(), "/", kGeneralMarkerFilename);
+    FileBackedProto<IcingSearchEngineMarkerProto> marker_file(*filesystem(),
+                                                              marker_filepath);
+    ICING_ASSERT_OK(marker_file.Write(std::move(marker_proto)));
+  }
+
+  // Initialize should succeed and all derived files should be rebuilt.
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Before rebuilding:
+  // - Main index has document id 0 hit for "message".
+  // - Lite index has document id 1 hit for "test".
+  // - Last added document id:
+  //   - Document store: 0
+  //   - Lite index: 1
+  //   - Main index: 0
+  //
+  // Since "fake_type/0" is deleted and Optimize for document store has been
+  // done, document id 0 now represents "fake_type/1". If we don't have the
+  // optimize marker file, then Icing initialize mechanism will only throw away
+  // the lite index without rebuilding. Then, searching "message" or "test" will
+  // get hits of old document ids from the term index and therefore match the
+  // incorrect document(s).
+  //
+  // Here we verify 2 searches to make sure that indices should be rebuilt and
+  // the correct results are returned.
+
+  // Searching "message" will not get "fake_type/1".
+  SearchResultProto expected_search_result_proto1;
+  expected_search_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance()),
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto1));
+
+  // Searching "test" will get "fake_type/1".
+  SearchResultProto expected_search_result_google::protobuf;
+  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
+      document2;
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("test");
+  search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance()),
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_google::protobuf));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -1325,10 +1456,11 @@ TEST_F(IcingSearchEngineInitializationTest,
 
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
-        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
-                          /*orphan_blob_time_to_live_ms=*/0,
-                          PortableFileBackedProtoLog<
-                              BlobInfoProto>::kDefaultCompressionLevel));
+        BlobStore::Create(
+            filesystem(), GetBlobDir(), &fake_clock,
+            /*orphan_blob_time_to_live_ms=*/0,
+            PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
+            /*manage_blob_files=*/true));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -5130,11 +5262,15 @@ TEST_F(IcingSearchEngineInitializationTest,
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    // Write the marker file
+    // Write the general marker file
+    auto marker_proto = std::make_unique<IcingSearchEngineMarkerProto>();
+    marker_proto->set_operation_type(
+        IcingSearchEngineMarkerProto::OperationType::SET_SCHEMA);
     std::string marker_filepath =
-        absl_ports::StrCat(options.base_dir(), "/set_schema_marker");
-    ScopedFd sfd(filesystem()->OpenForWrite(marker_filepath.c_str()));
-    ASSERT_TRUE(sfd.is_valid());
+        absl_ports::StrCat(options.base_dir(), "/", kGeneralMarkerFilename);
+    FileBackedProto<IcingSearchEngineMarkerProto> marker_file(*filesystem(),
+                                                              marker_filepath);
+    ICING_ASSERT_OK(marker_file.Write(std::move(marker_proto)));
 
     // Write the new schema
     FakeClock fake_clock;
@@ -5156,18 +5292,16 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
-    EXPECT_THAT(
-        initialize_result_proto.initialize_stats().index_restoration_cause(),
-        Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
+
+    // Schema store recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .integer_index_restoration_cause(),
+                    .schema_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
-    EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .index_restoration_latency_ms(),
+                    .schema_store_recovery_latency_ms(),
                 Eq(10));
+
+    // Document store recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
@@ -5177,12 +5311,29 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::NO_DATA_LOSS));
+
+    // Term index recovery stats.
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().index_restoration_cause(),
+        Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .schema_store_recovery_cause(),
-                Eq(InitializeStatsProto::NONE));
+                    .index_restoration_latency_ms(),
+                Eq(10));
+
+    // Integer index recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .schema_store_recovery_latency_ms(),
-                Eq(0));
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
+
+    // Qualified id join index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
+
+    // Embedding index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
   }
 
   {
@@ -5195,18 +5346,16 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
-    EXPECT_THAT(
-        initialize_result_proto.initialize_stats().index_restoration_cause(),
-        Eq(InitializeStatsProto::NONE));
+
+    // Schema store recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .integer_index_restoration_cause(),
+                    .schema_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result_proto.initialize_stats()
-                    .index_restoration_latency_ms(),
+                    .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // Document store recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .document_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
@@ -5216,12 +5365,211 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::NO_DATA_LOSS));
+
+    // Term index recovery stats.
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(0));
+
+    // Integer index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Qualified id join index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Embedding index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       InitializeShouldLogRecoveryCauseOptimizeOutOfSync) {
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "test")
+          .AddInt64Property("indexableInteger", 456)
+          .Build();
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  {
+    // Initialize and put document1.
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  }
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  {
+    // Simulate optimize where power is lost after document store is optimized,
+    // but indices are not.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(filesystem(), GetSchemaDir(), fake_clock.get(),
+                            feature_flags_.get()));
+
+    std::string doc_store_dir = GetDocumentDir();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(filesystem(), doc_store_dir, fake_clock.get(),
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+
+    std::string temp_doc_store_dir = doc_store_dir + "_temp";
+    ASSERT_THAT(filesystem()->CreateDirectory(temp_doc_store_dir.c_str()),
+                IsTrue());
+    ICING_ASSERT_OK(document_store->OptimizeInto(temp_doc_store_dir,
+                                                 lang_segmenter_.get(),
+                                                 /*expired_blob_handles=*/{}));
+    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+    document_store.reset();
+
+    ASSERT_THAT(filesystem()->SwapFiles(doc_store_dir.c_str(),
+                                        temp_doc_store_dir.c_str()),
+                IsTrue());
+
+    // Write the general marker file
+    auto marker_proto = std::make_unique<IcingSearchEngineMarkerProto>();
+    marker_proto->set_operation_type(
+        IcingSearchEngineMarkerProto::OperationType::OPTIMIZE);
+    std::string marker_filepath =
+        absl_ports::StrCat(options.base_dir(), "/", kGeneralMarkerFilename);
+    FileBackedProto<IcingSearchEngineMarkerProto> marker_file(*filesystem(),
+                                                              marker_filepath);
+    ICING_ASSERT_OK(marker_file.Write(std::move(marker_proto)));
+  }
+
+  {
+    // All derived files should be rebuilt.
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+
+    // Schema store recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(10));
+
+    // Document store recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Eq(10));
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().document_store_data_status(),
+        Eq(InitializeStatsProto::NO_DATA_LOSS));
+
+    // Term index recovery stats.
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().index_restoration_cause(),
+        Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(10));
+
+    // Integer index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+
+    // Qualified id join index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+
+    // Embedding index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+  }
+
+  {
+    // Initialize again. No recovery should be needed.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+
+    // Schema store recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // Document store recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Eq(0));
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().document_store_data_status(),
+        Eq(InitializeStatsProto::NO_DATA_LOSS));
+
+    // Term index recovery stats.
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(0));
+
+    // Integer index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Qualified id join index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Embedding index recovery stats.
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
   }
 }
 
@@ -5727,10 +6075,11 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
 
     ICING_ASSERT_OK_AND_ASSIGN(
         BlobStore blob_store,
-        BlobStore::Create(filesystem(), GetBlobDir(), &fake_clock,
-                          /*orphan_blob_time_to_live_ms=*/0,
-                          PortableFileBackedProtoLog<
-                              BlobInfoProto>::kDefaultCompressionLevel));
+        BlobStore::Create(
+            filesystem(), GetBlobDir(), &fake_clock,
+            /*orphan_blob_time_to_live_ms=*/0,
+            PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
+            /*manage_blob_files=*/true));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(

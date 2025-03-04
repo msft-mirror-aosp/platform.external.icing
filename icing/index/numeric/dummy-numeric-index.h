@@ -332,11 +332,15 @@ libtextclassifier3::Status DummyNumericIndex<T>::Optimize(
     for (const auto& [key, hits] : old_property_map) {
       for (const BasicHit& hit : hits) {
         DocumentId old_doc_id = hit.document_id();
-        if (old_doc_id >= document_id_old_to_new.size() ||
-            document_id_old_to_new[old_doc_id] == kInvalidDocumentId) {
-          continue;
+        if (old_doc_id < 0 || old_doc_id >= document_id_old_to_new.size()) {
+          return absl_ports::InternalError(
+              "Dummy numeric index hit document id is out of range. The index "
+              "may have been corrupted.");
         }
 
+        if (document_id_old_to_new[old_doc_id] == kInvalidDocumentId) {
+          continue;
+        }
         new_property_map[key].push_back(
             BasicHit(hit.section_id(), document_id_old_to_new[old_doc_id]));
       }
