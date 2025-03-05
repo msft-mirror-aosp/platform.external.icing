@@ -23,7 +23,7 @@
 #include "gtest/gtest.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/join/document-id-to-join-info.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/testing/common-matchers.h"
 
 using testing::ElementsAre;
@@ -38,152 +38,135 @@ namespace lib {
 namespace {
 
 TEST(PostingListJoinDataSerializerTest, GetMinPostingListSizeToFitNotNull) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size =
-      2551 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 2551 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/2))),
-      IsOk());
-  EXPECT_THAT(
-      serializer.GetMinPostingListSizeToFit(&pl_used),
-      Eq(2 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/0,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/2))),
+              IsOk());
+  EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used),
+              Eq(2 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
 
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/5))),
-      IsOk());
-  EXPECT_THAT(
-      serializer.GetMinPostingListSizeToFit(&pl_used),
-      Eq(3 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/1,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/5))),
+              IsOk());
+  EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used),
+              Eq(3 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
 }
 
 TEST(PostingListJoinDataSerializerTest, GetMinPostingListSizeToFitAlmostFull) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size = 3 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 3 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/2))),
-      IsOk());
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/5))),
-      IsOk());
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/0,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/2))),
+              IsOk());
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/1,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/5))),
+              IsOk());
   EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used), Eq(size));
 }
 
 TEST(PostingListJoinDataSerializerTest, GetMinPostingListSizeToFitFull) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size = 3 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 3 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/2))),
-      IsOk());
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/5))),
-      IsOk());
-  ASSERT_THAT(
-      serializer.PrependData(
-          &pl_used,
-          DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-              /*document_id=*/2, NamespaceFingerprintIdentifier(
-                                     /*namespace_id=*/1, /*fingerprint=*/10))),
-      IsOk());
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/0,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/2))),
+              IsOk());
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/1,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/5))),
+              IsOk());
+  ASSERT_THAT(serializer.PrependData(
+                  &pl_used, DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                                /*document_id=*/2,
+                                NamespaceIdFingerprint(/*namespace_id=*/1,
+                                                       /*fingerprint=*/10))),
+              IsOk());
   EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used), Eq(size));
 }
 
 TEST(PostingListJoinDataSerializerTest, PrependDataNotFull) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size =
-      2551 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 2551 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   // Make used.
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data0(
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data0(
       /*document_id=*/0,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2));
   EXPECT_THAT(serializer.PrependData(&pl_used, data0), IsOk());
   // Size = sizeof(uncompressed data0)
-  int expected_size =
-      sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int expected_size = sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used), IsOkAndHolds(ElementsAre(data0)));
 
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data1(
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data1(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/5));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5));
   EXPECT_THAT(serializer.PrependData(&pl_used, data1), IsOk());
   // Size = sizeof(uncompressed data1)
   //        + sizeof(uncompressed data0)
-  expected_size += sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  expected_size += sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used),
               IsOkAndHolds(ElementsAre(data1, data0)));
 
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data2(
-      /*document_id=*/2, NamespaceFingerprintIdentifier(
-                             /*namespace_id=*/1, /*fingerprint=*/10));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data2(
+      /*document_id=*/2,
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10));
   EXPECT_THAT(serializer.PrependData(&pl_used, data2), IsOk());
   // Size = sizeof(uncompressed data2)
   //        + sizeof(uncompressed data1)
   //        + sizeof(uncompressed data0)
-  expected_size += sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  expected_size += sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used),
               IsOkAndHolds(ElementsAre(data2, data1, data0)));
 }
 
 TEST(PostingListJoinDataSerializerTest, PrependDataAlmostFull) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size = 4 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 4 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
@@ -192,64 +175,61 @@ TEST(PostingListJoinDataSerializerTest, PrependDataAlmostFull) {
   // Transitions:
   // Adding data0: EMPTY -> NOT_FULL
   // Adding data1: NOT_FULL -> NOT_FULL
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data0(
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data0(
       /*document_id=*/0,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2));
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data1(
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data1(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/5));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5));
   EXPECT_THAT(serializer.PrependData(&pl_used, data0), IsOk());
   EXPECT_THAT(serializer.PrependData(&pl_used, data1), IsOk());
-  int expected_size =
-      2 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int expected_size = 2 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used),
               IsOkAndHolds(ElementsAre(data1, data0)));
 
   // Add one more data to transition NOT_FULL -> ALMOST_FULL
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data2(
-      /*document_id=*/2, NamespaceFingerprintIdentifier(
-                             /*namespace_id=*/1, /*fingerprint=*/10));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data2(
+      /*document_id=*/2,
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10));
   EXPECT_THAT(serializer.PrependData(&pl_used, data2), IsOk());
-  expected_size =
-      3 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  expected_size = 3 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used),
               IsOkAndHolds(ElementsAre(data2, data1, data0)));
 
   // Add one more data to transition ALMOST_FULL -> FULL
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data3(
-      /*document_id=*/3, NamespaceFingerprintIdentifier(
-                             /*namespace_id=*/1, /*fingerprint=*/0));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data3(
+      /*document_id=*/3,
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/0));
   EXPECT_THAT(serializer.PrependData(&pl_used, data3), IsOk());
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(size));
   EXPECT_THAT(serializer.GetData(&pl_used),
               IsOkAndHolds(ElementsAre(data3, data2, data1, data0)));
 
   // The posting list is FULL. Adding another data should fail.
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data4(
-      /*document_id=*/4, NamespaceFingerprintIdentifier(
-                             /*namespace_id=*/0, /*fingerprint=*/1234));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data4(
+      /*document_id=*/4,
+      NamespaceIdFingerprint(/*namespace_id=*/0, /*fingerprint=*/1234));
   EXPECT_THAT(serializer.PrependData(&pl_used, data4),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
 TEST(PostingListJoinDataSerializerTest, PrependSmallerDataShouldFail) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size = 4 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 4 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data(
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data(
       /*document_id=*/100,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2));
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> smaller_data(
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> smaller_data(
       /*document_id=*/99,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2));
 
   // NOT_FULL -> NOT_FULL
   ASSERT_THAT(serializer.PrependData(&pl_used, data), IsOk());
@@ -268,8 +248,7 @@ TEST(PostingListJoinDataSerializerTest, PrependSmallerDataShouldFail) {
 }
 
 TEST(PostingListJoinDataSerializerTest, PrependDataPostingListUsedMinSize) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
   int size = serializer.GetMinPostingListSize();
@@ -282,59 +261,57 @@ TEST(PostingListJoinDataSerializerTest, PrependDataPostingListUsedMinSize) {
   EXPECT_THAT(serializer.GetData(&pl_used), IsOkAndHolds(IsEmpty()));
 
   // Add a data. PL should shift to ALMOST_FULL state
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data0(
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data0(
       /*document_id=*/0,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2));
   EXPECT_THAT(serializer.PrependData(&pl_used, data0), IsOk());
   // Size = sizeof(uncompressed data0)
-  int expected_size =
-      sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int expected_size = sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used), IsOkAndHolds(ElementsAre(data0)));
 
   // Add another data. PL should shift to FULL state.
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data1(
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data1(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/5));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5));
   EXPECT_THAT(serializer.PrependData(&pl_used, data1), IsOk());
   // Size = sizeof(uncompressed data1) + sizeof(uncompressed data0)
-  expected_size += sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  expected_size += sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(expected_size));
   EXPECT_THAT(serializer.GetData(&pl_used),
               IsOkAndHolds(ElementsAre(data1, data0)));
 
   // The posting list is FULL. Adding another data should fail.
-  DocumentIdToJoinInfo<NamespaceFingerprintIdentifier> data2(
-      /*document_id=*/2, NamespaceFingerprintIdentifier(
-                             /*namespace_id=*/1, /*fingerprint=*/10));
+  DocumentIdToJoinInfo<NamespaceIdFingerprint> data2(
+      /*document_id=*/2,
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10));
   EXPECT_THAT(serializer.PrependData(&pl_used, data2),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
 TEST(PostingListJoinDataSerializerTest, PrependDataArrayDoNotKeepPrepended) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size = 6 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 6 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_in;
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_pushed;
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_in;
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_pushed;
 
   // Add 3 data. The PL is in the empty state and should be able to fit all 3
   // data without issue, transitioning the PL from EMPTY -> NOT_FULL.
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/0,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/5)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/2,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/10)));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10)));
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
@@ -342,19 +319,19 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayDoNotKeepPrepended) {
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() *
-                 sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+                 sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
   EXPECT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
 
   // Add 2 data. The PL should transition from NOT_FULL to ALMOST_FULL.
   data_in.clear();
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/3,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/0)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-      /*document_id=*/4, NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                                        /*fingerprint=*/1234)));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/0)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+      /*document_id=*/4,
+      NamespaceIdFingerprint(/*namespace_id=*/0, /*fingerprint=*/1234)));
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
@@ -362,7 +339,7 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayDoNotKeepPrepended) {
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() *
-                 sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+                 sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
   EXPECT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
@@ -370,19 +347,19 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayDoNotKeepPrepended) {
   // Add 2 data. The PL should remain ALMOST_FULL since the remaining space can
   // only fit 1 data.
   data_in.clear();
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-      /*document_id=*/5, NamespaceFingerprintIdentifier(/*namespace_id=*/2,
-                                                        /*fingerprint=*/99)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-      /*document_id=*/6, NamespaceFingerprintIdentifier(/*namespace_id=*/1,
-                                                        /*fingerprint=*/63)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+      /*document_id=*/5,
+      NamespaceIdFingerprint(/*namespace_id=*/2, /*fingerprint=*/99)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+      /*document_id=*/6,
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/63)));
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
       IsOkAndHolds(0));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() *
-                 sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+                 sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
   EXPECT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
@@ -397,36 +374,35 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayDoNotKeepPrepended) {
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() *
-                 sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+                 sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
   EXPECT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
 }
 
 TEST(PostingListJoinDataSerializerTest, PrependDataArrayKeepPrepended) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
-  int size = 6 * sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>);
+  int size = 6 * sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_in;
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_pushed;
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_in;
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_pushed;
 
   // Add 3 data. The PL is in the empty state and should be able to fit all 3
   // data without issue, transitioning the PL from EMPTY -> NOT_FULL.
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/0,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/2)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/1,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/5)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/2,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/10)));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10)));
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/true),
@@ -434,7 +410,7 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayKeepPrepended) {
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() *
-                 sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+                 sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
   EXPECT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
@@ -442,18 +418,18 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayKeepPrepended) {
   // Add 4 data. The PL should prepend 3 data and transition from NOT_FULL to
   // FULL.
   data_in.clear();
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
       /*document_id=*/3,
-      NamespaceFingerprintIdentifier(/*namespace_id=*/1, /*fingerprint=*/0)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-      /*document_id=*/4, NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                                        /*fingerprint=*/1234)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-      /*document_id=*/5, NamespaceFingerprintIdentifier(/*namespace_id=*/2,
-                                                        /*fingerprint=*/99)));
-  data_in.push_back(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-      /*document_id=*/6, NamespaceFingerprintIdentifier(/*namespace_id=*/1,
-                                                        /*fingerprint=*/63)));
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/0)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+      /*document_id=*/4,
+      NamespaceIdFingerprint(/*namespace_id=*/0, /*fingerprint=*/1234)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+      /*document_id=*/5,
+      NamespaceIdFingerprint(/*namespace_id=*/2, /*fingerprint=*/99)));
+  data_in.push_back(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+      /*document_id=*/6,
+      NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/63)));
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/true),
@@ -463,15 +439,14 @@ TEST(PostingListJoinDataSerializerTest, PrependDataArrayKeepPrepended) {
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() *
-                 sizeof(DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>)));
+                 sizeof(DocumentIdToJoinInfo<NamespaceIdFingerprint>)));
   EXPECT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
 }
 
 TEST(PostingListJoinDataSerializerTest, MoveFrom) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
@@ -479,13 +454,13 @@ TEST(PostingListJoinDataSerializerTest, MoveFrom) {
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_arr1 =
-      {DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/2)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/5))};
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_arr1 = {
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/0,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/1,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5))};
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used1, data_arr1.data(), data_arr1.size(),
                                   /*keep_prepended=*/false),
@@ -494,21 +469,19 @@ TEST(PostingListJoinDataSerializerTest, MoveFrom) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_arr2 =
-      {DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/2, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/10)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/3, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/0)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/4,
-           NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                          /*fingerprint=*/1234)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/5,
-           NamespaceFingerprintIdentifier(/*namespace_id=*/2,
-                                          /*fingerprint=*/99))};
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_arr2 = {
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/2,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/3,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/0)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/4,
+          NamespaceIdFingerprint(/*namespace_id=*/0, /*fingerprint=*/1234)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/5,
+          NamespaceIdFingerprint(/*namespace_id=*/2, /*fingerprint=*/99))};
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used2, data_arr2.data(), data_arr2.size(),
                                   /*keep_prepended=*/false),
@@ -523,21 +496,20 @@ TEST(PostingListJoinDataSerializerTest, MoveFrom) {
 }
 
 TEST(PostingListJoinDataSerializerTest, MoveToNullReturnsFailedPrecondition) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_arr = {
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-          /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                 /*namespace_id=*/1, /*fingerprint=*/2)),
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-          /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                 /*namespace_id=*/1, /*fingerprint=*/5))};
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_arr = {
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/0,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/1,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5))};
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used, data_arr.data(), data_arr.size(),
                                   /*keep_prepended=*/false),
@@ -557,31 +529,29 @@ TEST(PostingListJoinDataSerializerTest, MoveToNullReturnsFailedPrecondition) {
 }
 
 TEST(PostingListJoinDataSerializerTest, MoveToPostingListTooSmall) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
   int size1 = 3 * serializer.GetMinPostingListSize();
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size1));
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_arr1 =
-      {DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/2)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/5)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/2, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/10)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/3, NamespaceFingerprintIdentifier(
-                                  /*namespace_id=*/1, /*fingerprint=*/0)),
-       DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-           /*document_id=*/4,
-           NamespaceFingerprintIdentifier(/*namespace_id=*/0,
-                                          /*fingerprint=*/1234))};
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_arr1 = {
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/0,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/1,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/2,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/3,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/0)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/4,
+          NamespaceIdFingerprint(/*namespace_id=*/0, /*fingerprint=*/1234))};
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used1, data_arr1.data(), data_arr1.size(),
                                   /*keep_prepended=*/false),
@@ -591,10 +561,10 @@ TEST(PostingListJoinDataSerializerTest, MoveToPostingListTooSmall) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size2));
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_arr2 =
-      {DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-          /*document_id=*/5, NamespaceFingerprintIdentifier(
-                                 /*namespace_id=*/2, /*fingerprint=*/99))};
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_arr2 = {
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/5,
+          NamespaceIdFingerprint(/*namespace_id=*/2, /*fingerprint=*/99))};
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used2, data_arr2.data(), data_arr2.size(),
                                   /*keep_prepended=*/false),
@@ -611,8 +581,7 @@ TEST(PostingListJoinDataSerializerTest, MoveToPostingListTooSmall) {
 }
 
 TEST(PostingListJoinDataSerializerTest, PopFrontData) {
-  PostingListJoinDataSerializer<
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>>
+  PostingListJoinDataSerializer<DocumentIdToJoinInfo<NamespaceIdFingerprint>>
       serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
@@ -620,16 +589,16 @@ TEST(PostingListJoinDataSerializerTest, PopFrontData) {
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
-  std::vector<DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>> data_arr = {
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-          /*document_id=*/0, NamespaceFingerprintIdentifier(
-                                 /*namespace_id=*/1, /*fingerprint=*/2)),
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-          /*document_id=*/1, NamespaceFingerprintIdentifier(
-                                 /*namespace_id=*/1, /*fingerprint=*/5)),
-      DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-          /*document_id=*/2, NamespaceFingerprintIdentifier(
-                                 /*namespace_id=*/1, /*fingerprint=*/10))};
+  std::vector<DocumentIdToJoinInfo<NamespaceIdFingerprint>> data_arr = {
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/0,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/2)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/1,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/5)),
+      DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+          /*document_id=*/2,
+          NamespaceIdFingerprint(/*namespace_id=*/1, /*fingerprint=*/10))};
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used, data_arr.data(), data_arr.size(),
                                   /*keep_prepended=*/false),

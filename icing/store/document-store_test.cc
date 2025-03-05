@@ -15,17 +15,20 @@
 #include "icing/store/document-store.h"
 
 #include <cstdint>
-#include <filesystem>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -35,6 +38,7 @@
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
@@ -44,19 +48,22 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
+#include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/crc32.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "icing/util/scorable_property_set.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -74,7 +81,9 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Ne;
 using ::testing::Not;
+using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
 
@@ -122,16 +131,36 @@ void WriteDocumentLogHeader(
                    sizeof(PortableFileBackedProtoLog<DocumentWrapper>::Header));
 }
 
+ScorablePropertyProto BuildScorablePropertyProtoFromBoolean(
+    bool boolean_value) {
+  ScorablePropertyProto scorable_property;
+  scorable_property.add_boolean_values(boolean_value);
+  return scorable_property;
+}
+
+ScorablePropertyProto BuildScorablePropertyProtoFromInt64(
+    const std::vector<int64_t>& int64_values) {
+  ScorablePropertyProto scorable_property;
+  scorable_property.mutable_int64_values()->Add(int64_values.begin(),
+                                                int64_values.end());
+  return scorable_property;
+}
+
+ScorablePropertyProto BuildScorablePropertyProtoFromDouble(
+    const std::vector<double>& double_values) {
+  ScorablePropertyProto scorable_property;
+  scorable_property.mutable_double_values()->Add(double_values.begin(),
+                                                 double_values.end());
+  return scorable_property;
+}
+
 struct DocumentStoreTestParam {
-  bool namespace_id_fingerprint;
   bool pre_mapping_fbv;
   bool use_persistent_hash_map;
 
-  explicit DocumentStoreTestParam(bool namespace_id_fingerprint_in,
-                                  bool pre_mapping_fbv_in,
+  explicit DocumentStoreTestParam(bool pre_mapping_fbv_in,
                                   bool use_persistent_hash_map_in)
-      : namespace_id_fingerprint(namespace_id_fingerprint_in),
-        pre_mapping_fbv(pre_mapping_fbv_in),
+      : pre_mapping_fbv(pre_mapping_fbv_in),
         use_persistent_hash_map(use_persistent_hash_map_in) {}
 };
 
@@ -148,6 +177,7 @@ class DocumentStoreTest
             .SetSchema("email")
             .AddStringProperty("subject", "subject foo")
             .AddStringProperty("body", "body bar")
+            .AddDoubleProperty("score", 1.5, 2.5)
             .SetScore(document1_score_)
             .SetCreationTimestampMs(
                 document1_creation_timestamp_)  // A random timestamp
@@ -159,6 +189,7 @@ class DocumentStoreTest
             .SetSchema("email")
             .AddStringProperty("subject", "subject foo 2")
             .AddStringProperty("body", "body bar 2")
+            .AddDoubleProperty("score", 3.5, 4.5)
             .SetScore(document2_score_)
             .SetCreationTimestampMs(
                 document2_creation_timestamp_)  // A random timestamp
@@ -167,6 +198,7 @@ class DocumentStoreTest
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       // If we've specified using the reverse-JNI method for segmentation (i.e.
       // not ICU), then we won't have the ICU data file included to set up.
@@ -177,7 +209,7 @@ class DocumentStoreTest
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
 
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
@@ -199,11 +231,17 @@ class DocumentStoreTest
                                      .SetName("body")
                                      .SetDataTypeString(TERM_MATCH_EXACT,
                                                         TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("score")
+                            .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                            .SetScorableType(SCORABLE_TYPE_ENABLED)
+                            .SetCardinality(CARDINALITY_REPEATED)))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
                     schema, /*ignore_errors_and_delete_documents=*/false,
                     /*allow_circular_schema_definitions=*/false),
@@ -228,8 +266,7 @@ class DocumentStoreTest
     const std::string header_file =
         absl_ports::StrCat(document_store_dir_, "/document_store_header");
     DocumentStore::Header header;
-    header.magic = DocumentStore::Header::GetCurrentMagic(
-        GetParam().namespace_id_fingerprint);
+    header.magic = DocumentStore::Header::kMagic;
     header.checksum = 10;  // Arbitrary garbage checksum
     filesystem_.DeleteFile(header_file.c_str());
     filesystem_.Write(header_file.c_str(), &header, sizeof(header));
@@ -239,14 +276,14 @@ class DocumentStoreTest
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store) {
     return DocumentStore::Create(
-        filesystem, base_dir, clock, schema_store,
+        filesystem, base_dir, clock, schema_store, feature_flags_.get(),
         /*force_recovery_and_revalidate_documents=*/false,
-        GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-        GetParam().use_persistent_hash_map,
-        PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+        GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+        PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
         /*initialize_stats=*/nullptr);
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   FakeClock fake_clock_;
@@ -303,10 +340,16 @@ TEST_P(DocumentStoreTest, PutAndGetInSameNamespaceOk) {
       std::move(create_result.document_store);
 
   // Both documents have namespace of "icing"
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(DocumentProto(test_document2_)));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(test_document2_));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->Get(document_id1),
               IsOkAndHolds(EqualsProto(test_document1_)));
@@ -334,10 +377,16 @@ TEST_P(DocumentStoreTest, PutAndGetAcrossNamespacesOk) {
                                    .SetCreationTimestampMs(0)
                                    .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(foo_document));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(DocumentProto(bar_document)));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->Get(document_id1),
               IsOkAndHolds(EqualsProto(foo_document)));
@@ -359,10 +408,16 @@ TEST_P(DocumentStoreTest, PutSameKey) {
   DocumentProto document1 = DocumentProto(test_document1_);
   DocumentProto document2 = DocumentProto(test_document1_);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+  EXPECT_THAT(put_result2.old_document_id, Eq(document_id1));
+  EXPECT_TRUE(put_result2.was_replacement());
   EXPECT_THAT(document_id1, Not(document_id2));
   // document2 overrides document1, so document_id1 becomes invalid
   EXPECT_THAT(doc_store->Get(document_id1),
@@ -373,7 +428,11 @@ TEST_P(DocumentStoreTest, PutSameKey) {
   // Makes sure that old doc ids are not getting reused.
   DocumentProto document3 = DocumentProto(test_document1_);
   document3.set_uri("another/uri/1");
-  EXPECT_THAT(doc_store->Put(document3), IsOkAndHolds(Not(document_id1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             doc_store->Put(document3));
+  EXPECT_THAT(put_result3.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_THAT(put_result3.new_document_id, Ne(document_id1));
+  EXPECT_FALSE(put_result3.was_replacement());
 }
 
 TEST_P(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
@@ -384,10 +443,16 @@ TEST_P(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(DocumentProto(test_document1_)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(DocumentProto(test_document2_)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(test_document2_));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(
       document_id1, fake_clock_.GetSystemTimeMilliseconds()));
@@ -476,8 +541,11 @@ TEST_P(DocumentStoreTest, GetInvalidDocumentId) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(DocumentProto(test_document1_)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(test_document1_));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   DocumentId invalid_document_id_negative = -1;
   EXPECT_THAT(doc_store->Get(invalid_document_id_negative),
@@ -745,7 +813,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -763,32 +832,44 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                                        .SetSchema("email")
                                        .SetCreationTimestampMs(1)
                                        .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_1_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result1,
                              document_store->Put(email_document_1));
+  EXPECT_THAT(email_put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result1.was_replacement());
+  DocumentId email_1_document_id = email_put_result1.new_document_id;
 
   DocumentProto email_document_2 = DocumentBuilder()
                                        .SetKey("namespace2", "2")
                                        .SetSchema("email")
                                        .SetCreationTimestampMs(1)
                                        .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_2_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result2,
                              document_store->Put(email_document_2));
+  EXPECT_THAT(email_put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result2.was_replacement());
+  DocumentId email_2_document_id = email_put_result2.new_document_id;
 
   DocumentProto message_document = DocumentBuilder()
                                        .SetKey("namespace", "3")
                                        .SetSchema("message")
                                        .SetCreationTimestampMs(1)
                                        .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
+  DocumentId message_document_id = message_put_result.new_document_id;
 
   DocumentProto person_document = DocumentBuilder()
                                       .SetKey("namespace", "4")
                                       .SetSchema("person")
                                       .SetCreationTimestampMs(1)
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult person_put_result,
                              document_store->Put(person_document));
+  EXPECT_THAT(person_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(person_put_result.was_replacement());
+  DocumentId person_document_id = person_put_result.new_document_id;
 
   // Delete the "email" type and ensure that it works across both
   // email_document's namespaces. And that other documents aren't affected.
@@ -875,7 +956,8 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -904,11 +986,16 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(email_document_id,
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                                document_store->Put(email_document));
-    ICING_ASSERT_OK_AND_ASSIGN(message_document_id,
+    EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(email_put_result.was_replacement());
+    email_document_id = email_put_result.new_document_id;
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                                document_store->Put(message_document));
-
+    EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(message_put_result.was_replacement());
+    message_document_id = message_put_result.new_document_id;
     // Delete "email". "message" documents should still be retrievable.
     DocumentStore::DeleteByGroupResult group_result =
         document_store->DeleteBySchemaType("email");
@@ -969,7 +1056,8 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -998,10 +1086,16 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(email_document_id,
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                                document_store->Put(email_document));
-    ICING_ASSERT_OK_AND_ASSIGN(message_document_id,
+    EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(email_put_result.was_replacement());
+    email_document_id = email_put_result.new_document_id;
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                                document_store->Put(message_document));
+    EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(message_put_result.was_replacement());
+    message_document_id = message_put_result.new_document_id;
 
     // Delete "email". "message" documents should still be retrievable.
     DocumentStore::DeleteByGroupResult group_result =
@@ -1094,10 +1188,11 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
       filesystem_.GetFileSize(original_document_log.c_str());
 
   // Optimizing into the same directory is not allowed
-  EXPECT_THAT(
-      doc_store->OptimizeInto(document_store_dir_, lang_segmenter_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-               HasSubstr("directory is the same")));
+  EXPECT_THAT(doc_store->OptimizeInto(
+                  document_store_dir_, lang_segmenter_.get(),
+                  /*expired_blob_handles=*/std::unordered_set<std::string>()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("directory is the same")));
 
   std::string optimized_dir = document_store_dir_ + "_optimize";
   std::string optimized_document_log =
@@ -1109,7 +1204,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result1,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result1.document_id_old_to_new, ElementsAre(0, 1, 2));
   EXPECT_THAT(optimize_result1.namespace_id_old_to_new, ElementsAre(0));
   EXPECT_THAT(optimize_result1.should_rebuild_index, IsFalse());
@@ -1126,7 +1223,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   // DocumentId 0 is removed.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result2,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result2.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, 0, 1));
   EXPECT_THAT(optimize_result2.namespace_id_old_to_new, ElementsAre(0));
@@ -1146,7 +1245,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   // DocumentId 0 is removed, and DocumentId 2 is expired.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result3,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result3.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId));
   EXPECT_THAT(optimize_result3.namespace_id_old_to_new, ElementsAre(0));
@@ -1165,7 +1266,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   // id will be invalid.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result4,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(
       optimize_result4.document_id_old_to_new,
       ElementsAre(kInvalidDocumentId, kInvalidDocumentId, kInvalidDocumentId));
@@ -1245,7 +1348,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result1,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result1.document_id_old_to_new,
               ElementsAre(0, 1, 2, 3, 4));
   EXPECT_THAT(optimize_result1.namespace_id_old_to_new, ElementsAre(0, 1, 2));
@@ -1270,7 +1375,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result2,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result2.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, 0, 1, 2, 3));
   EXPECT_THAT(optimize_result2.namespace_id_old_to_new, ElementsAre(0, 1, 2));
@@ -1295,7 +1402,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result3,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result3.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0, 1, 2));
   EXPECT_THAT(optimize_result3.namespace_id_old_to_new, ElementsAre(1, 0, 2));
@@ -1319,7 +1428,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result4,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result4.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0,
                           kInvalidDocumentId, 1));
@@ -1344,7 +1455,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result5,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result5.document_id_old_to_new,
               ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0,
                           kInvalidDocumentId, kInvalidDocumentId));
@@ -1368,7 +1481,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result6,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(
       optimize_result6.document_id_old_to_new,
       ElementsAre(kInvalidDocumentId, kInvalidDocumentId, kInvalidDocumentId,
@@ -1395,7 +1510,9 @@ TEST_P(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::OptimizeResult optimize_result,
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
   EXPECT_THAT(optimize_result.document_id_old_to_new, IsEmpty());
   EXPECT_THAT(optimize_result.namespace_id_old_to_new, IsEmpty());
   EXPECT_THAT(optimize_result.should_rebuild_index, IsFalse());
@@ -1413,11 +1530,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
         std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id1,
+        DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id2,
+        DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
+    document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1425,17 +1548,33 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 
     // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
@@ -1476,20 +1615,33 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
@@ -1504,11 +1656,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
         std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id1,
+        DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id2,
+        DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
+    document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1516,17 +1674,33 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
+
     // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
                                   fake_clock_.GetSystemTimeMilliseconds()),
@@ -1577,17 +1751,19 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
@@ -1601,6 +1777,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
       doc_store->GetUsageScores(document_id2,
                                 fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
@@ -1615,11 +1802,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
         std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id1,
+        DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id2,
+        DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
+    document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1627,17 +1820,34 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
+
     // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
                                   fake_clock_.GetSystemTimeMilliseconds()),
@@ -1675,17 +1885,19 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
   // Checks derived score cache.
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
@@ -1699,6 +1911,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
       doc_store->GetUsageScores(document_id2,
                                 fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
@@ -1713,11 +1936,17 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
         std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id1,
+        DocumentStore::PutResult put_result1,
         doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id1 = put_result1.new_document_id;
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_id2,
+        DocumentStore::PutResult put_result2,
         doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
+    EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result2.was_replacement());
+    document_id2 = put_result2.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1725,17 +1954,34 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     // Checks derived score cache
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(
         doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
+        IsOkAndHolds(EqualsDocumentAssociatedScoreData(
             /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
+            /*length_in_tokens=*/4,
+            /*has_valid_scorable_property_cache_index=*/true)));
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Checks derived scorable property set cache
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+        doc_store->GetScorablePropertySet(
+            document_id1, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc1->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+    std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+        doc_store->GetScorablePropertySet(
+            document_id2, fake_clock_.GetSystemTimeMilliseconds());
+    EXPECT_THAT(
+        scorable_property_set_doc2->GetScorablePropertyProto("score"),
+        Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
+
     EXPECT_THAT(doc_store->Delete("icing", "email/1",
                                   fake_clock_.GetSystemTimeMilliseconds()),
                 IsOk());
@@ -1764,19 +2010,32 @@ TEST_P(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document2_.uri()),
+          /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
+          /*length_in_tokens=*/4,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
+
+  // Checks derived scorable property set cache
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id1, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({3.5, 4.5}))));
 }
 
 TEST_P(DocumentStoreTest, GetStorageInfo) {
@@ -1807,6 +2066,7 @@ TEST_P(DocumentStoreTest, GetStorageInfo) {
   doc_store_storage_info = doc_store->GetStorageInfo();
   EXPECT_THAT(doc_store_storage_info.document_store_size(),
               Gt(empty_doc_store_size));
+  doc_store.reset();
 
   // Bad file system
   MockFilesystem mock_filesystem;
@@ -1833,8 +2093,11 @@ TEST_P(DocumentStoreTest, MaxDocumentId) {
   // Since the DocumentStore is empty, we get an invalid DocumentId
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(kInvalidDocumentId));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(DocumentProto(test_document1_)));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
   // Still returns the last DocumentId even if it was deleted
@@ -1842,8 +2105,11 @@ TEST_P(DocumentStoreTest, MaxDocumentId) {
                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(DocumentProto(test_document2_)));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id2));
 }
 
@@ -2093,22 +2359,30 @@ TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       doc_store->Put(DocumentProto(document1), /*num_tokens=*/5));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       doc_store->Put(DocumentProto(document2), /*num_tokens=*/7));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id1),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-          /*length_in_tokens=*/5)));
+          /*length_in_tokens=*/5,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/7)));
+          /*length_in_tokens=*/7,
+          /*has_valid_scorable_property_cache_index=*/true)));
 }
 
 TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
@@ -2137,22 +2411,30 @@ TEST_P(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
+      DocumentStore::PutResult put_result1,
       doc_store->Put(DocumentProto(document1), /*num_tokens=*/5));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
+      DocumentStore::PutResult put_result2,
       doc_store->Put(DocumentProto(document2), /*num_tokens=*/7));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id1),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-          /*length_in_tokens=*/5)));
+          /*length_in_tokens=*/5,
+          /*has_valid_scorable_property_cache_index=*/true)));
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
+      IsOkAndHolds(EqualsDocumentAssociatedScoreData(
           /*corpus_id=*/1, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/7)));
+          /*length_in_tokens=*/7,
+          /*has_valid_scorable_property_cache_index=*/true)));
 }
 
 TEST_P(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataNotFound) {
@@ -2187,17 +2469,21 @@ TEST_P(DocumentStoreTest, DeleteClearsFilterCache) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(DocumentProto(test_document1_)));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document1_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(test_document1_.uri()),
+          /*schema_type_id=*/0, document1_expiration_timestamp_)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
                                     fake_clock_.GetSystemTimeMilliseconds()));
@@ -2214,25 +2500,53 @@ TEST_P(DocumentStoreTest, DeleteClearsScoreCache) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_, /*num_tokens=*/4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
-              IsOkAndHolds(DocumentAssociatedScoreData(
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
                   /*corpus_id=*/0,
                   /*document_score=*/document1_score_,
                   /*creation_timestamp_ms=*/document1_creation_timestamp_,
-                  /*length_in_tokens=*/4)));
+                  /*length_in_tokens=*/4,
+                  /*has_valid_scorable_property_cache_index=*/true)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
                                     fake_clock_.GetSystemTimeMilliseconds()));
   // Associated entry of the deleted document is removed.
-  EXPECT_THAT(
-      doc_store->GetDocumentAssociatedScoreData(document_id),
-      IsOkAndHolds(DocumentAssociatedScoreData(kInvalidCorpusId,
-                                               /*document_score=*/-1,
-                                               /*creation_timestamp_ms=*/-1,
-                                               /*length_in_tokens=*/0)));
+  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
+                  kInvalidCorpusId,
+                  /*document_score=*/-1,
+                  /*creation_timestamp_ms=*/-1,
+                  /*length_in_tokens=*/0,
+                  /*has_valid_scorable_property_cache_index=*/false)));
+}
+
+TEST_P(DocumentStoreTest, DeleteClearsScorablePropertyCache) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(test_document1_, /*num_tokens=*/4));
+  DocumentId document_id = put_result1.new_document_id;
+  EXPECT_NE(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  // Scorable property set is not found for deleted documents.
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
 }
 
 TEST_P(DocumentStoreTest, DeleteShouldPreventUsageScores) {
@@ -2243,8 +2557,11 @@ TEST_P(DocumentStoreTest, DeleteShouldPreventUsageScores) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(DocumentProto(test_document1_)));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   // Report usage with type 1.
   UsageReport usage_report_type1 = CreateUsageReport(
@@ -2292,7 +2609,11 @@ TEST_P(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
                                .SetTtlMs(100)
                                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   // Some arbitrary time before the document's creation time (10) + ttl (100)
   fake_clock_.SetSystemTimeMilliseconds(109);
@@ -2340,15 +2661,20 @@ TEST_P(DocumentStoreTest,
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
       doc_store->GetAliveDocumentFilterData(
           document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data, Eq(DocumentFilterData(
-                                   /*namespace_id=*/0,
-                                   /*schema_type_id=*/0,
-                                   /*expiration_timestamp_ms=*/1100)));
+  EXPECT_THAT(
+      doc_filter_data,
+      Eq(DocumentFilterData(
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(document.uri()),
+          /*schema_type_id=*/0, /*expiration_timestamp_ms=*/1100)));
 }
 
 TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
@@ -2366,7 +2692,11 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
@@ -2376,7 +2706,7 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
   EXPECT_THAT(
       doc_filter_data,
       Eq(DocumentFilterData(
-          /*namespace_id=*/0,
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(document.uri()),
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
 }
@@ -2397,7 +2727,11 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
@@ -2407,7 +2741,7 @@ TEST_P(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
   EXPECT_THAT(
       doc_filter_data,
       Eq(DocumentFilterData(
-          /*namespace_id=*/0,
+          /*namespace_id=*/0, tc3farmhash::Fingerprint64(document.uri()),
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
 }
@@ -2432,8 +2766,11 @@ TEST_P(DocumentStoreTest, CreationTimestampShouldBePopulated) {
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
+      DocumentStore::PutResult put_result,
       doc_store->Put(document_without_creation_timestamp));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentProto document_with_creation_timestamp,
                              doc_store->Get(document_id));
@@ -2464,25 +2801,33 @@ TEST_P(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              doc_store->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
                              doc_store->Put(document2));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id1),
-              IsOkAndHolds(DocumentAssociatedScoreData(
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
                   /*corpus_id=*/0,
                   /*document_score=*/0, /*creation_timestamp_ms=*/0,
-                  /*length_in_tokens=*/0)));
+                  /*length_in_tokens=*/0,
+                  /*has_valid_scorable_property_cache_index=*/true)));
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
-              IsOkAndHolds(DocumentAssociatedScoreData(
+              IsOkAndHolds(EqualsDocumentAssociatedScoreData(
                   /*corpus_id=*/0,
                   /*document_score=*/5, /*creation_timestamp_ms=*/0,
-                  /*length_in_tokens=*/0)));
+                  /*length_in_tokens=*/0,
+                  /*has_valid_scorable_property_cache_index=*/true)));
 }
 
-TEST_P(DocumentStoreTest, ComputeChecksumSameBetweenCalls) {
+TEST_P(DocumentStoreTest, GetChecksumDoesntUpdateStoredChecksum) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -2491,34 +2836,17 @@ TEST_P(DocumentStoreTest, ComputeChecksumSameBetweenCalls) {
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->ComputeChecksum());
+  // GetChecksum should succeed without updating the checksum.
+  ICING_EXPECT_OK(document_store->GetChecksum());
 
-  // Calling ComputeChecksum again shouldn't change anything
-  EXPECT_THAT(document_store->ComputeChecksum(), IsOkAndHolds(checksum));
-}
-
-TEST_P(DocumentStoreTest, ComputeChecksumSameAcrossInstances) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->ComputeChecksum());
-
-  // Destroy the previous instance and recreate DocumentStore
-  document_store.reset();
+  // Create another instance of DocumentStore
   ICING_ASSERT_OK_AND_ASSIGN(
       create_result, CreateDocumentStore(&filesystem_, document_store_dir_,
                                          &fake_clock_, schema_store_.get()));
-  document_store = std::move(create_result.document_store);
-
-  EXPECT_THAT(document_store->ComputeChecksum(), IsOkAndHolds(checksum));
+  EXPECT_TRUE(create_result.derived_files_regenerated);
 }
 
-TEST_P(DocumentStoreTest, ComputeChecksumChangesOnNewDocument) {
+TEST_P(DocumentStoreTest, UpdateChecksumNextInitializationSucceeds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -2527,14 +2855,61 @@ TEST_P(DocumentStoreTest, ComputeChecksumChangesOnNewDocument) {
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->GetChecksum());
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
+
+  // Create another instance of DocumentStore
+  ICING_ASSERT_OK_AND_ASSIGN(
+      create_result, CreateDocumentStore(&filesystem_, document_store_dir_,
+                                         &fake_clock_, schema_store_.get()));
+  EXPECT_FALSE(create_result.derived_files_regenerated);
+
+  std::unique_ptr<DocumentStore> document_store_two =
+      std::move(create_result.document_store);
+  EXPECT_THAT(document_store_two->GetChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store_two->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store_two->GetChecksum(), IsOkAndHolds(checksum));
+}
+
+TEST_P(DocumentStoreTest, UpdateChecksumSameBetweenCalls) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  // GetChecksum should return the same value as UpdateChecksum
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->GetChecksum());
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
+
+  // Calling UpdateChecksum again shouldn't change anything
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
+}
+
+TEST_P(DocumentStoreTest, UpdateChecksumChangesOnNewDocument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->GetChecksum());
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
 
   ICING_EXPECT_OK(document_store->Put(test_document2_));
-  EXPECT_THAT(document_store->ComputeChecksum(),
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+  EXPECT_THAT(document_store->UpdateChecksum(),
               IsOkAndHolds(Not(Eq(checksum))));
 }
 
-TEST_P(DocumentStoreTest, ComputeChecksumDoesntChangeOnNewUsage) {
+TEST_P(DocumentStoreTest, UpdateChecksumDoesntChangeOnNewUsage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -2543,13 +2918,17 @@ TEST_P(DocumentStoreTest, ComputeChecksumDoesntChangeOnNewUsage) {
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->GetChecksum());
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
 
   UsageReport usage_report =
       CreateUsageReport(test_document1_.namespace_(), test_document1_.uri(),
                         /*timestamp_ms=*/1000, UsageReport::USAGE_TYPE1);
   ICING_EXPECT_OK(document_store->ReportUsage(usage_report));
-  EXPECT_THAT(document_store->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
+  EXPECT_THAT(document_store->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
+  EXPECT_THAT(document_store->GetChecksum(), IsOkAndHolds(checksum));
 }
 
 TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
@@ -2579,7 +2958,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
     filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                            feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2603,27 +2983,38 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
 
     // Insert and verify a "email "document
     ICING_ASSERT_OK_AND_ASSIGN(
-        email_document_id, document_store->Put(DocumentProto(email_document)));
+        DocumentStore::PutResult email_put_result,
+        document_store->Put(DocumentProto(email_document)));
+    EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(email_put_result.was_replacement());
+    email_document_id = email_put_result.new_document_id;
     EXPECT_THAT(document_store->Get(email_document_id),
                 IsOkAndHolds(EqualsProto(email_document)));
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData email_data,
         document_store->GetAliveDocumentFilterData(
             email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(email_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(email_document.uri())));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
     email_expiration_timestamp = email_data.expiration_timestamp_ms();
 
     // Insert and verify a "message" document
     ICING_ASSERT_OK_AND_ASSIGN(
-        message_document_id,
+        DocumentStore::PutResult message_put_result,
         document_store->Put(DocumentProto(message_document)));
+    EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(message_put_result.was_replacement());
+    message_document_id = message_put_result.new_document_id;
     EXPECT_THAT(document_store->Get(message_document_id),
                 IsOkAndHolds(EqualsProto(message_document)));
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData message_data,
         document_store->GetAliveDocumentFilterData(
             message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(message_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(message_document.uri())));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
@@ -2639,7 +3030,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2670,6 +3062,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.expiration_timestamp_ms(),
               Eq(email_expiration_timestamp));
 
@@ -2683,6 +3077,8 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.expiration_timestamp_ms(),
               Eq(message_expiration_timestamp));
 }
@@ -2701,7 +3097,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -2731,20 +3128,32 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
-                             document_store->Put(email_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_put_result,
+      document_store->Put(DocumentProto(email_document)));
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
+  DocumentId email_document_id = email_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
-                             document_store->Put(message_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult message_put_result,
+      document_store->Put(DocumentProto(message_document)));
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
+  DocumentId message_document_id = message_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2774,12 +3183,16 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
       email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2800,7 +3213,8 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -2829,13 +3243,25 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_without_subject_document_id,
-                             document_store->Put(email_without_subject));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_without_subject_put_result,
+      document_store->Put(DocumentProto(email_without_subject)));
+  EXPECT_THAT(email_without_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_without_subject_put_result.was_replacement());
+  DocumentId email_without_subject_document_id =
+      email_without_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
               IsOkAndHolds(EqualsProto(email_without_subject)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_with_subject_document_id,
-                             document_store->Put(email_with_subject));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_with_subject_put_result,
+      document_store->Put(DocumentProto(email_with_subject)));
+  EXPECT_THAT(email_with_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_with_subject_put_result.was_replacement());
+  DocumentId email_with_subject_document_id =
+      email_with_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_with_subject_document_id),
               IsOkAndHolds(EqualsProto(email_with_subject)));
 
@@ -2874,7 +3300,8 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -2902,13 +3329,19 @@ TEST_P(DocumentStoreTest,
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                              document_store->Put(email_document));
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
+  DocumentId email_document_id = email_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
+  DocumentId message_document_id = message_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
 
@@ -2947,7 +3380,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -2977,20 +3411,30 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                              document_store->Put(email_document));
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
+  DocumentId email_document_id = email_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
+  DocumentId message_document_id = message_put_result.new_document_id;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -3023,12 +3467,16 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       email_data,
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(email_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(email_document.uri())));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       message_data,
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(message_data.uri_fingerprint(),
+              Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -3049,7 +3497,8 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3078,13 +3527,25 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_without_subject_document_id,
-                             document_store->Put(email_without_subject));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_without_subject_put_result,
+      document_store->Put(email_without_subject));
+  EXPECT_THAT(email_without_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_without_subject_put_result.was_replacement());
+  DocumentId email_without_subject_document_id =
+      email_without_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
               IsOkAndHolds(EqualsProto(email_without_subject)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_with_subject_document_id,
-                             document_store->Put(email_with_subject));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_with_subject_put_result,
+      document_store->Put(email_with_subject));
+  EXPECT_THAT(email_with_subject_put_result.old_document_id,
+              Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_with_subject_put_result.was_replacement());
+  DocumentId email_with_subject_document_id =
+      email_with_subject_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_with_subject_document_id),
               IsOkAndHolds(EqualsProto(email_with_subject)));
 
@@ -3126,7 +3587,8 @@ TEST_P(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
@@ -3154,13 +3616,19 @@ TEST_P(DocumentStoreTest,
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult email_put_result,
                              document_store->Put(email_document));
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
+  DocumentId email_document_id = email_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult message_put_result,
                              document_store->Put(message_document));
+  EXPECT_THAT(message_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(message_put_result.was_replacement());
+  DocumentId message_document_id = message_put_result.new_document_id;
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
 
@@ -3224,8 +3692,9 @@ TEST_P(DocumentStoreTest, GetOptimizeInfo) {
   std::string optimized_dir = document_store_dir_ + "_optimize";
   EXPECT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   EXPECT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(
-      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  ICING_ASSERT_OK(document_store->OptimizeInto(
+      optimized_dir, lang_segmenter_.get(),
+      /*expired_blob_handles=*/std::unordered_set<std::string>()));
   document_store.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
       create_result, CreateDocumentStore(&filesystem_, optimized_dir,
@@ -3320,8 +3789,11 @@ TEST_P(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
 
   // Report usage with type 1 and time 1.
   UsageReport usage_report_type1_time1 = CreateUsageReport(
@@ -3412,8 +3884,11 @@ TEST_P(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                              document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
 
   // Report usage with type 1.
   UsageReport usage_report_type1 = CreateUsageReport(
@@ -3465,8 +3940,11 @@ TEST_P(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(document_id,
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
                                document_store->Put(test_document1_));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id = put_result1.new_document_id;
 
     // Report usage with type 1.
     UsageReport usage_report_type1 = CreateUsageReport(
@@ -3510,8 +3988,11 @@ TEST_P(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        document_id, document_store->Put(DocumentProto(test_document1_)));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                               document_store->Put(test_document1_));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id = put_result1.new_document_id;
 
     // Report usage with type 1.
     UsageReport usage_report_type1 = CreateUsageReport(
@@ -3563,9 +4044,11 @@ TEST_P(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
-      document_store->Put(DocumentProto(test_document1_)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
 
   // Report usage with type 1.
   UsageReport usage_report_type1 = CreateUsageReport(
@@ -3582,9 +4065,11 @@ TEST_P(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Update the document.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId updated_document_id,
-      document_store->Put(DocumentProto(test_document1_)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+  EXPECT_THAT(put_result2.old_document_id, Eq(document_id));
+  EXPECT_TRUE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
   // We should get a different document id.
   ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
 
@@ -3604,12 +4089,16 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store->Put(DocumentProto(test_document1_)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
-      document_store->Put(DocumentProto(test_document2_)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document2_));
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK(document_store->Delete(
       document_id1, fake_clock_.GetSystemTimeMilliseconds()));
 
@@ -3630,8 +4119,9 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   // Run optimize
   std::string optimized_dir = document_store_dir_ + "/optimize_test";
   filesystem_.CreateDirectoryRecursively(optimized_dir.c_str());
-  ICING_ASSERT_OK(
-      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  ICING_ASSERT_OK(document_store->OptimizeInto(
+      optimized_dir, lang_segmenter_.get(),
+      /*expired_blob_handles=*/std::unordered_set<std::string>()));
 
   // Get optimized document store
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -3649,6 +4139,68 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
+TEST_P(DocumentStoreTest, DeletedDocumentsShouldNotBeReplacements) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
+
+  // Delete the document.
+  ICING_ASSERT_OK(document_store->Delete(
+      document_id, fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Re-add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+
+  // Because the document was deleted, it should not be a replacement.
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+}
+
+TEST_P(DocumentStoreTest, ExpiredDocumentsShouldNotBeReplacements) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add the document.
+  DocumentProto doc1 = test_document1_;
+  doc1.set_ttl_ms(1);
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(doc1));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
+
+  // Expire the document by advancing the clock by two milliseconds.
+  fake_clock_.SetSystemTimeMilliseconds(
+      fake_clock_.GetSystemTimeMilliseconds() + 2);
+
+  // Re-add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+
+  // Because the document was expired, it should not be a replacement.
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+}
+
 TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
   {
     // Can put and delete fine.
@@ -3661,8 +4213,11 @@ TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
     EXPECT_THAT(create_result.derived_files_regenerated, IsFalse());
 
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                               doc_store->Put(DocumentProto(test_document1_)));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                               doc_store->Put(test_document1_));
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
+    DocumentId document_id = put_result.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id),
                 IsOkAndHolds(EqualsProto(test_document1_)));
   }
@@ -3714,8 +4269,11 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
     // initialization.
     corruptible_offset = filesystem_.GetFileSize(document_log_file.c_str());
 
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                               doc_store->Put(DocumentProto(test_document1_)));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                               doc_store->Put(test_document1_));
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
+    DocumentId document_id = put_result.new_document_id;
     EXPECT_THAT(doc_store->Get(document_id),
                 IsOkAndHolds(EqualsProto(test_document1_)));
   }
@@ -3800,10 +4358,10 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
           &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
-          GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-          GetParam().use_persistent_hash_map,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -3949,7 +4507,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -3978,12 +4537,18 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
                 document1_creation_timestamp_)  // A random timestamp
             .SetTtlMs(document1_ttl_)
             .Build();
-    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                               doc_store->Put(doc));
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
+    docid = put_result.new_document_id;
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
 
+    ASSERT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(doc.uri())));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 
@@ -4017,14 +4582,14 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
-            /*force_recovery_and_revalidate_documents=*/true,
-            GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-            GetParam().use_persistent_hash_map,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            &initialize_stats));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/true,
+                              GetParam().pre_mapping_fbv,
+                              GetParam().use_persistent_hash_map,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4033,6 +4598,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(std::string("email/1"))));
     EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
@@ -4061,7 +4628,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4090,12 +4658,18 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
                 document1_creation_timestamp_)  // A random timestamp
             .SetTtlMs(document1_ttl_)
             .Build();
-    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                               doc_store->Put(doc));
+    EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result.was_replacement());
+    docid = put_result.new_document_id;
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
 
+    EXPECT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(doc.uri())));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 
@@ -4138,6 +4712,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
+    EXPECT_THAT(filter_data.uri_fingerprint(),
+                Eq(tc3farmhash::Fingerprint64(std::string("email/1"))));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 }
@@ -4164,7 +4740,8 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4203,10 +4780,19 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
         std::move(create_result.document_store);
 
     DocumentId docid = kInvalidDocumentId;
-    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithBody));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_with_body_result,
+                               doc_store->Put(docWithBody));
+    EXPECT_THAT(put_with_body_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_with_body_result.was_replacement());
+    docid = put_with_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
     docid = kInvalidDocumentId;
-    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithoutBody));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_without_body_result,
+                               doc_store->Put(docWithoutBody));
+    EXPECT_THAT(put_without_body_result.old_document_id,
+                Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_without_body_result.was_replacement());
+    docid = put_without_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
 
     ASSERT_THAT(doc_store->Get(docWithBody.namespace_(), docWithBody.uri()),
@@ -4237,14 +4823,14 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     CorruptDocStoreHeaderChecksumFile();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
-            /*force_recovery_and_revalidate_documents=*/true,
-            GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-            GetParam().use_persistent_hash_map,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/true,
+                              GetParam().pre_mapping_fbv,
+                              GetParam().use_persistent_hash_map,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4278,7 +4864,8 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
                   /*allow_circular_schema_definitions=*/false),
@@ -4317,10 +4904,19 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
         std::move(create_result.document_store);
 
     DocumentId docid = kInvalidDocumentId;
-    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithBody));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_with_body_result,
+                               doc_store->Put(docWithBody));
+    EXPECT_THAT(put_with_body_result.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_with_body_result.was_replacement());
+    docid = put_with_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
     docid = kInvalidDocumentId;
-    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithoutBody));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_without_body_result,
+                               doc_store->Put(docWithoutBody));
+    EXPECT_THAT(put_without_body_result.old_document_id,
+                Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_without_body_result.was_replacement());
+    docid = put_without_body_result.new_document_id;
     ASSERT_NE(docid, kInvalidDocumentId);
 
     ASSERT_THAT(doc_store->Get(docWithBody.namespace_(), docWithBody.uri()),
@@ -4388,7 +4984,8 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false,
@@ -4432,10 +5029,10 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
           &filesystem_, document_store_dir, &fake_clock_, schema_store.get(),
+          feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
-          GetParam().namespace_id_fingerprint,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -4520,7 +5117,8 @@ TEST_P(DocumentStoreTest, GetDebugInfo) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/false,
@@ -4625,7 +5223,8 @@ TEST_P(DocumentStoreTest, GetDebugInfoWithoutSchema) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -4670,18 +5269,21 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().namespace_id_fingerprint,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
-    ICING_ASSERT_OK_AND_ASSIGN(document_id1, doc_store->Put(test_document1_));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                               doc_store->Put(test_document1_));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id1 = put_result1.new_document_id;
 
     if (GetParam().use_persistent_hash_map) {
       EXPECT_THAT(filesystem_.DirectoryExists(
@@ -4709,12 +5311,12 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
             &filesystem_, document_store_dir_, &fake_clock_,
-            schema_store_.get(),
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
+            GetParam().pre_mapping_fbv,
             /*use_persistent_hash_map=*/switch_key_mapper_flag,
             PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
+                DocumentWrapper>::kDefaultCompressionLevel,
             &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::IO_ERROR));
@@ -4753,18 +5355,21 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().namespace_id_fingerprint,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
-    ICING_ASSERT_OK_AND_ASSIGN(document_id1, doc_store->Put(test_document1_));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                               doc_store->Put(test_document1_));
+    EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+    EXPECT_FALSE(put_result1.was_replacement());
+    document_id1 = put_result1.new_document_id;
 
     if (GetParam().use_persistent_hash_map) {
       EXPECT_THAT(filesystem_.DirectoryExists(
@@ -4789,13 +5394,12 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().namespace_id_fingerprint,
                               GetParam().pre_mapping_fbv,
                               GetParam().use_persistent_hash_map,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
@@ -4824,7 +5428,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
   }
 }
 
-TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceFingerprintIdentifier) {
+TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
   std::string dynamic_trie_uri_mapper_dir =
       document_store_dir_ + "/key_mapper_dir";
   std::string persistent_hash_map_uri_mapper_dir =
@@ -4833,63 +5437,657 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceFingerprintIdentifier) {
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
           &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
           /*force_recovery_and_revalidate_documents=*/false,
-          GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
-          GetParam().use_persistent_hash_map,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           /*initialize_stats=*/nullptr));
 
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
                              doc_store->Put(test_document1_));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId namespace_id,
       doc_store->GetNamespaceId(test_document1_.namespace_()));
-  NamespaceFingerprintIdentifier ns_fingerprint(
-      namespace_id,
-      /*target_str=*/test_document1_.uri());
-  if (GetParam().namespace_id_fingerprint) {
-    EXPECT_THAT(doc_store->GetDocumentId(ns_fingerprint),
-                IsOkAndHolds(document_id));
+  NamespaceIdFingerprint nsid_uri_fingerprint(
+      namespace_id, /*target_str=*/test_document1_.uri());
+  EXPECT_THAT(doc_store->GetDocumentId(nsid_uri_fingerprint),
+              IsOkAndHolds(document_id));
 
-    NamespaceFingerprintIdentifier non_existing_ns_fingerprint(
-        namespace_id + 1, /*target_str=*/test_document1_.uri());
-    EXPECT_THAT(doc_store->GetDocumentId(non_existing_ns_fingerprint),
-                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  } else {
-    EXPECT_THAT(doc_store->GetDocumentId(ns_fingerprint),
-                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  }
+  NamespaceIdFingerprint non_existing_nsid_uri_fingerprint(
+      namespace_id + 1, /*target_str=*/test_document1_.uri());
+  EXPECT_THAT(doc_store->GetDocumentId(non_existing_nsid_uri_fingerprint),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_P(DocumentStoreTest, PutDocumentWithNoScorablePropertiesInSchema) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("foo", "1")
+                               .SetSchema("message")
+                               .AddStringProperty("subject", "subject foo")
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  DocumentId document_id = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentAssociatedScoreData score_data,
+      doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_EQ(score_data.scorable_property_cache_index(), -1);
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+}
+
+TEST_P(DocumentStoreTest, PutDocumentWithNoScorableProperties) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "email/1")
+                               .SetSchema("email")
+                               .AddStringProperty("subject", "subject foo")
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document));
+  DocumentId document_id = put_result.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      doc_store->GetScorablePropertySet(
+          document_id, fake_clock_.GetSystemTimeMilliseconds());
+  // scorable property data for the document exists but is empty.
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("score"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({}))));
+}
+
+TEST_P(DocumentStoreTest, PutDocumentWithScorablePropertyThenRead) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("importance")
+                          .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("scoreInt64")
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 1.5, 2.5)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("bar", "2")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject bar")
+                                .AddBooleanProperty("importance", false)
+                                .AddInt64Property("scoreInt64", 5)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(document1));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+      doc_store->GetScorablePropertySet(
+          document_id1, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(false))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({5}))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({}))));
+
+  // document3 is a copy of document1 with scorable property scoreDouble
+  // updated.
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 0.5, 0.8)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  // Add document3 to the document store, it will result in document1 being
+  // deleted.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             doc_store->Put(document3));
+  DocumentId document_id3 = put_result3.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc3 =
+      doc_store->GetScorablePropertySet(
+          document_id3, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc3->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+
+  EXPECT_THAT(
+      scorable_property_set_doc3->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc3->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+
+  // document4 is a copy of document3 with scorable property scoreInt64
+  // removed.
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddDoubleProperty("scoreDouble", 0.5, 0.8)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  // Add document4 to the document store, it will result in document3 being
+  // deleted.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
+                             doc_store->Put(document4));
+  DocumentId document_id4 = put_result4.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc4 =
+      doc_store->GetScorablePropertySet(
+          document_id4, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc4->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc4->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({}))));
+  EXPECT_THAT(
+      scorable_property_set_doc4->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+}
+
+TEST_P(DocumentStoreTest, ReadScorablePropertyAfterOptimization) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("importance")
+                          .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("scoreDouble")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("scoreInt64")
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 1.5, 2.5)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(document1));
+  DocumentId document_id1 = put_result1.new_document_id;
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc1 =
+      doc_store->GetScorablePropertySet(
+          document_id1, fake_clock_.GetSystemTimeMilliseconds());
+
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc1->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({1.5, 2.5}))));
+
+  // document2 is a copy of document1 with scorable property scoreDouble
+  // updated.
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("foo", "1")
+                                .SetSchema("email")
+                                .AddStringProperty("subject", "subject foo")
+                                .AddBooleanProperty("importance", true)
+                                .AddInt64Property("scoreInt64", 1)
+                                .AddDoubleProperty("scoreDouble", 0.5, 0.8)
+                                .SetCreationTimestampMs(0)
+                                .Build();
+
+  // Add document2 to the document store, it will result in document1 being
+  // deleted.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(document2));
+  DocumentId document_id2 = put_result2.new_document_id;
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_doc2 =
+      doc_store->GetScorablePropertySet(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreInt64"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_doc2->GetScorablePropertyProto("scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+
+  // Optimize the document store.
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result,
+      doc_store->OptimizeInto(
+          optimized_dir, lang_segmenter_.get(),
+          /*expired_blob_handles=*/std::unordered_set<std::string>()));
+
+  // Verify that the scorable property set is still correct after optimization.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id_post_optimization,
+                             doc_store->GetDocumentId("foo", "1"));
+  std::unique_ptr<ScorablePropertySet> scorable_property_set_post_optimization =
+      doc_store->GetScorablePropertySet(
+          doc_id_post_optimization, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set_post_optimization->GetScorablePropertyProto(
+          "importance"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromBoolean(true))));
+  EXPECT_THAT(scorable_property_set_post_optimization->GetScorablePropertyProto(
+                  "scoreInt64"),
+              Pointee(EqualsProto(BuildScorablePropertyProtoFromInt64({1}))));
+  EXPECT_THAT(
+      scorable_property_set_post_optimization->GetScorablePropertyProto(
+          "scoreDouble"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({0.5, 0.8}))));
+}
+
+TEST_P(DocumentStoreTest,
+       RegenerateScorablePropertyCacheFlipPropertyToScorableEnabled) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document0));
+  DocumentId document_id = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentAssociatedScoreData score_data,
+      doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_EQ(score_data.scorable_property_cache_index(), -1);
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+
+  // Update the schema to make "income" property scorable.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("income")
+                       .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                       .SetScorableType(SCORABLE_TYPE_ENABLED)
+                       .SetCardinality(CARDINALITY_REPEATED)))
+               .Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
+                             schema_store->GetSchemaTypeId("Person"));
+  ICING_EXPECT_OK(doc_store->RegenerateScorablePropertyCache({schema_type_id}));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      score_data, doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_NE(score_data.scorable_property_cache_index(), -1);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      doc_store->GetScorablePropertySet(
+          document_id, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(
+                  BuildScorablePropertyProtoFromDouble({10000, 20000}))));
+}
+
+TEST_P(DocumentStoreTest,
+       RegenerateScorablePropertyCacheFlipPropertyToScorableDisabled) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document0));
+  DocumentId document_id = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentAssociatedScoreData score_data,
+      doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_NE(score_data.scorable_property_cache_index(), -1);
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      doc_store->GetScorablePropertySet(
+          document_id, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(scorable_property_set->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(
+                  BuildScorablePropertyProtoFromDouble({10000, 20000}))));
+
+  // Update the schema to make "income" property non-scorable.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("income")
+                       .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                       .SetCardinality(CARDINALITY_REPEATED)))
+               .Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
+                             schema_store->GetSchemaTypeId("Person"));
+  ICING_EXPECT_OK(doc_store->RegenerateScorablePropertyCache({schema_type_id}));
+  EXPECT_EQ(doc_store->GetScorablePropertySet(
+                document_id, fake_clock_.GetSystemTimeMilliseconds()),
+            nullptr);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      score_data, doc_store->GetDocumentAssociatedScoreData(document_id));
+  EXPECT_EQ(score_data.scorable_property_cache_index(), -1);
+}
+
+TEST_P(DocumentStoreTest,
+       RegenerateScorablePropertyCacheWithSchemaTypeIdChange) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("score")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "person0")
+                                .SetSchema("Person")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("income", 10000, 20000)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "message0")
+                                .SetSchema("Message")
+                                .SetScore(10)
+                                .SetCreationTimestampMs(1)
+                                .AddDoubleProperty("score", 10, 20)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(document0));
+  DocumentId document_id0 = put_result.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store->Put(document1));
+  DocumentId document_id1 = put_result.new_document_id;
+
+  // Update the schema by rearranging the schema types. Since SchemaTypeId is
+  // assigned based on order, this should change the SchemaTypeIds.
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("score")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId person_schema_type_id,
+                             schema_store->GetSchemaTypeId("Person"));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId message_schema_type_id,
+                             schema_store->GetSchemaTypeId("Message"));
+  ICING_EXPECT_OK(doc_store->RegenerateScorablePropertyCache(
+      {person_schema_type_id, message_schema_type_id}));
+
+  std::unique_ptr<ScorablePropertySet> scorable_property_set0 =
+      doc_store->GetScorablePropertySet(
+          document_id0, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(scorable_property_set0->GetScorablePropertyProto("income"),
+              Pointee(EqualsProto(
+                  BuildScorablePropertyProtoFromDouble({10000, 20000}))));
+  std::unique_ptr<ScorablePropertySet> scorable_property_set1 =
+      doc_store->GetScorablePropertySet(
+          document_id1, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(
+      scorable_property_set1->GetScorablePropertyProto("score"),
+      Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({10, 20}))));
 }
 
 INSTANTIATE_TEST_SUITE_P(
     DocumentStoreTest, DocumentStoreTest,
     testing::Values(
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/false,
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/false,
                                /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/false,
-                               /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/true,
-                               /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/true,
-                               /*use_persistent_hash_map_in=*/false),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/false,
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/false,
                                /*use_persistent_hash_map_in=*/true),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/false,
-                               /*use_persistent_hash_map_in=*/true),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/false,
-                               /*pre_mapping_fbv_in=*/true,
-                               /*use_persistent_hash_map_in=*/true),
-        DocumentStoreTestParam(/*namespace_id_fingerprint_in=*/true,
-                               /*pre_mapping_fbv_in=*/true,
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/true,
+                               /*use_persistent_hash_map_in=*/false),
+        DocumentStoreTestParam(/*pre_mapping_fbv_in=*/true,
                                /*use_persistent_hash_map_in=*/true)));
 
 }  // namespace

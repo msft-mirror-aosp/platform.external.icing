@@ -13,7 +13,11 @@
 // limitations under the License.
 #include "icing/query/advanced_query_parser/pending-value.h"
 
+#include <cstdlib>
+
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 
 namespace icing {
 namespace lib {
@@ -36,6 +40,28 @@ libtextclassifier3::Status PendingValue::ParseInt() {
         "Unable to parse \"", query_term_.term, "\" as number."));
   }
   data_type_ = DataType::kLong;
+  query_term_ = {/*term=*/"", /*raw_term=*/"", /*is_prefix_val=*/false};
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status PendingValue::ParseDouble() {
+  if (data_type_ == DataType::kDouble) {
+    return libtextclassifier3::Status::OK;
+  } else if (data_type_ != DataType::kText) {
+    return absl_ports::InvalidArgumentError("Cannot parse value as double");
+  }
+  if (query_term_.is_prefix_val) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Cannot use prefix operator '*' with numeric value: ",
+        query_term_.term));
+  }
+  char* value_end;
+  double_val_ = std::strtod(query_term_.term.c_str(), &value_end);
+  if (value_end != query_term_.term.c_str() + query_term_.term.length()) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Unable to parse \"", query_term_.term, "\" as double."));
+  }
+  data_type_ = DataType::kDouble;
   query_term_ = {/*term=*/"", /*raw_term=*/"", /*is_prefix_val=*/false};
   return libtextclassifier3::Status::OK;
 }

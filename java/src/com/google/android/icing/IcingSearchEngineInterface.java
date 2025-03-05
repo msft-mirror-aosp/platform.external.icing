@@ -1,5 +1,6 @@
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -17,6 +18,7 @@ import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
+import com.google.android.icing.proto.PropertyProto;
 import com.google.android.icing.proto.PutResultProto;
 import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
@@ -32,7 +34,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.UsageReport;
 import java.io.Closeable;
 
-/** A common user-facing interface to expose the funcationalities provided by Icing Library. */
+/** A common user-facing interface to expose the functionalities provided by Icing Library. */
 public interface IcingSearchEngineInterface extends Closeable {
   /**
    * Initializes the current IcingSearchEngine implementation.
@@ -54,6 +56,14 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Gets the schema for the icing instance. */
   GetSchemaResultProto getSchema();
+
+  /**
+   * Gets the schema for the specified database for the icing instance.
+   *
+   * @param database an icing schema database name. The retrieved SchemaProto will only contain
+   *     types that belong to the requested database.
+   */
+  GetSchemaResultProto getSchemaForDatabase(String database);
 
   /**
    * Gets the schema for the icing instance.
@@ -94,6 +104,18 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Invalidates the next page token. */
   void invalidateNextPageToken(long nextPageToken);
+
+  /** Gets a file descriptor to write blob data. */
+  BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);
+
+  /** Removes a pending blob. */
+  BlobProto removeBlob(PropertyProto.BlobHandleProto blobHandle);
+
+  /** Gets a file descriptor to read blob data. */
+  BlobProto openReadBlob(PropertyProto.BlobHandleProto blobHandle);
+
+  /** Marks the blob is committed. */
+  BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle);
 
   /**
    * Deletes the document.

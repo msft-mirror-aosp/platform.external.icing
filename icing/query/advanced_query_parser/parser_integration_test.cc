@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree-test-utils.h"
@@ -34,7 +39,7 @@ TEST(ParserIntegrationTest, EmptyQuery) {
   std::string query = "";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -45,7 +50,7 @@ TEST(ParserIntegrationTest, EmptyScoring) {
   std::string query = "";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeScoring(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -55,7 +60,7 @@ TEST(ParserIntegrationTest, SingleTerm) {
   std::string query = "foo";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -77,7 +82,7 @@ TEST(ParserIntegrationTest, ImplicitAnd) {
   std::string query = "foo bar";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -104,7 +109,7 @@ TEST(ParserIntegrationTest, Or) {
   std::string query = "foo OR bar";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -131,7 +136,7 @@ TEST(ParserIntegrationTest, And) {
   std::string query = "foo AND bar";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -158,7 +163,7 @@ TEST(ParserIntegrationTest, Not) {
   std::string query = "NOT foo";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -183,7 +188,7 @@ TEST(ParserIntegrationTest, Minus) {
   std::string query = "-foo";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -208,7 +213,7 @@ TEST(ParserIntegrationTest, Has) {
   std::string query = "subject:foo";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -235,7 +240,7 @@ TEST(ParserIntegrationTest, HasNested) {
   std::string query = "sender.name:foo";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -263,102 +268,93 @@ TEST(ParserIntegrationTest, EmptyFunction) {
   std::string query = "foo()";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
 
   // Expected AST:
   //    function
-  //       |
-  // function_name
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, function }
+  //   { function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionSingleArg) {
   std::string query = "foo(\"bar\")";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
 
   // Expected AST:
   //           function
-  //           /     \
-  // function_name  string
+  //              |
+  //           string
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, string, function }
+  //   { string, function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kString),
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionMultiArg) {
   std::string query = "foo(\"bar\", \"baz\")";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
 
   // Expected AST:
   //                function
-  //              /    |    \
-  // function_name  string  string
+  //                /     \
+  //            string  string
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, string, string, function }
+  //   { string, string, function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kString),
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kString),
                           EqualsNodeInfo("baz", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionNested) {
   std::string query = "foo(bar())";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
 
   // Expected AST:
   //          function
-  //          /      \
-  // function_name  function
-  //                    |
-  //              function_name
+  //             |
+  //          function
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, function_name, function, function }
+  //   { function, function }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("bar", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction),
-                          EqualsNodeInfo("", NodeType::kFunction)));
+              ElementsAre(EqualsNodeInfo("bar", NodeType::kFunction),
+                          EqualsNodeInfo("foo", NodeType::kFunction)));
 }
 
 TEST(ParserIntegrationTest, FunctionWithTrailingSequence) {
   std::string query = "foo() OR bar";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -367,15 +363,14 @@ TEST(ParserIntegrationTest, FunctionWithTrailingSequence) {
   //             OR
   //          /      \
   //     function   member
-  //        |         |
-  //  function_name  text
+  //                  |
+  //                text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { function_name, function, text, member, OR }
+  //   { function, text, member, OR }
   EXPECT_THAT(visitor.nodes(),
-              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction),
+              ElementsAre(EqualsNodeInfo("foo", NodeType::kFunction),
                           EqualsNodeInfo("bar", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("OR", NodeType::kNaryOperator)));
@@ -385,7 +380,7 @@ TEST(ParserIntegrationTest, Composite) {
   std::string query = "foo OR (bar baz)";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -417,7 +412,7 @@ TEST(ParserIntegrationTest, CompositeWithTrailingSequence) {
   std::string query = "(bar baz) OR foo";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -449,7 +444,7 @@ TEST(ParserIntegrationTest, Complex) {
   std::string query = "foo bar:baz OR pal(\"bat\")";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -460,15 +455,15 @@ TEST(ParserIntegrationTest, Complex) {
   //     member            OR
   //       |          /         \
   //     text      :             function
-  //              / \            /       \
-  //         member member  function_name string
+  //              / \               |
+  //         member member        string
   //           |       |
   //          text    text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { text, member, text, member, text, member, :, function_name, string,
-  //     function, OR, AND }
+  //   { text, member, text, member, text, member, :, string, function, OR,
+  //     AND }
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("foo", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
@@ -477,9 +472,8 @@ TEST(ParserIntegrationTest, Complex) {
                           EqualsNodeInfo("baz", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo(":", NodeType::kNaryOperator),
-                          EqualsNodeInfo("pal", NodeType::kFunctionName),
                           EqualsNodeInfo("bat", NodeType::kString),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("pal", NodeType::kFunction),
                           EqualsNodeInfo("OR", NodeType::kNaryOperator),
                           EqualsNodeInfo("AND", NodeType::kNaryOperator)));
 }
@@ -488,7 +482,7 @@ TEST(ParserIntegrationTest, InvalidHas) {
   std::string query = "foo:";  //  No right hand operand to :
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -498,7 +492,7 @@ TEST(ParserIntegrationTest, InvalidComposite) {
   std::string query = "(foo bar";  // No terminating RPAREN
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -508,7 +502,7 @@ TEST(ParserIntegrationTest, InvalidMember) {
   std::string query = "foo.";  // DOT must have succeeding TEXT
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -518,7 +512,7 @@ TEST(ParserIntegrationTest, InvalidOr) {
   std::string query = "foo OR";  // No right hand operand to OR
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -528,7 +522,7 @@ TEST(ParserIntegrationTest, InvalidAnd) {
   std::string query = "foo AND";  // No right hand operand to AND
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -538,7 +532,7 @@ TEST(ParserIntegrationTest, InvalidNot) {
   std::string query = "NOT";  // No right hand operand to NOT
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -548,7 +542,7 @@ TEST(ParserIntegrationTest, InvalidMinus) {
   std::string query = "-";  // No right hand operand to -
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -558,7 +552,7 @@ TEST(ParserIntegrationTest, InvalidFunctionCallNoRparen) {
   std::string query = "foo(";  // No terminating RPAREN
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -568,7 +562,7 @@ TEST(ParserIntegrationTest, InvalidFunctionArgsHangingComma) {
   std::string query = "foo(\"bar\",)";  // no valid arg following COMMA
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -578,7 +572,7 @@ TEST(ParserIntegrationTest, ScoringPlus) {
   std::string scoring = "1 + 1 + 1";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -605,7 +599,7 @@ TEST(ParserIntegrationTest, ScoringMinus) {
   std::string scoring = "1 - 1 - 1";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -632,7 +626,7 @@ TEST(ParserIntegrationTest, ScoringUnaryMinus) {
   std::string scoring = "1 + -1 + 1";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -662,7 +656,7 @@ TEST(ParserIntegrationTest, ScoringPlusMinus) {
   std::string scoring = "11 + 12 - 13 + 14";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -697,7 +691,7 @@ TEST(ParserIntegrationTest, ScoringTimes) {
   std::string scoring = "1 * 1 * 1";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -724,7 +718,7 @@ TEST(ParserIntegrationTest, ScoringDiv) {
   std::string scoring = "1 / 1 / 1";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -751,7 +745,7 @@ TEST(ParserIntegrationTest, ScoringTimesDiv) {
   std::string scoring = "11 / 12 * 13 / 14 / 15";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -789,7 +783,7 @@ TEST(ParserIntegrationTest, ComplexScoring) {
   std::string scoring = "1 + pow((2 * sin(3)), 4) + -5 / 6";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -799,17 +793,15 @@ TEST(ParserIntegrationTest, ComplexScoring) {
   EXPECT_THAT(node,
               ElementsAre(EqualsNodeInfo("1", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("pow", NodeType::kFunctionName),
                           EqualsNodeInfo("2", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("sin", NodeType::kFunctionName),
                           EqualsNodeInfo("3", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("sin", NodeType::kFunction),
                           EqualsNodeInfo("TIMES", NodeType::kNaryOperator),
                           EqualsNodeInfo("4", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("pow", NodeType::kFunction),
                           EqualsNodeInfo("5", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("MINUS", NodeType::kUnaryOperator),
@@ -821,7 +813,7 @@ TEST(ParserIntegrationTest, ComplexScoring) {
   // Without parentheses in function arguments.
   scoring = "1 + pow(2 * sin(3), 4) + -5 / 6";
   lexer = Lexer(scoring, Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(lexer_tokens, lexer.ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(lexer_tokens, std::move(lexer).ExtractTokens());
   parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(tree_root, parser.ConsumeScoring());
   visitor = SimpleVisitor();
@@ -833,7 +825,7 @@ TEST(ParserIntegrationTest, ScoringMemberFunction) {
   std::string scoring = "this.CreationTimestamp()";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -842,15 +834,12 @@ TEST(ParserIntegrationTest, ScoringMemberFunction) {
   //       member
   //     /        \
   //  text     function
-  //               |
-  //          function_name
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(
       visitor.nodes(),
       ElementsAre(EqualsNodeInfo("this", NodeType::kText),
-                  EqualsNodeInfo("CreationTimestamp", NodeType::kFunctionName),
-                  EqualsNodeInfo("", NodeType::kFunction),
+                  EqualsNodeInfo("CreationTimestamp", NodeType::kFunction),
                   EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -858,7 +847,7 @@ TEST(ParserIntegrationTest, QueryMemberFunction) {
   std::string query = "this.foo()";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -867,14 +856,11 @@ TEST(ParserIntegrationTest, QueryMemberFunction) {
   //       member
   //     /        \
   //  text     function
-  //               |
-  //          function_name
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("this", NodeType::kText),
-                          EqualsNodeInfo("foo", NodeType::kFunctionName),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("foo", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -882,7 +868,7 @@ TEST(ParserIntegrationTest, ScoringComplexMemberFunction) {
   std::string scoring = "a.b.fun(c, d)";
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -891,21 +877,20 @@ TEST(ParserIntegrationTest, ScoringComplexMemberFunction) {
   //                member
   //         /        |          \
   //  text          text         function
-  //                        /        |       \
-  //               function_name   member    member
-  //                                 |         |
-  //                                text      text
+  //                              /     \
+  //                          member    member
+  //                            |         |
+  //                           text      text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("a", NodeType::kText),
                           EqualsNodeInfo("b", NodeType::kText),
-                          EqualsNodeInfo("fun", NodeType::kFunctionName),
                           EqualsNodeInfo("c", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("d", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("fun", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -913,7 +898,7 @@ TEST(ParserTest, QueryComplexMemberFunction) {
   std::string query = "this.abc.fun(def, ghi)";
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -922,21 +907,20 @@ TEST(ParserTest, QueryComplexMemberFunction) {
   //                member
   //         /        |          \
   //  text          text         function
-  //                        /        |       \
-  //               function_name   member    member
-  //                                 |         |
-  //                                text      text
+  //                            /       \
+  //                         member    member
+  //                           |         |
+  //                          text      text
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("this", NodeType::kText),
                           EqualsNodeInfo("abc", NodeType::kText),
-                          EqualsNodeInfo("fun", NodeType::kFunctionName),
                           EqualsNodeInfo("def", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("ghi", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("", NodeType::kFunction),
+                          EqualsNodeInfo("fun", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
 }
 
@@ -953,7 +937,7 @@ TEST(ParserTest, QueryShouldNotStackOverflowAtMaxNumTokens) {
 
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(), IsOk());
@@ -972,7 +956,7 @@ TEST(ParserTest, ScoringShouldNotStackOverflowAtMaxNumTokens) {
 
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeScoring(), IsOk());
@@ -985,7 +969,7 @@ TEST(ParserTest, InvalidQueryShouldNotStackOverflowAtMaxNumTokens) {
   }
   Lexer lexer(query, Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
@@ -999,7 +983,7 @@ TEST(ParserTest, InvalidScoringShouldNotStackOverflowAtMaxNumTokens) {
   }
   Lexer lexer(scoring, Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
-                             lexer.ExtractTokens());
+                             std::move(lexer).ExtractTokens());
   EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeScoring(),
