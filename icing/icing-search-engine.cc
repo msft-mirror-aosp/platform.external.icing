@@ -40,6 +40,7 @@
 #include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embedding-indexing-handler.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index-processor.h"
@@ -79,6 +80,7 @@
 #include "icing/query/query-features.h"
 #include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
+#include "icing/query/query-terms.h"
 #include "icing/query/suggestion-processor.h"
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
@@ -505,7 +507,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_embedding_quantization(),
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
-                     options_.enable_schema_database()),
+                     options_.enable_schema_database(),
+                     options_.release_backup_schema_file_if_overlay_present()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1779,7 +1782,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   auto query_results_or = query_processor->ParseSearch(
-      search_spec, ScoringSpecProto::RankingStrategy::NONE, current_time_ms);
+      search_spec, ScoringSpecProto::RankingStrategy::NONE,
+      /*get_embedding_match_info=*/false, current_time_ms);
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -2506,7 +2510,9 @@ SearchResultProto IcingSearchEngine::InternalSearch(
 
   const JoinSpecProto& join_spec = search_spec.join_spec();
   std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
-  std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
+  ScoringSpecProto child_scoring_spec;
+  EmbeddingQueryResults child_embedding_query_results;
+  SectionRestrictQueryTermsMap child_query_terms;
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   if (!join_spec.parent_property_expression().empty() &&
       !join_spec.child_property_expression().empty()) {
@@ -2524,7 +2530,7 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     //
     // TODO(b/379288742): Avoid making the copy of the parent schema type alias
     // map.
-    ScoringSpecProto child_scoring_spec = CopyParentSchemaTypeAliasMapToChild(
+    child_scoring_spec = CopyParentSchemaTypeAliasMapToChild(
         scoring_spec, search_spec.join_spec().nested_spec().scoring_spec());
 
     // Process child query
@@ -2552,12 +2558,9 @@ SearchResultProto IcingSearchEngine::InternalSearch(
       return result_proto;
     }
     join_children_fetcher = std::move(join_children_fetcher_or).ValueOrDie();
-
-    // Assign child's ResultAdjustmentInfo.
-    child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
-        join_spec.nested_spec().search_spec(), child_scoring_spec,
-        join_spec.nested_spec().result_spec(), schema_store_.get(),
-        std::move(nested_query_scoring_results.query_terms));
+    child_embedding_query_results =
+        std::move(nested_query_scoring_results.embedding_query_results);
+    child_query_terms = std::move(nested_query_scoring_results.query_terms);
   }
 
   // Process parent query
@@ -2585,11 +2588,7 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     return result_proto;
   }
 
-  // Construct parent's result adjustment info.
-  auto parent_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
-      search_spec, scoring_spec, result_spec, schema_store_.get(),
-      std::move(query_scoring_results.query_terms));
-
+  std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
   if (join_children_fetcher != nullptr) {
     std::unique_ptr<Timer> join_timer = clock_->GetNewTimer();
@@ -2619,6 +2618,24 @@ SearchResultProto IcingSearchEngine::InternalSearch(
             ScoringSpecProto::Order::DESC);
     query_stats->set_ranking_latency_ms(
         component_timer->GetElapsedMilliseconds());
+
+    // Construct the child's result adjustment info.
+    bool get_child_embedding_match_info = join_spec.nested_spec()
+                                              .result_spec()
+                                              .snippet_spec()
+                                              .get_embedding_match_info();
+    std::unordered_set<DocumentId> documents_to_snippet_hint =
+        get_child_embedding_match_info
+            ? ranker->GetTopKChildDocumentIds(join_spec.nested_spec()
+                                                  .result_spec()
+                                                  .snippet_spec()
+                                                  .num_to_snippet())
+            : std::unordered_set<DocumentId>();
+    child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+        join_spec.nested_spec().search_spec(), child_scoring_spec,
+        join_spec.nested_spec().result_spec(), schema_store_.get(),
+        child_embedding_query_results, std::move(documents_to_snippet_hint),
+        std::move(child_query_terms));
   } else {
     // Non-join query
     std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
@@ -2631,6 +2648,20 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     query_stats->set_ranking_latency_ms(
         component_timer->GetElapsedMilliseconds());
   }
+
+  // Construct the parent's result adjustment info.
+  bool get_embedding_match_info =
+      result_spec.snippet_spec().get_embedding_match_info();
+  std::unordered_set<DocumentId> documents_to_snippet_hint =
+      get_embedding_match_info
+          ? ranker->GetTopKDocumentIds(
+                result_spec.snippet_spec().num_to_snippet())
+          : std::unordered_set<DocumentId>();
+  auto parent_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+      search_spec, scoring_spec, result_spec, schema_store_.get(),
+      query_scoring_results.embedding_query_results,
+      std::move(documents_to_snippet_hint),
+      std::move(query_scoring_results.query_terms));
 
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
   // CacheAndRetrieveFirstPage and retrieves the document protos and snippets if
@@ -2714,6 +2745,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
         component_timer->GetElapsedMilliseconds());
     return QueryScoringResults(std::move(query_processor_or).status(),
                                /*query_terms_in=*/{},
+                               /*embedding_query_results_in=*/{},
                                /*scored_document_hits_in=*/{});
   }
   std::unique_ptr<QueryProcessor> query_processor =
@@ -2723,7 +2755,8 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   libtextclassifier3::StatusOr<QueryResults> query_results_or;
   if (ranking_strategy_or.ok()) {
     query_results_or = query_processor->ParseSearch(
-        search_spec, ranking_strategy_or.ValueOrDie(), current_time_ms,
+        search_spec, ranking_strategy_or.ValueOrDie(),
+        result_spec.snippet_spec().get_embedding_match_info(), current_time_ms,
         search_stats);
   } else {
     query_results_or = ranking_strategy_or.status();
@@ -2733,6 +2766,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   if (!query_results_or.ok()) {
     return QueryScoringResults(std::move(query_results_or).status(),
                                /*query_terms_in=*/{},
+                               /*embedding_query_results_in=*/{},
                                /*scored_document_hits_in=*/{});
   }
   QueryResults query_results = std::move(query_results_or).ValueOrDie();
@@ -2759,6 +2793,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   if (!scoring_processor_or.ok()) {
     return QueryScoringResults(std::move(scoring_processor_or).status(),
                                std::move(query_results.query_terms),
+                               std::move(query_results.embedding_query_results),
                                /*scored_document_hits_in=*/{});
   }
   std::unique_ptr<ScoringProcessor> scoring_processor =
@@ -2772,6 +2807,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
 
   return QueryScoringResults(libtextclassifier3::Status::OK,
                              std::move(query_results.query_terms),
+                             std::move(query_results.embedding_query_results),
                              std::move(scored_document_hits));
 }
 

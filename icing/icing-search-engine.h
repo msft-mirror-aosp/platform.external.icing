@@ -32,6 +32,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -726,15 +727,22 @@ class IcingSearchEngine {
   //   Any other errors when processing the query or scoring
   struct QueryScoringResults {
     libtextclassifier3::Status status;
+    // This will be used to retrieve snippeting match info for the term query.
     SectionRestrictQueryTermsMap query_terms;
+    // Contains embedding match infos (scores and section info) from embedding
+    // based queries. This will be used to retrieve snippeting match info for
+    // the embedding query.
+    EmbeddingQueryResults embedding_query_results;
     std::vector<ScoredDocumentHit> scored_document_hits;
 
     explicit QueryScoringResults(
         libtextclassifier3::Status status_in,
         SectionRestrictQueryTermsMap&& query_terms_in,
+        EmbeddingQueryResults&& embedding_query_results_in,
         std::vector<ScoredDocumentHit>&& scored_document_hits_in)
         : status(std::move(status_in)),
           query_terms(std::move(query_terms_in)),
+          embedding_query_results(std::move(embedding_query_results_in)),
           scored_document_hits(std::move(scored_document_hits_in)) {}
   };
   QueryScoringResults ProcessQueryAndScore(

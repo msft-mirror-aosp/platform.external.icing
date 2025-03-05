@@ -42,12 +42,14 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-type-manager.h"
+#include "icing/schema/schema-util.h"
 #include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -694,12 +696,31 @@ class SchemaStore {
 
   // Correctly loads the Header, schema_file_ and (if present) the
   // overlay_schema_file_.
+  //
+  // If feature_flags_->release_backup_schema_file_after_initialization() is
+  // true, then schema_file_ will be released if the overlay_schema_file_ is
+  // present.
+  //
   // RETURNS:
   //   - OK on success
   //   - INTERNAL if an IO error is encountered when reading the Header or
   //   schemas.
   //     Or an invalid schema configuration is present.
   libtextclassifier3::Status LoadSchema();
+
+  // Resets the schema_file_'s cached FileBackedProto instance if needed.
+  //
+  // This is the case if the overlay_schema_file_ is present and
+  // feature_flags_->release_backup_schema_file_if_overlay_present is true.
+  void ResetSchemaFileIfNeeded() {
+    if (feature_flags_->release_backup_schema_file_if_overlay_present() &&
+        overlay_schema_file_ != nullptr) {
+      ICING_VLOG(2)
+          << "Freeing schema store's base schema file's "
+             "FileBackedProto instance since overlay_schema_file_ is present.";
+      schema_file_.ReleaseCachedSchemaFile();
+    }
+  }
 
   // Sets the schema for a database for the first time.
   //
@@ -800,8 +821,82 @@ class SchemaStore {
   // schema has ever been set.
   bool has_schema_successfully_set_ = false;
 
-  // Cached schema
-  std::unique_ptr<FileBackedProto<SchemaProto>> schema_file_;
+  // Wrapper class to store a cached schema file FileBackedProto instance and
+  // its checksum.
+  class SchemaFileCache {
+   public:
+    explicit SchemaFileCache(const Filesystem* filesystem,
+                             const std::string& schema_file_path)
+        : filesystem_(filesystem), schema_file_path_(schema_file_path) {}
+    // Returns a reference to the proto read from the schema FileBackedProto.
+    //
+    // NOTE: The caller does NOT get ownership of the object returned and
+    // the returned object is only valid till a new version of the proto is
+    // written to the file.
+    //
+    // Returns NOT_FOUND if the file was empty or never written to.
+    // Returns INTERNAL_ERROR if an IO error or a corruption was encountered.
+    libtextclassifier3::StatusOr<const SchemaProto*> Read() {
+      return GetCachedSchemaFile().Read();
+    }
+
+    // Writes the new schema_proto to schema_file_ and updates the cached
+    // checksum.
+    //
+    // Returns: INTERNAL_ERROR if any IO error is encountered.
+    libtextclassifier3::Status Write(
+        std::unique_ptr<SchemaProto> schema_proto) {
+      ICING_RETURN_IF_ERROR(
+          GetCachedSchemaFile().Write(std::move(schema_proto)));
+      ICING_ASSIGN_OR_RETURN(Crc32 checksum,
+                             GetCachedSchemaFile().GetChecksum());
+      checksum_ = std::make_unique<Crc32>(checksum);
+      return libtextclassifier3::Status::OK;
+    }
+
+    // Sets the swapped_to_file_path for the cached schema_file_ instance and
+    // the schema_file_path_.
+    void SetSwappedFilepath(std::string new_schema_file_path) {
+      if (schema_file_ != nullptr) {
+        schema_file_->SetSwappedFilepath(new_schema_file_path);
+      }
+      schema_file_path_ = std::move(new_schema_file_path);
+    }
+
+    // Releases the cached schema_file_ FileBackedProto instance.
+    void ReleaseCachedSchemaFile() { schema_file_.reset(); }
+
+    libtextclassifier3::StatusOr<Crc32> GetChecksum() {
+      if (checksum_ == nullptr) {
+        ICING_ASSIGN_OR_RETURN(Crc32 checksum,
+                               GetCachedSchemaFile().GetChecksum());
+        checksum_ = std::make_unique<Crc32>(std::move(checksum));
+      }
+      return *checksum_;
+    }
+
+   private:
+    FileBackedProto<SchemaProto>& GetCachedSchemaFile() {
+      if (schema_file_ == nullptr) {
+        schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
+            *filesystem_, schema_file_path_);
+      }
+      return *schema_file_;
+    }
+
+    const Filesystem* filesystem_;
+    std::string schema_file_path_;
+    std::unique_ptr<FileBackedProto<SchemaProto>> schema_file_;
+    std::unique_ptr<Crc32> checksum_;
+  };
+
+  // Caches a FileBackedProto instance and the checksum for the schema file.
+  //
+  // If the overlay_schema_file_ is present and
+  // feature_flags_->release_backup_schema_file_if_overlay_present is true, then
+  // the cached schema FileBackedProto instance should be released and reloaded
+  // only during mutating SetSchema operations.
+  mutable SchemaFileCache schema_file_;
 
   // This schema holds the definition of any schema types that are not
   // compatible with older versions of Icing code.
