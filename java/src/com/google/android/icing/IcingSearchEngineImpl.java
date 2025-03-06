@@ -89,6 +89,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] setSchemaWithRequestProto(@NonNull byte[] setSchemaRequestBytes) {
+    throwIfClosed();
+    return nativeSetSchemaWithRequestProto(this, setSchemaRequestBytes);
+  }
+
+  @Nullable
   public byte[] getSchema() {
     throwIfClosed();
     return nativeGetSchema(this);
@@ -295,6 +301,9 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeSetSchema(
       IcingSearchEngineImpl instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
+
+  private static native byte[] nativeSetSchemaWithRequestProto(
+      IcingSearchEngineImpl instance, byte[] setSchemaRequestBytes);
 
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
 

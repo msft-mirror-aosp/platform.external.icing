@@ -15,7 +15,6 @@
 #ifndef ICING_SCHEMA_BUILDER_H_
 #define ICING_SCHEMA_BUILDER_H_
 
-#include <cstdint>
 #include <initializer_list>
 #include <string>
 #include <string_view>
