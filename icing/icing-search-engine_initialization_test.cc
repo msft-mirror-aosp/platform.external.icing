@@ -330,6 +330,19 @@ ScoringSpecProto GetDefaultScoringSpec() {
   return scoring_spec;
 }
 
+SetSchemaRequestProto CreateSetSchemaRequestProto(
+    SchemaProto schema, std::string database,
+    bool ignore_errors_and_delete_documents) {
+  SetSchemaRequestProto set_schema_request;
+
+  *set_schema_request.mutable_schema() = std::move(schema);
+  set_schema_request.set_database(std::move(database));
+  set_schema_request.set_ignore_errors_and_delete_documents(
+      ignore_errors_and_delete_documents);
+
+  return set_schema_request;
+}
+
 // TODO(b/272145329): create SearchSpecBuilder, JoinSpecBuilder,
 // SearchResultProtoBuilder and ResultProtoBuilder for unit tests and build all
 // instances by them.
@@ -6991,27 +7004,49 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
                            .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
+  SchemaTypeConfigProto db1_email_type_with_db =
+      SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+  SchemaTypeConfigProto db2_email_type_with_db =
+      SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
 
+  SchemaProto previous_version_db1_schema;
+  SchemaProto previous_version_db2_schema;
+  SchemaBuilder previous_version_full_schema_builder;
+  SetSchemaRequestProto set_schema_request;
   if (previous_version_has_schema_database_enabled) {
-    // Populate the database field for the db1/email type.
-    db1_email_type =
-        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+    // Set db1/email schema to always populate the database field.
+    previous_version_full_schema_builder.AddType(db1_email_type_with_db);
+    previous_version_db1_schema =
+        SchemaBuilder().AddType(db1_email_type_with_db).Build();
+
     if (existing_version >= version_util::kSchemaDatabaseVersion) {
       // Populate the database field for the db2/email type only if previous
       // version is a post schema-database version.
-      db2_email_type =
-          SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+      previous_version_full_schema_builder.AddType(db2_email_type_with_db);
+      previous_version_db2_schema =
+          SchemaBuilder().AddType(db2_email_type_with_db).Build();
+    } else {
+      // Otherwise, the database field is not populated for db2/email type. This
+      // is to simulate the following situation:
+      // 1. Icing is initialized on a version>kSchemaDatabaseVersion with schema
+      //    database enabled, and db1/email is set with the database field
+      //    populated.
+      // 2. Icing gets rolled back to pre-schema database version, db2/email is
+      //    set during this time so the database field is not populated.
+      previous_version_full_schema_builder.AddType(db2_email_type);
+      previous_version_db2_schema =
+          SchemaBuilder().AddType(db2_email_type).Build();
     }
-    // Otherwise, the database field is not populated for db2/email type. This
-    // is to simulate the following situation:
-    // 1. Icing is initialized on a version>kSchemaDatabaseVersion with schema
-    //    database enabled, and db1/email is set with the database field
-    //    populated.
-    // 2. Icing gets rolled back to pre-schema database version, db2/email is
-    //    set during this time so the database field is not populated.
+  } else {
+    previous_version_full_schema_builder.AddType(db1_email_type)
+        .AddType(db2_email_type);
+    previous_version_db1_schema =
+        SchemaBuilder().AddType(db1_email_type).Build();
+    previous_version_db2_schema =
+        SchemaBuilder().AddType(db2_email_type).Build();
   }
   SchemaProto previous_version_schema =
-      SchemaBuilder().AddType(db1_email_type).AddType(db2_email_type).Build();
+      previous_version_full_schema_builder.Build();
 
   DocumentProto db1_email_doc =
       DocumentBuilder()
@@ -7040,15 +7075,21 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
     // 1. Set schema.
     if (options.enable_schema_database()) {
-      // Need to set schemas with a single database field at a time.
-      ASSERT_THAT(
-          icing.SetSchema(SchemaBuilder().AddType(db1_email_type).Build())
-              .status(),
-          ProtoIsOk());
-      ASSERT_THAT(
-          icing.SetSchema(SchemaBuilder().AddType(db2_email_type).Build())
-              .status(),
-          ProtoIsOk());
+      // Can only set schema for a single database at a time.
+      ASSERT_THAT(icing
+                      .SetSchema(CreateSetSchemaRequestProto(
+                          previous_version_db1_schema,
+                          previous_version_db1_schema.types(0).database(),
+                          /*ignore_errors_and_delete_documents=*/false))
+                      .status(),
+                  ProtoIsOk());
+      ASSERT_THAT(icing
+                      .SetSchema(CreateSetSchemaRequestProto(
+                          previous_version_db2_schema,
+                          previous_version_db2_schema.types(0).database(),
+                          /*ignore_errors_and_delete_documents=*/false))
+                      .status(),
+                  ProtoIsOk());
     } else {
       ASSERT_THAT(icing.SetSchema(previous_version_schema).status(),
                   ProtoIsOk());

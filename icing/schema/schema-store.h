@@ -253,6 +253,8 @@ class SchemaStore {
 
   static constexpr std::string_view kSchemaTypeWildcard = "*";
 
+  static constexpr std::string_view kDefaultEmptySchemaDatabase = "";
+
   // Factory function to create a SchemaStore which does not take ownership
   // of any input components, and all pointers must refer to valid objects that
   // outlive the created SchemaStore instance. The base_dir must already exist.
@@ -323,9 +325,22 @@ class SchemaStore {
   // schema or schema with types from multiple databases. Compatibility rules
   // defined by SchemaUtil::ComputeCompatibilityDelta.
   //
-  // The schema types in the new schema proto must all be from a single
-  // database. Does not support setting schema types across multiple databases
-  // at once.
+  // NOTE: This method is deprecated. Please use
+  // `SetSchema(SetSchemaRequestProto&& set_schema_request)` instead.
+  //
+  // TODO: b/337913932 - Remove this method once all callers (currently only
+  // used in tests) are migrated to the new SetSchema method.
+  libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
+      SchemaProto new_schema, bool ignore_errors_and_delete_documents);
+
+  // Update our current schema if it's compatible. Does not accept incompatible
+  // schema or schema with types from multiple databases. Compatibility rules
+  // defined by SchemaUtil::ComputeCompatibilityDelta.
+  //
+  // Does not support setting the schema across multiple databases if
+  // `feature_flags_->enable_schema_database()` is true. This means that:
+  // - All types within the new schema must have their `database` field matching
+  //  `set_schema_request.database()`.
   //
   // If ignore_errors_and_delete_documents is set to true, then incompatible
   // schema are allowed and we'll force set the schema, meaning
@@ -337,12 +352,12 @@ class SchemaStore {
   //   - INTERNAL_ERROR on any IO errors
   //   - ALREADY_EXISTS_ERROR if type names in the new schema are already in use
   //     by a different database.
-  //   - INVALID_ARGUMENT_ERROR if the schema is invalid, or if the schema types
-  //     are from multiple databases (once schema database is enabled).
+  //   - INVALID_ARGUMENT_ERROR if the schema is invalid. This can happen if
+  //     the schema is malformed, if the new schema contains types where the
+  //     database field does not match the database field in the
+  //     set_schema_request.
   libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
-      const SchemaProto& new_schema, bool ignore_errors_and_delete_documents);
-  libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
-      SchemaProto&& new_schema, bool ignore_errors_and_delete_documents);
+      SetSchemaRequestProto&& set_schema_request);
 
   // Get the SchemaTypeConfigProto of schema_type name.
   //
@@ -725,19 +740,18 @@ class SchemaStore {
   // Sets the schema for a database for the first time.
   //
   // Note that when schema database is disabled, this function sets the entire
-  // schema, with all under the default empty database.
+  // schema, with all types under the default empty database.
   //
   // Requires:
-  //   - All types in new_schema are from the same database.
-  //   - new_schema does not contain type names that are already in use by a
-  //     different database.
+  //   - `new_schema` is valid according to `ValidateSchemaDatabase'
   //
   // Returns:
   //   - SetSchemaResult that indicates if the new schema can be set.
   //   - INTERNAL_ERROR on any IO errors.
-  //   - INVALID_ARGUMENT_ERROR if the schema is invalid.
+  //   - INVALID_ARGUMENT_ERROR if the new schema is invalid.
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetInitialSchemaForDatabase(SchemaProto new_schema,
+                              const std::string& database,
                               bool ignore_errors_and_delete_documents);
 
   // Sets the schema for a database, overriding any existing schema for that
@@ -747,18 +761,24 @@ class SchemaStore {
   // overrides the entire schema.
   //
   // Requires:
-  //   - All types in new_schema are from the same database.
-  //   - new_schema does not contain type names that are already in use by a
-  //     different database.
+  //   - `new_schema` and `database` are valid according to
+  //     `ValidateSchemaDatabase(new_schema, database)`
+  //   - Types in `new_schema` and `old_schema` all belong to the provided
+  //     database.
+  //     - The old schema is guaranteed to contain types from exactly one
+  //       database when schema database is enabled, because it was obtained
+  //       using `GetSchema(database)`.
   //
   // Returns:
   //   - SetSchemaResult that encapsulates the differences between the old and
   //     new schema, as well as if the new schema can be set.
   //   - INTERNAL_ERROR on any IO errors.
-  //   - INVALID_ARGUMENT_ERROR if the schema is invalid.
+  //   - INVALID_ARGUMENT_ERROR if the schema is invalid, or if there are
+  //     mismatches between the schema databases.
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetSchemaWithDatabaseOverride(SchemaProto new_schema,
                                 const SchemaProto& old_schema,
+                                const std::string& database,
                                 bool ignore_errors_and_delete_documents);
 
   // Initial validation on the SchemaProto for SetSchema. This is intended as a
@@ -769,22 +789,25 @@ class SchemaStore {
   // an empty string is returned as the database.
   //
   // Checks that:
-  // - The new schema only contains types from a single database.
+  // - The new schema only contains types from a single database, which matches
+  //   the provided database.
   // - The schema's type names are not already in use in other databases. This
   //   is done outside of `SchemaUtil::Validate` because we need to know all
   //   existing type names, which is stored in the SchemaStore and not known to
   //   SchemaUtil.
   //
   // Returns:
-  //   - new_schema's database on success
-  //   - INVALID_ARGUMENT_ERROR if new_schema contains types from multiple
-  //     databases
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_schema.types's databases do not match the
+  //     provided database.
   //   - ALREADY_EXISTS_ERROR if new_schema's types names are not unique
-  libtextclassifier3::StatusOr<std::string> ValidateAndGetDatabase(
-      const SchemaProto& new_schema) const;
+  libtextclassifier3::Status ValidateSchemaDatabase(
+      const SchemaProto& new_schema, const std::string& database) const;
 
   // Returns a SchemaProto representing the full schema, which is a combination
-  // of the existing schema and the input database schema.
+  // of the existing schema and the input database schema. Deletes all types
+  // belonging to the specified database if input_database_schema is an empty
+  // proto.
   //
   // For the database being updated by the input database schema:
   // - If the existing schema does not contain the database, the input types
@@ -800,7 +823,8 @@ class SchemaStore {
   //     existing types from unaffected databases.
   //
   // Requires:
-  //   - input_database_schema must not contain types from multiple databases.
+  //   - input_database_schema is valid according to `ValidateSchemaDatabase`
+  //     and `SchemaUtil::Validate`.
   //
   // Returns:
   //   - SchemaProto on success
@@ -809,7 +833,8 @@ class SchemaStore {
   //   - INVALID_ARGUMENT_ERROR if the input schema contains types from multiple
   //     databases.
   libtextclassifier3::StatusOr<SchemaProto> GetFullSchemaProtoWithUpdatedDb(
-      SchemaProto input_database_schema) const;
+      SchemaProto input_database_schema,
+      const std::string& database_to_update) const;
 
   const Filesystem* filesystem_;
   std::string base_dir_;
