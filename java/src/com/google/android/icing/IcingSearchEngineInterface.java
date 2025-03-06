@@ -29,6 +29,7 @@ import com.google.android.icing.proto.SchemaProto;
 import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
+import com.google.android.icing.proto.SetSchemaRequestProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.SuggestionResponse;
@@ -45,16 +46,31 @@ public interface IcingSearchEngineInterface extends Closeable {
    */
   InitializeResultProto initialize();
 
-  /** Sets the schema for the icing instance. */
+  /**
+   * Sets the schema for the icing instance.
+   *
+   * <p>Note: This method is deprecated. Please use {@link
+   * #setSchemaWithRequestProto(SetSchemaRequestProto)} instead.
+   */
   SetSchemaResultProto setSchema(SchemaProto schema);
 
   /**
    * Sets the schema for the icing instance.
    *
+   * <p>Note: This method is deprecated. Please use {@link
+   * #setSchemaWithRequestProto(SetSchemaRequestProto)} instead.
+   *
    * @param ignoreErrorsAndDeleteDocuments force to set the schema and delete documents in case of
    *     incompatible schema change.
    */
   SetSchemaResultProto setSchema(SchemaProto schema, boolean ignoreErrorsAndDeleteDocuments);
+
+  /**
+   * Sets the schema for the icing instance.
+   *
+   * @param setSchemaRequest the request proto for setting the schema.
+   */
+  SetSchemaResultProto setSchemaWithRequestProto(SetSchemaRequestProto setSchemaRequest);
 
   /** Gets the schema for the icing instance. */
   GetSchemaResultProto getSchema();

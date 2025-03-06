@@ -17,6 +17,7 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/logging.proto";
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -24,9 +25,13 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Holds a list of DocumentProto.
-// Next tag: 2
+// Next tag: 3
 message PutDocumentRequest {
   repeated DocumentProto documents = 1;
+
+  // The persist type used to call PersistToDisk at the end of the Put request.
+  // If not specified, PersistToDisk will not be called.
+  optional PersistType.Code persist_type = 2;
 }
 
 // Defines a unit of data understood by the IcingSearchEngine.
@@ -125,9 +130,13 @@ message PropertyProto {
 }
 
 // Holds a list of PutResultProto.
-// Next tag: 2
+// Next tag: 3
 message BatchPutResultProto {
   repeated PutResultProto put_result_protos = 1;
+
+  // The result of calling PersistToDisk at the end of the BatchPut request if
+  // PutDocumentRequest.persist_type is set.
+  optional PersistToDiskResultProto persist_to_disk_result_proto = 2;
 }
 
 // Result of a call to IcingSearchEngine.Put

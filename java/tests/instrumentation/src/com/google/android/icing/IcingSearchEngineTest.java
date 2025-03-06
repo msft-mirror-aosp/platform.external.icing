@@ -51,6 +51,7 @@ import com.google.android.icing.proto.SchemaTypeConfigProto;
 import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
+import com.google.android.icing.proto.SetSchemaRequestProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.SnippetMatchProto;
 import com.google.android.icing.proto.SnippetProto;
@@ -211,6 +212,9 @@ public final class IcingSearchEngineTest {
     assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
   }
 
+  // TODO: b/383379132 - Re-enable this test once the JNI API is pre-registered and dropped back
+  // into g3.
+  @Ignore
   @Test
   public void setAndGetSchemaWithDatabase_ok() throws Exception {
     IcingSearchEngineOptions options =
@@ -228,11 +232,23 @@ public final class IcingSearchEngineTest {
     SchemaProto db2Schema =
         SchemaProto.newBuilder().addTypes(createEmailTypeConfigWithDatabase(db2)).build();
 
+    SetSchemaRequestProto requestProto1 =
+        SetSchemaRequestProto.newBuilder()
+            .setSchema(db1Schema)
+            .setDatabase(db1)
+            .setIgnoreErrorsAndDeleteDocuments(false)
+            .build();
     SetSchemaResultProto setSchemaResultProto =
-        icingSearchEngine.setSchema(db1Schema, /* ignoreErrorsAndDeleteDocuments= */ false);
+        icingSearchEngine.setSchemaWithRequestProto(requestProto1);
     assertStatusOk(setSchemaResultProto.getStatus());
-    setSchemaResultProto =
-        icingSearchEngine.setSchema(db2Schema, /* ignoreErrorsAndDeleteDocuments= */ false);
+
+    SetSchemaRequestProto requestProto2 =
+        SetSchemaRequestProto.newBuilder()
+            .setSchema(db2Schema)
+            .setDatabase(db2)
+            .setIgnoreErrorsAndDeleteDocuments(false)
+            .build();
+    setSchemaResultProto = icingSearchEngine.setSchemaWithRequestProto(requestProto2);
     assertStatusOk(setSchemaResultProto.getStatus());
 
     // Get schema for individual databases.
@@ -305,6 +321,11 @@ public final class IcingSearchEngineTest {
     assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
     assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
 
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
+
     // Check document 1
     GetResultProto getResultProto =
         icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
@@ -348,6 +369,11 @@ public final class IcingSearchEngineTest {
     assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri");
     assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
     assertThat(batchPutResultProto.getPutResultProtos(1).getWasReplacement()).isTrue();
+
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
   }
 
   @Test
@@ -368,6 +394,11 @@ public final class IcingSearchEngineTest {
 
     BatchPutResultProto expected = BatchPutResultProto.getDefaultInstance();
     assertThat(batchPutResultProto).isEqualTo(expected);
+
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
   }
 
   @Test
@@ -402,6 +433,11 @@ public final class IcingSearchEngineTest {
     assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
     assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
 
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
+
     // Check document 1
     GetResultProto getResultProto =
         icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
@@ -413,6 +449,38 @@ public final class IcingSearchEngineTest {
         icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
     assertStatusOk(getResultProto.getStatus());
     assertThat(getResultProto.getDocument()).isEqualTo(emailDocument2);
+  }
+
+  @Test
+  public void testBatchPutWithPersistToDisk() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 = createEmailDocument("namespace", "uri1");
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri2");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .setPersistType(PersistType.Code.FULL)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+
+    assertThat(batchPutResultProto.getPutResultProtos(0).getUri()).isEqualTo("uri1");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(0).getStatus());
+    assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
+
+    // PersistToDisk should be called if persist_type is set in the PutDocumentRequest.
+    assertStatusOk(batchPutResultProto.getPersistToDiskResultProto().getStatus());
   }
 
   @Test
