@@ -1166,6 +1166,16 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
 
 SetSchemaResultProto IcingSearchEngine::SetSchema(
     SchemaProto&& new_schema, bool ignore_errors_and_delete_documents) {
+  SetSchemaRequestProto set_schema_request;
+  *set_schema_request.mutable_schema() = std::move(new_schema);
+  set_schema_request.set_ignore_errors_and_delete_documents(
+      ignore_errors_and_delete_documents);
+
+  return SetSchema(std::move(set_schema_request));
+}
+
+SetSchemaResultProto IcingSearchEngine::SetSchema(
+    SetSchemaRequestProto&& set_schema_request) {
   ICING_VLOG(1) << "Setting new Schema";
 
   SetSchemaResultProto result_proto;
@@ -1207,8 +1217,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   std::unique_ptr<MarkerFile> marker_file =
       std::move(marker_file_or).ValueOrDie();
 
-  auto set_schema_result_or = schema_store_->SetSchema(
-      std::move(new_schema), ignore_errors_and_delete_documents);
+  auto set_schema_result_or =
+      schema_store_->SetSchema(std::move(set_schema_request));
   if (!set_schema_result_or.ok()) {
     TransformStatus(set_schema_result_or.status(), result_status);
     return result_proto;
@@ -1398,6 +1408,26 @@ GetSchemaTypeResultProto IcingSearchEngine::GetSchemaType(
   result_status->set_code(StatusProto::OK);
   *result_proto.mutable_schema_type_config() = *(type_config_or.ValueOrDie());
   return result_proto;
+}
+
+BatchPutResultProto IcingSearchEngine::BatchPut(
+    PutDocumentRequest&& put_document_request) {
+  BatchPutResultProto batch_put_result_proto;
+
+  // TODO(b/394875109): right now we lock in the Put(DocumentProto&&) for each
+  // document. We should considering just locking once for the whole batch here.
+  for (DocumentProto& document_proto :
+       *(put_document_request.mutable_documents())) {
+    batch_put_result_proto.mutable_put_result_protos()->Add(
+        Put(std::move(document_proto)));
+  }
+
+  if (put_document_request.persist_type() != PersistType::UNKNOWN) {
+    *batch_put_result_proto.mutable_persist_to_disk_result_proto() =
+        PersistToDisk(put_document_request.persist_type());
+  }
+
+  return batch_put_result_proto;
 }
 
 PutResultProto IcingSearchEngine::Put(const DocumentProto& document) {

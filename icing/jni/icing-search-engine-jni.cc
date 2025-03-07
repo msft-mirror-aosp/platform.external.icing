@@ -126,6 +126,28 @@ jbyteArray nativeSetSchema(JNIEnv* env, jclass clazz, jobject object,
 
   return SerializeProtoToJniByteArray(env, set_schema_result_proto);
 }
+// TODO : b/337913932 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeSetSchemaWithRequestProto(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray set_schema_request_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::SetSchemaRequestProto set_schema_request;
+  if (!ParseProtoFromJniByteArray(env, set_schema_request_bytes,
+                                  &set_schema_request)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse SetSchemaRequestProto in nativeSetSchema";
+    return nullptr;
+  }
+
+  icing::lib::SetSchemaResultProto set_schema_result_proto =
+      icing->SetSchema(std::move(set_schema_request));
+
+  return SerializeProtoToJniByteArray(env, set_schema_result_proto);
+}
 
 jbyteArray nativeGetSchema(JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
@@ -136,8 +158,8 @@ jbyteArray nativeGetSchema(JNIEnv* env, jclass clazz, jobject object) {
   return SerializeProtoToJniByteArray(env, get_schema_result_proto);
 }
 
-jbyteArray nativeGetSchemaForDatabase(
-    JNIEnv* env, jclass clazz, jobject object, jstring database) {
+jbyteArray nativeGetSchemaForDatabase(JNIEnv* env, jclass clazz, jobject object,
+                                      jstring database) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
@@ -195,12 +217,8 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchPut(
     return nullptr;
   }
 
-  icing::lib::BatchPutResultProto batch_put_result_proto;
-  for (icing::lib::DocumentProto& document_proto :
-       *(put_document_request.mutable_documents())) {
-    batch_put_result_proto.mutable_put_result_protos()->Add(
-        icing->Put(std::move(document_proto)));
-  }
+  icing::lib::BatchPutResultProto batch_put_result_proto =
+      icing->BatchPut(std::move(put_document_request));
 
   return SerializeProtoToJniByteArray(env, batch_put_result_proto);
 }
