@@ -307,6 +307,7 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
   bool should_rebuild = false;
   int32_t existing_version = existing_version_info.version;
   while (existing_version < curr_version) {
+    // LINT.IfChange(should_rebuild_derived_files_upgrade_check)
     switch (existing_version) {
       case 1: {
         // version 1 -> version 2 upgrade, no need to rebuild
@@ -324,10 +325,15 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
         // version 4 -> version 5 upgrade, no need to rebuild
         break;
       }
+      case 5: {
+        // version 5 -> version 6 upgrade, no need to rebuild
+        break;
+      }
       default:
         // This should not happen. Rebuild anyway if unsure.
         should_rebuild |= true;
     }
+    // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
     ++existing_version;
   }
   return should_rebuild;

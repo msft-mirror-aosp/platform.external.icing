@@ -45,6 +45,7 @@ import com.google.android.icing.proto.SchemaProto;
 import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
+import com.google.android.icing.proto.SetSchemaRequestProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.SuggestionResponse;
@@ -89,7 +90,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull SetSchemaResultProto setSchema(@NonNull SchemaProto schema) {
-    return setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    return setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false);
   }
 
   @Override
@@ -97,6 +98,13 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
       @NonNull SchemaProto schema, boolean ignoreErrorsAndDeleteDocuments) {
     return IcingSearchEngineUtils.byteArrayToSetSchemaResultProto(
         icingSearchEngineImpl.setSchema(schema.toByteArray(), ignoreErrorsAndDeleteDocuments));
+  }
+
+  @Override
+  public @NonNull SetSchemaResultProto setSchemaWithRequestProto(
+      @NonNull SetSchemaRequestProto setSchemaRequest) {
+    return IcingSearchEngineUtils.byteArrayToSetSchemaResultProto(
+        icingSearchEngineImpl.setSchemaWithRequestProto(setSchemaRequest.toByteArray()));
   }
 
   @Override
@@ -222,7 +230,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull DeleteByQueryResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
-    return deleteByQuery(searchSpec, /*returnDeletedDocumentInfo=*/ false);
+    return deleteByQuery(searchSpec, /* returnDeletedDocumentInfo= */ false);
   }
 
   @Override
