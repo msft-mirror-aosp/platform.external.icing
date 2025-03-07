@@ -106,9 +106,22 @@ class IcingSearchEngine {
   //   NOT_FOUND if missing some internal data
   InitializeResultProto Initialize() ICING_LOCKS_EXCLUDED(mutex_);
 
+  // TODO: b/337913932 - Remove this method once all callers are migrated to the
+  // new SetSchema method.
+  //
+  // This method is deprecated. Please use
+  // `IcingSearchEngine::SetSchema(SetSchemaRequestProto)` instead.
+  //
   // Specifies the schema to be applied on all Documents that are already
-  // stored as well as future documents. A schema can be 'invalid' and/or
-  // 'incompatible'. These are two independent concepts.
+  // stored as well as future documents.
+  //
+  // This SetSchema call only allows setting schemas in the default empty
+  // database. Any non-empty database field in `new_schema.types` invalidates
+  // this SetSchema request. To set a schema for a non-empty database, please
+  // use `IcingSearchEngine::SetSchema(SetSchemaRequestProto)`.
+  //
+  // A schema can be 'invalid' and/or 'incompatible'. These are two independent
+  // concepts.
   //
   // An 'invalid' schema is one that is not constructed properly. For example,
   // a PropertyConfigProto is missing the property name field. A schema can be
@@ -169,6 +182,63 @@ class IcingSearchEngine {
                                  bool ignore_errors_and_delete_documents =
                                      false) ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Specifies the schema to be applied on all Documents that are already
+  // stored as well as future documents.
+  //
+  // This operation sets the schema for the single database specified in
+  // `set_schema_request.database()`. If unset, the default empty
+  // database is assumed.
+  //
+  // A schema can be 'invalid' and/or 'incompatible'. These are two independent
+  // concepts.
+  // - An 'invalid' schema is one that is not constructed properly.
+  //   - For example, a PropertyConfigProto is missing the property name field.
+  //   - A schema can be 'invalid' even if there is no previously existing
+  //     schema.
+  // - An 'incompatible' schema is one that is incompatible with a previously
+  //   existing schema.
+  //   - If there is no previously existing schema, then a new schema cannot be
+  //     incompatible. An incompatible schema is one that invalidates
+  //     pre-existing data.
+  //   - For example, a previously OPTIONAL field is now REQUIRED in the new
+  //     schema, and pre-existing data is considered invalid against the new
+  //     schema now.
+  //
+  // Default behavior will not allow a new schema to be set if it is invalid or
+  // incompatible.
+  // - `set_schema_request.ignore_errors_and_delete_documents' can be set to
+  //   true to force set an incompatible schema.
+  //   - In that case, documents that are invalidated by the new schema would be
+  //     deleted from Icing.
+  //   - This cannot be used to force set an invalid schema.
+  //
+  // This schema is persisted to disk and used across multiple instances.
+  // So, callers should only have to call this if the schema changed.
+  // However, calling it multiple times with the same schema is a no-op.
+  //
+  // On some errors, Icing will keep using the older schema, but on
+  // INTERNAL_ERROR, it is undefined to continue using Icing.
+  //
+  // Returns:
+  // - OK on success
+  // - ALREADY_EXISTS if 'set_schema_request.schema' contains multiple
+  //     definitions of the same type or contains a type that has multiple
+  //     properties with the same name.
+  // - INVALID_ARGUMENT if 'set_schema_request.schema' is invalid, or if
+  //     `set_schema_request.database` does not match the database fields of
+  //     `set_schema_request.schema.types`.
+  // - FAILED_PRECONDITION if 'set_schema_request.schema' is incompatible, or
+  //     IcingSearchEngine has not been initialized yet.
+  // - INTERNAL_ERROR if Icing failed to store the new schema or upgrade
+  //     existing data based on the new schema. Using Icing beyond this error is
+  //     undefined and may cause crashes.
+  // - DATA_LOSS_ERROR if 'set_schema_request.schema' requires the index to be
+  //     rebuilt and an IO error leads to some documents being excluded from the
+  //     index. These documents will still be retrievable via Get, but won't
+  //     match queries.
+  SetSchemaResultProto SetSchema(SetSchemaRequestProto&& set_schema_request)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Get Icing's current copy of the schema.
   //
   // Returns:
@@ -203,6 +273,16 @@ class IcingSearchEngine {
   //     SchemaProto
   //   INTERNAL_ERROR on IO error
   GetSchemaTypeResultProto GetSchemaType(std::string_view schema_type)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Batch puts the documents into icing search engine so that they're stored
+  // and indexed. Documents are automatically written to disk, callers can also
+  // call PersistToDisk() to flush changes immediately.
+  //
+  // Returns: BatchPutResultProto with a list of PutResultProtos for each
+  // document, and a PersistToDiskResultProto if persist_type is set in the
+  // request.
+  BatchPutResultProto BatchPut(PutDocumentRequest&& put_document_request)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Puts the document into icing search engine so that it's stored and
