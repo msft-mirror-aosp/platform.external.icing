@@ -23,6 +23,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/derived-file-util.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/initialize.pb.h"
 
@@ -38,7 +39,7 @@ namespace version_util {
 // - Version 3: M-2024-02. Schema is compatible with v1 and v2.
 // - Version 4: Android V base. Schema is compatible with v1, v2 and v3.
 // - Version 5: M-2025-02. Schema is compatible with v1, v2, v3 and v4.
-inline static constexpr int32_t kVersion = 5;
+inline static constexpr int32_t kVersion = 6;
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;
@@ -79,75 +80,6 @@ enum class StateChange {
   kUpgrade,
   kVersionZeroUpgrade,
   kVersionZeroRollForward,
-};
-
-// Contains information about which derived files need to be rebuild.
-//
-// These flags only reflect whether each component should be rebuilt, but do not
-// handle any dependencies. The caller should handle the dependencies by
-// themselves.
-// e.g. - qualified id join index depends on document store derived files, but
-//        it's possible to have needs_document_store_derived_files_rebuild =
-//        true and needs_qualified_id_join_index_rebuild = false.
-//      - The caller should know that join index should also be rebuilt in this
-//        case even though needs_qualified_id_join_index_rebuild = false.
-struct DerivedFilesRebuildResult {
-  bool needs_document_store_derived_files_rebuild = false;
-  bool needs_schema_store_derived_files_rebuild = false;
-  bool needs_term_index_rebuild = false;
-  bool needs_integer_index_rebuild = false;
-  bool needs_qualified_id_join_index_rebuild = false;
-  bool needs_embedding_index_rebuild = false;
-
-  DerivedFilesRebuildResult() = default;
-
-  explicit DerivedFilesRebuildResult(
-      bool needs_document_store_derived_files_rebuild_in,
-      bool needs_schema_store_derived_files_rebuild_in,
-      bool needs_term_index_rebuild_in, bool needs_integer_index_rebuild_in,
-      bool needs_qualified_id_join_index_rebuild_in,
-      bool needs_embedding_index_rebuild_in)
-      : needs_document_store_derived_files_rebuild(
-            needs_document_store_derived_files_rebuild_in),
-        needs_schema_store_derived_files_rebuild(
-            needs_schema_store_derived_files_rebuild_in),
-        needs_term_index_rebuild(needs_term_index_rebuild_in),
-        needs_integer_index_rebuild(needs_integer_index_rebuild_in),
-        needs_qualified_id_join_index_rebuild(
-            needs_qualified_id_join_index_rebuild_in),
-        needs_embedding_index_rebuild(needs_embedding_index_rebuild_in) {}
-
-  bool IsRebuildNeeded() const {
-    return needs_document_store_derived_files_rebuild ||
-           needs_schema_store_derived_files_rebuild ||
-           needs_term_index_rebuild || needs_integer_index_rebuild ||
-           needs_qualified_id_join_index_rebuild ||
-           needs_embedding_index_rebuild;
-  }
-
-  bool operator==(const DerivedFilesRebuildResult& other) const {
-    return needs_document_store_derived_files_rebuild ==
-               other.needs_document_store_derived_files_rebuild &&
-           needs_schema_store_derived_files_rebuild ==
-               other.needs_schema_store_derived_files_rebuild &&
-           needs_term_index_rebuild == other.needs_term_index_rebuild &&
-           needs_integer_index_rebuild == other.needs_integer_index_rebuild &&
-           needs_qualified_id_join_index_rebuild ==
-               other.needs_qualified_id_join_index_rebuild &&
-           needs_embedding_index_rebuild == other.needs_embedding_index_rebuild;
-  }
-
-  void CombineWithOtherRebuildResultOr(const DerivedFilesRebuildResult& other) {
-    needs_document_store_derived_files_rebuild |=
-        other.needs_document_store_derived_files_rebuild;
-    needs_schema_store_derived_files_rebuild |=
-        other.needs_schema_store_derived_files_rebuild;
-    needs_term_index_rebuild |= other.needs_term_index_rebuild;
-    needs_integer_index_rebuild |= other.needs_integer_index_rebuild;
-    needs_qualified_id_join_index_rebuild |=
-        other.needs_qualified_id_join_index_rebuild;
-    needs_embedding_index_rebuild |= other.needs_embedding_index_rebuild;
-  }
 };
 
 // There are two icing version files:
@@ -234,8 +166,8 @@ StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
 // REQUIRES: curr_version >= kFirstV2Version. We implement v2 version checking
 // in kFirstV2Version, so callers will always use a version # greater than this.
 //
-// RETURNS: DerivedFilesRebuildResult
-DerivedFilesRebuildResult CalculateRequiredDerivedFilesRebuild(
+// RETURNS: derived_file_util::DerivedFilesRebuildInfo
+derived_file_util::DerivedFilesRebuildInfo CalculateRequiredDerivedFilesRebuild(
     const IcingSearchEngineVersionProto& prev_version_proto,
     const IcingSearchEngineVersionProto& curr_version_proto);
 
@@ -258,7 +190,7 @@ bool SchemaDatabaseMigrationRequired(
     const IcingSearchEngineVersionProto& prev_version_proto);
 
 // Returns the derived files rebuilds required for a given feature.
-DerivedFilesRebuildResult GetFeatureDerivedFilesRebuildResult(
+derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
     IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature);
 
 // Constructs the IcingSearchEngineFeatureInfoProto for a given feature.

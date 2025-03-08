@@ -1,7 +1,6 @@
 #include <android/binder_auto_utils.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
-#include <vm_payload.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -11,6 +10,7 @@
 
 #include "aidl/com/android/isolated_storage_service/BnIcingSearchEngine.h"
 #include "aidl/com/android/isolated_storage_service/BnIsolatedStorageService.h"
+#include <vm_payload.h>
 #include "icing/icing-search-engine.h"
 #include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"

@@ -15,20 +15,25 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
-#include "icing/result/projection-tree.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
@@ -37,6 +42,7 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -45,6 +51,7 @@
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
@@ -315,7 +322,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          /*documents_to_snippet=*/
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -418,7 +427,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -532,7 +542,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -650,7 +661,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -751,7 +763,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -835,7 +848,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -920,7 +934,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1003,11 +1018,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      //*parent_adjustment_info=*/
+      /*parent_adjustment_info=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1098,7 +1114,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1193,7 +1210,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1297,7 +1315,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1405,7 +1424,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1536,12 +1556,14 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       parent_result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1645,7 +1667,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1732,7 +1755,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1806,7 +1830,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>{document_id},
+          SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1885,7 +1911,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1968,7 +1995,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          schema_store_.get(), SectionRestrictQueryTermsMap()),
+          schema_store_.get(), EmbeddingQueryResults(),
+          std::unordered_set<DocumentId>{document_id},
+          SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(

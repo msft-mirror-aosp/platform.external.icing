@@ -16,10 +16,12 @@
 #define ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
 
 #include <queue>
+#include <unordered_set>
 #include <vector>
 
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -51,6 +53,18 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
   //   store ScoredDocumentHit or any other types of data, but require PopNext
   //   to convert it to JoinedScoredDocumentHit.
   JoinedScoredDocumentHit PopNext() override;
+
+  // Returns DocumentIds of the top K documents according to the ranking policy.
+  // - For ScoredDocumentHit, this returns the DocumentIds of the top K
+  //   documents.
+  // - For JoinedScoredDocumentHit, this returns the DocumentIds of the top K
+  //   parent documents.
+  std::unordered_set<DocumentId> GetTopKDocumentIds(int k) const override;
+
+  // Returns the DocumentIds of the top K child documents for each
+  // JoinedScoredDocumentHit.
+  // - For ScoredDocumentHit, this returns an empty set.
+  std::unordered_set<DocumentId> GetTopKChildDocumentIds(int k) const override;
 
   void TruncateHitsTo(int new_size) override;
 
@@ -103,6 +117,65 @@ PriorityQueueScoredDocumentHitsRanker<ScoredDataType, Converter>::PopNext() {
   ScoredDataType next_scored_data = scored_data_pq_.top();
   scored_data_pq_.pop();
   return converter_(std::move(next_scored_data));
+}
+
+template <typename ScoredDataType, typename Converter>
+std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
+    ScoredDataType, Converter>::GetTopKDocumentIds(int k) const {
+  std::unordered_set<DocumentId> top_k_document_ids;
+  if (k <= 0) {
+    return top_k_document_ids;
+  }
+
+  std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
+      pq_copy(scored_data_pq_);
+  for (int i = 0; i < k && !pq_copy.empty(); ++i) {
+    const ScoredDataType& next_scored_data = pq_copy.top();
+    if constexpr (std::is_same_v<ScoredDataType, ScoredDocumentHit>) {
+      top_k_document_ids.insert(next_scored_data.document_id());
+    } else if constexpr (std::is_same_v<ScoredDataType,
+                                        JoinedScoredDocumentHit>) {
+      top_k_document_ids.insert(
+          next_scored_data.parent_scored_document_hit().document_id());
+    } else {
+      // Returns an empty set if the ScoredDataType is not
+      // JoinedScoredDocumentHit or ScoredDocumentHit.
+      return top_k_document_ids;
+    }
+    pq_copy.pop();
+  }
+  return top_k_document_ids;
+}
+
+template <typename ScoredDataType, typename Converter>
+std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
+    ScoredDataType, Converter>::GetTopKChildDocumentIds(int k) const {
+  std::unordered_set<DocumentId> top_k_document_ids;
+  if (k <= 0) {
+    return top_k_document_ids;
+  }
+
+  if constexpr (std::is_same_v<ScoredDataType, ScoredDocumentHit>) {
+    return top_k_document_ids;
+  } else if constexpr (std::is_same_v<ScoredDataType,
+                                      JoinedScoredDocumentHit>) {
+    std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
+        pq_copy(scored_data_pq_);
+    while (!pq_copy.empty()) {
+      const ScoredDataType& next_scored_data = pq_copy.top();
+      const std::vector<ScoredDocumentHit>& child_scored_document_hits =
+          next_scored_data.child_scored_document_hits();
+      for (int i = 0; i < k && i < child_scored_document_hits.size(); ++i) {
+        top_k_document_ids.insert(child_scored_document_hits[i].document_id());
+      }
+      pq_copy.pop();
+    }
+  } else {
+    // Returns an empty set if the ScoredDataType is not JoinedScoredDocumentHit
+    // or ScoredDocumentHit.
+    return top_k_document_ids;
+  }
+  return top_k_document_ids;
 }
 
 template <typename ScoredDataType, typename Converter>
