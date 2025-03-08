@@ -282,8 +282,9 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
       tokenizer_factory::CreateIndexingTokenizer(
           StringIndexingConfig::TokenizerType::PLAIN, lang_segmenter_.get()));
 
-  if (GetIcuTokenizationVersion() >= 72) {
-    // In ICU 72+ and above, ':' are no longer considered word connectors.
+  int icu_version = GetIcuTokenizationVersion();
+  if (icu_version >= 72 && icu_version < 77) {
+    // In ICU 72+ and before 77, ':' are not considered word connectors.
     constexpr std::string_view kText = "foo:bar";
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<Token> indexing_tokens,
                                indexing_tokenizer->TokenizeAll(kText));
