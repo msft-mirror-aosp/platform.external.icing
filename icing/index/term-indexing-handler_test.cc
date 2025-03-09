@@ -29,6 +29,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
@@ -50,13 +51,14 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -99,10 +101,11 @@ constexpr SectionId kSectionIdNestedBody = 1;
 class TermIndexingHandlerTest : public Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -128,8 +131,8 @@ class TermIndexingHandlerTest : public Test {
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()),
         IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -174,13 +177,12 @@ class TermIndexingHandlerTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
+                              schema_store_.get(), feature_flags_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/true,
                               /*pre_mapping_fbv=*/false,
                               /*use_persistent_hash_map=*/true,
                               PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
+                                  DocumentWrapper>::kDefaultCompressionLevel,
                               /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
   }
@@ -194,6 +196,7 @@ class TermIndexingHandlerTest : public Test {
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   FakeClock fake_clock_;
@@ -273,10 +276,10 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
       TermIndexingHandler::Create(
           &fake_clock_, normalizer_.get(), index.get(),
           /*build_property_existence_metadata_hits=*/true));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id));
 
@@ -338,10 +341,10 @@ TEST_F(TermIndexingHandlerTest,
       TermIndexingHandler::Create(
           &fake_clock_, normalizer_.get(), index.get(),
           /*build_property_existence_metadata_hits=*/true));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id));
 
@@ -436,22 +439,25 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
 
   // Handle doc0 and doc1. The LiteIndex should sort and merge after adding
   // these
-  EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
-  EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document0, document_id0,
+                      put_result0.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document1, document_id1,
+                      put_result1.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id1));
   EXPECT_THAT(index->LiteIndexNeedSort(), IsFalse());
 
   // Handle doc2. The LiteIndex should have an unsorted portion after adding
-  EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document2, document_id2,
+                      put_result2.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id2));
 
   // Hits in the hit buffer:
@@ -580,18 +586,21 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
           /*build_property_existence_metadata_hits=*/true));
 
   // Handle all docs
-  EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
-  EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
-  EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
-                              /*recovery_mode=*/false,
-                              /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document0, document_id0,
+                      put_result0.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document1, document_id1,
+                      put_result1.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document2, document_id2,
+                      put_result2.old_document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(document_id2));
 
   // We've disabled sorting during indexing so the HitBuffer's unsorted section
