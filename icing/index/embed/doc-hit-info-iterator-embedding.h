@@ -48,8 +48,8 @@ class DocHitInfoIteratorEmbedding
   // embedding matched with the provided query with a score in the range of
   // [score_low, score_high], using the provided metric_type.
   //
-  // The iterator will store the matched embedding scores in score_map to
-  // prepare for scoring.
+  // The iterator will store the matched embedding scores in info_map to
+  // prepare for scoring and snippeting.
   //
   // The iterator will handle the section restriction logic internally with the
   // help of DocHitInfoIteratorHandlingSectionRestrict.
@@ -61,8 +61,8 @@ class DocHitInfoIteratorEmbedding
       std::unique_ptr<DocHitInfoIteratorEmbedding>>
   Create(const PropertyProto::VectorProto* query,
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
-         double score_low, double score_high,
-         EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
+         double score_low, double score_high, bool get_embedding_match_info,
+         EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
          const EmbeddingIndex* embedding_index,
          const DocumentStore* document_store, const SchemaStore* schema_store,
          int64_t current_time_ms);
@@ -95,8 +95,8 @@ class DocHitInfoIteratorEmbedding
       const PropertyProto::VectorProto* query,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
-      double score_high,
-      EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
+      double score_high, bool get_embedding_match_info,
+      EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
       const EmbeddingIndex* embedding_index,
       std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor,
       const DocumentStore* document_store, const SchemaStore* schema_store,
@@ -106,7 +106,8 @@ class DocHitInfoIteratorEmbedding
         embedding_scorer_(std::move(embedding_scorer)),
         score_low_(score_low),
         score_high_(score_high),
-        score_map_(*score_map),
+        get_embedding_match_info_(get_embedding_match_info),
+        info_map_(*info_map),
         embedding_index_(*embedding_index),
         posting_list_accessor_(std::move(posting_list_accessor)),
         cached_embedding_hits_idx_(0),
@@ -152,8 +153,11 @@ class DocHitInfoIteratorEmbedding
   double score_low_;
   double score_high_;
 
-  // Score map
-  EmbeddingQueryResults::EmbeddingQueryScoreMap& score_map_;  // Does not own
+  // Snippet arguments
+  bool get_embedding_match_info_;
+
+  // MatchInfo map
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap& info_map_;  // Does not own
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;

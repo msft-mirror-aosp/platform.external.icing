@@ -259,6 +259,27 @@ TEST_F(IcingSearchEngineTest, GetDocumentWithBadString) {
       EqualsProto(expected_get_result_proto));
 }
 
+TEST_F(IcingSearchEngineTest, GetDocumentWithNullTerminator) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Put and get for a document with a null terminator in the string.
+  std::string name_space = "namespace";
+  std::string uri = "uri";
+  std::string string_with_null_terminator = std::string("message\0body", 12);
+  DocumentProto document =
+      CreateMessageDocument(name_space, uri, string_with_null_terminator);
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document;
+  ASSERT_THAT(
+      icing.Get(name_space, uri, GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+}
+
 TEST_F(IcingSearchEngineTest, GetDocumentProjectionEmpty) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());

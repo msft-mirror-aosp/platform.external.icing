@@ -89,6 +89,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] setSchemaWithRequestProto(@NonNull byte[] setSchemaRequestBytes) {
+    throwIfClosed();
+    return nativeSetSchemaWithRequestProto(this, setSchemaRequestBytes);
+  }
+
+  @Nullable
   public byte[] getSchema() {
     throwIfClosed();
     return nativeGetSchema(this);
@@ -110,6 +116,12 @@ public class IcingSearchEngineImpl implements Closeable {
   public byte[] put(@NonNull byte[] documentBytes) {
     throwIfClosed();
     return nativePut(this, documentBytes);
+  }
+
+  @Nullable
+  public byte[] batchPut(@NonNull byte[] documentsBytes) {
+    throwIfClosed();
+    return nativeBatchPut(this, documentsBytes);
   }
 
   @Nullable
@@ -290,6 +302,9 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeSetSchema(
       IcingSearchEngineImpl instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
 
+  private static native byte[] nativeSetSchemaWithRequestProto(
+      IcingSearchEngineImpl instance, byte[] setSchemaRequestBytes);
+
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeGetSchemaForDatabase(
@@ -299,6 +314,9 @@ public class IcingSearchEngineImpl implements Closeable {
       IcingSearchEngineImpl instance, String schemaType);
 
   private static native byte[] nativePut(IcingSearchEngineImpl instance, byte[] documentBytes);
+
+  private static native byte[] nativeBatchPut(
+      IcingSearchEngineImpl instance, byte[] documentsBytes);
 
   private static native byte[] nativeGet(
       IcingSearchEngineImpl instance, String namespace, String uri, byte[] getResultSpecBytes);

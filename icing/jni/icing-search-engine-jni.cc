@@ -14,7 +14,6 @@
 
 #include <jni.h>
 
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -33,7 +32,6 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
 #include <google/protobuf/message_lite.h>
 
 namespace {
@@ -128,6 +126,28 @@ jbyteArray nativeSetSchema(JNIEnv* env, jclass clazz, jobject object,
 
   return SerializeProtoToJniByteArray(env, set_schema_result_proto);
 }
+// TODO : b/337913932 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeSetSchemaWithRequestProto(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray set_schema_request_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::SetSchemaRequestProto set_schema_request;
+  if (!ParseProtoFromJniByteArray(env, set_schema_request_bytes,
+                                  &set_schema_request)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse SetSchemaRequestProto in nativeSetSchema";
+    return nullptr;
+  }
+
+  icing::lib::SetSchemaResultProto set_schema_result_proto =
+      icing->SetSchema(std::move(set_schema_request));
+
+  return SerializeProtoToJniByteArray(env, set_schema_result_proto);
+}
 
 jbyteArray nativeGetSchema(JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
@@ -138,8 +158,8 @@ jbyteArray nativeGetSchema(JNIEnv* env, jclass clazz, jobject object) {
   return SerializeProtoToJniByteArray(env, get_schema_result_proto);
 }
 
-jbyteArray nativeGetSchemaForDatabase(
-    JNIEnv* env, jclass clazz, jobject object, jstring database) {
+jbyteArray nativeGetSchemaForDatabase(JNIEnv* env, jclass clazz, jobject object,
+                                      jstring database) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
@@ -180,6 +200,27 @@ jbyteArray nativePut(JNIEnv* env, jclass clazz, jobject object,
       icing->Put(std::move(document_proto));
 
   return SerializeProtoToJniByteArray(env, put_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchPut(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray put_document_request_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::PutDocumentRequest put_document_request;
+  if (!ParseProtoFromJniByteArray(env, put_document_request_bytes,
+                                  &put_document_request)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse DocumentProto in nativePut";
+    return nullptr;
+  }
+
+  icing::lib::BatchPutResultProto batch_put_result_proto =
+      icing->BatchPut(std::move(put_document_request));
+
+  return SerializeProtoToJniByteArray(env, batch_put_result_proto);
 }
 
 jbyteArray nativeGet(JNIEnv* env, jclass clazz, jobject object,
@@ -572,8 +613,6 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       env->GetFieldID(java_class, "nativePointer", "J");
 
   // Register your class' native methods.
-  // TODO(b/629896095): Add blob methods pre-register here when g3 JNI build
-  // pick up the blob APIs.
   static const JNINativeMethod methods[] = {
       {"nativeCreate", "([B)J", reinterpret_cast<void*>(nativeCreate)},
       {"nativeDestroy", "(Lcom/google/android/icing/IcingSearchEngineImpl;)V",
@@ -595,6 +634,11 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
        reinterpret_cast<void*>(nativeGetSchemaType)},
       {"nativePut", "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativePut)},
+      // TODO(b/394875109): uncomment when Jetpack library is updated with this
+      // change and syned to google3.
+      // {"nativeBatchPut",
+      //  "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+      //  reinterpret_cast<void*>(nativeBatchPut)},
       {"nativeGet",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/"
        "String;Ljava/lang/String;[B)[B",

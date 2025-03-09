@@ -73,7 +73,7 @@ class QueryProcessor {
   libtextclassifier3::StatusOr<QueryResults> ParseSearch(
       const SearchSpecProto& search_spec,
       ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-      int64_t current_time_ms,
+      bool get_embedding_match_info, int64_t current_time_ms,
       QueryStatsProto::SearchStats* search_stats = nullptr);
 
  private:
@@ -97,7 +97,7 @@ class QueryProcessor {
   libtextclassifier3::StatusOr<QueryResults> ParseAdvancedQuery(
       const SearchSpecProto& search_spec,
       ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-      int64_t current_time_ms,
+      bool get_embedding_match_info, int64_t current_time_ms,
       QueryStatsProto::SearchStats* search_stats) const;
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
