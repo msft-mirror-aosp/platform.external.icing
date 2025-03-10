@@ -44,6 +44,9 @@ interface IIcingSearchEngine {
   /*PutResultProto*/ byte[] put(in byte[] documentProto);
 
   @nullable
+  /*BatchPutResultProto*/ byte[] batchPut(in byte[] putDocumentRequestProto);
+
+  @nullable
   /*GetResultProto*/ byte[] get(String name_space, String uri, in byte[] getResultSpecProto);
 
   @nullable
