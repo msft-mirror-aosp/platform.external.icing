@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.IcingSearchEngine;
+import com.google.android.icing.proto.BatchGetResultProto;
 import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
@@ -316,6 +317,7 @@ public final class IcingSearchEngineTest {
             .build();
     BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
 
+    assertStatusOk(batchPutResultProto.getStatus());
     assertThat(batchPutResultProto.getPutResultProtos(0).getUri()).isEqualTo("uri1");
     assertStatusOk(batchPutResultProto.getPutResultProtos(0).getStatus());
     assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
@@ -326,16 +328,81 @@ public final class IcingSearchEngineTest {
     assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
         .isEqualTo(StatusProto.Code.UNKNOWN);
 
-    // Check document 1
-    GetResultProto getResultProto =
-        icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
-    assertStatusOk(getResultProto.getStatus());
-    assertThat(getResultProto.getDocument()).isEqualTo(emailDocument1);
-    // check document 2
-    getResultProto =
-        icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
-    assertStatusOk(getResultProto.getStatus());
-    assertThat(getResultProto.getDocument()).isEqualTo(emailDocument2);
+    GetResultSpecProto getResultSpecProto =
+        GetResultSpecProto.newBuilder()
+            .setNamespaceRequested("namespace")
+            .addIds("uri1")
+            .addIds("uri2")
+            .build();
+    BatchGetResultProto batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+
+    assertStatusOk(batchGetResultProto.getStatus());
+    // Check doc1
+    DocumentProto document = batchGetResultProto.getGetResultProtos(0).getDocument();
+    assertStatusOk(batchGetResultProto.getGetResultProtos(0).getStatus());
+    assertThat(document).isEqualTo(emailDocument1);
+    // Check doc2
+    document = batchGetResultProto.getGetResultProtos(1).getDocument();
+    assertStatusOk(batchGetResultProto.getGetResultProtos(1).getStatus());
+    assertThat(document).isEqualTo(emailDocument2);
+  }
+
+  @Test
+  public void testBatchGetWithEmptyResult() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 = createEmailDocument("namespace", "uri1");
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri2");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+    assertStatusOk(batchPutResultProto.getStatus());
+
+    // no ids.
+    GetResultSpecProto getResultSpecProto =
+        GetResultSpecProto.newBuilder().setNamespaceRequested("namespace").build();
+    BatchGetResultProto batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+
+    // Check no doc returned if no ids are specified.
+    assertStatusOk(batchGetResultProto.getStatus());
+    assertThat(batchGetResultProto.getGetResultProtosList()).isEmpty();
+
+    // empty namespace.
+    getResultSpecProto = GetResultSpecProto.newBuilder().addIds("uri1").build();
+    batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+    assertStatusOk(batchGetResultProto.getStatus());
+    assertThat(batchGetResultProto.getGetResultProtosList()).hasSize(1);
+    assertThat(batchGetResultProto.getGetResultProtos(0).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+
+    // different namespace.
+    getResultSpecProto =
+        GetResultSpecProto.newBuilder()
+            .setNamespaceRequested("otherNameSpace")
+            .addIds("uri1")
+            .addIds("uri2")
+            .build();
+    batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+
+    // Check not found returned if namespace is different.
+    assertStatusOk(batchGetResultProto.getStatus());
+    assertThat(batchGetResultProto.getGetResultProtosList()).hasSize(2);
+    assertThat(batchGetResultProto.getGetResultProtos(0).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+    assertThat(batchGetResultProto.getGetResultProtos(1).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
   @Test
@@ -392,7 +459,10 @@ public final class IcingSearchEngineTest {
     PutDocumentRequest putDocumentRequest = PutDocumentRequest.getDefaultInstance();
     BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
 
-    BatchPutResultProto expected = BatchPutResultProto.getDefaultInstance();
+    BatchPutResultProto expected =
+        BatchPutResultProto.newBuilder()
+            .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.OK))
+            .build();
     assertThat(batchPutResultProto).isEqualTo(expected);
 
     // PersistToDiskResultProto should not be set if persist_type is not set in the

@@ -1577,6 +1577,23 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   return result_proto;
 }
 
+BatchGetResultProto IcingSearchEngine::BatchGet(
+    const GetResultSpecProto& get_result_spec) {
+  const std::string& name_space = get_result_spec.namespace_requested();
+  BatchGetResultProto batch_get_result_proto;
+
+  // TODO(b/394875109) Right now we lock in Get(namespace, id, result_spec) for
+  // each id. We should consider locking here for the entire batch request.
+  for (const std::string& id : get_result_spec.ids()) {
+    batch_get_result_proto.mutable_get_result_protos()->Add(
+        Get(name_space, id, get_result_spec));
+  }
+  batch_get_result_proto.mutable_status()->set_code(
+      icing::lib::StatusProto::OK);
+
+  return batch_get_result_proto;
+}
+
 ReportUsageResultProto IcingSearchEngine::ReportUsage(
     const UsageReport& usage_report) {
   ReportUsageResultProto result_proto;
