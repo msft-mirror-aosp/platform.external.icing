@@ -17,6 +17,7 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.google.android.icing.proto.BatchGetResultProto;
 import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
@@ -159,18 +160,22 @@ public final class IcingSearchEngineUtils {
   }
 
   @NonNull
-  public static BatchPutResultProto byteArrayToPutResultProtos(@Nullable byte[] putResultsBytes) {
+  public static BatchPutResultProto byteArrayToBatchPutResultProto(
+      @Nullable byte[] putResultsBytes) {
     if (putResultsBytes == null) {
       Log.e(TAG, "Received null PutResultProtos from native.");
-      // TODO(b/394875109) Or we should create a proto with error status?
-      return BatchPutResultProto.getDefaultInstance();
+      return BatchPutResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
     }
 
     try {
       return BatchPutResultProto.parseFrom(putResultsBytes, EXTENSION_REGISTRY_LITE);
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing PutResultProtos.", e);
-      return BatchPutResultProto.getDefaultInstance();
+      return BatchPutResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
     }
   }
 
@@ -188,6 +193,26 @@ public final class IcingSearchEngineUtils {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing GetResultProto.", e);
       return GetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
+  public static BatchGetResultProto byteArrayToBatchGetResultProto(
+      @Nullable byte[] batchGetResultBytes) {
+    if (batchGetResultBytes == null) {
+      Log.e(TAG, "Received null BatchGetResultProto from native.");
+      return BatchGetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BatchGetResultProto.parseFrom(batchGetResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing BatchGetResultProto.", e);
+      return BatchGetResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }

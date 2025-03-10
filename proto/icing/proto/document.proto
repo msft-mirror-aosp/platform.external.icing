@@ -130,8 +130,14 @@ message PropertyProto {
 }
 
 // Holds a list of PutResultProto.
-// Next tag: 3
+// Next tag: 4
 message BatchPutResultProto {
+  // The overall status of doing the batch put. It is independent of the status
+  // of the individual PutResultProtos. E.g. we may still return OK here even if
+  // all the PutResultProto have errors. Or return INTERNAL_ERROR if there is
+  // some issue parsing this proto, even if all documents are indexed
+  // successfully.
+  optional StatusProto status = 3;
   repeated PutResultProto put_result_protos = 1;
 
   // The result of calling PersistToDisk at the end of the BatchPut request if
@@ -186,6 +192,13 @@ message GetResultProto {
   // Copy of the Document proto with the specified name_space, uri. Modifying
   // this does not affect the Document in IcingSearchEngine.
   optional DocumentProto document = 2;
+}
+
+// Result of a call to IcingSearchEngine.BatchGet
+// Next tag: 3
+message BatchGetResultProto {
+  optional StatusProto status = 1;
+  repeated GetResultProto get_result_protos = 2;
 }
 
 // Result of a call to IcingSearchEngine.GetAllNamespaces
