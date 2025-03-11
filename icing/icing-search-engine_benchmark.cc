@@ -150,6 +150,7 @@ class DestructibleDirectory {
   explicit DestructibleDirectory(const Filesystem& filesystem,
                                  const std::string& dir)
       : filesystem_(filesystem), dir_(dir) {
+    filesystem_.DeleteDirectoryRecursively(dir_.c_str());
     filesystem_.CreateDirectoryRecursively(dir_.c_str());
   }
   ~DestructibleDirectory() {
@@ -222,7 +223,6 @@ void BM_IndexLatency(benchmark::State& state) {
   // Create the index.
   IcingSearchEngineOptions options;
   options.set_base_dir(test_dir);
-  options.set_index_merge_size(kIcingFullIndexSize);
   std::unique_ptr<IcingSearchEngine> icing =
       std::make_unique<IcingSearchEngine>(options);
 

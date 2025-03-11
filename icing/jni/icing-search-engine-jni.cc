@@ -14,6 +14,7 @@
 
 #include <jni.h>
 
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -29,6 +30,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/util/logging.h"
@@ -219,6 +221,8 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchPut(
 
   icing::lib::BatchPutResultProto batch_put_result_proto =
       icing->BatchPut(std::move(put_document_request));
+  batch_put_result_proto.mutable_status()->set_code(
+      icing::lib::StatusProto::OK);
 
   return SerializeProtoToJniByteArray(env, batch_put_result_proto);
 }
@@ -242,6 +246,25 @@ jbyteArray nativeGet(JNIEnv* env, jclass clazz, jobject object,
                  get_result_spec);
 
   return SerializeProtoToJniByteArray(env, get_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchGet(
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray result_spec_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::GetResultSpecProto get_result_spec;
+  if (!ParseProtoFromJniByteArray(env, result_spec_bytes, &get_result_spec)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse GetResultSpecProto in nativeGet";
+    return nullptr;
+  }
+
+  icing::lib::BatchGetResultProto batch_get_result_proto =
+      icing->BatchGet(get_result_spec);
+
+  return SerializeProtoToJniByteArray(env, batch_get_result_proto);
 }
 
 jbyteArray nativeReportUsage(JNIEnv* env, jclass clazz, jobject object,
@@ -639,6 +662,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       // {"nativeBatchPut",
       //  "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
       //  reinterpret_cast<void*>(nativeBatchPut)},
+      // TODO(b/394875109): Add nativeBatchGet here.
       {"nativeGet",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/"
        "String;Ljava/lang/String;[B)[B",
