@@ -98,8 +98,8 @@ inline uint32_t NextPowerOf2(uint32_t n) {
 // vector. permutation[i] specifies the new index for the element originally at
 // index i.
 template <typename... ContainerTypes>
-static void ApplyPermutation(const std::vector<int> permutation,
-                             ContainerTypes&... values) {
+static void ApplyPermutation(const std::vector<int> &permutation,
+                             ContainerTypes &...values) {
   std::vector<bool> done(permutation.size());
   // Apply permutation
   for (int i = 0; i < permutation.size(); ++i) {
