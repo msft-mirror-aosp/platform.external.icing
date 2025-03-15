@@ -29,6 +29,7 @@ namespace {
 
 using ::aidl::com::android::isolated_storage_service::BnIcingSearchEngine;
 using ::aidl::com::android::isolated_storage_service::BnIsolatedStorageService;
+using ::icing::lib::BatchPutResultProto;
 using ::icing::lib::BlobProto;
 using ::icing::lib::DebugInfoResultProto;
 using ::icing::lib::DebugInfoVerbosity;
@@ -49,6 +50,7 @@ using ::icing::lib::InitializeResultProto;
 using ::icing::lib::OptimizeResultProto;
 using ::icing::lib::PersistToDiskResultProto;
 using ::icing::lib::PersistType;
+using ::icing::lib::PutDocumentRequest;
 using ::icing::lib::PutResultProto;
 using ::icing::lib::ReportUsageResultProto;
 using ::icing::lib::ResetResultProto;
@@ -149,6 +151,19 @@ class IcingConnectionImpl
     PutResultProto put_result = icing_->Put(document);
     *put_result_proto = std::vector<uint8_t>();
     SERIALIZE_AND_RETURN_ASTATUS(put_result, put_result_proto);
+  }
+
+  ScopedAStatus batchPut(const std::vector<uint8_t>& put_document_request_proto,
+                         std::optional<std::vector<uint8_t>>* batch_put_result_proto) {
+    CHECK_ICING_INIT(icing_);
+
+    PutDocumentRequest request;
+    DESERIALIZE_OR_RETURN(put_document_request_proto, request);
+
+    BatchPutResultProto result = icing_->BatchPut(std::move(request));
+
+    *batch_put_result_proto = std::vector<uint8_t>();
+    SERIALIZE_AND_RETURN_ASTATUS(result, batch_put_result_proto);
   }
 
   ScopedAStatus get(const std::string& name_space, const std::string& uri,
