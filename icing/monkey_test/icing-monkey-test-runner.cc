@@ -551,6 +551,8 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   // flip this flag to test document store's compatibility.
   icing_options.set_document_store_namespace_id_fingerprint(
       GetRandomBoolean(&random_));
+  icing_options.set_enable_embedding_index(true);
+  icing_options.set_enable_embedding_quantization(GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

@@ -47,7 +47,7 @@ uint64_t DecodeIntFromCString(std::string_view encoded_str);
 // string.
 // Eg2: This increases the size from 1-byte string to 2-bytes C string.
 // Eg3: This increases the size from 2-byte string to 3-bytes C string.
-std::string EncodeStringToCString(std::string input);
+std::string EncodeStringToCString(const std::string& input);
 
 }  // namespace encode_util
 
