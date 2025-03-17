@@ -169,6 +169,40 @@ bool ParseAndPopulateAppSearchDatabaseField(SchemaProto& schema_proto) {
   return populated_database_field;
 }
 
+// Compares the schema types list defined in two schemas, ignoring order.
+//
+// Requires: old_schema.schema_database() == new_schema.schema_database()
+//
+// Returns: true if the types in `new_schema` are identical to the types
+// in `old_schema`, otherwise returns false.
+bool AreSchemaTypesEqual(const SchemaProto& old_schema,
+                         const SchemaProto& new_schema) {
+  if (old_schema.types().size() != new_schema.types().size()) {
+    return false;
+  }
+
+  // Create a map of old schema types to and check that the new schema's types
+  // are identical.
+  std::unordered_map<std::string_view, const SchemaTypeConfigProto&>
+      old_schema_types;
+  old_schema_types.reserve(old_schema.types().size());
+  for (const SchemaTypeConfigProto& old_type : old_schema.types()) {
+    old_schema_types.emplace(old_type.schema_type(), old_type);
+  }
+  for (const SchemaTypeConfigProto& new_type : new_schema.types()) {
+    auto old_type_itr = old_schema_types.find(new_type.schema_type());
+    if (old_type_itr == old_schema_types.end()) {
+      return false;
+    }
+    if (old_type_itr->second.SerializeAsString() !=
+        new_type.SerializeAsString()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 }  // namespace
 
 /* static */ libtextclassifier3::StatusOr<SchemaStore::Header>
@@ -466,12 +500,11 @@ SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
       base_dir_(std::move(base_dir)),
       clock_(clock),
       feature_flags_(feature_flags),
-      schema_file_(std::make_unique<FileBackedProto<SchemaProto>>(
-          *filesystem, MakeSchemaFilename(base_dir_))) {}
+      schema_file_(filesystem, MakeSchemaFilename(base_dir_)) {}
 
 SchemaStore::~SchemaStore() {
-  if (has_schema_successfully_set_ && schema_file_ != nullptr &&
-      schema_type_mapper_ != nullptr && schema_type_manager_ != nullptr) {
+  if (has_schema_successfully_set_ && schema_type_mapper_ != nullptr &&
+      schema_type_manager_ != nullptr) {
     if (!PersistToDisk().ok()) {
       ICING_LOG(ERROR) << "Error persisting to disk in SchemaStore destructor";
     }
@@ -485,8 +518,9 @@ libtextclassifier3::Status SchemaStore::Initialize(SchemaProto new_schema) {
         "Incorrectly tried to initialize schema store with a new schema, when "
         "one is already set!");
   }
-  ICING_RETURN_IF_ERROR(schema_file_->Write(
-      std::make_unique<SchemaProto>(std::move(new_schema))));
+  // ResetSchemaFileIfNeeded() will be called in InitializeInternal below.
+  ICING_RETURN_IF_ERROR(
+      schema_file_.Write(std::make_unique<SchemaProto>(std::move(new_schema))));
   return InitializeInternal(/*create_overlay_if_necessary=*/true,
                             /*initialize_stats=*/nullptr);
 }
@@ -524,8 +558,9 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   bool overlay_schema_file_exists =
       filesystem_->FileExists(overlay_schema_filename.c_str());
 
-  libtextclassifier3::Status base_schema_state = schema_file_->Read().status();
+  libtextclassifier3::Status base_schema_state = schema_file_.Read().status();
   if (!base_schema_state.ok() && !absl_ports::IsNotFound(base_schema_state)) {
+    ResetSchemaFileIfNeeded();
     return base_schema_state;
   }
 
@@ -533,6 +568,7 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   // 1. Everything is missing. This is an empty schema store.
   if (!base_schema_state.ok() && !overlay_schema_file_exists &&
       !header_exists) {
+    ResetSchemaFileIfNeeded();
     return libtextclassifier3::Status::OK;
   }
 
@@ -541,6 +577,7 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   if (base_schema_state.ok() && !overlay_schema_file_exists && header_exists &&
       !header_->overlay_created()) {
     // Nothing else to do. Just return safely.
+    ResetSchemaFileIfNeeded();
     return libtextclassifier3::Status::OK;
   }
 
@@ -550,6 +587,7 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
       header_->overlay_created()) {
     overlay_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
         *filesystem_, MakeOverlaySchemaFilename(base_dir_));
+    ResetSchemaFileIfNeeded();
     return libtextclassifier3::Status::OK;
   }
 
@@ -557,6 +595,7 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   // Return an error.
   bool overlay_created = header_->overlay_created();
   bool base_schema_exists = base_schema_state.ok();
+  ResetSchemaFileIfNeeded();
   return absl_ports::InternalError(IcingStringUtil::StringPrintf(
       "Unable to properly load schema. Header {exists:%d, overlay_created:%d}, "
       "base schema exists: %d, overlay_schema_exists: %d",
@@ -638,7 +677,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
       // The base schema should be written to the original file
       auto base_schema_ptr =
           std::make_unique<SchemaProto>(std::move(backup_result.backup_schema));
-      ICING_RETURN_IF_ERROR(schema_file_->Write(std::move(base_schema_ptr)));
+      ICING_RETURN_IF_ERROR(schema_file_.Write(std::move(base_schema_ptr)));
 
       // LINT.IfChange(min_overlay_version_compatibility)
       // Although the current version is 5, the schema is compatible with
@@ -655,6 +694,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
 
   // Write the header
   ICING_RETURN_IF_ERROR(UpdateChecksum());
+  ResetSchemaFileIfNeeded();
   return libtextclassifier3::Status::OK;
 }
 
@@ -734,15 +774,13 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
 }
 
 libtextclassifier3::StatusOr<Crc32> SchemaStore::GetChecksum() const {
-  ICING_ASSIGN_OR_RETURN(Crc32 schema_checksum, schema_file_->GetChecksum());
-  // We've gotten the schema_checksum successfully. This means that
-  // schema_file_->Read() will only return either a schema or NOT_FOUND.
-  // Sadly, we actually need to differentiate between an existing, but empty
-  // schema and a non-existent schema (both of which will have a checksum of 0).
-  // For existing, but empty schemas, we need to continue with the checksum
-  // calculation of the other components.
-  if (schema_checksum == Crc32() &&
-      absl_ports::IsNotFound(schema_file_->Read().status())) {
+  ICING_ASSIGN_OR_RETURN(Crc32 schema_checksum, schema_file_.GetChecksum());
+  // We've gotten the schema_checksum successfully. Sadly, we still need to
+  // differentiate between an existing, but empty schema and a non-existent
+  // schema (both of which will have a checksum of 0). For existing, but empty
+  // schemas, we need to continue with the checksum calculation of the other
+  // components.
+  if (schema_checksum == Crc32() && !has_schema_successfully_set_) {
     return schema_checksum;
   }
 
@@ -761,18 +799,13 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::GetChecksum() const {
 }
 
 libtextclassifier3::StatusOr<Crc32> SchemaStore::UpdateChecksum() {
-  // FileBackedProto always keeps its checksum up to date. So we just need to
-  // retrieve the checksum.
-  ICING_ASSIGN_OR_RETURN(Crc32 schema_checksum, schema_file_->GetChecksum());
-  // We've gotten the schema_checksum successfully. This means that
-  // schema_file_->Read() will only return either a schema or NOT_FOUND.
-  // Sadly, we actually need to differentiate between an existing, but empty
-  // schema and a non-existent schema (both of which will have a checksum of 0).
-  // For existing, but empty schemas, we need to continue with the checksum
-  // calculation of the other components so that we will correctly write the
-  // header.
-  if (schema_checksum == Crc32() &&
-      absl_ports::IsNotFound(schema_file_->Read().status())) {
+  ICING_ASSIGN_OR_RETURN(Crc32 schema_checksum, schema_file_.GetChecksum());
+  // We've gotten the schema_checksum successfully. Sadly, we still need to
+  // differentiate between an existing, but empty schema and a non-existent
+  // schema (both of which will have a checksum of 0). For existing, but empty
+  // schemas, we need to continue with the checksum calculation of the other
+  // components.
+  if (schema_checksum == Crc32() && !has_schema_successfully_set_) {
     return schema_checksum;
   }
   Crc32 total_checksum;
@@ -798,7 +831,8 @@ libtextclassifier3::StatusOr<const SchemaProto*> SchemaStore::GetSchema()
   if (overlay_schema_file_ != nullptr) {
     return overlay_schema_file_->Read();
   }
-  return schema_file_->Read();
+
+  return schema_file_.Read();
 }
 
 libtextclassifier3::StatusOr<SchemaProto> SchemaStore::GetSchema(
@@ -822,37 +856,45 @@ libtextclassifier3::StatusOr<SchemaProto> SchemaStore::GetSchema(
   return schema_proto;
 }
 
-// TODO(cassiewang): Consider removing this definition of SetSchema if it's not
-// needed by production code. It's currently being used by our tests, but maybe
-// it's trivial to change our test code to also use the
-// SetSchema(SchemaProto&& new_schema)
+// TODO - b/337913932 - Remove this method once all callers are migrated to
+// SetSchema(SetSchemaRequestProto&& set_schema_request). This should just be
+// used in our tests.
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
-SchemaStore::SetSchema(const SchemaProto& new_schema,
+SchemaStore::SetSchema(SchemaProto new_schema,
                        bool ignore_errors_and_delete_documents) {
-  return SetSchema(SchemaProto(new_schema), ignore_errors_and_delete_documents);
+  SetSchemaRequestProto set_schema_request;
+  *set_schema_request.mutable_schema() = std::move(new_schema);
+  set_schema_request.set_ignore_errors_and_delete_documents(
+      ignore_errors_and_delete_documents);
+
+  return SetSchema(std::move(set_schema_request));
 }
 
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
-SchemaStore::SetSchema(SchemaProto&& new_schema,
-                       bool ignore_errors_and_delete_documents) {
+SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
+  bool ignore_errors_and_delete_documents =
+      set_schema_request.ignore_errors_and_delete_documents();
+
   if (feature_flags_->enable_schema_database()) {
     // Step 1: (Only required if schema database is enabled)
     // Do some preliminary checks on the new schema before formal validation and
     // delta computation. This checks that:
-    // - The new schema only contains types from a single database.
+    // - The database field in the new schema's types match the provided
+    //   database.
     // - The new schema's type names are not already in use from other
-    // databases.
-    ICING_ASSIGN_OR_RETURN(std::string database,
-                           ValidateAndGetDatabase(new_schema));
+    //   databases.
+    ICING_RETURN_IF_ERROR(ValidateSchemaDatabase(
+        set_schema_request.schema(), set_schema_request.database()));
 
     // Step 2: Schema validation and delta computation -- try to get the
     // existing schema for the database to compare to the new schema.
     libtextclassifier3::StatusOr<SchemaProto> schema_proto =
-        GetSchema(database);
+        GetSchema(set_schema_request.database());
     if (absl_ports::IsNotFound(schema_proto.status())) {
       // Case 1: No preexisting schema for this database.
-      return SetInitialSchemaForDatabase(std::move(new_schema),
-                                         ignore_errors_and_delete_documents);
+      return SetInitialSchemaForDatabase(
+          std::move(*set_schema_request.mutable_schema()),
+          set_schema_request.database(), ignore_errors_and_delete_documents);
     }
 
     if (!schema_proto.ok()) {
@@ -863,16 +905,18 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
     // Case 3: At this point, we're guaranteed that we have an existing schema
     // for this database.
     const SchemaProto& old_schema = schema_proto.ValueOrDie();
-    return SetSchemaWithDatabaseOverride(std::move(new_schema), old_schema,
-                                         ignore_errors_and_delete_documents);
+    return SetSchemaWithDatabaseOverride(
+        std::move(*set_schema_request.mutable_schema()), old_schema,
+        set_schema_request.database(), ignore_errors_and_delete_documents);
   }
 
   // Get the full schema if schema database is disabled.
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto = GetSchema();
   if (absl_ports::IsNotFound(schema_proto.status())) {
     // Case 1: No preexisting schema
-    return SetInitialSchemaForDatabase(std::move(new_schema),
-                                       ignore_errors_and_delete_documents);
+    return SetInitialSchemaForDatabase(
+        std::move(*set_schema_request.mutable_schema()),
+        set_schema_request.database(), ignore_errors_and_delete_documents);
   }
 
   if (!schema_proto.ok()) {
@@ -882,13 +926,15 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
   // Case 3: At this point, we're guaranteed that we have an existing schema
   const SchemaProto& old_schema = *schema_proto.ValueOrDie();
-  return SetSchemaWithDatabaseOverride(std::move(new_schema), old_schema,
-                                       ignore_errors_and_delete_documents);
+  return SetSchemaWithDatabaseOverride(
+      std::move(*set_schema_request.mutable_schema()), old_schema,
+      set_schema_request.database(), ignore_errors_and_delete_documents);
 }
 
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
 SchemaStore::SetInitialSchemaForDatabase(
-    SchemaProto new_schema, bool ignore_errors_and_delete_documents) {
+    SchemaProto new_schema, const std::string& database,
+    bool ignore_errors_and_delete_documents) {
   SetSchemaResult result;
 
   ICING_RETURN_IF_ERROR(SchemaUtil::Validate(new_schema, *feature_flags_));
@@ -902,7 +948,7 @@ SchemaStore::SetInitialSchemaForDatabase(
   // schema file.
   ICING_ASSIGN_OR_RETURN(
       SchemaProto full_new_schema,
-      GetFullSchemaProtoWithUpdatedDb(std::move(new_schema)));
+      GetFullSchemaProtoWithUpdatedDb(std::move(new_schema), database));
   ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
   has_schema_successfully_set_ = true;
 
@@ -912,14 +958,36 @@ SchemaStore::SetInitialSchemaForDatabase(
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
 SchemaStore::SetSchemaWithDatabaseOverride(
     SchemaProto new_schema, const SchemaProto& old_schema,
-    bool ignore_errors_and_delete_documents) {
+    const std::string& database, bool ignore_errors_and_delete_documents) {
   // Assume we can set the schema unless proven otherwise.
   SetSchemaResult result;
   result.success = true;
 
-  if (new_schema.SerializeAsString() == old_schema.SerializeAsString()) {
-    // Same schema as before. No need to update anything
-    return result;
+  if (feature_flags_->enable_schema_database()) {
+    // Sanity check to make sure that we're comparing schemas from the same
+    // database.
+    // The new code path ensures that old_schema contains types from exactly one
+    // database since it's obtained using GetSchema(database), which is
+    // guaranteed to only return types from the single provided database.
+    libtextclassifier3::Status validate_old_schema_database =
+        ValidateSchemaDatabase(old_schema, database);
+    if (!validate_old_schema_database.ok()) {
+      return absl_ports::InvalidArgumentError(
+          "Schema database mismatch between new and old schemas. This should "
+          "never happen");
+    }
+
+    // Check if the schema types are the same between the new and old schema,
+    // ignoring order.
+    if (AreSchemaTypesEqual(new_schema, old_schema)) {
+      return result;
+    }
+  } else {
+    // Old equality check that is sensitive to type definition order.
+    if (new_schema.SerializeAsString() == old_schema.SerializeAsString()) {
+      // Same schema as before. No need to update anything
+      return result;
+    }
   }
 
   // Different schema -- we need to validate the schema and track the
@@ -972,7 +1040,7 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   // for writing the full proto to the schema file.
   ICING_ASSIGN_OR_RETURN(
       SchemaProto full_new_schema,
-      GetFullSchemaProtoWithUpdatedDb(std::move(new_schema)));
+      GetFullSchemaProtoWithUpdatedDb(std::move(new_schema), database));
 
   // We still need to update old_schema_type_ids_changed. We need to retrieve
   // the entire old schema for this, as type ids are assigned for the entire
@@ -1058,7 +1126,7 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
   // even though they now point to files that are within old_base_dir.
   // Manually set them to the correct paths.
   base_dir_ = std::move(old_base_dir);
-  schema_file_->SetSwappedFilepath(MakeSchemaFilename(base_dir_));
+  schema_file_.SetSwappedFilepath(MakeSchemaFilename(base_dir_));
   if (overlay_schema_file_ != nullptr) {
     overlay_schema_file_->SetSwappedFilepath(
         MakeOverlaySchemaFilename(base_dir_));
@@ -1347,15 +1415,12 @@ SchemaStore::ConstructBlobPropertyMap() const {
   return blob_property_map;
 }
 
-libtextclassifier3::StatusOr<std::string> SchemaStore::ValidateAndGetDatabase(
-    const SchemaProto& new_schema) const {
-  std::string database;
-
+libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
+    const SchemaProto& new_schema, const std::string& database) const {
   if (!feature_flags_->enable_schema_database() || new_schema.types().empty()) {
-    return database;
+    return libtextclassifier3::Status::OK;
   }
 
-  database = new_schema.types(0).database();
   // Loop through new_schema's types and validate it. The input SchemaProto
   // contains a list of SchemaTypeConfigProtos without deduplication. We need to
   // check that:
@@ -1366,10 +1431,10 @@ libtextclassifier3::StatusOr<std::string> SchemaStore::ValidateAndGetDatabase(
   for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
     // Check database consistency.
     if (database != type_config.database()) {
-      return absl_ports::InvalidArgumentError(
-          "SetSchema only accepts a SchemaProto with types from a single "
-          "database at a time. Please make separate calls for each database if "
-          "you need to set the schema for multiple databases.");
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Mismatch between the set schema request's database and the new "
+          "schema types' database. Expected '",
+          database, "' but got '", type_config.database(), "'."));
     }
 
     // Check type name uniqueness. This is only necessary if there is a
@@ -1384,12 +1449,13 @@ libtextclassifier3::StatusOr<std::string> SchemaStore::ValidateAndGetDatabase(
       }
     }
   }
-  return database;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<SchemaProto>
 SchemaStore::GetFullSchemaProtoWithUpdatedDb(
-    SchemaProto input_database_schema) const {
+    SchemaProto input_database_schema,
+    const std::string& database_to_update) const {
   if (!feature_flags_->enable_schema_database()) {
     // If the schema database is not enabled, the input schema is already the
     // full schema, so we don't need to do any merges.
@@ -1415,13 +1481,8 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
 
   // At this point, we have a pre-existing schema -- we need to merge the
   // updated database with the existing schema.
-  if (input_database_schema.types().empty()) {
-    return *schema_proto.ValueOrDie();
-  }
-
-  std::string input_database = input_database_schema.types(0).database();
   if (database_type_map_.size() == 1 &&
-      database_type_map_.find(input_database) != database_type_map_.end()) {
+      database_type_map_.find(database_to_update) != database_type_map_.end()) {
     // No other databases in the schema -- we can return the input database
     // schema.
     return input_database_schema;
@@ -1432,18 +1493,18 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
 
   // 1. Add types from the existing schema, replacing existing types with the
   // input types if the database is the one being updated by the input schema.
-  // - For the input_database, we replace the existing types with the input
-  //   types. An exisiting type is deleted if it's not included in
-  //   input_database.
-  // - If there are more input types than existing types for the input_database,
+  // - For database_to_update, we replace the existing types with the input
+  //   types. Any existing type not included in input_database_schema is
+  //   deleted.
+  // - If there are more input types than existing types for database_to_update,
   //   the rest of the input types are appended to the end of the full_schema.
-  // - If there are fewer input types than existing types for the
-  //   input_database, we shift all existing that come after input_database
-  //   forward.
-  // - For existing types from other databases, we add the types in their
-  //   original order to full_schema. Note that the type-ids of existing types
-  //   might still change if some types deleted in input_database as this will
-  //   cause all subsequent types ids to shift forward.
+  // - If there are fewer input types than existing types for
+  //   database_to_update, we shift forward all existing types that appear after
+  //   the last input type.
+  // - For existing types from other databases, we preserve the existing order
+  //   after adding to full_schema. Note that the type-ids of existing types
+  //   might still change if some types are deleted in the database_to_update as
+  //   this will cause all subsequent types ids to shift forward.
   int input_schema_index = 0, existing_schema_index = 0;
   while (input_schema_index < input_database_schema.types().size() &&
          existing_schema_index < existing_schema->types().size()) {
@@ -1452,12 +1513,7 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     SchemaTypeConfigProto& input_type_config =
         *input_database_schema.mutable_types(input_schema_index);
 
-    if (input_type_config.database() != input_database) {
-      return absl_ports::InvalidArgumentError(
-          "Can only update a single database at a time.");
-    }
-
-    if (existing_type_config.database() == input_database) {
+    if (existing_type_config.database() == database_to_update) {
       // If the database is the one being updated by the input schema, replace
       // the existing type with a type from the input schema.
       *full_schema.add_types() = std::move(input_type_config);
@@ -1486,7 +1542,7 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     // that are from input_database, since existing types from input_database
     // are replaced with input_database_schema.
     if (existing_schema->types(existing_schema_index).database() !=
-        input_database) {
+        database_to_update) {
       *full_schema.add_types() = existing_schema->types(existing_schema_index);
     }
   }

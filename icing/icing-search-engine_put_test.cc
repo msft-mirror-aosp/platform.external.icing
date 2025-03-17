@@ -330,6 +330,25 @@ TEST_F(IcingSearchEnginePutTest, IndexingDocMergeFailureResets) {
   }
 }
 
+TEST_F(IcingSearchEnginePutTest, PutDocumentUriReturnedInResult) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_index_merge_size(document.ByteSizeLong());
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(put_result_proto.uri(), document.uri());
+  EXPECT_FALSE(put_result_proto.was_replacement());
+}
+
 TEST_F(IcingSearchEnginePutTest, PutDocumentReplacementSucceeds) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")

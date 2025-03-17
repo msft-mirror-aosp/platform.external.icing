@@ -101,9 +101,11 @@ QueryProcessor::QueryProcessor(
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    int64_t current_time_ms, QueryStatsProto::SearchStats* search_stats) {
+    bool get_embedding_match_info, int64_t current_time_ms,
+    QueryStatsProto::SearchStats* search_stats) {
   ICING_ASSIGN_OR_RETURN(QueryResults results,
                          ParseAdvancedQuery(search_spec, ranking_strategy,
+                                            get_embedding_match_info,
                                             current_time_ms, search_stats));
 
   // Check that all new features used in the search have been enabled in the
@@ -153,7 +155,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    int64_t current_time_ms, QueryStatsProto::SearchStats* search_stats) const {
+    bool get_embedding_match_info, int64_t current_time_ms,
+    QueryStatsProto::SearchStats* search_stats) const {
   std::unique_ptr<Timer> lexer_timer = clock_.GetNewTimer();
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
@@ -189,7 +192,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
       &index_, &numeric_index_, &embedding_index_, &document_store_,
       &schema_store_, &normalizer_, plain_tokenizer.get(),
       join_children_fetcher_, search_spec, std::move(options),
-      needs_term_frequency_info, &feature_flags_, current_time_ms);
+      needs_term_frequency_info, get_embedding_match_info, &feature_flags_,
+      current_time_ms);
   tree_root->Accept(&query_visitor);
   ICING_ASSIGN_OR_RETURN(QueryResults results,
                          std::move(query_visitor).ConsumeResults());

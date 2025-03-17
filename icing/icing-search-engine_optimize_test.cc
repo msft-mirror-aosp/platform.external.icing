@@ -18,13 +18,16 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/marker-file.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
@@ -52,6 +55,7 @@
 #include "icing/schema-builder.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
@@ -72,6 +76,14 @@ using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::Lt;
 using ::testing::Return;
+using ::testing::SizeIs;
+
+// - Before we only created a marker file for set schema.
+// - Now, we switch to a general marker file for different operations that are
+//   sensitive to power loss or crash.
+// - In order to make the change compatible with old versions for possible
+//   AppSearch mainline rollback, let's keep the old marker file name.
+constexpr std::string_view kGeneralMarkerFilename = "set_schema_marker";
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -125,9 +137,10 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_enable_scorable_properties(true);
   icing_options.set_base_dir(GetTestBaseDir());
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
   icing_options.set_calculate_time_since_last_attempted_optimize(true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_marker_file_for_optimize(true);
   return icing_options;
 }
 
@@ -154,6 +167,16 @@ std::vector<double> GetScoresFromSearchResults(
     result_scores.push_back(search_result_proto.results(i).score());
   }
   return result_scores;
+}
+
+EmbeddingMatchSnippetProto CreateEmbeddingMatchSnippetProto(
+    double score, int query_index,
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) {
+  EmbeddingMatchSnippetProto match_snippet;
+  match_snippet.set_semantic_score(score);
+  match_snippet.set_embedding_query_vector_index(query_index);
+  match_snippet.set_embedding_query_metric_type(metric_type);
+  return match_snippet;
 }
 
 // TODO(b/272145329): create SearchSpecBuilder, JoinSpecBuilder,
@@ -2461,6 +2484,293 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
                 ElementsAre(ranking_score_doc2));
+  }
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, OptimizeShouldCreateMarkerFile) {
+  std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Marker file remains on disk only if any crash or power loss occurs during
+  // Optimize. In order to test the behavior of the marker file creation, we
+  // need to mock the filesystem to intentionally skip the marker file deletion
+  // upon destruction of the marker file object.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem, DeleteFile(Eq(marker_file_path)))
+      .WillByDefault(Return(true));
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Marker file should not exist before Optimize.
+  ASSERT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  EXPECT_TRUE(filesystem()->FileExists(marker_file_path.c_str()));
+  std::unique_ptr<IcingSearchEngineMarkerProto> marker_proto =
+      MarkerFile::Postmortem(*filesystem(), marker_file_path);
+  EXPECT_THAT(marker_proto->operation_type(),
+              Eq(IcingSearchEngineMarkerProto::OperationType::OPTIMIZE));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       OptimizeShouldNotCreateMarkerFileWhenFlagDisabled) {
+  std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Marker file remains on disk only if any crash or power loss occurs during
+  // Optimize. In order to test the behavior of the marker file creation, we
+  // need to mock the filesystem to intentionally skip the marker file deletion
+  // upon destruction of the marker file object.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem, DeleteFile(Eq(marker_file_path)))
+      .WillByDefault(Return(true));
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_marker_file_for_optimize(false);
+  TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Marker file should not exist before Optimize.
+  ASSERT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Marker file should not be created during Optimize.
+  EXPECT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       GetEmbeddingMatchInfoShouldWorkAfterDeleteAndOptimization) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  DocumentProto document0 =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty(
+              "embedding1",
+              CreateVector("my_model_v1", {-0.1, 0.2, -0.3, -0.4, 0.5}))
+          .AddVectorProperty("embedding2",
+                             CreateVector("my_model_v2", {0.6, 0.7, -0.8}))
+          .Build();
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty(
+              "embedding1",
+              CreateVector("my_model_v1", {0.1, 0.2, 0.3, 0.4, 0.5}),
+              CreateVector("my_model_v1", {1, 2, 3, 4, 5}),
+              CreateVector("my_model_v1", {0.6, 0.7, 0.8, 0.9, -1}))
+          .AddVectorProperty(
+              "embedding2",
+              CreateVector("my_model_v1", {-0.1, -0.2, -0.3, 0.4, 0.5}),
+              CreateVector("my_model_v2", {0.6, 0.7, 0.8}))
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+
+  // Add an embedding query with semantic scores:
+  // - document 0: -0.5 (embedding1[0]), -5 (embedding1[1]), 1 (embedding1[2]),
+  //                0.3 (embedding2[0])
+  // - document 1: -0.9 (embedding1[0])
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model_v1", {1, -1, -1, 1, -1});
+  // Add an embedding query with semantic scores:
+  // - document 0: -0.5 (embedding2[1])
+  // - document 1: -2.1 (embedding2[0])
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model_v2", {-1, -1, 1});
+
+  search_spec.set_query(
+      "semanticSearch(getEmbeddingParameter(0)) OR "
+      "semanticSearch(getEmbeddingParameter(1))");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0))) + "
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(3);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(true);
+
+  {
+    // The matched embeddings for each doc are:
+    // - document 0: -0.5 (embedding1[0]), -5 (embedding1[1]), 1
+    // (embedding1[2]),
+    //               0.3 (embedding2[0]), -0.5 (embedding2[1])
+    // - document 1: -0.9 (embedding1), -2.1 (embedding2)
+    // The scoring expression for each doc will be evaluated as:
+    // - document 0: sum({-0.5, -5, 1, 0.3}) + sum({-0.5}) = -0.7
+    // - document 1: sum({-0.9}) + sum({-2.1}) = -3
+    SearchResultProto results =
+        icing.Search(search_spec, scoring_spec, result_spec);
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    EXPECT_THAT(results.results(), SizeIs(2));
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
+    EXPECT_THAT(results.results(0).score(), DoubleNear(-0.9 - 2.1, kEps));
+    EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
+    EXPECT_THAT(results.results(1).score(),
+                DoubleNear(-0.5 - 5 + 1 + 0.3 - 0.5, kEps));
+    // Document 0
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(2));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding1"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.9, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(1).property_name(),
+                Eq("embedding2"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-2.1, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    // Document 1
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(5));
+    EXPECT_THAT(results.results(1).snippet().entries(0).property_name(),
+                Eq("embedding1[0]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(1).property_name(),
+                Eq("embedding1[1]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(2).property_name(),
+                Eq("embedding1[2]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(2).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/1, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(3).property_name(),
+                Eq("embedding2[0]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(3).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/0.3, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(4).property_name(),
+                Eq("embedding2[1]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(4).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  }
+
+  {
+    ASSERT_THAT(icing.Delete(document0.namespace_(), document0.uri()).status(),
+                ProtoIsOk());
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+    // Verify that the getEmbeddingMatchInfo is still working as expected.
+    // Only document 1 will be returned since document 0 is deleted.
+    SearchResultProto results =
+        icing.Search(search_spec, scoring_spec, result_spec);
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    EXPECT_THAT(results.results(), SizeIs(1));
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
+    EXPECT_THAT(results.results(0).score(),
+                DoubleNear(-0.5 - 5 + 1 + 0.3 - 0.5, kEps));
+    // Document 1
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(5));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding1[0]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(1).property_name(),
+                Eq("embedding1[1]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(2).property_name(),
+                Eq("embedding1[2]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(2).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/1, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(3).property_name(),
+                Eq("embedding2[0]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(3).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/0.3, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(4).property_name(),
+                Eq("embedding2[1]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(4).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
   }
 }
 

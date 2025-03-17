@@ -14,8 +14,7 @@
 
 #include "icing/result/snippet-retriever.h"
 
-#include <algorithm>
-#include <iterator>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -31,10 +30,12 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
+#include "icing/result/snippet-context.h"
 #include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
@@ -135,8 +136,7 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       // matched query term must be either equal to or a prefix of the token's
       // text. Therefore, the match must end at the end of the matched query
       // term.
-      CharacterIterator verbatim_match_end =
-          CharacterIterator(token.text, 0, 0, 0);
+      CharacterIterator verbatim_match_end(token.text);
       verbatim_match_end.AdvanceToUtf8(match_query_term.length());
       return verbatim_match_end;
     }
@@ -209,12 +209,12 @@ class TokenMatcher {
   // token.text that matches a query term. Note that the utf* indices will be
   // in relation to token.text's start.
   //
-  // If there is no match, then it will construct a CharacterIterator with all
-  // of its indices set to -1.
+  // If there is no match, then it will return an invalid CharacterIterator
+  // instance.
   //
   // Ex. With an exact matcher, query terms=["foo","bar"] and token.text="bar",
   // Matches will return a CharacterIterator(u8:3, u16:3, u32:3).
-  virtual CharacterIterator Matches(Token token) const = 0;
+  virtual CharacterIterator Matches(const Token& token) const = 0;
 };
 
 class TokenMatcherExact : public TokenMatcher {
@@ -227,7 +227,7 @@ class TokenMatcherExact : public TokenMatcher {
         restricted_query_terms_(restricted_query_terms),
         normalizer_(normalizer) {}
 
-  CharacterIterator Matches(Token token) const override {
+  CharacterIterator Matches(const Token& token) const override {
     Normalizer::NormalizedTerm normalized_term =
         NormalizeToken(normalizer_, token);
     auto itr = unrestricted_query_terms_.find(normalized_term.text);
@@ -239,7 +239,7 @@ class TokenMatcherExact : public TokenMatcher {
       return FindMatchEnd(normalizer_, token, *itr);
     }
 
-    return CharacterIterator(token.text, -1, -1, -1);
+    return CharacterIterator();
   }
 
  private:
@@ -258,7 +258,7 @@ class TokenMatcherPrefix : public TokenMatcher {
         restricted_query_terms_(restricted_query_terms),
         normalizer_(normalizer) {}
 
-  CharacterIterator Matches(Token token) const override {
+  CharacterIterator Matches(const Token& token) const override {
     Normalizer::NormalizedTerm normalized_term =
         NormalizeToken(normalizer_, token);
     for (const std::string& query_term : unrestricted_query_terms_) {
@@ -275,7 +275,7 @@ class TokenMatcherPrefix : public TokenMatcher {
         return FindMatchEnd(normalizer_, token, query_term);
       }
     }
-    return CharacterIterator(token.text, -1, -1, -1);
+    return CharacterIterator();
   }
 
  private:
@@ -326,7 +326,7 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowStart(
 CharacterIterator IncludeTrailingPunctuation(
     std::string_view value, CharacterIterator window_end_exclusive,
     int window_end_max_exclusive_utf32) {
-  size_t max_search_index = value.length() - 1;
+  int max_search_index = static_cast<int>(value.length()) - 1;
   while (window_end_exclusive.utf8_index() <= max_search_index &&
          window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
     int char_len = 0;
@@ -490,6 +490,10 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
                             const Tokenizer* tokenizer,
                             MatchOptions* match_options,
                             SnippetProto* snippet_proto) {
+  if (tokenizer == nullptr || matcher == nullptr) {
+    // This is the case if the property is not a string property.
+    return;
+  }
   // We're at the end. Let's check our values.
   for (int i = 0; i < current_property->string_values_size(); ++i) {
     SnippetProto::EntryProto snippet_entry;
@@ -522,9 +526,9 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
       for (int i = 0; i < batch_tokens.size(); ++i) {
         const Token& token = batch_tokens.at(i);
         CharacterIterator submatch_end = matcher->Matches(token);
-        // If the token matched a query term, then submatch_end will point to an
-        // actual position within token.text.
-        if (submatch_end.utf8_index() == -1) {
+        // If the token didn't match, then we will get an invalid iterator
+        // instance.
+        if (!submatch_end.is_valid()) {
           continue;
         }
         // As snippet matching may move iterator around, we save a reset
@@ -596,9 +600,147 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
   }
 }
 
+// Iterates through the PropertyProto to find the global section position
+// indices for each embedding match.
+//
+// The returned map maps a vector-query index to a list of global positions
+// within the property, in the order in which the vector appears in the
+// property.
+//
+// For example, if the property contains the following vectors:
+// - 0: [1, 2, 3] (signature a)
+// - 1: [4, 5, 6, 7] (signature b)
+// - 2: [7, 8, 9, 10, 2, 3] (signature c)
+// - 3: [10, 11, 12] (signature a)
+//
+// And the embedding queries are:
+// {0: dimension=3, signature=a; 1: dimension=5, signature=c}
+//
+// Then the returned map will be: {{0: [0, 3]}; {1: [2]}}
+std::unordered_map<int, std::vector<int>> GetGlobalEmbeddingSectionPositions(
+    const PropertyProto& property,
+    const SnippetContext::EmbeddingQueryVectorMetadataMap&
+        embedding_query_vector_metadata) {
+  std::unordered_map<int, std::vector<int>> global_embedding_section_positions;
+  for (int i = 0; i < property.vector_values_size(); ++i) {
+    const PropertyProto::VectorProto& vector_value = property.vector_values(i);
+    int dimension = vector_value.values().size();
+    std::string_view model_signature = vector_value.model_signature();
+    auto dimension_itr = embedding_query_vector_metadata.find(dimension);
+    if (dimension_itr == embedding_query_vector_metadata.end()) {
+      // No embedding query vector with this dimension.
+      continue;
+    }
+    auto signature_itr =
+        dimension_itr->second.find(std::string(model_signature));
+    if (signature_itr == dimension_itr->second.end()) {
+      // No embedding query vector with this dimension and signature.
+      continue;
+    }
+    for (int query_vector_index : signature_itr->second) {
+      global_embedding_section_positions[query_vector_index].push_back(i);
+    }
+  }
+  return global_embedding_section_positions;
+}
+
+// Retrieves embedding match info for the vector values in the given property.
+//
+// MatchOptions holds the snippet spec and number of desired matches remaining.
+// Each call to GetEntriesFromProperty will decrement max_matches_remaining
+// by the number of entries that it adds to snippet_proto.
+//
+// The SnippetEntries found for matched content will be added to snippet_proto.
+void GetEmbeddingMatchInfo(
+    DocumentId doc_id, SectionId section_id, const PropertyProto& property,
+    const std::string& property_path,
+    const SnippetContext::EmbeddingQueryVectorMetadataMap&
+        embedding_query_vector_metadata,
+    const SnippetContext::DocumentEmbeddingMatchInfoMap&
+        embedding_match_info_map,
+    MatchOptions* match_options, SnippetProto* snippet_proto) {
+  // Step 1: Get the matches for this document and section from
+  // embedding_match_info_map.
+  auto itr = embedding_match_info_map.find(doc_id);
+  if (itr == embedding_match_info_map.end()) {
+    // No embedding matches for this document.
+    return;
+  }
+  const std::vector<SnippetContext::EmbeddingMatchInfoEntry>&
+      embedding_matches = itr->second;
+
+  // Step 2: Get the global section positions for all embeddings in the
+  // property. This maps a vector query index to a list of global positions
+  // within the property, in the order in which the vector appears in the
+  // property.
+  std::unordered_map<int, std::vector<int>> global_embedding_section_positions =
+      GetGlobalEmbeddingSectionPositions(property,
+                                         embedding_query_vector_metadata);
+
+  // Step 3: Retrieve results and populate snippet entries.
+  // Maps from position in section to EmbeddingMatchSnippetProto entries. An
+  // ordered map is used so that we can return the match entries in the order
+  // in which the vector appears in the property.
+  std::map<int, std::vector<EmbeddingMatchSnippetProto>> match_info_entries;
+  for (const SnippetContext::EmbeddingMatchInfoEntry& match :
+       embedding_matches) {
+    if (match_options->max_matches_remaining <= 0) {
+      // We've reached the max number of matches. This shouldn't really happen
+      // because the match-info map should not contain more entries than needed,
+      // but break just in case.
+      break;
+    }
+    if (match.section_id != section_id) {
+      continue;
+    }
+    auto global_positions_itr =
+        global_embedding_section_positions.find(match.query_vector_index);
+    if (global_positions_itr == global_embedding_section_positions.end()) {
+      // This would indicate that the embedding query results recorded for the
+      // query is incorrect, which should never happen.
+      ICING_LOG(ERROR) << "Incorrect embedding query results match info "
+                          "recorded for query vector index "
+                       << match.query_vector_index << ", document " << doc_id
+                       << ", property " << property_path;
+      continue;
+    }
+    const std::vector<int>& global_positions = global_positions_itr->second;
+    if (match.position >= global_positions.size()) {
+      // This would indicate that the embedding query results recorded for the
+      // query is incorrect, which should never happen.
+      ICING_LOG(ERROR) << "Incorrect embedding query results match info "
+                          "recorded for query vector index "
+                       << match.query_vector_index << ", document " << doc_id
+                       << ", property " << property_path;
+      continue;
+    }
+
+    // Create the match proto and add it to the entries map.
+    EmbeddingMatchSnippetProto match_proto;
+    match_proto.set_semantic_score(match.score);
+    match_proto.set_embedding_query_vector_index(match.query_vector_index);
+    match_proto.set_embedding_query_metric_type(match.metric_type);
+    match_info_entries[global_positions.at(match.position)].push_back(
+        match_proto);
+
+    --match_options->max_matches_remaining;
+  }
+
+  // Step 5: Add the entries to the snippet proto.
+  for (auto& [position_in_section, entries] : match_info_entries) {
+    SnippetProto::EntryProto* snippet_entry = snippet_proto->add_entries();
+    snippet_entry->set_property_name(AddIndexToPath(
+        property.vector_values().size(), position_in_section, property_path));
+    for (EmbeddingMatchSnippetProto& match_proto : entries) {
+      *snippet_entry->add_embedding_matches() = std::move(match_proto);
+    }
+  }
+}
+
 // Retrieves snippets in document from content at section_path.
 // Tokenizer is provided to tokenize string content and matcher is provided to
-// indicate when a token matches content in the query.
+// indicate when a token matches content in the query. Both tokenizer and
+// matcher will be nullptr for non-string sections (i.e. vector).
 //
 // section_path_index refers to the current property that is held by document.
 // current_path is equivalent to the first section_path_index values in
@@ -617,11 +759,15 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
 //
 // The SnippetEntries found for matched content will be added to snippet_proto.
 void RetrieveSnippetForSection(
-    const DocumentProto& document, const TokenMatcher* matcher,
-    const Tokenizer* tokenizer,
-    const std::vector<std::string_view>& section_path, int section_path_index,
-    const std::string& current_path, MatchOptions* match_options,
-    SnippetProto* snippet_proto) {
+    DocumentId document_id, const DocumentProto& document,
+    const TokenMatcher* matcher, const Tokenizer* tokenizer,
+    SectionId section_id, const std::vector<std::string_view>& section_path,
+    int section_path_index, const std::string& current_path,
+    const SnippetContext::EmbeddingQueryVectorMetadataMap&
+        embedding_query_vector_metadata,
+    const SnippetContext::DocumentEmbeddingMatchInfoMap&
+        embedding_match_info_map,
+    MatchOptions* match_options, SnippetProto* snippet_proto) {
   std::string_view next_property_name = section_path.at(section_path_index);
   const PropertyProto* current_property =
       property_util::GetPropertyProto(document, next_property_name);
@@ -634,17 +780,27 @@ void RetrieveSnippetForSection(
       current_path, next_property_name);
   if (section_path_index == section_path.size() - 1) {
     // We're at the end. Let's check our values.
-    GetEntriesFromProperty(current_property, property_path, matcher, tokenizer,
-                           match_options, snippet_proto);
+    if (tokenizer == nullptr || matcher == nullptr) {
+      // Vector section.
+      GetEmbeddingMatchInfo(document_id, section_id, *current_property,
+                            property_path, embedding_query_vector_metadata,
+                            embedding_match_info_map, match_options,
+                            snippet_proto);
+    } else {
+      // String section.
+      GetEntriesFromProperty(current_property, property_path, matcher,
+                             tokenizer, match_options, snippet_proto);
+    }
   } else {
     // Still got more to go. Let's look through our subdocuments.
-    std::vector<SnippetProto::EntryProto> entries;
     for (int i = 0; i < current_property->document_values_size(); ++i) {
       std::string new_path = AddIndexToPath(
           current_property->document_values_size(), /*index=*/i, property_path);
-      RetrieveSnippetForSection(current_property->document_values(i), matcher,
-                                tokenizer, section_path, section_path_index + 1,
-                                new_path, match_options, snippet_proto);
+      RetrieveSnippetForSection(
+          document_id, current_property->document_values(i), matcher, tokenizer,
+          section_id, section_path, section_path_index + 1, new_path,
+          embedding_query_vector_metadata, embedding_match_info_map,
+          match_options, snippet_proto);
       if (match_options->max_matches_remaining <= 0) {
         break;
       }
@@ -667,26 +823,26 @@ SnippetRetriever::Create(const SchemaStore* schema_store,
 }
 
 SnippetProto SnippetRetriever::RetrieveSnippet(
-    const SectionRestrictQueryTermsMap& query_terms,
-    TermMatchType::Code match_type,
-    const ResultSpecProto::SnippetSpecProto& snippet_spec,
-    const DocumentProto& document, SectionIdMask section_id_mask) const {
+    const SnippetContext& snippet_context, const DocumentProto& document,
+    DocumentId document_id, SectionIdMask section_id_mask) const {
   SnippetProto snippet_proto;
   ICING_ASSIGN_OR_RETURN(SchemaTypeId type_id,
                          schema_store_.GetSchemaTypeId(document.schema()),
                          snippet_proto);
   const std::unordered_set<std::string> empty_set;
+  const SectionRestrictQueryTermsMap& query_terms = snippet_context.query_terms;
   auto itr = query_terms.find("");
   const std::unordered_set<std::string>& unrestricted_set =
       (itr != query_terms.end()) ? itr->second : empty_set;
+
   while (section_id_mask != kSectionIdMaskNone) {
     SectionId section_id = __builtin_ctzll(section_id_mask);
     // Remove this section from the mask.
     section_id_mask &= ~(UINT64_C(1) << section_id);
 
-    MatchOptions match_options = {snippet_spec};
+    MatchOptions match_options = {snippet_context.snippet_spec};
     match_options.max_matches_remaining =
-        snippet_spec.num_matches_per_property();
+        snippet_context.snippet_spec.num_matches_per_property();
 
     // Determine the section name and match type.
     auto section_metadata_or =
@@ -702,7 +858,7 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     // snippet should only be included if both the query is Prefix and the
     // section has prefixes enabled.
     TermMatchType::Code section_match_type = TermMatchType::EXACT_ONLY;
-    if (match_type == TermMatchType::PREFIX &&
+    if (snippet_context.match_type == TermMatchType::PREFIX &&
         metadata->term_match_type == TermMatchType::PREFIX) {
       section_match_type = TermMatchType::PREFIX;
     }
@@ -710,24 +866,36 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     itr = query_terms.find(metadata->path);
     const std::unordered_set<std::string>& restricted_set =
         (itr != query_terms.end()) ? itr->second : empty_set;
-    libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> matcher_or =
-        CreateTokenMatcher(section_match_type, unrestricted_set, restricted_set,
-                           normalizer_);
-    if (!matcher_or.ok()) {
-      continue;
-    }
-    std::unique_ptr<TokenMatcher> matcher = std::move(matcher_or).ValueOrDie();
 
-    auto tokenizer_or = tokenizer_factory::CreateIndexingTokenizer(
-        metadata->tokenizer, &language_segmenter_);
-    if (!tokenizer_or.ok()) {
-      // If we couldn't create the tokenizer properly, just skip this section.
-      continue;
+    std::unique_ptr<TokenMatcher> matcher;
+    std::unique_ptr<Tokenizer> tokenizer;
+    if (metadata->data_type == PropertyConfigProto::DataType::STRING) {
+      // The tokenizer and matcher are only needed for string sections/queries.
+      // These will be null for other types (i.e. vector)
+      libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> matcher_or =
+          CreateTokenMatcher(section_match_type, unrestricted_set,
+                             restricted_set, normalizer_);
+      if (!matcher_or.ok()) {
+        // If we couldn't create the matcher properly, just skip this section.
+        continue;
+      }
+      matcher = std::move(matcher_or).ValueOrDie();
+
+      libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>> tokenizer_or =
+          tokenizer_factory::CreateIndexingTokenizer(metadata->tokenizer,
+                                                     &language_segmenter_);
+      if (!tokenizer_or.ok()) {
+        // If we couldn't create the tokenizer properly, just skip this section.
+        continue;
+      }
+      tokenizer = std::move(tokenizer_or).ValueOrDie();
     }
-    std::unique_ptr<Tokenizer> tokenizer = std::move(tokenizer_or).ValueOrDie();
     RetrieveSnippetForSection(
-        document, matcher.get(), tokenizer.get(), section_path,
-        /*section_path_index=*/0, "", &match_options, &snippet_proto);
+        document_id, document, matcher.get(), tokenizer.get(), section_id,
+        section_path, /*section_path_index=*/0, /*current_path=*/"",
+        snippet_context.embedding_query_vector_metadata_map,
+        snippet_context.embedding_match_info_map, &match_options,
+        &snippet_proto);
   }
   return snippet_proto;
 }
