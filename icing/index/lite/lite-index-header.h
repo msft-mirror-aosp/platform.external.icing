@@ -17,9 +17,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -33,8 +35,8 @@ class LiteIndex_Header {
   // value associated with this header format.
   virtual bool check_magic() const = 0;
 
-  virtual uint32_t lite_index_crc() const = 0;
-  virtual void set_lite_index_crc(uint32_t crc) = 0;
+  virtual Crc32 lite_index_crc() const = 0;
+  virtual void set_lite_index_crc(Crc32 crc) = 0;
 
   virtual uint32_t last_added_docid() const = 0;
   virtual void set_last_added_docid(uint32_t last_added_docid) = 0;
@@ -45,7 +47,7 @@ class LiteIndex_Header {
   virtual uint32_t searchable_end() const = 0;
   virtual void set_searchable_end(uint32_t searchable_end) = 0;
 
-  virtual uint32_t CalculateHeaderCrc() const = 0;
+  virtual Crc32 GetHeaderCrc() const = 0;
 
   virtual void Reset() = 0;
 };
@@ -53,14 +55,7 @@ class LiteIndex_Header {
 class LiteIndex_HeaderImpl : public LiteIndex_Header {
  public:
   struct HeaderData {
-    static uint32_t GetCurrentMagic(
-        bool include_property_existence_metadata_hits) {
-      if (!include_property_existence_metadata_hits) {
-        return 0x01c61418;
-      } else {
-        return 0x56e07d5b;
-      }
-    }
+    static const uint32_t kMagic = 0xC2EAD682;
 
     uint32_t lite_index_crc;
     uint32_t magic;
@@ -76,19 +71,16 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
     uint32_t searchable_end;
   };
 
-  explicit LiteIndex_HeaderImpl(HeaderData *hdr,
-                                bool include_property_existence_metadata_hits)
-      : hdr_(hdr),
-        include_property_existence_metadata_hits_(
-            include_property_existence_metadata_hits) {}
+  explicit LiteIndex_HeaderImpl(HeaderData *hdr) : hdr_(hdr) {}
 
   bool check_magic() const override {
-    return hdr_->magic == HeaderData::GetCurrentMagic(
-                              include_property_existence_metadata_hits_);
+    return hdr_->magic == HeaderData::kMagic;
   }
 
-  uint32_t lite_index_crc() const override { return hdr_->lite_index_crc; }
-  void set_lite_index_crc(uint32_t crc) override { hdr_->lite_index_crc = crc; }
+  Crc32 lite_index_crc() const override { return Crc32(hdr_->lite_index_crc); }
+  void set_lite_index_crc(Crc32 crc) override {
+    hdr_->lite_index_crc = crc.Get();
+  }
 
   uint32_t last_added_docid() const override { return hdr_->last_added_docid; }
   void set_last_added_docid(uint32_t last_added_docid) override {
@@ -103,16 +95,16 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
     hdr_->searchable_end = searchable_end;
   }
 
-  uint32_t CalculateHeaderCrc() const override {
-    return IcingStringUtil::UpdateCrc32(
-        0, reinterpret_cast<const char *>(hdr_) + offsetof(HeaderData, magic),
+  Crc32 GetHeaderCrc() const override {
+    std::string_view data(
+        reinterpret_cast<const char *>(hdr_) + offsetof(HeaderData, magic),
         sizeof(HeaderData) - offsetof(HeaderData, magic));
+    return Crc32(data);
   }
 
   void Reset() override {
     hdr_->lite_index_crc = 0;
-    hdr_->magic =
-        HeaderData::GetCurrentMagic(include_property_existence_metadata_hits_);
+    hdr_->magic = HeaderData::kMagic;
     hdr_->last_added_docid = kInvalidDocumentId;
     hdr_->cur_size = 0;
     hdr_->searchable_end = 0;
@@ -120,7 +112,6 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
 
  private:
   HeaderData *hdr_;
-  bool include_property_existence_metadata_hits_;
 };
 static_assert(24 == sizeof(LiteIndex_HeaderImpl::HeaderData),
               "sizeof(HeaderData) != 24");

@@ -37,6 +37,7 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -72,7 +73,8 @@ void ApplyProjection(const ResultAdjustmentInfo* adjustment_info,
 
 bool ApplySnippet(ResultAdjustmentInfo* adjustment_info,
                   const SnippetRetriever& snippet_retriever,
-                  const DocumentProto& document, SectionIdMask section_id_mask,
+                  const DocumentProto& document, DocumentId doc_id,
+                  SectionIdMask section_id_mask,
                   SearchResultProto::ResultProto* result) {
   if (adjustment_info == nullptr) {
     return false;
@@ -84,8 +86,7 @@ bool ApplySnippet(ResultAdjustmentInfo* adjustment_info,
   if (snippet_context.snippet_spec.num_matches_per_property() > 0 &&
       remaining_num_to_snippet > 0) {
     SnippetProto snippet_proto = snippet_retriever.RetrieveSnippet(
-        snippet_context.query_terms, snippet_context.match_type,
-        snippet_context.snippet_spec, document, section_id_mask);
+        snippet_context, document, doc_id, section_id_mask);
     *result->mutable_snippet() = std::move(snippet_proto);
     --remaining_num_to_snippet;
     return true;
@@ -177,8 +178,10 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       continue;
     }
 
-    libtextclassifier3::StatusOr<DocumentProto> document_or = doc_store_.Get(
-        next_best_document_hit.parent_scored_document_hit().document_id());
+    DocumentId doc_id =
+        next_best_document_hit.parent_scored_document_hit().document_id();
+    libtextclassifier3::StatusOr<DocumentProto> document_or =
+        doc_store_.Get(doc_id);
     if (!document_or.ok()) {
       // Skip the document if getting errors.
       ICING_LOG(WARNING) << "Fail to fetch document from document store: "
@@ -193,7 +196,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     SearchResultProto::ResultProto result;
     // Add parent snippet if requested.
     if (ApplySnippet(result_state.parent_adjustment_info(), *snippet_retriever_,
-                     document,
+                     document, doc_id,
                      next_best_document_hit.parent_scored_document_hit()
                          .hit_section_id_mask(),
                      &result)) {
@@ -203,6 +206,12 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     // Add the document, itself.
     *result.mutable_document() = std::move(document);
     result.set_score(next_best_document_hit.final_score());
+    const auto* parent_additional_scores =
+        next_best_document_hit.parent_scored_document_hit().additional_scores();
+    if (parent_additional_scores != nullptr) {
+      result.mutable_additional_scores()->Add(parent_additional_scores->begin(),
+                                              parent_additional_scores->end());
+    }
 
     // Retrieve child documents
     for (const ScoredDocumentHit& child_scored_document_hit :
@@ -212,8 +221,9 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
         break;
       }
 
+      DocumentId child_doc_id = child_scored_document_hit.document_id();
       libtextclassifier3::StatusOr<DocumentProto> child_document_or =
-          doc_store_.Get(child_scored_document_hit.document_id());
+          doc_store_.Get(child_doc_id);
       if (!child_document_or.ok()) {
         // Skip the document if getting errors.
         ICING_LOG(WARNING)
@@ -229,12 +239,17 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
           result.add_joined_results();
       // Add child snippet if requested.
       ApplySnippet(result_state.child_adjustment_info(), *snippet_retriever_,
-                   child_document,
+                   child_document, child_doc_id,
                    child_scored_document_hit.hit_section_id_mask(),
                    child_result);
 
       *child_result->mutable_document() = std::move(child_document);
       child_result->set_score(child_scored_document_hit.score());
+      if (child_scored_document_hit.additional_scores() != nullptr) {
+        child_result->mutable_additional_scores()->Add(
+            child_scored_document_hit.additional_scores()->begin(),
+            child_scored_document_hit.additional_scores()->end());
+      }
     }
 
     size_t result_bytes = result.ByteSizeLong();

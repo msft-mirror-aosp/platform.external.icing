@@ -27,7 +27,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
@@ -37,9 +39,12 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -68,6 +73,7 @@ template <typename T>
 class NumericIndexIntegerTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     base_dir_ = GetTestTempDir() + "/icing";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
                 IsTrue());
@@ -76,22 +82,24 @@ class NumericIndexIntegerTest : public ::testing::Test {
     std::string schema_dir = base_dir_ + "/schema_test";
 
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(schema_dir.c_str()));
+
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, schema_dir, &clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_dir, &clock_,
+                                           feature_flags_.get()));
 
     std::string document_store_dir = base_dir_ + "/doc_store_test";
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(document_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -142,7 +150,10 @@ class NumericIndexIntegerTest : public ::testing::Test {
     }
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::OptimizeResult doc_store_optimize_result,
-        doc_store_->OptimizeInto(document_store_compact_dir, nullptr));
+        doc_store_->OptimizeInto(document_store_compact_dir,
+                                 /*lang_segmenter=*/nullptr,
+                                 /*potentially_optimizable_blob_handles=*/
+                                 std::unordered_set<std::string>()));
 
     doc_store_.reset();
     if (!filesystem_.SwapFiles(document_store_dir.c_str(),
@@ -156,14 +167,14 @@ class NumericIndexIntegerTest : public ::testing::Test {
 
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
-            /*initialize_stats=*/nullptr));
+        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
+                              schema_store_.get(), feature_flags_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/true,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDefaultCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return std::move(doc_store_optimize_result.document_id_old_to_new);
   }
@@ -184,6 +195,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
     return result;
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   std::string base_dir_;
   std::string working_path_;
@@ -396,9 +408,7 @@ TYPED_TEST(NumericIndexIntegerTest, WildcardStorageQuery) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
@@ -1023,21 +1033,16 @@ TYPED_TEST(NumericIndexIntegerTest, OptimizeOutOfRangeDocumentId) {
   Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
         kDefaultSectionId, /*keys=*/{3});
 
-  // Create document_id_old_to_new with size = 2. Optimize should handle out of
-  // range DocumentId properly.
+  // Create document_id_old_to_new with size = 2. Optimize should return
+  // internal error for out of range document id.
   std::vector<DocumentId> document_id_old_to_new(2, kInvalidDocumentId);
 
   EXPECT_THAT(integer_index->Optimize(
                   document_id_old_to_new,
                   /*new_last_added_document_id=*/kInvalidDocumentId),
-              IsOk());
-  EXPECT_THAT(integer_index->last_added_document_id(), Eq(kInvalidDocumentId));
-
-  // Verify all data are discarded after Optimize().
-  EXPECT_THAT(this->Query(integer_index.get(), kDefaultTestPropertyPath,
-                          /*key_lower=*/std::numeric_limits<int64_t>::min(),
-                          /*key_upper=*/std::numeric_limits<int64_t>::max()),
-              IsOkAndHolds(IsEmpty()));
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+                       HasSubstr("document id is out of range. The index may "
+                                 "have been corrupted.")));
 }
 
 TYPED_TEST(NumericIndexIntegerTest, OptimizeDeleteAll) {
@@ -1222,6 +1227,47 @@ TEST_P(IntegerIndexTest,
                            GetParam().num_data_threshold_for_bucket_split,
                            GetParam().pre_mapping_fbv),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_P(IntegerIndexTest, InitializationShouldSucceedWithUpdateChecksums) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index1,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  // Insert some data.
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/0,
+        /*section_id=*/20, /*keys=*/{0, 100, -100});
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        /*section_id=*/2, /*keys=*/{3, -1000, 500});
+  Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        /*section_id=*/15, /*keys=*/{-6, 321, 98});
+  integer_index1->set_last_added_document_id(2);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> doc_hit_info_vec,
+      Query(integer_index1.get(), kDefaultTestPropertyPath,
+            /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // written correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, integer_index1->GetChecksum());
+  EXPECT_THAT(integer_index1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(integer_index1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index2,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+  EXPECT_THAT(integer_index2->last_added_document_id(), Eq(2));
+  EXPECT_THAT(Query(integer_index2.get(), kDefaultTestPropertyPath,
+                    /*key_lower=*/std::numeric_limits<int64_t>::min(),
+                    /*key_upper=*/std::numeric_limits<int64_t>::max()),
+              IsOkAndHolds(ElementsAreArray(doc_hit_info_vec.begin(),
+                                            doc_hit_info_vec.end())));
 }
 
 TEST_P(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
@@ -1591,9 +1637,7 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -1973,9 +2017,7 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -2266,9 +2308,7 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
                                         .SetName("undesiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0

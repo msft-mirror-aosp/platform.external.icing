@@ -15,10 +15,13 @@
 #include "icing/scoring/ranker.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/term-metadata.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/util/logging.h"
 
@@ -183,7 +186,7 @@ libtextclassifier3::StatusOr<ScoredDocumentHit> PopNextTopResultFromHeap(
 
   // Steps to extract root from heap:
   // 1. copy out root
-  ScoredDocumentHit root = scored_document_hits_heap->at(0);
+  ScoredDocumentHit root = std::move(scored_document_hits_heap->at(0));
   const size_t last_node_index = scored_document_hits_heap->size() - 1;
   // 2. swap root and the last node
   std::swap(scored_document_hits_heap->at(0),

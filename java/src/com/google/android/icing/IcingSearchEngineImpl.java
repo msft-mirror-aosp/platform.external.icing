@@ -38,7 +38,7 @@ public class IcingSearchEngineImpl implements Closeable {
 
   static {
     // NOTE: This can fail with an UnsatisfiedLinkError
-    System.loadLibrary("icing");
+    IcingLibraryLoader.loadLibrary();
   }
 
   /**
@@ -71,13 +71,6 @@ public class IcingSearchEngineImpl implements Closeable {
     closed = true;
   }
 
-  @SuppressWarnings({"deprecation", "removal"}) // b/316643605
-  @Override
-  protected void finalize() throws Throwable {
-    close();
-    super.finalize();
-  }
-
   @Nullable
   public byte[] initialize() {
     throwIfClosed();
@@ -96,9 +89,21 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] setSchemaWithRequestProto(@NonNull byte[] setSchemaRequestBytes) {
+    throwIfClosed();
+    return nativeSetSchemaWithRequestProto(this, setSchemaRequestBytes);
+  }
+
+  @Nullable
   public byte[] getSchema() {
     throwIfClosed();
     return nativeGetSchema(this);
+  }
+
+  @Nullable
+  public byte[] getSchemaForDatabase(@NonNull String database) {
+    throwIfClosed();
+    return nativeGetSchemaForDatabase(this, database);
   }
 
   @Nullable
@@ -114,10 +119,22 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] batchPut(@NonNull byte[] documentsBytes) {
+    throwIfClosed();
+    return nativeBatchPut(this, documentsBytes);
+  }
+
+  @Nullable
   public byte[] get(
       @NonNull String namespace, @NonNull String uri, @NonNull byte[] getResultSpecBytes) {
     throwIfClosed();
     return nativeGet(this, namespace, uri, getResultSpecBytes);
+  }
+
+  @Nullable
+  public byte[] batchGet(@NonNull byte[] getResultSpecBytes) {
+    throwIfClosed();
+    return nativeBatchGet(this, getResultSpecBytes);
   }
 
   @Nullable
@@ -157,10 +174,33 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
   }
 
-  @NonNull
   public void invalidateNextPageToken(long nextPageToken) {
     throwIfClosed();
     nativeInvalidateNextPageToken(this, nextPageToken);
+  }
+
+  @NonNull
+  public byte[] openWriteBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeOpenWriteBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] removeBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeRemoveBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] openReadBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeOpenReadBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] commitBlob(@NonNull byte[] blobHandleBytes) {
+    throwIfClosed();
+    return nativeCommitBlob(this, blobHandleBytes);
   }
 
   @Nullable
@@ -268,15 +308,27 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeSetSchema(
       IcingSearchEngineImpl instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
 
+  private static native byte[] nativeSetSchemaWithRequestProto(
+      IcingSearchEngineImpl instance, byte[] setSchemaRequestBytes);
+
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeGetSchemaForDatabase(
+      IcingSearchEngineImpl instance, String database);
 
   private static native byte[] nativeGetSchemaType(
       IcingSearchEngineImpl instance, String schemaType);
 
   private static native byte[] nativePut(IcingSearchEngineImpl instance, byte[] documentBytes);
 
+  private static native byte[] nativeBatchPut(
+      IcingSearchEngineImpl instance, byte[] documentsBytes);
+
   private static native byte[] nativeGet(
       IcingSearchEngineImpl instance, String namespace, String uri, byte[] getResultSpecBytes);
+
+  private static native byte[] nativeBatchGet(
+      IcingSearchEngineImpl instance, byte[] getResultSpecBytes);
 
   private static native byte[] nativeReportUsage(
       IcingSearchEngineImpl instance, byte[] usageReportBytes);
@@ -295,6 +347,18 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
+
+  private static native byte[] nativeOpenWriteBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeRemoveBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeOpenReadBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeCommitBlob(
+      IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);

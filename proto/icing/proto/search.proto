@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 11
+// Next tag: 15
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -49,6 +49,15 @@ message SearchSpecProto {
   // the token.
   // Ex. A query term "foo" will match indexed tokens like "foo", "foot", and
   // "football".
+  //
+  // TermMatchType.Code=STEMMING
+  // Query terms will match indexed tokens when the query term is a stem of
+  // the token, or relates to the token via the same stem.
+  // Ex. A query term "dance" will match indexed tokens like "dance", "dances",
+  // and "dancing".
+  //
+  // TODO: b/344915547 - Refactor this to be a repeated field so that clients
+  // can choose multiple fuzzy match types.
   optional TermMatchType.Code term_match_type = 2;
 
   // OPTIONAL: Only search for documents that have the specified namespaces. If
@@ -60,33 +69,20 @@ message SearchSpecProto {
   // OPTIONAL: Only search for documents that have the specified schema types.
   // If unset, the query will search over all schema types. Note that this
   // applies to the entire 'query'. To issue different queries for different
-  // schema types, separate Search()'s will need to be made.
+  // schema types, separate Search()'s will need to be made. Also note that
+  // schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 4;
+
+  // OPTIONAL: Only search for documents under the specified namespaces and
+  // uris. If unset, all documents will be searched.
+  //
+  // All given NamespaceDocumentUriGroup must specify at least one
+  // document_uri. To exclude a namespace, use namespace_filters instead.
+  repeated NamespaceDocumentUriGroup document_uri_filters = 14;
 
   // Timestamp taken just before sending proto across the JNI boundary from java
   // to native side.
   optional int64 java_to_native_start_timestamp_ms = 5;
-
-  message SearchType {
-    enum Code {
-      UNDEFINED = 0;
-      ICING_RAW_QUERY = 1;
-      EXPERIMENTAL_ICING_ADVANCED_QUERY = 2;
-    }
-  }
-  // This field determines which type of query parsing Icing will use to fulfill
-  // the query.
-  // ICING_RAW_QUERY is the current query language as released, which supports
-  // basic ands, ors and nots as well as grouping and property restricts.
-  // EXPERIMENTAL_ICING_ADVANCED_QUERY is a superset of ICING_RAW_QUERY that
-  // will also support the use of functions defined by Icing Lib.
-  // This field is only temporary. When fully complete, all queries will be
-  // parsed by EXPERIMENTAL_ICING_ADVANCED_QUERY. This field only exists to
-  // enable testing.
-  // TODO(b/208654892) Remove this field once EXPERIMENTAL_ICING_ADVANCED_QUERY
-  // is fully supported.
-  optional SearchType.Code search_type = 6
-      [default = EXPERIMENTAL_ICING_ADVANCED_QUERY];
 
   // OPTIONAL: If this field is present, join documents based on a nested
   // SearchSpec.
@@ -112,6 +108,28 @@ message SearchSpecProto {
   // (TypePropertyMask for the given schema type has empty paths field), no
   // properties of that schema type will be searched.
   repeated TypePropertyMask type_property_filters = 10;
+
+  // The vectors to be used in embedding queries.
+  repeated PropertyProto.VectorProto embedding_query_vectors = 11;
+
+  message EmbeddingQueryMetricType {
+    enum Code {
+      UNKNOWN = 0;
+      COSINE = 1;
+      DOT_PRODUCT = 2;
+      EUCLIDEAN = 3;
+    }
+  }
+
+  // The default metric type used to calculate the scores for embedding
+  // queries.
+  optional EmbeddingQueryMetricType.Code embedding_query_metric_type = 12;
+
+  // Strings to be used as parameters in the query. The strings will be treated
+  // as pure TEXT and will be normalized and tokenized.
+  repeated string query_parameter_strings = 13;
+
+  reserved 6;
 }
 
 // Client-supplied specifications on what to include/how to format the search
@@ -146,6 +164,15 @@ message ResultSpecProto {
     // max_window_utf32_length = 16. "foo bar baz bat rat" with a query of "baz"
     // will return a window of "bar baz bat" which is only 11 bytes long.
     optional int32 max_window_utf32_length = 3;
+
+    // Whether to get match info for embedding semantic search. Embedding match
+    // info is returned in
+    // ResultProto.SnippetProto.EntryProto.EmbeddingMatchSnippetProto and
+    // contains the following information:
+    // - The score of the matched embedding vector.
+    // - The index of the embedding query for this vector match.
+    // - The metric type of the embedding query for this vector match.
+    optional bool get_embedding_match_info = 4;
   }
   optional SnippetSpecProto snippet_spec = 3;
 
@@ -293,12 +320,28 @@ message SnippetMatchProto {
   reserved 1;
 }
 
+// The representation of a single embedding vector match within a DocumentProto
+// property.
+//
+// Next tag: 4
+message EmbeddingMatchSnippetProto {
+  // Semantic score of the matched embedding vector.
+  optional double semantic_score = 1;
+
+  // Index of the embedding query for this vector match.
+  optional int32 embedding_query_vector_index = 2;
+
+  // The metric type of the embedding query for this vector match.
+  optional SearchSpecProto.EmbeddingQueryMetricType.Code
+      embedding_query_metric_type = 3;
+}
+
 // A Proto representing all snippets for a single DocumentProto.
 // Next tag: 2
 message SnippetProto {
   // A pair of property name and all snippet matches that correspond to the
   // property values in the corresponding DocumentProto.
-  // Next tag: 3
+  // Next tag: 4
   message EntryProto {
     // A property path indicating which property in the DocumentProto these
     // snippets correspond to. Property paths will contain 1) property names,
@@ -325,7 +368,14 @@ message SnippetProto {
     // 'attachements[0]').
     optional string property_name = 1;
 
+    // The term-match info for this property. Only populated if the property is
+    // a string.
     repeated SnippetMatchProto snippet_matches = 2;
+
+    // The embedding-match info for this property. Only populated if the
+    // property is an embedding vector and get_embedding_match_info is set to
+    // true in the ResultSpecProto.
+    repeated EmbeddingMatchSnippetProto embedding_matches = 3;
   }
   // Properties that do not appear in entries do not contain any matches.
   repeated EntryProto entries = 1;
@@ -348,7 +398,7 @@ message SearchResultProto {
   optional StatusProto status = 1;
 
   // The Results that matched the query. Empty if there was an error.
-  // Next tag: 5
+  // Next tag: 6
   message ResultProto {
     // Document that matches the SearchSpecProto.
     optional DocumentProto document = 1;
@@ -363,6 +413,11 @@ message SearchResultProto {
 
     // The child documents that were joined to a parent document.
     repeated ResultProto joined_results = 4;
+
+    // Extra helpful scores as specified by
+    // ScoringSpecProto.additional_advanced_scoring_expressions. The scores will
+    // not be used for ranking.
+    repeated double additional_scores = 5 [packed = true];
   }
   repeated ResultProto results = 2;
 
@@ -404,15 +459,20 @@ message TypePropertyMask {
   repeated string paths = 2;
 }
 
-// Next tag: 2
+// Next tag: 4
+// TODO(b/394875109): Rename it to GetRequestProto to be consistent with the
+// name in AppSearch.
 message GetResultSpecProto {
+  optional string namespace_requested = 2;
+  repeated string ids = 3;
+
   // How to specify a subset of properties to retrieve. If no type property mask
   // has been specified for a schema type, then *all* properties of that schema
   // type will be retrieved.
   repeated TypePropertyMask type_property_masks = 1;
 }
 
-// Next tag: 8
+// Next tag: 12
 message SuggestionSpecProto {
   // REQUIRED: The "raw" prefix string that users may type. For example, "f"
   // will search for suggested query that start with "f" like "foo", "fool".
@@ -449,6 +509,7 @@ message SuggestionSpecProto {
   // If unset, the suggestion will search over all schema types. Note that this
   // applies to the entire 'prefix'. To issue different suggestions for
   // different schema typs, separate RunSuggestion()'s will need to be made.
+  // Also note that schema filters will not be expanded for polymorphism.
   repeated string schema_type_filters = 6;
 
   // OPTIONAL: Only search for suggestions that under the specified types and
@@ -462,6 +523,21 @@ message SuggestionSpecProto {
   // suggestions for different types, separate RunSuggestion()'s will need to be
   // made.
   repeated TypePropertyMask type_property_filters = 7;
+
+  // The vectors to be used in embedding queries.
+  repeated PropertyProto.VectorProto embedding_query_vectors = 8;
+
+  // The default metric type used to calculate the scores for embedding
+  // queries.
+  optional SearchSpecProto.EmbeddingQueryMetricType.Code
+      embedding_query_metric_type = 9;
+
+  // Strings to be used as parameters in the query. The strings will be treated
+  // as pure TEXT and will be normalized and tokenized.
+  repeated string query_parameter_strings = 10;
+
+  // Features enabled in this suggestion spec.
+  repeated string enabled_features = 11;
 }
 
 // A group that holds namespace and document_uris under it.

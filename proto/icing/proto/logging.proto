@@ -17,13 +17,14 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/scoring.proto";
+import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 14
+// Next tag: 17
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -40,7 +41,8 @@ message InitializeStatsProto {
     // Data in index is inconsistent with ground truth.
     INCONSISTENT_WITH_GROUND_TRUTH = 2;
 
-    // Changes were made to the schema, but possibly not fully applied to the
+    // Changes were made to the schema, but the marker file remains in the
+    // filesystem indicating that changes possibly were not fully applied to the
     // document store and the index - requiring a recovery.
     SCHEMA_CHANGES_OUT_OF_SYNC = 3;
 
@@ -55,6 +57,22 @@ message InitializeStatsProto {
 
     // Any dependencies have changed.
     DEPENDENCIES_CHANGED = 7;
+
+    // Change detected in Icing's feature flags since last initialization that
+    // requires recovery.
+    FEATURE_FLAG_CHANGED = 8;
+
+    // Changes were made by an incomplete complex operation, which caused marker
+    // file to remain in the filesystem - requiring a recovery.
+    //
+    // Note: Icing is unable to interpret the information from the marker file
+    // due to some reasons, so the OUT_OF_SYNC reason is UNKNOWN.
+    UNKNOWN_OUT_OF_SYNC = 9;
+
+    // Changes were made by optimize, but the marker file remains in the
+    // filesystem indicating that optimize possibly was not fully applied to the
+    // document store and the index - requiring a recovery.
+    OPTIMIZE_OUT_OF_SYNC = 10;
   }
 
   // Possible recovery causes for document store:
@@ -117,10 +135,25 @@ message InitializeStatsProto {
   // - SCHEMA_CHANGES_OUT_OF_SYNC
   // - IO_ERROR
   optional RecoveryCause qualified_id_join_index_restoration_cause = 13;
+
+  // Possible recovery causes for embedding index:
+  // - INCONSISTENT_WITH_GROUND_TRUTH
+  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - IO_ERROR
+  optional RecoveryCause embedding_index_restoration_cause = 14;
+
+  // Possible status codes for ICU data initialization.
+  // - OK
+  // - INVALID_ARGUMENT
+  // - INTERNAL
+  optional StatusProto initialize_icu_data_status = 15;
+
+  // Number of documents that failed to be reindexed during index restoration.
+  optional int32 num_failed_reindexed_documents = 16;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
-// Next tag: 12
+// Next tag: 13
 message PutDocumentStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -166,11 +199,14 @@ message PutDocumentStatsProto {
   // Time used to index all metadata terms in the document, which can only be
   // added by PropertyExistenceIndexingHandler currently.
   optional int32 metadata_term_index_latency_ms = 11;
+
+  // Time used to index all embeddings in the document.
+  optional int32 embedding_index_latency_ms = 12;
 }
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 26
+// Next tag: 28
 message QueryStatsProto {
   // TODO(b/305098009): deprecate. Use parent_search_stats instead.
   // The UTF-8 length of the query string
@@ -252,7 +288,7 @@ message QueryStatsProto {
   optional bool is_join_query = 23;
 
   // Stats of the search. Only valid for first page.
-  // Next tag: 13
+  // Next tag: 16
   message SearchStats {
     // The UTF-8 length of the query string
     optional int32 query_length = 1;
@@ -290,6 +326,15 @@ message QueryStatsProto {
 
     // Number of hits fetched by integer index before applying any filters.
     optional int32 num_fetched_hits_integer_index = 12;
+
+    // Time used in Lexer to extract lexer tokens from the query.
+    optional int32 query_processor_lexer_extract_token_latency_ms = 13;
+
+    // Time used in Parser to consume lexer tokens extracted from the query.
+    optional int32 query_processor_parser_consume_query_latency_ms = 14;
+
+    // Time used in QueryVisitor to visit and build (nested) DocHitInfoIterator.
+    optional int32 query_processor_query_visitor_latency_ms = 15;
   }
 
   // Search stats for parent. Only valid for first page.
@@ -297,6 +342,12 @@ message QueryStatsProto {
 
   // Search stats for child.
   optional SearchStats child_search_stats = 25;
+
+  // Byte size of the lite index hit buffer.
+  optional int64 lite_index_hit_buffer_byte_size = 26;
+
+  // Byte size of the unsorted tail of the lite index hit buffer.
+  optional int64 lite_index_hit_buffer_unsorted_byte_size = 27;
 
   reserved 9;
 }
