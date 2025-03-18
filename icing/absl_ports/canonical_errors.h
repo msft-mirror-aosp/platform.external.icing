@@ -23,6 +23,38 @@ namespace icing {
 namespace lib {
 namespace absl_ports {
 
+// Overload both const char* and std::string to support 2 different callers:
+// `FooError(StrCat("text", a_str, " and ", b_str));` and
+// `FooError("simple text");`
+//
+// - std::string is used for the first call to avoid additional copies (Note:
+//   if using std::string_view, then the caller cannot move the string).
+// - const char* is used for the second call.
+//   - If const char* is not overloaded, then it is still valid for the second
+//     call to use std::string.
+//   - However, in Android the compiler will implicitly compile some conversion
+//     code (from const char* to std::string) **on the caller side** and
+//     increase most of the classes' size by ~1 KB, and the size of libicing.so
+//     will be increased by ~100 KBs.
+//   - From the experiment, overloading both const char* and std::string can
+//     avoid this binary size increase.
+libtextclassifier3::Status CancelledError(const char* error_message);
+libtextclassifier3::Status UnknownError(const char* error_message);
+libtextclassifier3::Status InvalidArgumentError(const char* error_message);
+libtextclassifier3::Status DeadlineExceededError(const char* error_message);
+libtextclassifier3::Status NotFoundError(const char* error_message);
+libtextclassifier3::Status AlreadyExistsError(const char* error_message);
+libtextclassifier3::Status PermissionDeniedError(const char* error_message);
+libtextclassifier3::Status ResourceExhaustedError(const char* error_message);
+libtextclassifier3::Status FailedPreconditionError(const char* error_message);
+libtextclassifier3::Status AbortedError(const char* error_message);
+libtextclassifier3::Status OutOfRangeError(const char* error_message);
+libtextclassifier3::Status UnimplementedError(const char* error_message);
+libtextclassifier3::Status InternalError(const char* error_message);
+libtextclassifier3::Status UnavailableError(const char* error_message);
+libtextclassifier3::Status DataLossError(const char* error_message);
+libtextclassifier3::Status UnauthenticatedError(const char* error_message);
+
 libtextclassifier3::Status CancelledError(std::string error_message);
 libtextclassifier3::Status UnknownError(std::string error_message);
 libtextclassifier3::Status InvalidArgumentError(std::string error_message);
