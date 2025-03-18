@@ -408,9 +408,7 @@ TYPED_TEST(NumericIndexIntegerTest, WildcardStorageQuery) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
@@ -1035,21 +1033,16 @@ TYPED_TEST(NumericIndexIntegerTest, OptimizeOutOfRangeDocumentId) {
   Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
         kDefaultSectionId, /*keys=*/{3});
 
-  // Create document_id_old_to_new with size = 2. Optimize should handle out of
-  // range DocumentId properly.
+  // Create document_id_old_to_new with size = 2. Optimize should return
+  // internal error for out of range document id.
   std::vector<DocumentId> document_id_old_to_new(2, kInvalidDocumentId);
 
   EXPECT_THAT(integer_index->Optimize(
                   document_id_old_to_new,
                   /*new_last_added_document_id=*/kInvalidDocumentId),
-              IsOk());
-  EXPECT_THAT(integer_index->last_added_document_id(), Eq(kInvalidDocumentId));
-
-  // Verify all data are discarded after Optimize().
-  EXPECT_THAT(this->Query(integer_index.get(), kDefaultTestPropertyPath,
-                          /*key_lower=*/std::numeric_limits<int64_t>::min(),
-                          /*key_upper=*/std::numeric_limits<int64_t>::max()),
-              IsOkAndHolds(IsEmpty()));
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+                       HasSubstr("document id is out of range. The index may "
+                                 "have been corrupted.")));
 }
 
 TYPED_TEST(NumericIndexIntegerTest, OptimizeDeleteAll) {
@@ -1644,9 +1637,7 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -2026,9 +2017,7 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
                                         .SetName("desiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -2319,9 +2308,7 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
                                         .SetName("undesiredProperty")))
           .Build();
   ICING_ASSERT_OK(this->schema_store_->SetSchema(
-      schema,
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0

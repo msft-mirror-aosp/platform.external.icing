@@ -15,7 +15,10 @@
 #ifndef ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
 #define ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
 
+#include <unordered_set>
+
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -50,6 +53,19 @@ class ScoredDocumentHitsRanker {
   // ScoredDocumentHits, then no action will be taken. Otherwise truncates the
   // the remaining ScoredDocumentHits to the given size.
   virtual void TruncateHitsTo(int new_size) = 0;
+
+  // Returns DocumentIds of the top K documents according to the ranking policy.
+  // - For ScoredDocumentHit, this returns the DocumentIds of the top K
+  //   documents.
+  // - For JoinedScoredDocumentHit, this returns the DocumentIds of the top K
+  //   parent documents.
+  virtual std::unordered_set<DocumentId> GetTopKDocumentIds(int k) const = 0;
+
+  // Returns DocumentIds of the top K child documents for each
+  // JoinedScoredDocumentHit.
+  // - For ScoredDocumentHit, this returns an empty set.
+  virtual std::unordered_set<DocumentId> GetTopKChildDocumentIds(
+      int k) const = 0;
 
   virtual int size() const = 0;
 

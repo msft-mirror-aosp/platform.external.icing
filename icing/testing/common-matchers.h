@@ -16,16 +16,17 @@
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <cmath>
-#include <functional>
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
@@ -35,14 +36,21 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
+#include "icing/result/snippet-context.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
+
+using ::testing::DoubleNear;
+using ::testing::Matches;
+
+constexpr float kEps = 1e-6;
 
 // Used to match Token(Token::Type type, std::string_view text)
 MATCHER_P2(EqualsToken, type, text, "") {
@@ -630,6 +638,15 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
                             actual_copy, result_listener);
 }
 
+MATCHER_P4(EqualsCharacterIterator, expected_text, expected_utf8_index,
+           expected_utf16_index, expected_utf32_index, "") {
+  const CharacterIterator& actual = arg;
+  return actual.text() == expected_text &&
+         actual.utf8_index() == expected_utf8_index &&
+         actual.utf16_index() == expected_utf16_index &&
+         actual.utf32_index() == expected_utf32_index;
+}
+
 MATCHER_P(EqualsHit, expected_hit, "") {
   const Hit& actual = arg;
   return actual.value() == expected_hit.value() &&
@@ -640,6 +657,46 @@ MATCHER_P(EqualsHit, expected_hit, "") {
 MATCHER(EqualsHit, "") {
   return ExplainMatchResult(EqualsHit(std::get<1>(arg)), std::get<0>(arg),
                             result_listener);
+}
+
+MATCHER_P(EqualsEmbeddingMatchInfoEntry, expected, "") {
+  const SnippetContext::EmbeddingMatchInfoEntry& actual = arg;
+
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected: {score=%f, metric_type=%d, position=%d, "
+      "query_vector_index=%d, section_id=%d}, but got: {score=%f, "
+      "metric_type=%d, "
+      "position=%d, query_vector_index=%d, section_id=%d}",
+      expected.score, expected.metric_type, expected.position,
+      expected.query_vector_index, expected.section_id, actual.score,
+      actual.metric_type, actual.position, actual.query_vector_index,
+      expected.section_id);
+
+  return Matches(DoubleNear(expected.score, kEps))(actual.score) &&
+         actual.metric_type == expected.metric_type &&
+         actual.query_vector_index == expected.query_vector_index &&
+         actual.position == expected.position &&
+         actual.section_id == expected.section_id;
+}
+
+MATCHER_P(EqualsEmbeddingMatchSnippetProto, expected, "") {
+  const EmbeddingMatchSnippetProto& actual = arg;
+
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected: {semantic_score=%f, embedding_query_vector_index=%d, "
+      "embedding_query_metric_type=%d}, but got: {semantic_score=%f, "
+      "embedding_query_vector_index=%d, embedding_query_metric_type=%d}",
+      expected.semantic_score(), expected.embedding_query_vector_index(),
+      expected.embedding_query_metric_type(), actual.semantic_score(),
+      actual.embedding_query_vector_index(),
+      actual.embedding_query_metric_type());
+
+  return Matches(DoubleNear(expected.semantic_score(), kEps))(
+             actual.semantic_score()) &&
+         actual.embedding_query_vector_index() ==
+             expected.embedding_query_vector_index() &&
+         actual.embedding_query_metric_type() ==
+             expected.embedding_query_metric_type();
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status

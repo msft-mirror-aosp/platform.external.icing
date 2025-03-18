@@ -278,9 +278,9 @@ SuggestionProcessor::QuerySuggestions(
   }
   ICING_ASSIGN_OR_RETURN(
       QueryResults query_results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE,
-                                   current_time_ms));
+      query_processor->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          /*get_embedding_match_info=*/false, current_time_ms));
 
   ICING_ASSIGN_OR_RETURN(
       DocHitInfoIterator::TrimmedNode trimmed_node,

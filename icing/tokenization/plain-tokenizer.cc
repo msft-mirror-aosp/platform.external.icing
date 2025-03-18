@@ -33,7 +33,7 @@ namespace {
 //   1. it's not empty
 //   2. it's not a whitespace
 //   3. it's not a punctuation mark
-//
+//   4. it's not a null terminator
 // TODO(b/141007791): figure out how we'd like to support special characters
 // like "+", "&", "@", "#" in indexing and query tokenizers.
 bool IsValidTerm(std::string_view term) {
@@ -43,7 +43,8 @@ bool IsValidTerm(std::string_view term) {
   // Gets the first unicode character. We can know what the whole term is by
   // checking only the first character.
   return !i18n_utils::IsWhitespaceAt(term, /*position=*/0) &&
-         !i18n_utils::IsPunctuationAt(term, /*position=*/0);
+         !i18n_utils::IsPunctuationAt(term, /*position=*/0) &&
+         !(term[0] == '\0');
 }
 }  // namespace
 

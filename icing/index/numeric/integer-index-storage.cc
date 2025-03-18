@@ -717,11 +717,16 @@ libtextclassifier3::Status IntegerIndexStorage::TransferIndex(
       while (!batch_old_data.empty()) {
         for (const IntegerIndexData& old_data : batch_old_data) {
           DocumentId old_document_id = old_data.basic_hit().document_id();
-          DocumentId new_document_id =
-              old_document_id >= 0 &&
-                      old_document_id < document_id_old_to_new.size()
-                  ? document_id_old_to_new[old_document_id]
-                  : kInvalidDocumentId;
+          if (old_document_id < 0 ||
+              old_document_id >= document_id_old_to_new.size()) {
+            // If it happens, then the posting list is corrupted. Return error
+            // and let the caller rebuild everything.
+            return absl_ports::InternalError(
+                "Integer index hit document id is out of range. The index may "
+                "have been corrupted.");
+          }
+
+          DocumentId new_document_id = document_id_old_to_new[old_document_id];
           // Transfer the document id of the hit if the document is not deleted
           // or outdated.
           if (new_document_id != kInvalidDocumentId) {
