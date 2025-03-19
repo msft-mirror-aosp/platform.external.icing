@@ -175,7 +175,7 @@ message PutResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Get
-// Next tag: 3
+// Next tag: 4
 message GetResultProto {
   // Status code can be one of:
   //   OK
@@ -188,6 +188,13 @@ message GetResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED, -INTERNAL.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // The uri of the document that was retrieved, or failed to be retrieved.
+  // It won't be set now for a single Get call, as the caller knows the uri if
+  // the Get fails.
+  // TODO(b/404275015) We should always set this field in Get once we refactor
+  // the tests.
+  optional string uri = 3;
 
   // Copy of the Document proto with the specified name_space, uri. Modifying
   // this does not affect the Document in IcingSearchEngine.

@@ -5406,11 +5406,74 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
   }
 }
 
+TEST_P(DocumentStoreTest, GetDocumentId_expiredDocument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          /*initialize_stats=*/nullptr));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  fake_clock_.SetSystemTimeMilliseconds(0);
+  DocumentProto foo_document = DocumentBuilder()
+                                   .SetCreationTimestampMs(0)
+                                   .SetTtlMs(1000)
+                                   .SetKey("namespace", "uri")
+                                   .SetSchema("email")
+                                   .SetCreationTimestampMs(0)
+                                   .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(foo_document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
+
+  // Adjust the clock to make the document expired. GetDocumentId should still
+  // return the original document id.
+  fake_clock_.SetSystemTimeMilliseconds(2000);
+  EXPECT_THAT(doc_store->GetDocumentId("namespace", "uri"),
+              IsOkAndHolds(document_id));
+}
+
+TEST_P(DocumentStoreTest, GetDocumentId_deletedDocument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          /*initialize_stats=*/nullptr));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto foo_document = DocumentBuilder()
+                                   .SetKey("namespace", "uri")
+                                   .SetSchema("email")
+                                   .SetCreationTimestampMs(0)
+                                   .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(foo_document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
+
+  // Delete the document. GetDocumentId should still return the original
+  // document id.
+  ICING_ASSERT_OK(doc_store->Delete(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->GetDocumentId("namespace", "uri"),
+              IsOkAndHolds(document_id));
+}
+
 TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
-  std::string dynamic_trie_uri_mapper_dir =
-      document_store_dir_ + "/key_mapper_dir";
-  std::string persistent_hash_map_uri_mapper_dir =
-      document_store_dir_ + "/uri_mapper";
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
