@@ -1,5 +1,6 @@
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchGetResultProto;
 import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
@@ -104,6 +105,13 @@ public interface IcingSearchEngineInterface extends Closeable {
    * @param getResultSpec the spec for getting the document.
    */
   GetResultProto get(String namespace, String uri, GetResultSpecProto getResultSpec);
+
+  /**
+   * Gets a list of documents.
+   *
+   * @param getResultSpec the spec for getting the documents.
+   */
+  BatchGetResultProto batchGet(GetResultSpecProto getResultSpec);
 
   /** Reports usage. */
   ReportUsageResultProto reportUsage(UsageReport usageReport);

@@ -321,6 +321,11 @@ class IcingSearchEngine {
   GetResultProto Get(std::string_view name_space, std::string_view uri,
                      const GetResultSpecProto& result_spec);
 
+  // Finds and returns the documents identified by the given GetResultSpecProto.
+  // Returns:
+  //   A BatchGetResultProto with a list of GetResultProto.
+  BatchGetResultProto BatchGet(const GetResultSpecProto& get_result_spec);
+
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.
   //

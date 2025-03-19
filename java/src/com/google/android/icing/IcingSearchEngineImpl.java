@@ -132,6 +132,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] batchGet(@NonNull byte[] getResultSpecBytes) {
+    throwIfClosed();
+    return nativeBatchGet(this, getResultSpecBytes);
+  }
+
+  @Nullable
   public byte[] reportUsage(@NonNull byte[] usageReportBytes) {
     throwIfClosed();
     return nativeReportUsage(this, usageReportBytes);
@@ -320,6 +326,9 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeGet(
       IcingSearchEngineImpl instance, String namespace, String uri, byte[] getResultSpecBytes);
+
+  private static native byte[] nativeBatchGet(
+      IcingSearchEngineImpl instance, byte[] getResultSpecBytes);
 
   private static native byte[] nativeReportUsage(
       IcingSearchEngineImpl instance, byte[] usageReportBytes);
