@@ -262,7 +262,7 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchGet(
   }
 
   icing::lib::BatchGetResultProto batch_get_result_proto =
-      icing->BatchGet(get_result_spec);
+      icing->BatchGet(std::move(get_result_spec));
 
   return SerializeProtoToJniByteArray(env, batch_get_result_proto);
 }

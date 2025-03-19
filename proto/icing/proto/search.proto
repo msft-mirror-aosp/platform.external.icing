@@ -459,7 +459,7 @@ message TypePropertyMask {
   repeated string paths = 2;
 }
 
-// Next tag: 4
+// Next tag: 5
 // TODO(b/394875109): Rename it to GetRequestProto to be consistent with the
 // name in AppSearch.
 message GetResultSpecProto {
@@ -470,6 +470,12 @@ message GetResultSpecProto {
   // has been specified for a schema type, then *all* properties of that schema
   // type will be retrieved.
   repeated TypePropertyMask type_property_masks = 1;
+
+  // The maximum number of accumulated bytes for the documents to return in the
+  // result. This limit is to prevent the result from being too large, and we
+  // can't send it over VM boundary, which has transaction limit 600KB.
+  optional int32 num_total_document_bytes_to_return = 4
+      [default = 2147483647];  // INT_MAX
 }
 
 // Next tag: 12
