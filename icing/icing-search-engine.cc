@@ -1427,6 +1427,8 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
         PersistToDisk(put_document_request.persist_type());
   }
 
+  batch_put_result_proto.mutable_status()->set_code(StatusProto::OK);
+
   return batch_put_result_proto;
 }
 
@@ -1578,15 +1580,63 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
 }
 
 BatchGetResultProto IcingSearchEngine::BatchGet(
-    const GetResultSpecProto& get_result_spec) {
+    GetResultSpecProto&& get_result_spec) {
   const std::string& name_space = get_result_spec.namespace_requested();
   BatchGetResultProto batch_get_result_proto;
 
+  if (get_result_spec.num_total_document_bytes_to_return() <= 0) {
+    StatusProto* result_status = batch_get_result_proto.mutable_status();
+    result_status->set_code(StatusProto::INVALID_ARGUMENT);
+    result_status->set_message(
+        "num_total_document_bytes_to_return must be greater than 0.");
+    return batch_get_result_proto;
+  }
+
   // TODO(b/394875109) Right now we lock in Get(namespace, id, result_spec) for
   // each id. We should consider locking here for the entire batch request.
-  for (const std::string& id : get_result_spec.ids()) {
+  int32_t total_docs_bytes_so_far = 0;
+  bool skip_remaining_docs = false;
+  for (std::string& id : *get_result_spec.mutable_ids()) {
+    if (skip_remaining_docs) {
+      // We simply set the status to OUT_OF_SPACE for the remaining docs, even
+      // if some docs might be small enough to fit in the result. We are doing
+      // this to avoid the worst case that all remaining docs are too big, and
+      // we read all of them out but fail to put them in the result.
+      GetResultProto result_proto;
+      // Id is redundant for a single Get call, so we only set it in BatchGet.
+      result_proto.set_uri(std::move(id));
+      StatusProto* result_status = result_proto.mutable_status();
+      result_status->set_code(StatusProto::ABORTED);
+      batch_get_result_proto.mutable_get_result_protos()->Add(
+          std::move(result_proto));
+      continue;
+    }
+
+    // We try to check each doc so smaller docs at the end of the list can
+    // still be put into the result.
+    GetResultProto result_proto = Get(name_space, id, get_result_spec);
+    // Id is redundant for a single Get call, so we only set it in BatchGet.
+    result_proto.set_uri(std::move(id));
+    if (result_proto.status().code() == StatusProto::OK) {
+      // We get the doc successfully. Check if we can add it to the result.
+      size_t document_bytes = result_proto.document().ByteSizeLong();
+      if (document_bytes <=
+          get_result_spec.num_total_document_bytes_to_return() -
+              total_docs_bytes_so_far) {
+        total_docs_bytes_so_far += document_bytes;
+      } else {
+        result_proto.clear_document();
+        StatusProto* result_status = result_proto.mutable_status();
+        result_status->set_code(StatusProto::ABORTED);
+        // We skip the remaining docs even if there might be smaller docs
+        // afterwards. This is to avoid the worst case that all remaining docs
+        // are too big, and we read all of them out but fail to put them in the
+        // result.
+        skip_remaining_docs = true;
+      }
+    }
     batch_get_result_proto.mutable_get_result_protos()->Add(
-        Get(name_space, id, get_result_spec));
+        std::move(result_proto));
   }
   batch_get_result_proto.mutable_status()->set_code(
       icing::lib::StatusProto::OK);

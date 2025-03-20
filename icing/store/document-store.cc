@@ -1472,9 +1472,8 @@ DocumentStore::GetNonDeletedDocumentFilterData(DocumentId document_id) const {
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
-    // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
-    // document doesn't exist.
+    // already have checked the status or validated their document_id.
+    // Regardless, return std::nullopt since the document doesn't exist.
     return std::nullopt;
   }
 
@@ -1488,9 +1487,8 @@ bool DocumentStore::IsDeleted(DocumentId document_id) const {
   if (!file_offset_or.ok()) {
     // This would only happen if document_id is out of range of the
     // document_id_mapper, meaning we got some invalid document_id. Callers
-    // should already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return true since the
-    // document doesn't exist.
+    // should already have checked the status or validated their document_id.
+    // Regardless, return true since the document doesn't exist.
     return true;
   }
   int64_t file_offset = *file_offset_or.ValueOrDie();
@@ -1506,9 +1504,8 @@ DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id,
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
-    // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
-    // document doesn't exist.
+    // already have checked the status or validated their document_id.
+    // Regardless, return std::nullopt since the document doesn't exist.
     return std::nullopt;
   }
   DocumentFilterData document_filter_data = filter_data_or.ValueOrDie();
