@@ -508,7 +508,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
                      options_.enable_schema_database(),
-                     options_.release_backup_schema_file_if_overlay_present()),
+                     options_.release_backup_schema_file_if_overlay_present(),
+                     options_.enable_strict_page_byte_size_limit()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -2763,9 +2764,9 @@ SearchResultProto IcingSearchEngine::InternalSearch(
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
   // CacheAndRetrieveFirstPage and retrieves the document protos and snippets if
   // requested
-  auto result_retriever_or =
-      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get());
+  auto result_retriever_or = ResultRetrieverV2::Create(
+      document_store_.get(), schema_store_.get(), language_segmenter_.get(),
+      normalizer_.get(), &feature_flags_);
   if (!result_retriever_or.ok()) {
     TransformStatus(result_retriever_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -2926,9 +2927,9 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
     return result_proto;
   }
 
-  auto result_retriever_or =
-      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get());
+  auto result_retriever_or = ResultRetrieverV2::Create(
+      document_store_.get(), schema_store_.get(), language_segmenter_.get(),
+      normalizer_.get(), &feature_flags_);
   if (!result_retriever_or.ok()) {
     TransformStatus(result_retriever_or.status(), result_status);
     return result_proto;

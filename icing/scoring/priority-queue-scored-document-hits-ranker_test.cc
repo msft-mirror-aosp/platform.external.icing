@@ -48,7 +48,8 @@ std::vector<JoinedScoredDocumentHit> PopAll(
     PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>& ranker) {
   std::vector<JoinedScoredDocumentHit> hits;
   while (!ranker.empty()) {
-    hits.push_back(ranker.PopNext());
+    hits.push_back(ranker.Top());
+    ranker.Pop();
   }
   return hits;
 }
@@ -57,7 +58,8 @@ std::vector<JoinedScoredDocumentHit> PopAll(
     PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>& ranker) {
   std::vector<JoinedScoredDocumentHit> hits;
   while (!ranker.empty()) {
-    hits.push_back(ranker.PopNext());
+    hits.push_back(ranker.Top());
+    ranker.Pop();
   }
   return hits;
 }
@@ -76,15 +78,15 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldGetCorrectSizeAndEmpty) {
   EXPECT_THAT(ranker.size(), Eq(3));
   EXPECT_FALSE(ranker.empty());
 
-  ranker.PopNext();
+  ranker.Pop();
   EXPECT_THAT(ranker.size(), Eq(2));
   EXPECT_FALSE(ranker.empty());
 
-  ranker.PopNext();
+  ranker.Pop();
   EXPECT_THAT(ranker.size(), Eq(1));
   EXPECT_FALSE(ranker.empty());
 
-  ranker.PopNext();
+  ranker.Pop();
   EXPECT_THAT(ranker.size(), Eq(0));
   EXPECT_TRUE(ranker.empty());
 }
