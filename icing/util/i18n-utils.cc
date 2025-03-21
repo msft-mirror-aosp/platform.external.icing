@@ -14,23 +14,33 @@
 
 #include "icing/util/i18n-utils.h"
 
-#include <sys/types.h>
-
 #include <cctype>
-#include <string>
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/util/logging.h"
+#include "unicode/uchar.h"
 #include "unicode/umachine.h"
-#include "unicode/unorm2.h"
 #include "unicode/ustring.h"
+#include "unicode/utf16.h"
 #include "unicode/utf8.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {
 namespace i18n_utils {
+
+namespace {
+
+// All ASCII punctuation that's also in a Unicode Punctuation category
+// (https://www.fileformat.info/info/unicode/category/index.htm). The set of
+// characters that are regarded as punctuation is not the same for std::ispunct
+// and u_ispunct.
+constexpr std::string_view kAsciiIcuPunctuation = "!\"#%&'*,./:;?@\\_-([{}])";
+
+}  // namespace
 
 libtextclassifier3::StatusOr<std::string> Utf16ToUtf8(
     const std::u16string& utf16_string) {
@@ -89,32 +99,37 @@ void SafeTruncateUtf8(std::string* str, int truncate_to_length) {
     return;
   }
 
-  while (truncate_to_length > 0) {
-    if (IsLeadUtf8Byte(str->at(truncate_to_length))) {
-      str->resize(truncate_to_length);
-      return;
-    }
-    truncate_to_length--;
-  }
-
-  // Truncates to an empty string
-  str->resize(0);
+  str->resize(SafeTruncateUtf8Length(str->c_str(), truncate_to_length));
 }
 
-bool IsAscii(char c) { return U8_IS_SINGLE((u_int8_t)c); }
+int SafeTruncateUtf8Length(const char* str, int desired_length) {
+  while (desired_length > 0) {
+    if (IsLeadUtf8Byte(str[desired_length])) {
+      break;
+    }
+    --desired_length;
+  }
+  return desired_length;
+}
+
+bool IsAscii(char c) { return U8_IS_SINGLE((uint8_t)c); }
 
 bool IsAscii(UChar32 c) { return U8_LENGTH(c) == 1; }
 
+bool IsAlphaNumeric(UChar32 c) { return u_isalnum(c); }
+
 int GetUtf8Length(UChar32 c) { return U8_LENGTH(c); }
 
-bool IsLeadUtf8Byte(char c) { return IsAscii(c) || U8_IS_LEAD((u_int8_t)c); }
+int GetUtf16Length(UChar32 c) { return U16_LENGTH(c); }
+
+bool IsLeadUtf8Byte(char c) { return IsAscii(c) || U8_IS_LEAD((uint8_t)c); }
 
 bool IsPunctuationAt(std::string_view input, int position, int* char_len_out) {
   if (IsAscii(input[position])) {
     if (char_len_out != nullptr) {
       *char_len_out = 1;
     }
-    return std::ispunct(input[position]);
+    return kAsciiIcuPunctuation.find(input[position]) != std::string_view::npos;
   }
   UChar32 c = GetUChar32At(input.data(), input.length(), position);
   if (char_len_out != nullptr) {
@@ -123,36 +138,36 @@ bool IsPunctuationAt(std::string_view input, int position, int* char_len_out) {
   return u_ispunct(c);
 }
 
-bool DiacriticCharToAscii(const UNormalizer2* normalizer2, UChar32 uchar32_in,
-                          char* char_out) {
-  if (IsAscii(uchar32_in)) {
-    // The Unicode character is within ASCII range
-    if (char_out != nullptr) {
-      *char_out = uchar32_in;
-    }
-    return true;
+bool IsWhitespaceAt(std::string_view input, int position) {
+  if (IsAscii(input[position])) {
+    return std::isspace(input[position]);
   }
+  UChar32 c = GetUChar32At(input.data(), input.length(), position);
+  return u_isUWhiteSpace(c);
+}
 
-  // Maximum number of pieces a Unicode character can be decomposed into.
-  // TODO(samzheng) figure out if this number is proper.
-  constexpr int kDecompositionBufferCapacity = 5;
-
-  // A buffer used to store Unicode decomposition mappings of only one
-  // character.
-  UChar decomposition_buffer[kDecompositionBufferCapacity];
-
-  // Decomposes the Unicode character, trying to get an ASCII char and some
-  // diacritic chars.
-  UErrorCode status = U_ZERO_ERROR;
-  if (unorm2_getDecomposition(normalizer2, uchar32_in, &decomposition_buffer[0],
-                              kDecompositionBufferCapacity, &status) > 0 &&
-      !U_FAILURE(status) && i18n_utils::IsAscii(decomposition_buffer[0])) {
-    if (char_out != nullptr) {
-      *char_out = decomposition_buffer[0];
-    }
-    return true;
+bool IsAlphabeticAt(std::string_view input, int position) {
+  if (IsAscii(input[position])) {
+    return std::isalpha(input[position]);
   }
-  return false;
+  UChar32 c = GetUChar32At(input.data(), input.length(), position);
+  return u_isUAlphabetic(c);
+}
+
+void AppendUchar32ToUtf8(std::string* utf8_string, UChar32 uchar) {
+  uint8_t utf8_buffer[4];  // U8_APPEND writes 0 to 4 bytes
+
+  int utf8_index = 0;
+  UBool has_error = false;
+
+  // utf8_index is advanced to the end of the contents if successful
+  U8_APPEND(utf8_buffer, utf8_index, sizeof(utf8_buffer), uchar, has_error);
+
+  if (has_error) {
+    ICING_LOG(WARNING) << "Error appending UChar32 to the UTF8 string.";
+    return;
+  }
+  utf8_string->append(reinterpret_cast<char*>(utf8_buffer), utf8_index);
 }
 
 }  // namespace i18n_utils

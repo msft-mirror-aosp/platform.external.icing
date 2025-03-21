@@ -14,74 +14,48 @@
  * limitations under the License.
  */
 
-buildscript {
-    boolean unbundleBuild = (new File('unbundled-build')).exists()
-    repositories {
-        maven { url '../../prebuilts/androidx/external' }
-        if (unbundleBuild) {
-            jcenter()
-        }
-    }
-    dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.8')
+import androidx.build.SdkHelperKt
+
+plugins {
+    id("AndroidXPlugin")
+    id("AndroidXRepackagePlugin")
+    id("java-library")
+    id("com.google.protobuf")
+}
+
+repackage {
+    // Must match what is in frameworks/support/appsearch/appsearch-external-protobuf/build.gradle
+    addRelocation {
+        sourcePackage = "com.google.protobuf"
+        targetPackage = "com.google.android.icing.protobuf"
     }
 }
 
-apply plugin: 'AndroidXPlugin'
-apply plugin: 'com.android.library'
-apply plugin: 'com.google.protobuf'
-apply plugin: 'idea'
-
-def protoGeneratedFilesBaseDir = "${project.buildDir}/generated/source/proto"
-
-android {
-    defaultConfig {
-        externalNativeBuild {
-            cmake {
-                arguments "-DPROTO_GENERATED_FILES_BASE_DIR=${protoGeneratedFilesBaseDir}"
-                cppFlags "-std=c++17"
-                arguments "-DCMAKE_VERBOSE_MAKEFILE=ON"
-                targets "icing"
-            }
-        }
-    }
-
-    sourceSets {
-        main {
-            manifest.srcFile 'AndroidManifest.xml'
-            proto {
-                srcDir '.'
-                include '**/*.proto'
-            }
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            version '3.10.2'
-            // TODO(b/149853706): Uncomment this line once the lib fully compiles under cmake
-            //path 'CMakeLists.txt'
-        }
+sourceSets {
+    main {
+        java.srcDir 'java/src/'
+        proto.srcDir 'proto/'
     }
 }
 
 dependencies {
-    api('com.google.protobuf:protobuf-javalite:3.10.0')
+    compileOnly("androidx.annotation:annotation:1.1.0")
+    compileOnly(SdkHelperKt.getSdkDependency(project))
+    compileOnly(libs.jspecify)
+    compileOnly(libs.protobufLite)
 }
 
-protobuf {
-    generatedFilesBaseDir = protoGeneratedFilesBaseDir
-    protoc {
-        artifact = 'com.google.protobuf:protoc:3.10.0'
-    }
-
-    generateProtoTasks {
-        all().each { task ->
-            task.builtins {
-                java {
-                    option 'lite'
-                }
-            }
+afterEvaluate {
+    lint {
+        lintOptions {
+            // protobuf generates unannotated methods
+            disable("UnknownNullness")
         }
     }
+}
+
+androidx {
+    mavenVersion = LibraryVersions.APPSEARCH
+    // JSpecify lint is disabled since icing is developed externally
+    optOutJSpecify = true
 }

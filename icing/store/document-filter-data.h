@@ -19,29 +19,35 @@
 #include <type_traits>
 
 #include "icing/legacy/core/icing-packed-pod.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
 
-using NamespaceId = int16_t;
 using SchemaTypeId = int16_t;
+inline constexpr SchemaTypeId kInvalidSchemaTypeId = -1;
 
 class DocumentFilterData {
  public:
   explicit DocumentFilterData(NamespaceId namespace_id,
+                              uint64_t uri_fingerprint,
                               SchemaTypeId schema_type_id,
                               int64_t expiration_timestamp_ms)
       : expiration_timestamp_ms_(expiration_timestamp_ms),
+        uri_fingerprint_(uri_fingerprint),
         namespace_id_(namespace_id),
         schema_type_id_(schema_type_id) {}
 
   bool operator==(const DocumentFilterData& other) const {
     return namespace_id_ == other.namespace_id() &&
+           uri_fingerprint_ == other.uri_fingerprint() &&
            schema_type_id_ == other.schema_type_id() &&
            expiration_timestamp_ms_ == other.expiration_timestamp_ms();
   }
 
   NamespaceId namespace_id() const { return namespace_id_; }
+
+  uint64_t uri_fingerprint() const { return uri_fingerprint_; }
 
   SchemaTypeId schema_type_id() const { return schema_type_id_; }
   void set_schema_type_id(SchemaTypeId schema_type_id) {
@@ -52,11 +58,12 @@ class DocumentFilterData {
 
  private:
   int64_t expiration_timestamp_ms_;
+  uint64_t uri_fingerprint_;
   NamespaceId namespace_id_;
   SchemaTypeId schema_type_id_;
 } __attribute__((packed));
 
-static_assert(sizeof(DocumentFilterData) == 12, "");
+static_assert(sizeof(DocumentFilterData) == 20, "");
 static_assert(icing_is_packed_pod<DocumentFilterData>::value, "go/icing-ubsan");
 
 }  // namespace lib
