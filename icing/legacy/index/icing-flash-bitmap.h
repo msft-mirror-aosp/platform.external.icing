@@ -11,9 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2012 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
 //
 // A disk-backed bitmap.
 //
@@ -40,13 +37,13 @@
 #ifndef ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 #define ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -55,7 +52,6 @@ class IcingFlashBitmap {
  public:
   using Word = uint32_t;
 
-  static constexpr uint32_t kEmptyCrc = 0;
   static constexpr size_t kGrowSize = (1u << 12);  // 4KB;
   static constexpr size_t kWordBits = 8 * sizeof(Word);
 
@@ -96,7 +92,7 @@ class IcingFlashBitmap {
   bool Clear() { return Delete() && Init(); }
 
   // Sync the changes to disk.
-  bool Sync() const;
+  bool Sync();
 
   uint64_t GetDiskUsage() const;
 
@@ -122,7 +118,11 @@ class IcingFlashBitmap {
   const std::string &filename() const { return filename_; }
 
   // If the bitmap is dirty, update the crc and mark it clean.
-  uint32_t UpdateCrc() const;
+  Crc32 UpdateCrc();
+
+  // Calculates the crc and returns it. This function does NOT update the crc
+  // in the header.
+  Crc32 GetCrc() const;
 
  private:
   class Accessor;
@@ -142,6 +142,7 @@ class IcingFlashBitmap {
   // Upgrade for version 18.
   bool UpgradeTo18();
 
+  // Legacy file system. Switch to use the new Filesystem class instead.
   const IcingFilesystem *const filesystem_;
   std::string filename_;
   OpenType open_type_;

@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Google LLC
+// Copyright (C) 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,62 +14,113 @@
 
 #include "icing/store/key-mapper.h"
 
+#include <memory>
+#include <string>
+#include <unordered_map>
+
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/filesystem.h"
 #include "icing/store/document-id.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
-using ::testing::_;
-using ::testing::HasSubstr;
+using ::testing::IsEmpty;
+using ::testing::IsTrue;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
 
 namespace icing {
 namespace lib {
-namespace {
-constexpr int kMaxKeyMapperSize = 3 * 1024 * 1024;  // 3 MiB
 
-class KeyMapperTest : public testing::Test {
+namespace {
+
+constexpr int kMaxDynamicTrieKeyMapperSize = 3 * 1024 * 1024;  // 3 MiB
+
+enum class KeyMapperType {
+  kDynamicTrie,
+  kPersistentHashMap,
+};
+
+struct KeyMapperTestParam {
+  KeyMapperType key_mapper_type;
+  bool pre_mapping_fbv;
+
+  explicit KeyMapperTestParam(KeyMapperType key_mapper_type_in,
+                              bool pre_mapping_fbv_in)
+      : key_mapper_type(key_mapper_type_in),
+        pre_mapping_fbv(pre_mapping_fbv_in) {}
+};
+
+class KeyMapperTest : public ::testing::TestWithParam<KeyMapperTestParam> {
  protected:
-  void SetUp() override { base_dir_ = GetTestTempDir() + "/key_mapper"; }
+  void SetUp() override {
+    base_dir_ = GetTestTempDir() + "/icing";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
+                IsTrue());
+
+    working_dir_ = base_dir_ + "/key_mapper";
+  }
 
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
+  libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<DocumentId>>>
+  CreateKeyMapper() {
+    const KeyMapperTestParam& param = GetParam();
+    switch (param.key_mapper_type) {
+      case KeyMapperType::kDynamicTrie:
+        return DynamicTrieKeyMapper<DocumentId>::Create(
+            filesystem_, working_dir_, kMaxDynamicTrieKeyMapperSize);
+      case KeyMapperType::kPersistentHashMap:
+        return PersistentHashMapKeyMapper<DocumentId>::Create(
+            filesystem_, working_dir_, param.pre_mapping_fbv);
+    }
+  }
+
+  libtextclassifier3::Status DeleteKeyMapper() {
+    const KeyMapperTestParam& param = GetParam();
+    switch (param.key_mapper_type) {
+      case KeyMapperType::kDynamicTrie:
+        return DynamicTrieKeyMapper<DocumentId>::Delete(filesystem_,
+                                                        working_dir_);
+      case KeyMapperType::kPersistentHashMap:
+        return PersistentHashMapKeyMapper<DocumentId>::Delete(filesystem_,
+                                                              working_dir_);
+    }
+  }
+
   std::string base_dir_;
+  std::string working_dir_;
   Filesystem filesystem_;
 };
 
-TEST_F(KeyMapperTest, InvalidBaseDir) {
-  ASSERT_THAT(
-      KeyMapper<DocumentId>::Create(filesystem_, "/dev/null", kMaxKeyMapperSize)
-          .status()
-          .error_message(),
-      HasSubstr("Failed to create KeyMapper"));
+std::unordered_map<std::string, DocumentId> GetAllKeyValuePairs(
+    const KeyMapper<DocumentId>* key_mapper) {
+  std::unordered_map<std::string, DocumentId> ret;
+
+  std::unique_ptr<typename KeyMapper<DocumentId>::Iterator> itr =
+      key_mapper->GetIterator();
+  while (itr->Advance()) {
+    ret.emplace(itr->GetKey(), itr->GetValue());
+  }
+  return ret;
 }
 
-TEST_F(KeyMapperTest, NegativeMaxKeyMapperSizeReturnsInternalError) {
-  ASSERT_THAT(KeyMapper<DocumentId>::Create(filesystem_, base_dir_, -1),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-}
-
-TEST_F(KeyMapperTest, TooLargeMaxKeyMapperSizeReturnsInternalError) {
-  ASSERT_THAT(KeyMapper<DocumentId>::Create(filesystem_, base_dir_,
-                                            std::numeric_limits<int>::max()),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-}
-
-TEST_F(KeyMapperTest, CreateNewKeyMapper) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+TEST_P(KeyMapperTest, CreateNewKeyMapper) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
   EXPECT_THAT(key_mapper->num_keys(), 0);
 }
 
-TEST_F(KeyMapperTest, CanUpdateSameKeyMultipleTimes) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+TEST_P(KeyMapperTest, CanUpdateSameKeyMultipleTimes) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
 
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->Put("default-youtube.com", 50));
@@ -85,10 +136,9 @@ TEST_F(KeyMapperTest, CanUpdateSameKeyMultipleTimes) {
   EXPECT_THAT(key_mapper->num_keys(), 2);
 }
 
-TEST_F(KeyMapperTest, GetOrPutOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+TEST_P(KeyMapperTest, GetOrPutOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
 
   EXPECT_THAT(key_mapper->Get("foo"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -96,15 +146,15 @@ TEST_F(KeyMapperTest, GetOrPutOk) {
   EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(1));
 }
 
-TEST_F(KeyMapperTest, CanPersistToDiskRegularly) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
-  // Can persist an empty KeyMapper.
+TEST_P(KeyMapperTest, CanPersistToDiskRegularly) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+
+  // Can persist an empty DynamicTrieKeyMapper.
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
   EXPECT_THAT(key_mapper->num_keys(), 0);
 
-  // Can persist the smallest KeyMapper.
+  // Can persist the smallest DynamicTrieKeyMapper.
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
   EXPECT_THAT(key_mapper->num_keys(), 1);
@@ -121,17 +171,15 @@ TEST_F(KeyMapperTest, CanPersistToDiskRegularly) {
   EXPECT_THAT(key_mapper->num_keys(), 2);
 }
 
-TEST_F(KeyMapperTest, CanUseAcrossMultipleInstances) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+TEST_P(KeyMapperTest, CanUseAcrossMultipleInstances) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
 
   key_mapper.reset();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+
+  ICING_ASSERT_OK_AND_ASSIGN(key_mapper, CreateKeyMapper());
   EXPECT_THAT(key_mapper->num_keys(), 1);
   EXPECT_THAT(key_mapper->Get("default-google.com"), IsOkAndHolds(100));
 
@@ -143,26 +191,165 @@ TEST_F(KeyMapperTest, CanUseAcrossMultipleInstances) {
   EXPECT_THAT(key_mapper->Get("default-google.com"), IsOkAndHolds(300));
 }
 
-TEST_F(KeyMapperTest, CanDeleteAndRestartKeyMapping) {
+TEST_P(KeyMapperTest, CanDeleteAndRestartKeyMapping) {
   // Can delete even if there's nothing there
-  ICING_EXPECT_OK(KeyMapper<DocumentId>::Delete(filesystem_, base_dir_));
+  ICING_EXPECT_OK(DeleteKeyMapper());
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
-  ICING_EXPECT_OK(KeyMapper<DocumentId>::Delete(filesystem_, base_dir_));
+  ICING_EXPECT_OK(DeleteKeyMapper());
 
   key_mapper.reset();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+  ICING_ASSERT_OK_AND_ASSIGN(key_mapper, CreateKeyMapper());
   EXPECT_THAT(key_mapper->num_keys(), 0);
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   EXPECT_THAT(key_mapper->num_keys(), 1);
 }
 
+TEST_P(KeyMapperTest, Iterator) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_EXPECT_OK(key_mapper->Put("foo", /*value=*/1));
+  ICING_EXPECT_OK(key_mapper->Put("bar", /*value=*/2));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2)));
+
+  ICING_EXPECT_OK(key_mapper->Put("baz", /*value=*/3));
+  EXPECT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
+}
+
+TEST_P(KeyMapperTest, DeleteByKey_singleEntry) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_ASSERT_OK(key_mapper->Put("foo", /*value=*/1));
+  ASSERT_THAT(key_mapper->num_keys(), 1);
+  ASSERT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 1)));
+
+  // Delete "foo".
+  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+
+  // Verify num_keys().
+  EXPECT_THAT(key_mapper->num_keys(), 0);
+
+  // Verify Get() returns NOT_FOUND.
+  EXPECT_THAT(key_mapper->Get("foo"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Verify the iterator returns nothing.
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  // Add back "foo" a with different value and verify the key mapper.
+  EXPECT_THAT(key_mapper->Put("foo", /*value=*/12345), IsOk());
+  EXPECT_THAT(key_mapper->num_keys(), 1);
+  EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(12345));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 12345)));
+}
+
+TEST_P(KeyMapperTest, DeleteByKey_multipleEntries) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_ASSERT_OK(key_mapper->Put("foo", /*value=*/1));
+  ICING_ASSERT_OK(key_mapper->Put("bar", /*value=*/2));
+  ICING_ASSERT_OK(key_mapper->Put("baz", /*value=*/3));
+  ASSERT_THAT(key_mapper->num_keys(), 3);
+  ASSERT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
+
+  // Delete "foo".
+  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+
+  // Verify num_keys().
+  EXPECT_THAT(key_mapper->num_keys(), 2);
+
+  // Verify Get("foo") returns NOT_FOUND and Get("bar") and Get("baz") return
+  // the correct values.
+  EXPECT_THAT(key_mapper->Get("foo"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("bar"), IsOkAndHolds(2));
+  EXPECT_THAT(key_mapper->Get("baz"), IsOkAndHolds(3));
+
+  // Verify the iterator returns "bar" and "baz".
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("bar", 2), Pair("baz", 3)));
+
+  // Add back "foo" a with different value and verify the key mapper.
+  EXPECT_THAT(key_mapper->Put("foo", /*value=*/12345), IsOk());
+  EXPECT_THAT(key_mapper->num_keys(), 3);
+  EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(12345));
+  EXPECT_THAT(key_mapper->Get("bar"), IsOkAndHolds(2));
+  EXPECT_THAT(key_mapper->Get("baz"), IsOkAndHolds(3));
+  EXPECT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 12345), Pair("bar", 2), Pair("baz", 3)));
+}
+
+TEST_P(KeyMapperTest, DeleteByKey_multipleEntriesDeleteAll) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_ASSERT_OK(key_mapper->Put("foo", /*value=*/1));
+  ICING_ASSERT_OK(key_mapper->Put("bar", /*value=*/2));
+  ICING_ASSERT_OK(key_mapper->Put("baz", /*value=*/3));
+  ASSERT_THAT(key_mapper->num_keys(), 3);
+  ASSERT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
+
+  // Delete all keys.
+  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+  EXPECT_THAT(key_mapper->Delete("bar"), IsTrue());
+  EXPECT_THAT(key_mapper->Delete("baz"), IsTrue());
+
+  // Verify num_keys().
+  EXPECT_THAT(key_mapper->num_keys(), 0);
+
+  // Verify Get("foo"), Get("bar") and Get("baz") return NOT_FOUND.
+  EXPECT_THAT(key_mapper->Get("foo"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("bar"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("baz"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Verify the iterator returns nothing.
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  // Add back "foo" a with different value and verify the key mapper.
+  EXPECT_THAT(key_mapper->Put("foo", /*value=*/12345), IsOk());
+  EXPECT_THAT(key_mapper->num_keys(), 1);
+  EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(12345));
+  EXPECT_THAT(key_mapper->Get("bar"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("baz"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 12345)));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    KeyMapperTest, KeyMapperTest,
+    testing::Values(KeyMapperTestParam(KeyMapperType::kDynamicTrie,
+                                       /*pre_mapping_fbv_in=*/true),
+                    KeyMapperTestParam(KeyMapperType::kPersistentHashMap,
+                                       /*pre_mapping_fbv_in=*/true),
+                    KeyMapperTestParam(KeyMapperType::kPersistentHashMap,
+                                       /*pre_mapping_fbv_in=*/false)));
+
 }  // namespace
+
 }  // namespace lib
 }  // namespace icing
