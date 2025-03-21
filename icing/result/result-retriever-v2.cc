@@ -174,7 +174,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
          results.size() < result_state.num_per_page() &&
          !result_state.scored_document_hits_ranker->empty()) {
     RetrieveResult result = Retrieve(result_state, current_time_ms);
-    if (result.pb.has_value()) {
+    if (result.proto.has_value()) {
       if (result.has_parent_snippets) {
         ++num_results_with_snippets;
       }
