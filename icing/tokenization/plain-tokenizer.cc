@@ -14,10 +14,13 @@
 
 #include "icing/tokenization/plain-tokenizer.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 
@@ -30,7 +33,7 @@ namespace {
 //   1. it's not empty
 //   2. it's not a whitespace
 //   3. it's not a punctuation mark
-//
+//   4. it's not a null terminator
 // TODO(b/141007791): figure out how we'd like to support special characters
 // like "+", "&", "@", "#" in indexing and query tokenizers.
 bool IsValidTerm(std::string_view term) {
@@ -40,7 +43,8 @@ bool IsValidTerm(std::string_view term) {
   // Gets the first unicode character. We can know what the whole term is by
   // checking only the first character.
   return !i18n_utils::IsWhitespaceAt(term, /*position=*/0) &&
-         !i18n_utils::IsPunctuationAt(term, /*position=*/0);
+         !i18n_utils::IsPunctuationAt(term, /*position=*/0) &&
+         !(term[0] == '\0');
 }
 }  // namespace
 
@@ -63,15 +67,26 @@ class PlainTokenIterator : public Tokenizer::Iterator {
     return found_next_valid_term;
   }
 
-  Token GetToken() const override {
-    if (current_term_.empty()) {
-      return Token(Token::INVALID);
+  std::vector<Token> GetTokens() const override {
+    std::vector<Token> result;
+    if (!current_term_.empty()) {
+      result.push_back(Token(Token::Type::REGULAR, current_term_));
     }
-    return Token(Token::REGULAR, current_term_);
+    return result;
   }
 
-  bool ResetToTokenAfter(int32_t offset) override {
-    if (!base_iterator_->ResetToTermStartingAfter(offset).ok()) {
+  libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenStart()
+      override {
+    return base_iterator_->CalculateTermStart();
+  }
+
+  libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenEndExclusive()
+      override {
+    return base_iterator_->CalculateTermEndExclusive();
+  }
+
+  bool ResetToTokenStartingAfter(int32_t utf32_offset) override {
+    if (!base_iterator_->ResetToTermStartingAfterUtf32(utf32_offset).ok()) {
       return false;
     }
     current_term_ = base_iterator_->GetTerm();
@@ -82,22 +97,24 @@ class PlainTokenIterator : public Tokenizer::Iterator {
     return true;
   }
 
-  bool ResetToTokenBefore(int32_t offset) override {
+  bool ResetToTokenEndingBefore(int32_t utf32_offset) override {
     ICING_ASSIGN_OR_RETURN(
-        offset, base_iterator_->ResetToTermEndingBefore(offset), false);
+        utf32_offset,
+        base_iterator_->ResetToTermEndingBeforeUtf32(utf32_offset), false);
     current_term_ = base_iterator_->GetTerm();
     while (!IsValidTerm(current_term_)) {
       // Haven't found a valid term yet. Retrieve the term prior to this one
       // from the segmenter.
       ICING_ASSIGN_OR_RETURN(
-          offset, base_iterator_->ResetToTermEndingBefore(offset), false);
+          utf32_offset,
+          base_iterator_->ResetToTermEndingBeforeUtf32(utf32_offset), false);
       current_term_ = base_iterator_->GetTerm();
     }
     return true;
   }
 
   bool ResetToStart() override {
-    if (!base_iterator_->ResetToStart().ok()) {
+    if (!base_iterator_->ResetToStartUtf32().ok()) {
       return false;
     }
     current_term_ = base_iterator_->GetTerm();
@@ -127,7 +144,8 @@ libtextclassifier3::StatusOr<std::vector<Token>> PlainTokenizer::TokenizeAll(
                          Tokenize(text));
   std::vector<Token> tokens;
   while (iterator->Advance()) {
-    tokens.push_back(iterator->GetToken());
+    std::vector<Token> batch_tokens = iterator->GetTokens();
+    tokens.insert(tokens.end(), batch_tokens.begin(), batch_tokens.end());
   }
   return tokens;
 }

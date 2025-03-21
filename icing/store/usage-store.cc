@@ -17,6 +17,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -74,6 +75,9 @@ libtextclassifier3::Status UsageStore::AddUsageReport(const UsageReport& report,
         "Document id %d is invalid.", document_id));
   }
 
+  // We don't need a copy here because we'll set the value at the same index.
+  // This won't unintentionally grow the underlying file since we already have
+  // enough space for the current index.
   auto usage_scores_or = usage_score_cache_->Get(document_id);
 
   // OutOfRange means that the mapper hasn't seen this document id before, it's
@@ -159,7 +163,7 @@ UsageStore::GetUsageScores(DocumentId document_id) {
         "Document id %d is invalid.", document_id));
   }
 
-  auto usage_scores_or = usage_score_cache_->Get(document_id);
+  auto usage_scores_or = usage_score_cache_->GetCopy(document_id);
   if (absl_ports::IsOutOfRange(usage_scores_or.status())) {
     // No usage scores found. Return the default scores.
     return UsageScores();
@@ -168,7 +172,7 @@ UsageStore::GetUsageScores(DocumentId document_id) {
     return usage_scores_or.status();
   }
 
-  return *std::move(usage_scores_or).ValueOrDie();
+  return std::move(usage_scores_or).ValueOrDie();
 }
 
 libtextclassifier3::Status UsageStore::SetUsageScores(
@@ -193,10 +197,10 @@ libtextclassifier3::Status UsageStore::CloneUsageScores(
         "to_document_id %d is invalid.", to_document_id));
   }
 
-  auto usage_scores_or = usage_score_cache_->Get(from_document_id);
+  auto usage_scores_or = usage_score_cache_->GetCopy(from_document_id);
   if (usage_scores_or.ok()) {
     return usage_score_cache_->Set(to_document_id,
-                                   *std::move(usage_scores_or).ValueOrDie());
+                                   std::move(usage_scores_or).ValueOrDie());
   } else if (absl_ports::IsOutOfRange(usage_scores_or.status())) {
     // No usage scores found. Set default scores to to_document_id.
     return usage_score_cache_->Set(to_document_id, UsageScores());
@@ -210,12 +214,20 @@ libtextclassifier3::Status UsageStore::PersistToDisk() {
   return usage_score_cache_->PersistToDisk();
 }
 
-libtextclassifier3::StatusOr<Crc32> UsageStore::ComputeChecksum() {
-  return usage_score_cache_->ComputeChecksum();
+libtextclassifier3::StatusOr<Crc32> UsageStore::UpdateChecksum() {
+  return usage_score_cache_->UpdateChecksum();
+}
+
+Crc32 UsageStore::GetChecksum() const {
+  return usage_score_cache_->GetChecksum();
 }
 
 libtextclassifier3::StatusOr<int64_t> UsageStore::GetElementsFileSize() const {
   return usage_score_cache_->GetElementsFileSize();
+}
+
+libtextclassifier3::StatusOr<int64_t> UsageStore::GetDiskUsage() const {
+  return usage_score_cache_->GetDiskUsage();
 }
 
 libtextclassifier3::Status UsageStore::TruncateTo(DocumentId num_documents) {

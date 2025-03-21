@@ -17,6 +17,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
 
 #ifndef ICING_STORE_USAGE_STORE_H_
 #define ICING_STORE_USAGE_STORE_H_
@@ -141,12 +142,16 @@ class UsageStore {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Updates checksum of the usage scores and returns it.
+  // Updates checksum of the usage scores and saves it in the header.
   //
   // Returns:
   //   A Crc32 on success
   //   INTERNAL_ERROR if the internal state is inconsistent
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates the checksum of the usage scores and returns it. Does NOT update
+  // the checksum in the header.
+  Crc32 GetChecksum() const;
 
   // Returns the file size of the all the elements held in the UsageStore. File
   // size is in bytes. This excludes the size of any internal metadata, e.g. any
@@ -156,6 +161,14 @@ class UsageStore {
   //   File size on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
+
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
+  //
+  // Returns:
+  //   Disk usage on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
 
   // Resizes the storage so that only the usage scores of and before
   // last_document_id are stored.
@@ -171,6 +184,8 @@ class UsageStore {
   //   OK on success
   //   INTERNAL_ERROR on I/O error
   libtextclassifier3::Status Reset();
+
+  int32_t num_elements() const { return usage_score_cache_->num_elements(); }
 
  private:
   explicit UsageStore(std::unique_ptr<FileBackedVector<UsageScores>>

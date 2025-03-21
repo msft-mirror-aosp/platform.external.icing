@@ -15,7 +15,10 @@
 #ifndef ICING_UTIL_MATH_UTIL_H_
 #define ICING_UTIL_MATH_UTIL_H_
 
+#include <cstdint>
 #include <limits>
+#include <utility>
+#include <vector>
 
 namespace icing {
 namespace lib {
@@ -37,7 +40,7 @@ inline double SafeDivide(double first, double second) {
 template <typename IntType>
 static IntType RoundDownTo(IntType input_value, IntType rounding_value) {
   static_assert(std::numeric_limits<IntType>::is_integer,
-                "RoundUpTo() operation type is not integer");
+                "RoundDownTo() operation type is not integer");
 
   if (input_value <= 0) {
     return 0;
@@ -71,6 +74,55 @@ static IntType RoundUpTo(IntType input_value, IntType rounding_value) {
   const IntType remainder = input_value % rounding_value;
   return (remainder == 0) ? input_value
                           : (input_value - remainder + rounding_value);
+}
+
+// Returns the next power of 2 given n (the smallest power of 2 which is
+// greater or equal to n).
+//
+// REQUIRES: n <= 2^31, since 2^31 is the largest power of 2 that can be
+//   represented by an unsigned int.
+inline uint32_t NextPowerOf2(uint32_t n) {
+  if (n == 0) {
+    return 1;
+  }
+
+  if ((n & (n - 1)) != 0) {
+    // not 2's power
+    return UINT32_C(1) << (32 - __builtin_clz(n));
+  }
+  return n;
+}
+
+// Applies a permutation to multiple containers in-place, which permutes
+// elements within the given containers according to the provided permutation
+// vector. permutation[i] specifies the new index for the element originally at
+// index i.
+template <typename... ContainerTypes>
+static void ApplyPermutation(const std::vector<int> &permutation,
+                             ContainerTypes &...values) {
+  std::vector<bool> done(permutation.size());
+  // Apply permutation
+  for (int i = 0; i < permutation.size(); ++i) {
+    if (done[i]) {
+      continue;
+    }
+    done[i] = true;
+    int curr = i;
+    int next = permutation[i];
+    // Since every finite permutation is formed by disjoint cycles, we can
+    // start with the current element, at index i, and swap the element at
+    // this position with whatever element that *should* be here. Then,
+    // continue to swap the original element, at its updated positions, with
+    // the element that should be occupying that position until the original
+    // element has reached *its* correct position. This completes applying the
+    // single cycle in the permutation.
+    while (next != i) {
+      (std::swap(values[curr], values[next]), ...);
+      done[next] = true;
+      curr = next;
+      next = permutation[next];
+    }
+  }
 }
 
 }  // namespace math_util

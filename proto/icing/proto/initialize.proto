@@ -16,33 +16,133 @@ syntax = "proto2";
 
 package icing.lib;
 
-import "icing/proto/status.proto";
 import "icing/proto/logging.proto";
+import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
-// Next tag: 5
+// Next tag: 8
+message IcingSearchEngineFeatureInfoProto {
+  // REQUIRED: Enum representing an IcingLib feature flagged using
+  // IcingSearchEngineOptions
+  optional FlaggedFeatureType feature_type = 1;
+
+  enum FlaggedFeatureType {
+    // This value should never purposely be used. This is used for backwards
+    // compatibility reasons.
+    UNKNOWN = 0;
+
+    // Feature for flag
+    // IcingSearchEngineOptions::build_property_existence_metadata_hits.
+    //
+    // This feature covers the kHasPropertyFunctionFeature advanced query
+    // feature, and related metadata hits indexing used for property existence
+    // check.
+    FEATURE_HAS_PROPERTY_OPERATOR = 1;
+
+    // Feature for flag IcingSearchEngineOptions::enable_embedding_index.
+    //
+    // This feature covers the embedding index.
+    FEATURE_EMBEDDING_INDEX = 2;
+
+    // Feature for flag IcingSearchEngineOptions::enable_scorable_properties.
+    //
+    // This feature covers the scorable properties feature.
+    FEATURE_SCORABLE_PROPERTIES = 3;
+
+    // Feature for flag IcingSearchEngineOptions::enable_embedding_quantization.
+    //
+    // This feature covers whether to enable quantization for embedding vectors.
+    FEATURE_EMBEDDING_QUANTIZATION = 4;
+
+    // Feature for flag IcingSearchEngineOptions::enable_schema_database.
+    //
+    // This feature covers whether to enable the database field in the schema.
+    // Once enabled, SetSchema will only allow setting schema types from a
+    // single database field at a time.
+    FEATURE_SCHEMA_DATABASE = 5;
+
+    // Feature for flag
+    // IcingSearchEngineOptions::enable_qualified_id_join_index_v3.
+    //
+    // This feature covers whether to enable the join index v3. Once enabled,
+    // join index v3 will be rebuilt to replace v2.
+    FEATURE_QUALIFIED_ID_JOIN_INDEX_V3 = 6;
+
+    // TODO(b/384947619): decide whether need to add a feature type for delete
+    // propagation.
+  }
+
+  // Whether the feature requires the document store to be rebuilt.
+  // The default value is false.
+  optional bool needs_document_store_rebuild = 2;
+
+  // Whether the feature requires the schema store to be rebuilt.
+  // The default value is false.
+  optional bool needs_schema_store_rebuild = 3;
+
+  // Whether the feature requires the term index to be rebuilt.
+  // The default value is false.
+  optional bool needs_term_index_rebuild = 4;
+
+  // Whether the feature requires the integer index to be rebuilt.
+  // The default value is false.
+  optional bool needs_integer_index_rebuild = 5;
+
+  // Whether the feature requires the qualified id join index to be rebuilt.
+  // The default value is false.
+  optional bool needs_qualified_id_join_index_rebuild = 6;
+
+  // Whether the feature requires the embedding index to be rebuilt.
+  // The default value is false.
+  optional bool needs_embedding_index_rebuild = 7;
+}
+
+// Next tag: 4
+message IcingSearchEngineVersionProto {
+  // version and max_version are from the original version file.
+  optional int32 version = 1;
+  optional int32 max_version = 2;
+  // Features that are enabled in an icing version at initialization.
+  repeated IcingSearchEngineFeatureInfoProto enabled_features = 3;
+}
+
+// This proto is used by the marker file to record information about the last
+// incomplete operation that was performed on Icing.
+// - Usually the marker file is required for a complex operation which is
+//   sensitive to power loss or crash.
+// - The marker file is created before the complex operation and flushed to disk
+//   with essential information. It is deleted after the operation is completed.
+// - If the marker file is present during initialization, then it means the
+//   last operation was not completed due to power loss or crash.
+//
+// Next tag: 2
+message IcingSearchEngineMarkerProto {
+  // Next tag: 3
+  message OperationType {
+    enum Code {
+      // This value should never purposely be used. This is used for backwards
+      // compatibility reasons.
+      UNKNOWN = 0;
+
+      // SetSchema operation.
+      SET_SCHEMA = 1;
+
+      // Optimize operation.
+      OPTIMIZE = 2;
+    }
+  }
+  optional OperationType.Code operation_type = 1;
+}
+
+// Next tag: 35
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
   // the index saved by the last instance.
   optional string base_dir = 1;
-
-  // The maximum number of tokens to be allowed per document. If a document
-  // exceeds this number of tokens, then only the first max_tokens_per_doc
-  // will be indexed.
-  //
-  // Clients may use this value to prevent the possibility of a select few
-  // documents from exhausting limits in the index that are shared between all
-  // documents (ie max allowed index size).
-  //
-  // Valid values: [1, INT_MAX], Current default is 1/5 of the default of
-  // max_document_size.
-  // Optional.
-  optional int32 max_tokens_per_doc = 2 [default = 13107];
 
   // The maximum allowable token length. All tokens in excess of this size
   // will be truncated to max_token_length before being indexed.
@@ -71,6 +171,197 @@ message IcingSearchEngineOptions {
   // Valid values: [1, INT_MAX]
   // Optional.
   optional int32 index_merge_size = 4 [default = 1048576];  // 1 MiB
+
+  // Whether to use namespace id or namespace name to build up fingerprint for
+  // document_key_mapper_ and corpus_mapper_ in document store.
+  optional bool document_store_namespace_id_fingerprint = 5;
+
+  // The threshold of the percentage of invalid documents to rebuild index
+  // during optimize, i.e. we rebuild index if and only if
+  // |invalid_documents| / |all_documents| >= optimize_rebuild_index_threshold
+  //
+  // Rebuilding the index could be faster than optimizing the index if we have
+  // removed most of the documents.
+  // Based on benchmarks, 85%~95% seems to be a good threshold for most cases.
+  //
+  // Default to 0 for better rollout of the new index optimize.
+  optional float optimize_rebuild_index_threshold = 6 [default = 0.0];
+
+  // Level of compression, NO_COMPRESSION = 0, BEST_SPEED = 1,
+  // BEST_COMPRESSION = 9
+  // Valid values: [0, 9]
+  // Optional.
+  optional int32 compression_level = 7 [default = 3];
+
+  // OPTIONAL: Whether to allow circular references between schema types for
+  // the schema definition.
+  //
+  // Even when set to true, circular references are still not allowed in the
+  // following cases:
+  //    1. All edges of a cycle have index_nested_properties=true
+  //    2. One of the types in the cycle has a joinable property, or depends on
+  //       a type with a joinable property.
+  // This is because such a cycle would lead to an infinite number of
+  // indexed/joinable properties:
+  //
+  // The default value is false.
+  optional bool allow_circular_schema_definitions = 8;
+
+  // Whether memory map max possible file size for FileBackedVector before
+  // growing the actual file size.
+  optional bool pre_mapping_fbv = 9;
+
+  // Whether use persistent hash map as the key mapper (if false, then fall back
+  // to dynamic trie key mapper).
+  optional bool use_persistent_hash_map = 10;
+
+  // Integer index bucket split threshold.
+  optional int32 integer_index_bucket_split_threshold = 11 [default = 65536];
+
+  // Whether Icing should sort and merge its lite index HitBuffer unsorted tail
+  // at indexing time.
+  //
+  // If set to true, the HitBuffer will be sorted at indexing time after
+  // exceeding the sort threshold. If false, the HifBuffer will be sorted at
+  // querying time, before the first query after inserting new elements into the
+  // HitBuffer.
+  //
+  // The default value is false.
+  optional bool lite_index_sort_at_indexing = 12;
+
+  // Size (in bytes) at which Icing's lite index should sort and merge the
+  // HitBuffer's unsorted tail into the sorted head for sorting at indexing
+  // time. Size specified here is the maximum byte size to allow for the
+  // unsorted tail section.
+  //
+  // Setting a lower sort size reduces querying latency at the expense of
+  // indexing latency.
+  optional int32 lite_index_sort_size = 13 [default = 8192];  // 8 KiB
+
+  // DEPRECATED: qualified id join index v2 is fully rolled out.
+  optional bool use_new_qualified_id_join_index = 14;
+
+  // Whether to build the metadata hits used for property existence check, which
+  // is required to support the hasProperty function in advanced query.
+  optional bool build_property_existence_metadata_hits = 15;
+
+  // Whether to enable blob store.
+  // If set to true, the BlobStore will be created to store and retrieve blobs.
+  optional bool enable_blob_store = 16;
+
+  // The time to live for an orphan blob. If the blob has no reference document
+  // for this amount of time, it will be deleted.
+  // If set to 0, the blob will never be deleted.
+  optional int64 orphan_blob_time_to_live_ms = 17;
+
+  // Whether to enable schema database.
+  //
+  // If set to true, the schema database field will be used to store and
+  // retrieve schemas, and SetSchema will only allow setting schema types from
+  // a single database field at a time.
+  //
+  // Icing will automatically handle migrating the stored SchemaProto and
+  // populate the database field when this flag is flipped from false to true.
+  //
+  // TODO - b/337913932: Remove this flag once the schema database is fully
+  // rolled out.
+  optional bool enable_schema_database = 18;
+
+  // Whether to enable embedding index.
+  // If set to false, the EmbeddingIndex will only be created with a header, and
+  // embedding properties will not be indexed.
+  // TODO(b/326656531): Change the default value to false when the flag is
+  // propagated from AppSearch.
+  optional bool enable_embedding_index = 19 [default = true];
+
+  // Feature flag guarding the new scorable properties feature.
+  // TODO - b/357105837: Remove this flag once the feature is fully rolled out.
+  optional bool enable_scorable_properties = 21;
+
+  // Whether to enable quantization for embedding vectors.
+  // If set to false, all embedding vectors will not be quantized. Otherwise,
+  // quantization will be controlled by the quantization type specified in the
+  // schema.
+  optional bool enable_embedding_quantization = 22;
+
+  // Level of blob_info_file_log store compression in blob store ,
+  // NO_COMPRESSION = 0, BEST_SPEED = 1, BEST_COMPRESSION = 9
+  // Valid values: [0, 9]
+  // Optional.
+  optional int32 blob_store_compression_level = 23 [default = 3];
+
+  // Whether to allow repeated fields to have a joinable value type.
+  optional bool enable_repeated_field_joins = 24;
+
+  // DEPRECATED (separate them into 2 flags): whether to use qualified id join
+  // index v3 and enable delete propagation PROPAGATE_FROM.
+  //
+  // - If set to true, qualified id join index v3 will be created and delete
+  //   propagation PROPAGATE_FROM will be enabled.
+  // - Otherwise, qualified id join index v2 will be created and delete
+  //   propagation will be disabled.
+  //
+  // The default value is false.
+  optional bool enable_qualified_id_join_index_v3_and_delete_propagate_from =
+      25;
+
+  // The absolute path to the ICU data file.
+  // If set, ICU will be initialized using this data file.
+  optional string icu_data_file_absolute_path = 26;
+
+  // Whether a backup schema and document should be generated for documents with
+  // embedding properties.
+  optional bool enable_embedding_backup_generation = 27;
+
+  // Whether to calculate time since last optimize using last attempted optimize
+  // run time instead of last successful optimize run time.
+  // - If set to true, time since last optimize is calculated using last
+  //   attempted optimize run time, regardless of whether the optimize run was
+  //   successful or not.
+  // - Otherwise, time since last optimize is calculated using last successful
+  //   optimize run time.
+  //
+  // The default value is false.
+  optional bool calculate_time_since_last_attempted_optimize = 28;
+
+  // Whether to use qualified id join index v3.
+  //
+  // If set to true, qualified id join index v3 will be created.
+  // Otherwise, qualified id join index v2 will be created.
+  optional bool enable_qualified_id_join_index_v3 = 29;
+
+  // Whether to enable delete propagation PROPAGATE_FROM.
+  //
+  // If set to true, enable_qualified_id_join_index_v3 must be also true
+  // (otherwise initialization will fail), and delete propagation PROPAGATE_FROM
+  // will be enabled.
+  // Otherwise, delete propagation will be disabled.
+  optional bool enable_delete_propagation_from = 30;
+
+  // Whether to enable soft index restoration.
+  // If set to true, then any error that occurs during index restoration will be
+  // ignored, and the failed document will be deleted.
+  optional bool enable_soft_index_restoration = 31;
+
+  // Whether to enable marker file for optimize API.
+  // If set to true, then a general marker file will be created before any
+  // optimize operation is performed, and deleted after the operation is
+  // completed. This is to ensure that the optimize operation is not interrupted
+  // by power loss or crash.
+  optional bool enable_marker_file_for_optimize = 32;
+
+  // Whether to manage blob files.
+  // If set to true, then Icing will manage blob files and all APIs will return
+  // valid FileDescriptors. If false, then Icing will only manage blob metadata
+  // and will return the names of the files to be created and managed by the
+  // caller.
+  optional bool manage_blob_files = 33 [default = true];
+
+  // Whether to release the backup schema file instance in the schema-store if
+  // the overlay exists.
+  optional bool release_backup_schema_file_if_overlay_present = 34;
+
+  reserved 2, 20;
 }
 
 // Result of a call to IcingSearchEngine.Initialize
@@ -89,11 +380,11 @@ message InitializeResultProto {
   // go/icing-library-apis.
   optional StatusProto status = 1;
 
-  // Stats of the function call. Inside NativeInitializeStats, the function call
+  // Stats of the function call. Inside InitializeStatsProto, the function call
   // latency 'latency_ms' will always be populated. The other fields will be
   // accurate only when the status above is OK or WARNING_DATA_LOSS. See
   // logging.proto for details.
-  optional NativeInitializeStats native_initialize_stats = 2;
+  optional InitializeStatsProto initialize_stats = 2;
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.

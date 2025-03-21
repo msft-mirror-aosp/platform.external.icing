@@ -18,16 +18,18 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
-#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -37,39 +39,49 @@ namespace lib {
 class DocHitInfoIteratorFilter : public DocHitInfoIterator {
  public:
   struct Options {
-    // List of namespaces that documents must have. An empty vector means that
-    // all namespaces are valid, and no documents will be filtered out.
+    // List of namespace ids that documents must have.
+    // filter_by_namespace_id_enabled=false means that all namespaces are valid,
+    // and no documents will be filtered out.
     //
     // Note that if we want to reference the strings in namespaces later, ensure
     // that the caller who passed the Options class outlives the
     // DocHitInfoIteratorFilter.
-    std::vector<std::string_view> namespaces;
+    bool filter_by_namespace_id_enabled = false;
+    std::unordered_set<NamespaceId> target_namespace_ids;
 
-    // List of schema types that documents must have. An empty vector means that
-    // all schema types are valid, and no documents will be filtered out.
+    // List of schema type ids that documents must have.
+    // filter_by_schema_type_id_enabled=false means that all schema types are
+    // valid, and no documents will be filtered out.
     //
     // Note that if we want to reference the strings in schema types later,
     // ensure that the caller who passed the Options class outlives the
     // DocHitInfoIteratorFilter.
-    std::vector<std::string_view> schema_types;
+    bool filter_by_schema_type_id_enabled = false;
+    std::unordered_set<SchemaTypeId> target_schema_type_ids;
   };
 
   explicit DocHitInfoIteratorFilter(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Clock* clock, const Options& options);
+      const Options& options, int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  void MapChildren(const ChildrenMapper& mapper) override {
+    delegate_ = mapper(std::move(delegate_));
+  }
+
+  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
 
   std::string ToString() const override;
 
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats) const override {
-    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats,
+                                         filtering_section_mask);
   }
 
  private:
@@ -77,9 +89,7 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
   const Options options_;
-  std::unordered_set<NamespaceId> target_namespace_ids_;
-  std::unordered_set<SchemaTypeId> target_schema_type_ids_;
-  const int64_t current_time_milliseconds_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib
