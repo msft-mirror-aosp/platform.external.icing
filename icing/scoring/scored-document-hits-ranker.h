@@ -25,7 +25,7 @@ namespace lib {
 
 // TODO(sungyc): re-evaluate other similar implementations (e.g. std::sort +
 //               std::queue/std::vector). Also revisit the capacity shrinking
-//               issue for PopNext().
+//               issue for Pop().
 
 // ScoredDocumentHitsRanker is an interface class for ranking
 // ScoredDocumentHits.
@@ -33,19 +33,24 @@ class ScoredDocumentHitsRanker {
  public:
   virtual ~ScoredDocumentHitsRanker() = default;
 
-  // Pop the next top JoinedScoredDocumentHit and return. It is undefined to
-  // call PopNext on an empty ranker, so the caller should check if it is not
-  // empty before calling.
+  // Pops the current element and moves to the next one.
+  //
+  // REQUIRES: !empty().
+  virtual void Pop() = 0;
+
+  // Returns the top JoinedScoredDocumentHit.
   //
   // Note: ranker may store ScoredDocumentHit or JoinedScoredDocumentHit. We can
   // add template for this interface, but since JoinedScoredDocumentHit is a
-  // superset of ScoredDocumentHit, we unify the return type of PopNext to use
-  // the superset type JoinedScoredDocumentHit in order to make it simple, and
+  // superset of ScoredDocumentHit, we unify the return type of Top to use the
+  // superset type JoinedScoredDocumentHit in order to make it simple, and
   // rankers storing ScoredDocumentHit should convert it to
   // JoinedScoredDocumentHit before returning. It makes the implementation
   // simpler, especially for ResultRetriever, which now only needs to deal with
   // one single return format.
-  virtual JoinedScoredDocumentHit PopNext() = 0;
+  //
+  // REQUIRES: !empty().
+  virtual const JoinedScoredDocumentHit& Top() const = 0;
 
   // Truncates the remaining ScoredDocumentHits to the given size. The best
   // ScoredDocumentHits (according to the ranking policy) should be kept.

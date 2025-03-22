@@ -140,9 +140,10 @@ class ResultStateManagerTest : public testing::Test {
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        result_retriever_, ResultRetrieverV2::Create(
-                               document_store_.get(), schema_store_.get(),
-                               language_segmenter_.get(), normalizer_.get()));
+        result_retriever_,
+        ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
   }
 
   void TearDown() override {
