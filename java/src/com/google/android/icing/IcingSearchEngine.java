@@ -14,6 +14,7 @@
 
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchGetResultProto;
 import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
@@ -135,7 +136,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull BatchPutResultProto batchPut(@NonNull PutDocumentRequest documents) {
-    return IcingSearchEngineUtils.byteArrayToPutResultProtos(
+    return IcingSearchEngineUtils.byteArrayToBatchPutResultProto(
         icingSearchEngineImpl.batchPut(documents.toByteArray()));
   }
 
@@ -144,6 +145,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
       @NonNull String namespace, @NonNull String uri, @NonNull GetResultSpecProto getResultSpec) {
     return IcingSearchEngineUtils.byteArrayToGetResultProto(
         icingSearchEngineImpl.get(namespace, uri, getResultSpec.toByteArray()));
+  }
+
+  @Override
+  public @NonNull BatchGetResultProto batchGet(@NonNull GetResultSpecProto getResultSpec) {
+    return IcingSearchEngineUtils.byteArrayToBatchGetResultProto(
+        icingSearchEngineImpl.batchGet(getResultSpec.toByteArray()));
   }
 
   @Override
