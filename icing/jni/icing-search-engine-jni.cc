@@ -14,6 +14,7 @@
 
 #include <jni.h>
 
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -29,6 +30,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/util/logging.h"
@@ -126,10 +128,8 @@ jbyteArray nativeSetSchema(JNIEnv* env, jclass clazz, jobject object,
 
   return SerializeProtoToJniByteArray(env, set_schema_result_proto);
 }
-// TODO : b/337913932 - pre-register this API once Jetpack build is dropped back
-// into g3
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeSetSchemaWithRequestProto(
+
+jbyteArray nativeSetSchemaWithRequestProto(
     JNIEnv* env, jclass clazz, jobject object,
     jbyteArray set_schema_request_bytes) {
   icing::lib::IcingSearchEngine* icing =
@@ -202,10 +202,8 @@ jbyteArray nativePut(JNIEnv* env, jclass clazz, jobject object,
   return SerializeProtoToJniByteArray(env, put_result_proto);
 }
 
-JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchPut(
-    JNIEnv* env, jclass clazz, jobject object,
-    jbyteArray put_document_request_bytes) {
+jbyteArray nativeBatchPut(JNIEnv* env, jclass clazz, jobject object,
+                          jbyteArray put_document_request_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
@@ -219,6 +217,8 @@ Java_com_google_android_icing_IcingSearchEngineImpl_nativeBatchPut(
 
   icing::lib::BatchPutResultProto batch_put_result_proto =
       icing->BatchPut(std::move(put_document_request));
+  batch_put_result_proto.mutable_status()->set_code(
+      icing::lib::StatusProto::OK);
 
   return SerializeProtoToJniByteArray(env, batch_put_result_proto);
 }
@@ -242,6 +242,24 @@ jbyteArray nativeGet(JNIEnv* env, jclass clazz, jobject object,
                  get_result_spec);
 
   return SerializeProtoToJniByteArray(env, get_result_proto);
+}
+
+jbyteArray nativeBatchGet(JNIEnv* env, jclass clazz, jobject object,
+                          jbyteArray result_spec_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::GetResultSpecProto get_result_spec;
+  if (!ParseProtoFromJniByteArray(env, result_spec_bytes, &get_result_spec)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse GetResultSpecProto in nativeGet";
+    return nullptr;
+  }
+
+  icing::lib::BatchGetResultProto batch_get_result_proto =
+      icing->BatchGet(std::move(get_result_spec));
+
+  return SerializeProtoToJniByteArray(env, batch_get_result_proto);
 }
 
 jbyteArray nativeReportUsage(JNIEnv* env, jclass clazz, jobject object,
@@ -623,6 +641,9 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeSetSchema",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[BZ)[B",
        reinterpret_cast<void*>(nativeSetSchema)},
+      {"nativeSetSchemaWithRequestProto",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeSetSchemaWithRequestProto)},
       {"nativeGetSchema",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;)[B",
        reinterpret_cast<void*>(nativeGetSchema)},
@@ -634,15 +655,16 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
        reinterpret_cast<void*>(nativeGetSchemaType)},
       {"nativePut", "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativePut)},
-      // TODO(b/394875109): uncomment when Jetpack library is updated with this
-      // change and syned to google3.
-      // {"nativeBatchPut",
-      //  "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
-      //  reinterpret_cast<void*>(nativeBatchPut)},
+      {"nativeBatchPut",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeBatchPut)},
       {"nativeGet",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/"
        "String;Ljava/lang/String;[B)[B",
        reinterpret_cast<void*>(nativeGet)},
+      {"nativeBatchGet",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
+       reinterpret_cast<void*>(nativeBatchGet)},
       {"nativeReportUsage",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativeReportUsage)},
