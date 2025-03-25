@@ -29,6 +29,7 @@ namespace {
 
 using ::aidl::com::android::isolated_storage_service::BnIcingSearchEngine;
 using ::aidl::com::android::isolated_storage_service::BnIsolatedStorageService;
+using ::icing::lib::BatchGetResultProto;
 using ::icing::lib::BatchPutResultProto;
 using ::icing::lib::BlobProto;
 using ::icing::lib::DebugInfoResultProto;
@@ -176,6 +177,19 @@ class IcingConnectionImpl
 
     GetResultProto get_result = icing_->Get(name_space, uri, get_result_spec);
     SERIALIZE_AND_RETURN_ASTATUS(get_result, get_result_proto);
+  }
+
+  ScopedAStatus batchGet(
+          const std::vector<uint8_t>& get_result_spec_proto,
+          std::optional<std::vector<uint8_t>>* batch_get_result_proto) {
+    CHECK_ICING_INIT(icing_);
+
+    GetResultSpecProto get_result_spec;
+    DESERIALIZE_OR_RETURN(get_result_spec_proto, get_result_spec);
+
+    BatchGetResultProto batch_get_result = icing_->BatchGet(
+            std::move(get_result_spec));
+    SERIALIZE_AND_RETURN_ASTATUS(batch_get_result, batch_get_result_proto);
   }
 
   ScopedAStatus reportUsage(

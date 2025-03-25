@@ -50,6 +50,9 @@ interface IIcingSearchEngine {
   /*GetResultProto*/ byte[] get(String name_space, String uri, in byte[] getResultSpecProto);
 
   @nullable
+  /*BatchGetResultProto*/ byte[] batchGet(in byte[] getResultSpecProto);
+
+  @nullable
   /*ReportUsageResultProto*/ byte[] reportUsage(in byte[] usageReportProto);
 
   @nullable
