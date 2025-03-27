@@ -18,7 +18,11 @@
 #include <memory>
 #include <optional>
 #include <thread>  // NOLINT
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -31,6 +35,7 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -120,9 +125,10 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        result_retriever_, ResultRetrieverV2::Create(
-                               document_store_.get(), schema_store_.get(),
-                               language_segmenter_.get(), normalizer_.get()));
+        result_retriever_,
+        ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
   }
 
   void TearDown() override {
@@ -194,8 +200,8 @@ TEST_F(ResultStateManagerThreadSafetyTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<ResultRetrieverV2> result_retriever,
         ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  normalizer_.get()));
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         PageResultInfo page_result_info,
         result_state_manager.GetNextPage(next_page_token, *result_retriever,
@@ -297,8 +303,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<ResultRetrieverV2> result_retriever,
         ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  normalizer_.get()));
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
 
     libtextclassifier3::StatusOr<PageResultInfo> page_result_info_or =
         result_state_manager.GetNextPage(next_page_token, *result_retriever,
@@ -392,8 +398,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<ResultRetrieverV2> result_retriever,
         ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  normalizer_.get()));
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
 
     // Retrieve the first page.
     // Documents are ordered by score *ascending*, so the first page should
