@@ -15,6 +15,7 @@
 #ifndef ICING_STORE_DOCUMENT_LOG_CREATOR_H_
 #define ICING_STORE_DOCUMENT_LOG_CREATOR_H_
 
+#include <cstdint>
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -58,7 +59,7 @@ class DocumentLogCreator {
   //   INTERNAL on any I/O error.
   static libtextclassifier3::StatusOr<DocumentLogCreator::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      int32_t compression_level);
+      int32_t compression_level, uint32_t compression_threshold_bytes);
 
   // Returns the filename of the document log, without any directory prefixes.
   // Used mainly for testing purposes.
@@ -76,7 +77,7 @@ class DocumentLogCreator {
   //   INTERNAL on I/O error.
   static libtextclassifier3::Status MigrateFromV0ToV1(
       const Filesystem* filesystem, const std::string& base_dir,
-      int32_t compression_level);
+      int32_t compression_level, uint32_t compression_threshold_bytes);
 };
 
 }  // namespace lib

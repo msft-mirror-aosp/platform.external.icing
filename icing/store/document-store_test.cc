@@ -284,6 +284,8 @@ class DocumentStoreTest
         /*force_recovery_and_revalidate_documents=*/false,
         GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
         PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+        PortableFileBackedProtoLog<
+            DocumentWrapper>::kDefaultCompressionThresholdBytes,
         /*initialize_stats=*/nullptr);
   }
 
@@ -4350,6 +4352,8 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
           &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -4568,14 +4572,16 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/true,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4805,14 +4811,16 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     CorruptDocStoreHeaderChecksumFile();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/true,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -5012,6 +5020,8 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
           &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -5246,14 +5256,16 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -5295,6 +5307,8 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
             /*use_persistent_hash_map=*/switch_key_mapper_flag,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
             &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::IO_ERROR));
@@ -5332,14 +5346,16 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -5371,14 +5387,16 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
 
@@ -5415,6 +5433,8 @@ TEST_P(DocumentStoreTest, GetDocumentId_expiredDocument) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
           /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -5449,6 +5469,8 @@ TEST_P(DocumentStoreTest, GetDocumentId_deletedDocument) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
           /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -5482,6 +5504,8 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
           /*initialize_stats=*/nullptr));
 
   std::unique_ptr<DocumentStore> doc_store =

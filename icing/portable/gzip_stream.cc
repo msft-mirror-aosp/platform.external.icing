@@ -18,13 +18,12 @@
 // smaller libprotobuf-lite instead.
 
 #include "icing/portable/gzip_stream.h"
+
 #include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
 namespace protobuf_ports {
-
-static const int kDefaultBufferSize = 65536;
 
 GzipInputStream::GzipInputStream(ZeroCopyInputStream* sub_stream, Format format,
                                  int buffer_size)
@@ -179,7 +178,8 @@ GzipOutputStream::Options::Options()
     : format(GZIP),
       buffer_size(kDefaultBufferSize),
       compression_level(Z_DEFAULT_COMPRESSION),
-      compression_strategy(Z_DEFAULT_STRATEGY) {}
+      compression_strategy(Z_DEFAULT_STRATEGY),
+      mem_level(kDefaultMemLevel) {}
 
 GzipOutputStream::GzipOutputStream(ZeroCopyOutputStream* sub_stream) {
   Init(sub_stream, Options());
@@ -214,10 +214,10 @@ void GzipOutputStream::Init(ZeroCopyOutputStream* sub_stream,
   if (options.format == ZLIB) {
     windowBitsFormat = 0;
   }
-  zerror_ =
-      deflateInit2(&zcontext_, options.compression_level, Z_DEFLATED,
-                   /* windowBits */ 15 | windowBitsFormat,
-                   /* memLevel (default) */ 8, options.compression_strategy);
+  zerror_ = deflateInit2(&zcontext_, options.compression_level, Z_DEFLATED,
+                         /* windowBits */ 15 | windowBitsFormat,
+                         /* memLevel */ options.mem_level,
+                         options.compression_strategy);
 }
 
 GzipOutputStream::~GzipOutputStream() {

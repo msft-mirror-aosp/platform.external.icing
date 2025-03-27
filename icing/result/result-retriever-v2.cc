@@ -174,7 +174,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
          results.size() < result_state.num_per_page() &&
          !result_state.scored_document_hits_ranker->empty()) {
     RetrieveResult result = Retrieve(result_state, current_time_ms);
-    if (result.proto.has_value()) {
+    if (result.result_proto.has_value()) {
       if (result.has_parent_snippets) {
         ++num_results_with_snippets;
       }
@@ -185,7 +185,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       // ranker.
       //
       // (Use subtraction to avoid integer overflow).
-      size_t result_bytes = result.proto->ByteSizeLong();
+      size_t result_bytes = result.result_proto->ByteSizeLong();
       if (feature_flags_.enable_strict_page_byte_size_limit() &&
           !results.empty() &&
           result_bytes >= result_state.num_total_bytes_per_page_threshold() -
@@ -195,7 +195,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
         break;
       }
 
-      results.push_back(std::move(*result.proto));
+      results.push_back(std::move(*result.result_proto));
       num_total_bytes += result_bytes;
     }
 
@@ -226,7 +226,8 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
           result_state.entry_id_group_id_map(), doc_store_,
           result_state.group_result_limits, result_state.result_group_type(),
           current_time_ms)) {
-    return RetrieveResult{.proto = std::nullopt, .has_parent_snippets = false};
+    return RetrieveResult{.result_proto = std::nullopt,
+                          .has_parent_snippets = false};
   }
 
   DocumentId doc_id =
@@ -236,7 +237,8 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
     // Skip the document if getting errors.
     ICING_LOG(WARNING) << "Fail to fetch document from document store: "
                        << document_or.status().error_message();
-    return RetrieveResult{.proto = std::nullopt, .has_parent_snippets = false};
+    return RetrieveResult{.result_proto = std::nullopt,
+                          .has_parent_snippets = false};
   }
   DocumentProto document = std::move(document_or).ValueOrDie();
 
@@ -297,7 +299,7 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
     }
   }
 
-  return RetrieveResult{.proto = std::make_optional(std::move(result)),
+  return RetrieveResult{.result_proto = std::make_optional(std::move(result)),
                         .has_parent_snippets = has_parent_snippets};
 }
 
