@@ -79,14 +79,17 @@ class ResultStateV2Test : public ::testing::Test {
     filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, doc_store_base_dir_, &clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_base_dir_, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     num_total_hits_ = 0;

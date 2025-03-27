@@ -113,7 +113,7 @@ class ResultRetrieverV2 {
   struct RetrieveResult {
     // The constructed result proto. If std::nullopt, then the document should
     // be skipped.
-    std::optional<SearchResultProto::ResultProto> proto;
+    std::optional<SearchResultProto::ResultProto> result_proto;
 
     // Whether the (parent) document of the result has snippets. Only used when
     // the proto is not std::nullopt.
