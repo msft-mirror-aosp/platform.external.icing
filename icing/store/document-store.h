@@ -151,6 +151,7 @@ class DocumentStore {
       const FeatureFlags* feature_flags,
       bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
+      uint32_t compression_threshold_bytes,
       InitializeStatsProto* initialize_stats);
 
   // Discards all derived data in the document store.
@@ -600,7 +601,8 @@ class DocumentStore {
                          const SchemaStore* schema_store,
                          const FeatureFlags* feature_flags,
                          bool pre_mapping_fbv, bool use_persistent_hash_map,
-                         int32_t compression_level);
+                         int32_t compression_level,
+                         uint32_t compression_threshold_bytes);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -624,6 +626,7 @@ class DocumentStore {
   bool use_persistent_hash_map_;
 
   const int32_t compression_level_;
+  const uint32_t compression_threshold_bytes_;
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
