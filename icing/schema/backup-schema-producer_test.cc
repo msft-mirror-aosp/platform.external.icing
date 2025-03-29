@@ -952,14 +952,16 @@ INSTANTIATE_TEST_SUITE_P(
                      /*enable_repeated_field_joins=*/true,
                      /*enable_embedding_backup_generation=*/false,
                      /*enable_schema_database=*/true,
-                     /*release_backup_schema_file_if_overlay_present=*/true),
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size=*/true),
         FeatureFlags(/*allow_circular_schema_definitions=*/true,
                      /*enable_scorable_properties=*/true,
                      /*enable_embedding_quantization=*/true,
                      /*enable_repeated_field_joins=*/true,
                      /*enable_embedding_backup_generation=*/true,
                      /*enable_schema_database=*/true,
-                     /*release_backup_schema_file_if_overlay_present=*/true)));
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size=*/true)));
 
 }  // namespace
 
