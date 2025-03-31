@@ -17,11 +17,14 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/thread_annotations.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
@@ -63,7 +66,7 @@ class ResultRetrieverV2 {
   static libtextclassifier3::StatusOr<std::unique_ptr<ResultRetrieverV2>>
   Create(const DocumentStore* doc_store, const SchemaStore* schema_store,
          const LanguageSegmenter* language_segmenter,
-         const Normalizer* normalizer,
+         const Normalizer* normalizer, const FeatureFlags* feature_flags,
          std::unique_ptr<const GroupResultLimiterV2> group_result_limiter =
              std::make_unique<const GroupResultLimiterV2>());
 
@@ -89,20 +92,42 @@ class ResultRetrieverV2 {
   // Returns:
   //   std::pair<PageResult, bool>
   std::pair<PageResult, bool> RetrieveNextPage(ResultStateV2& result_state,
-                                               int64_t current_time_ms) const;
+                                               int64_t current_time_ms) const
+      ICING_LOCKS_EXCLUDED(result_state.mutex);
 
  private:
   explicit ResultRetrieverV2(
       const DocumentStore* doc_store,
       std::unique_ptr<SnippetRetriever> snippet_retriever,
-      std::unique_ptr<const GroupResultLimiterV2> group_result_limiter)
+      std::unique_ptr<const GroupResultLimiterV2> group_result_limiter,
+      const FeatureFlags* feature_flags)
       : doc_store_(*doc_store),
         snippet_retriever_(std::move(snippet_retriever)),
-        group_result_limiter_(std::move(group_result_limiter)) {}
+        group_result_limiter_(std::move(group_result_limiter)),
+        feature_flags_(*feature_flags) {}
+
+  // Helper function to construct a ResultProto by the next best document hit
+  // from the scored document hits ranker.
+  //
+  // REQUIRES: !result_state.scored_document_hits_ranker.empty()
+  struct RetrieveResult {
+    // The constructed result proto. If std::nullopt, then the document should
+    // be skipped.
+    std::optional<SearchResultProto::ResultProto> result_proto;
+
+    // Whether the (parent) document of the result has snippets. Only used when
+    // the proto is not std::nullopt.
+    bool has_parent_snippets;
+  };
+  RetrieveResult Retrieve(ResultStateV2& result_state,
+                          int64_t current_time_ms) const
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(result_state.mutex);
 
   const DocumentStore& doc_store_;
   std::unique_ptr<SnippetRetriever> snippet_retriever_;
   const std::unique_ptr<const GroupResultLimiterV2> group_result_limiter_;
+
+  const FeatureFlags& feature_flags_;
 };
 
 }  // namespace lib

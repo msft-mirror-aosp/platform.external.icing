@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 35
+// Next tag: 37
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -360,6 +360,19 @@ message IcingSearchEngineOptions {
   // Whether to release the backup schema file instance in the schema-store if
   // the overlay exists.
   optional bool release_backup_schema_file_if_overlay_present = 34;
+
+  // Whether to enable strict byte size enforcement on a result page.
+  // - If set to true, then ResultRetrieverV2 will not include the next result
+  //   document if it would exceed the page byte size threshold (except for the
+  //   first document).
+  // - Otherwise, the page byte size enforcement works as a soft limit, i.e. it
+  //   will keep adding documents until exceeding the threshold.
+  optional bool enable_strict_page_byte_size_limit = 35;
+
+  // The threshold in bytes for compressing documents. If a document is larger
+  // than or equal to this threshold, it will be compressed based on
+  // compression_level. 0 means always compress.
+  optional uint32 compression_threshold_bytes = 36;
 
   reserved 2, 20;
 }

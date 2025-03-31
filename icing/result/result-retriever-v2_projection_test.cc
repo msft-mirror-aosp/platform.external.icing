@@ -200,14 +200,17 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -330,7 +333,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
@@ -434,7 +438,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'sender.name'
   // property.
@@ -549,7 +554,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'sender'
   // property and all of the subproperties of 'sender'.
@@ -668,7 +674,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'sender.name' and
   // 'sender.address' properties.
@@ -770,7 +777,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
@@ -855,7 +863,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
@@ -941,7 +950,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
@@ -1029,7 +1039,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results have all of their properties.
@@ -1121,7 +1132,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results only contain the 'name' property.
@@ -1217,7 +1229,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'body'
   // property and the returned Person results  only contain the 'name' property.
@@ -1322,7 +1335,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results only contain the 'name' property.
@@ -1431,7 +1445,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results contain no properties.
@@ -1569,7 +1584,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 7. Verify that the returned results:
   //    - Person docs only contain the "name" property.
@@ -1674,7 +1690,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Person and Artist results only contain the
   // 'name' property.
@@ -1762,7 +1779,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Person and Musician results only contain the
   // 'name' property.
@@ -1838,7 +1856,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned person document does not contain any property,
   // since 'emailAddress' is missing.
@@ -1918,7 +1937,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Person results only contain the 'name'
   // property and the returned Artist results contain both the 'name' and
@@ -2003,7 +2023,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned document only contains the 'name' and the
   // 'phoneNumber' property.

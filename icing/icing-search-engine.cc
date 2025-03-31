@@ -508,7 +508,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
                      options_.enable_schema_database(),
-                     options_.release_backup_schema_file_if_overlay_present()),
+                     options_.release_backup_schema_file_if_overlay_present(),
+                     options_.enable_strict_page_byte_size_limit()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -965,7 +966,8 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
           filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
           &feature_flags_, force_recovery_and_revalidate_documents,
           /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-          options_.compression_level(), initialize_stats));
+          options_.compression_level(), options_.compression_threshold_bytes(),
+          initialize_stats));
   document_store_ = std::move(create_result.document_store);
   return create_result.derived_files_regenerated;
 }
@@ -2348,9 +2350,10 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   auto optimize_status_or = optimize_status_file.Read();
   int64_t current_time = clock_->GetSystemTimeMilliseconds();
 
-  if (optimize_status_or.ok()) {
-    // If we have trouble reading the status or this is the first time that
-    // we've ever run, don't set this field.
+  if (!optimize_status_or.ok()) {
+    // We have trouble reading the status; or we've never run optimize before.
+    result_proto.set_no_previous_optimize_info(true);
+  } else {
     int64_t time_since_last_optimize_ms;
     if (options_.calculate_time_since_last_attempted_optimize()) {
       time_since_last_optimize_ms = GetTimeSinceLastOptimizeMs(
@@ -2763,9 +2766,9 @@ SearchResultProto IcingSearchEngine::InternalSearch(
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
   // CacheAndRetrieveFirstPage and retrieves the document protos and snippets if
   // requested
-  auto result_retriever_or =
-      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get());
+  auto result_retriever_or = ResultRetrieverV2::Create(
+      document_store_.get(), schema_store_.get(), language_segmenter_.get(),
+      normalizer_.get(), &feature_flags_);
   if (!result_retriever_or.ok()) {
     TransformStatus(result_retriever_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -2926,9 +2929,9 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
     return result_proto;
   }
 
-  auto result_retriever_or =
-      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get());
+  auto result_retriever_or = ResultRetrieverV2::Create(
+      document_store_.get(), schema_store_.get(), language_segmenter_.get(),
+      normalizer_.get(), &feature_flags_);
   if (!result_retriever_or.ok()) {
     TransformStatus(result_retriever_or.status(), result_status);
     return result_proto;
@@ -3143,7 +3146,8 @@ IcingSearchEngine::OptimizeDocumentStore(
         schema_store_.get(), &feature_flags_,
         /*force_recovery_and_revalidate_documents=*/false,
         /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-        options_.compression_level(), /*initialize_stats=*/nullptr);
+        options_.compression_level(), options_.compression_threshold_bytes(),
+        /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
     if (!create_result_or.ok()) {
@@ -3171,7 +3175,8 @@ IcingSearchEngine::OptimizeDocumentStore(
       schema_store_.get(), &feature_flags_,
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-      options_.compression_level(), /*initialize_stats=*/nullptr);
+      options_.compression_level(), options_.compression_threshold_bytes(),
+      /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
     // and return INTERNAL.

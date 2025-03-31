@@ -147,14 +147,17 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -326,7 +329,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/3);
 
@@ -382,7 +386,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/3);
@@ -497,7 +502,8 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -582,7 +588,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -760,7 +767,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -884,7 +892,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -948,7 +957,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -1014,7 +1024,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -1124,7 +1135,8 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/3);
@@ -1359,7 +1371,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto parent_snippet_spec = CreateSnippetSpec();
@@ -1487,7 +1500,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto parent_snippet_spec = CreateSnippetSpec();

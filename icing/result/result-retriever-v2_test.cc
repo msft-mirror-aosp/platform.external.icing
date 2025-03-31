@@ -94,14 +94,15 @@ class MockGroupResultLimiter : public GroupResultLimiterV2 {
               (const, override));
 };
 
-class ResultRetrieverV2Test : public ::testing::Test {
+class ResultRetrieverV2Test : public ::testing::TestWithParam<FeatureFlags> {
  protected:
   ResultRetrieverV2Test() : test_dir_(GetTestTempDir() + "/icing") {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
   }
 
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    feature_flags_ = std::make_unique<FeatureFlags>(GetParam());
+
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
@@ -231,13 +232,16 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
       /*initialize_stats=*/nullptr);
 }
 
-TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
+TEST_P(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
-      ResultRetrieverV2::Create(/*doc_store=*/nullptr, schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()),
+      ResultRetrieverV2::Create(
+          /*doc_store=*/nullptr, schema_store_.get(), language_segmenter_.get(),
+          normalizer_.get(), feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -249,19 +253,32 @@ TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
 
   EXPECT_THAT(
       ResultRetrieverV2::Create(doc_store.get(), /*schema_store=*/nullptr,
-                                language_segmenter_.get(), normalizer_.get()),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                /*language_segmenter=*/nullptr,
+                                normalizer_.get(), feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(),
+                                /*normalizer=*/nullptr, feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                /*feature_flags=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                        /*language_segmenter=*/nullptr,
-                                        normalizer_.get()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
                                         language_segmenter_.get(),
-                                        /*normalizer=*/nullptr),
+                                        normalizer_.get(), feature_flags_.get(),
+                                        /*group_result_limiter=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
+TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
@@ -297,7 +314,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -359,7 +377,7 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   EXPECT_FALSE(has_more_results3);
 }
 
-TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
+TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
@@ -386,6 +404,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get(),
                                 std::make_unique<MockGroupResultLimiter>()));
 
   SearchResultProto::ResultProto result1;
@@ -433,7 +452,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
 }
 
-TEST_F(ResultRetrieverV2Test,
+TEST_P(ResultRetrieverV2Test,
        ShouldLimitNumChildDocumentsByMaxJoinedChildPerParent) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -555,7 +574,8 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
@@ -590,7 +610,7 @@ TEST_F(ResultRetrieverV2Test,
   EXPECT_FALSE(has_more_results);
 }
 
-TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
+TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   MockFilesystem mock_filesystem;
   EXPECT_CALL(mock_filesystem,
               PRead(A<int>(), A<void*>(), A<size_t>(), A<off_t>()))
@@ -622,6 +642,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get(),
                                 std::make_unique<MockGroupResultLimiter>()));
 
   SearchResultProto::ResultProto result1;
@@ -646,7 +667,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   EXPECT_THAT(page_result.results, ElementsAre(EqualsProto(result1)));
 }
 
-TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
+TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
@@ -682,7 +703,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   ResultStateV2 result_state(
       std::make_unique<
@@ -745,7 +767,7 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   }
 }
 
-TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
+TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
@@ -814,7 +836,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Should get 1 doc in the first page of result_state1, and num_total_hits
   // should be decremented by 1.
@@ -858,7 +881,7 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   EXPECT_THAT(num_total_hits_, Eq(0));
 }
 
-TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
+TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
@@ -882,7 +905,8 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -919,7 +943,7 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   EXPECT_FALSE(has_more_results2);
 }
 
-TEST_F(ResultRetrieverV2Test,
+TEST_P(ResultRetrieverV2Test,
        ShouldReturnSingleLargeResultAboveNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -944,7 +968,8 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -983,8 +1008,12 @@ TEST_F(ResultRetrieverV2Test,
   EXPECT_FALSE(has_more_results2);
 }
 
-TEST_F(ResultRetrieverV2Test,
+TEST_P(ResultRetrieverV2Test,
        ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
+  if (feature_flags_->enable_strict_page_byte_size_limit()) {
+    GTEST_SKIP() << "Test only applies to non-strict page byte size limit.";
+  }
+
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
@@ -1008,7 +1037,8 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -1042,6 +1072,101 @@ TEST_F(ResultRetrieverV2Test,
   // No more results.
   EXPECT_FALSE(has_more_results);
 }
+
+TEST_P(ResultRetrieverV2Test,
+       ShouldNotIncludeNextResultIfExceedingNumTotalBytesPerPageThreshold) {
+  if (!feature_flags_->enable_strict_page_byte_size_limit()) {
+    GTEST_SKIP() << "Test only applies to strict page byte size limit.";
+  }
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get(), *feature_flags_));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+  DocumentId document_id2 = put_result2.new_document_id;
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  // result1.ByteSizeLong() < threshold < result1.ByteSizeLong() +
+  //                                      result2.ByteSizeLong().
+  int threshold = result1.ByteSizeLong() + 1;
+  ASSERT_THAT(result1.ByteSizeLong() + result2.ByteSizeLong(), Gt(threshold));
+
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.set_num_total_bytes_per_page_threshold(threshold);
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
+
+  // After retrieving result1, total bytes are still below the threshold and #
+  // of results is still below num_per_page, so ResultRetriever should continue
+  // the retrieval process. But when serializing result2, the byte size exceeds
+  // the threshold, so result2 should not be included.
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // More results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page. Even though result2 was evaluated in the previous round but
+  // excluded, it should not be popped from the ranker and thus should be
+  // included in the second page.
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ResultRetrieverV2Test, ResultRetrieverV2Test,
+    testing::Values(
+        FeatureFlags(/*allow_circular_schema_definitions=*/true,
+                     /*enable_scorable_properties=*/true,
+                     /*enable_embedding_quantization=*/true,
+                     /*enable_repeated_field_joins=*/true,
+                     /*enable_embedding_backup_generation=*/true,
+                     /*enable_schema_database=*/true,
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size_limit=*/false),
+        FeatureFlags(/*allow_circular_schema_definitions=*/true,
+                     /*enable_scorable_properties=*/true,
+                     /*enable_embedding_quantization=*/true,
+                     /*enable_repeated_field_joins=*/true,
+                     /*enable_embedding_backup_generation=*/true,
+                     /*enable_schema_database=*/true,
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size_limit=*/true)));
 
 }  // namespace
 
