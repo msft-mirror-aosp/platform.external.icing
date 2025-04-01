@@ -92,14 +92,17 @@ class NumericIndexIntegerTest : public ::testing::Test {
         filesystem_.CreateDirectoryRecursively(document_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -167,14 +170,17 @@ class NumericIndexIntegerTest : public ::testing::Test {
 
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return std::move(doc_store_optimize_result.document_id_old_to_new);
   }

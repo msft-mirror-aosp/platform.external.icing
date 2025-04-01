@@ -53,6 +53,7 @@
 #ifndef ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 #define ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -60,7 +61,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -73,7 +73,6 @@
 #include "icing/portable/endian.h"
 #include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
-#include "icing/portable/zlib.h"
 #include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
@@ -111,19 +110,26 @@ class PortableFileBackedProtoLog {
     // BEST_COMPRESSION = 9
     const int32_t compression_level;
 
+    // The threshold in bytes for compression if enabled. If the proto is larger
+    // than or equal to this threshold, it will be compressed.
+    const uint32_t compression_threshold_bytes;
+
     // Must specify values for options.
     Options() = delete;
-    explicit Options(
-        bool compress_in,
-        const int32_t max_proto_size_in = constants::kMaxProtoSize,
-        const int32_t compression_level_in = kDefaultCompressionLevel)
+    explicit Options(bool compress_in, const int32_t max_proto_size_in,
+                     const int32_t compression_level_in,
+                     const uint32_t compression_threshold_bytes_in)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
-          compression_level(compression_level_in) {}
+          compression_level(compression_level_in),
+          compression_threshold_bytes(compression_threshold_bytes_in) {}
   };
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
   static constexpr int kDefaultCompressionLevel = 3;
+
+  // The default compression threshold is 0, which means always compress.
+  static constexpr uint32_t kDefaultCompressionThresholdBytes = 0;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the
@@ -503,7 +509,8 @@ class PortableFileBackedProtoLog {
   PortableFileBackedProtoLog(const Filesystem* filesystem,
                              const std::string& file_path,
                              std::unique_ptr<Header> header, int64_t file_size,
-                             int32_t compression_level);
+                             int32_t compression_level,
+                             uint32_t compression_threshold_bytes);
 
   // Initializes a new proto log.
   //
@@ -589,18 +596,20 @@ class PortableFileBackedProtoLog {
   std::unique_ptr<Header> header_;
   int64_t file_size_;
   const int32_t compression_level_;
+  const uint32_t compression_threshold_bytes_;
 };
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
     std::unique_ptr<Header> header, int64_t file_size,
-    int32_t compression_level)
+    int32_t compression_level, uint32_t compression_threshold_bytes)
     : filesystem_(filesystem),
       file_path_(file_path),
       header_(std::move(header)),
       file_size_(file_size),
-      compression_level_(compression_level) {
+      compression_level_(compression_level),
+      compression_threshold_bytes_(compression_threshold_bytes) {
   fd_.reset(filesystem_->OpenForAppend(file_path.c_str()));
 }
 
@@ -683,7 +692,8 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(
               filesystem, file_path, std::move(header),
-              /*file_size=*/kHeaderReservedBytes, options.compression_level)),
+              /*file_size=*/kHeaderReservedBytes, options.compression_level,
+              options.compression_threshold_bytes)),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
@@ -816,9 +826,9 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
-          new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header), file_size,
-                                                 options.compression_level)),
+          new PortableFileBackedProtoLog<ProtoT>(
+              filesystem, file_path, std::move(header), file_size,
+              options.compression_level, options.compression_threshold_bytes)),
       data_loss, recalculated_checksum};
 
   return create_result;
@@ -922,7 +932,14 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   if (header_->GetCompressFlag()) {
     protobuf_ports::GzipOutputStream::Options options;
     options.format = protobuf_ports::GzipOutputStream::ZLIB;
-    options.compression_level = compression_level_;
+
+    if (proto_size >= compression_threshold_bytes_) {
+      options.compression_level = compression_level_;
+    } else {
+      options.compression_level = 0;
+    }
+    options.buffer_size =
+        std::min(protobuf_ports::kDefaultBufferSize, proto_size);
 
     protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 

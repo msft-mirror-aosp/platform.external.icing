@@ -110,14 +110,17 @@ class SuggestionProcessorTest : public Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,

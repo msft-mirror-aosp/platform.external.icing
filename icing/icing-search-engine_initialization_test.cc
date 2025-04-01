@@ -1294,14 +1294,17 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
     std::string doc_store_dir = GetDocumentDir();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), doc_store_dir, &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), doc_store_dir, &fake_clock, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -1478,14 +1481,17 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -5443,14 +5449,17 @@ TEST_F(IcingSearchEngineInitializationTest,
     std::string doc_store_dir = GetDocumentDir();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), doc_store_dir, fake_clock.get(),
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), doc_store_dir, fake_clock.get(), schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -6097,14 +6106,17 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
     ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
