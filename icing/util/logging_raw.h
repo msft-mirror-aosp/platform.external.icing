@@ -26,7 +26,7 @@ namespace lib {
 // severity.  From android/log.h: "the tag normally corresponds to the component
 // that emits the log message, and should be reasonably small".
 void LowLevelLogging(LogSeverity::Code severity, const std::string &tag,
-                     const std::string &message);
+                     const std::string &message, const bool force_debug_logs);
 
 }  // namespace lib
 }  // namespace icing

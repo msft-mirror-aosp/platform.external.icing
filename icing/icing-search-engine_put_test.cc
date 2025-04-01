@@ -45,6 +45,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
@@ -330,6 +331,25 @@ TEST_F(IcingSearchEnginePutTest, IndexingDocMergeFailureResets) {
   }
 }
 
+TEST_F(IcingSearchEnginePutTest, PutDocumentUriReturnedInResult) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_index_merge_size(document.ByteSizeLong());
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(put_result_proto.uri(), document.uri());
+  EXPECT_FALSE(put_result_proto.was_replacement());
+}
+
 TEST_F(IcingSearchEnginePutTest, PutDocumentReplacementSucceeds) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
@@ -581,6 +601,114 @@ TEST_F(IcingSearchEnginePutTest, PutDocumentWithInvalidBlobHandle) {
           .Build();
   ASSERT_THAT(icing.Put(document).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEnginePutTest, DocumentCompressionThreshold) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Create document1 with size of 1024 bytes.
+  int64_t document1_size = 1024;
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", std::string(979, 'a'))
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(document1.ByteSizeLong(), Eq(document1_size));
+
+  // Create document2 with size of 900 bytes.
+  int64_t document2_size = 900;
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", std::string(855, 'a'))
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(document2.ByteSizeLong(), Eq(document2_size));
+
+  // Create icing instance with compression threshold of 1000 bytes.
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_compression_level(3);
+
+  int64_t document_log_size_full_compression;
+  int64_t document_log_size_part_compression;
+  int64_t document_log_size_no_compression;
+  const std::string document_log_path =
+      icing_options.base_dir() + "/document_dir/" +
+      DocumentLogCreator::GetDocumentLogFilename();
+
+  // Set the compression threshold to 1000 bytes to only compress document1.
+  {
+    icing_options.set_compression_threshold_bytes(1000);
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+    document_log_size_part_compression =
+        filesystem()->GetFileSize(document_log_path.c_str());
+
+    // Calling Optimize() will not change the size of the document log since
+    // the compression setting is the same.
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    ASSERT_EQ(filesystem()->GetFileSize(document_log_path.c_str()),
+              document_log_size_part_compression);
+  }
+
+  // Set the compression threshold to 900 bytes to compress both documents.
+  {
+    icing_options.set_compression_threshold_bytes(900);
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Call Optimize() to refresh the document log with the new compression
+    // threshold.
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    document_log_size_full_compression =
+        filesystem()->GetFileSize(document_log_path.c_str());
+
+    // Calling Optimize() again will not change the size of the document log
+    // since the compression setting is the same.
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    ASSERT_EQ(filesystem()->GetFileSize(document_log_path.c_str()),
+              document_log_size_full_compression);
+  }
+
+  // Set the compression threshold to 10000 bytes will turn off compression.
+  {
+    icing_options.set_compression_threshold_bytes(10000);
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Call Optimize() to refresh the document log with the new compression
+    // threshold.
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    document_log_size_no_compression =
+        filesystem()->GetFileSize(document_log_path.c_str());
+
+    // Calling Optimize() again will not change the size of the document log
+    // since the compression setting is the same.
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    ASSERT_EQ(filesystem()->GetFileSize(document_log_path.c_str()),
+              document_log_size_no_compression);
+  }
+
+  // Check that no_compression > part_compression > full_compression
+  ASSERT_GT(document_log_size_part_compression,
+            document_log_size_full_compression);
+  ASSERT_GT(document_log_size_no_compression,
+            document_log_size_part_compression);
 }
 
 }  // namespace

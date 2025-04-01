@@ -119,6 +119,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
       /*initialize_stats=*/nullptr);
 }
 
@@ -166,8 +168,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -210,6 +211,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -305,8 +307,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -367,6 +368,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -462,8 +464,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -509,6 +510,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -604,8 +606,7 @@ void BM_QueryHiragana(benchmark::State& state) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock, &feature_flags));
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -651,6 +652,7 @@ void BM_QueryHiragana(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {

@@ -151,6 +151,7 @@ class DocumentStore {
       const FeatureFlags* feature_flags,
       bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
+      uint32_t compression_threshold_bytes,
       InitializeStatsProto* initialize_stats);
 
   // Discards all derived data in the document store.
@@ -289,9 +290,10 @@ class DocumentStore {
   // Helper method to find a DocumentId that is associated with the given
   // namespace and uri.
   //
-  // NOTE: The DocumentId may refer to a invalid document (deleted
-  // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
-  // refers to a valid Document.
+  // NOTE: if succeeded, it always returns a valid DocumentId, but this
+  // DocumentId may refer to a invalid document (deleted or expired). Callers
+  // can call GetAliveDocumentFilterData(document_id, current_time_ms) and check
+  // the return value to ensure it refers to an alive Document.
   //
   // Returns:
   //   A DocumentId on success
@@ -303,9 +305,10 @@ class DocumentStore {
   // Helper method to find a DocumentId that is associated with the given
   // NamespaceIdFingerprint.
   //
-  // NOTE: The DocumentId may refer to a invalid document (deleted
-  // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
-  // refers to a valid Document.
+  // NOTE: if succeeded, it always returns a valid DocumentId, but this
+  // DocumentId may refer to a invalid document (deleted or expired). Callers
+  // can call GetAliveDocumentFilterData(document_id, current_time_ms) and check
+  // the return value to ensure it refers to an alive Document.
   //
   // Returns:
   //   A DocumentId on success
@@ -598,7 +601,8 @@ class DocumentStore {
                          const SchemaStore* schema_store,
                          const FeatureFlags* feature_flags,
                          bool pre_mapping_fbv, bool use_persistent_hash_map,
-                         int32_t compression_level);
+                         int32_t compression_level,
+                         uint32_t compression_threshold_bytes);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -622,6 +626,7 @@ class DocumentStore {
   bool use_persistent_hash_map_;
 
   const int32_t compression_level_;
+  const uint32_t compression_threshold_bytes_;
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
@@ -811,32 +816,16 @@ class DocumentStore {
   libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
   GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const;
 
-  // Check if a document exists. Existence means it hasn't been deleted and it
-  // hasn't expired yet.
-  //
-  // Returns:
-  //   OK if the document exists
-  //   INVALID_ARGUMENT if document_id is less than 0 or greater than the
-  //                    maximum value
-  //   NOT_FOUND if the document doesn't exist (i.e. deleted or expired)
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status DoesDocumentExistWithStatus(
-      DocumentId document_id) const;
-
-  // Checks if a document has been deleted
+  // Checks if a document has been deleted.
   //
   // This is for internal-use only because we assume that the document_id is
-  // already valid. If you're unsure if the document_id is valid, use
-  // DoesDocumentExist(document_id) instead, which will perform those additional
-  // checks.
+  // already valid.
   bool IsDeleted(DocumentId document_id) const;
 
   // Checks if a document has expired.
   //
   // This is for internal-use only because we assume that the document_id is
-  // already valid. If you're unsure if the document_id is valid, use
-  // DoesDocumentExist(document_id) instead, which will perform those additional
-  // checks.
+  // already valid.
 
   // Returns:
   //   True:DocumentFilterData  if the given document isn't expired.

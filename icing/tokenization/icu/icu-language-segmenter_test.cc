@@ -229,12 +229,19 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
   //   2. '@' became a word connector
   //   3. <numeric><word-connector><numeric> such as "3'14" is now considered as
   //      a single token.
-  if (GetIcuTokenizationVersion() >= 72) {
-    EXPECT_THAT(
-        language_segmenter->GetAllTerms("com:google:android"),
-        IsOkAndHolds(ElementsAre("com", ":", "google", ":", "android")));
+  int icu_version = GetIcuTokenizationVersion();
+  if (icu_version >= 72) {
+    // In ICU 77, the rules for ':' were reverted.
+    if (icu_version >= 77) {
+      EXPECT_THAT(language_segmenter->GetAllTerms("com:google:android"),
+                  IsOkAndHolds(ElementsAre("com:google:android")));
+    } else {
+      EXPECT_THAT(
+          language_segmenter->GetAllTerms("com:google:android"),
+          IsOkAndHolds(ElementsAre("com", ":", "google", ":", "android")));
+    }
     // In ICU 74, the rules for '@' were reverted.
-    if (GetIcuTokenizationVersion() >= 74) {
+    if (icu_version >= 74) {
       EXPECT_THAT(
           language_segmenter->GetAllTerms("com@google@android"),
           IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));

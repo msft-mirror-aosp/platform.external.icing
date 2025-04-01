@@ -1325,7 +1325,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
               IsOkAndHolds(ElementsAre(another_child_join_id_pair)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeDocumentId) {
+TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeParentDocumentId) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1355,10 +1355,62 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeDocumentId) {
   index->set_last_added_document_id(120);
   ASSERT_THAT(index->last_added_document_id(), Eq(120));
 
-  // Create document_id_old_to_new with size = 107 (from index 0 to 106), which
-  // makes parent document 120 and child document 108 out of range.
+  // Create document_id_old_to_new with size = 109 (from index 0 to 108), which
+  // makes parent document 120 out of range.
   //
-  // Optimize should handle out of range DocumentId properly without crashing.
+  // Optimize should return internal error for out of range parent document id
+  // without crashing.
+  std::vector<DocumentId> document_id_old_to_new(109, kInvalidDocumentId);
+  document_id_old_to_new[1] = 0;
+  document_id_old_to_new[101] = 11;
+  document_id_old_to_new[106] = 12;
+
+  // Note: namespace_id_old_to_new is not used in
+  // QualifiedIdJoinIndexImplV3::Optimize.
+  DocumentId new_last_added_document_id = 12;
+  EXPECT_THAT(
+      index->Optimize(document_id_old_to_new, /*namespace_id_old_to_new=*/{},
+                      new_last_added_document_id),
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+               HasSubstr("Qualified id join index data parent document id is "
+                         "out of range. The index may have been corrupted.")));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeChildDocumentId) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  // Create 2 parent and 3 child documents (with N to N joins):
+  // - Document 1: 101, 106, 108
+  // - Document 120: 101
+  // Add 3 children with their parents to the index.
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/106,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair3(/*document_id=*/108,
+                                         /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(
+      index->Put(child_join_id_pair1,
+                 /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
+  ICING_ASSERT_OK(
+      index->Put(child_join_id_pair2,
+                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
+  ICING_ASSERT_OK(
+      index->Put(child_join_id_pair3,
+                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
+
+  ASSERT_THAT(index, Pointee(SizeIs(4)));
+  index->set_last_added_document_id(120);
+  ASSERT_THAT(index->last_added_document_id(), Eq(120));
+
+  // Create document_id_old_to_new with size = 107 (from index 0 to 106), which
+  // makes child document 108 out of range.
+  //
+  // Optimize should return internal error for out of range child document id
+  // without crashing.
   std::vector<DocumentId> document_id_old_to_new(107, kInvalidDocumentId);
   document_id_old_to_new[1] = 0;
   document_id_old_to_new[101] = 11;
@@ -1370,18 +1422,9 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeDocumentId) {
   EXPECT_THAT(
       index->Optimize(document_id_old_to_new, /*namespace_id_old_to_new=*/{},
                       new_last_added_document_id),
-      IsOk());
-  EXPECT_THAT(index, Pointee(SizeIs(2)));
-  EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
-
-  // Verify document 0 (originally document 1)
-  // - Child doc 101, 106 become 11, 12.
-  // - Child doc 108 is out of range, so it should be deleted.
-  EXPECT_THAT(
-      index->Get(/*parent_document_id=*/0),
-      IsOkAndHolds(ElementsAre(
-          DocumentJoinIdPair(/*document_id=*/11, /*joinable_property_id=*/0),
-          DocumentJoinIdPair(/*document_id=*/12, /*joinable_property_id=*/0))));
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+               HasSubstr("Qualified id join index data child document id is "
+                         "out of range. The index may have been corrupted.")));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
