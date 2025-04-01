@@ -1038,6 +1038,45 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
+  public void testClearAndDestroy() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    // Simple put and get
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
+    PutResultProto putResultProto = icingSearchEngine.put(emailDocument);
+    assertStatusOk(putResultProto.getStatus());
+
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
+    assertStatusOk(getResultProto.getStatus());
+    assertThat(getResultProto.getDocument()).isEqualTo(emailDocument);
+
+    // Clear and destroy
+    ResetResultProto clearAndDestroyResult = icingSearchEngine.clearAndDestroy();
+    assertStatusOk(clearAndDestroyResult.getStatus());
+
+    // Try to put and get again, but it should fail since the instance is
+    // uninitialized after clearAndDestroy().
+    assertThat(icingSearchEngine.put(emailDocument).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.FAILED_PRECONDITION);
+    assertThat(
+            icingSearchEngine
+                .get("namespace", "uri", GetResultSpecProto.getDefaultInstance())
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.FAILED_PRECONDITION);
+  }
+
+  @Test
   public void testReportUsage() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 

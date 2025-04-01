@@ -282,6 +282,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
     return IcingSearchEngineUtils.byteArrayToResetResultProto(icingSearchEngineImpl.reset());
   }
 
+  @Override
+  public @NonNull ResetResultProto clearAndDestroy() {
+    return IcingSearchEngineUtils.byteArrayToResetResultProto(
+        icingSearchEngineImpl.clearAndDestroy());
+  }
+
   public static boolean shouldLog(LogSeverity.Code severity) {
     return shouldLog(severity, (short) 0);
   }
