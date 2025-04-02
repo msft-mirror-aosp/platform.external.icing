@@ -35,6 +35,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
@@ -50,8 +51,8 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
@@ -120,6 +121,7 @@ class SuggestionProcessorTest : public Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 

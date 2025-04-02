@@ -35,6 +35,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -53,7 +54,6 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -234,6 +234,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       PortableFileBackedProtoLog<
           DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 

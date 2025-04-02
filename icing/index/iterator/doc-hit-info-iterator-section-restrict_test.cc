@@ -17,6 +17,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -27,9 +28,11 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
@@ -115,6 +118,7 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }

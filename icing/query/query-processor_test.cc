@@ -41,6 +41,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -91,6 +92,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       PortableFileBackedProtoLog<
           DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 

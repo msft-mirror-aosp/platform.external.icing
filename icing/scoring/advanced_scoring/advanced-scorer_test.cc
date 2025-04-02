@@ -35,6 +35,7 @@
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/join/join-children-fetcher-impl-deprecated.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -90,6 +91,7 @@ class AdvancedScorerTest : public testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
@@ -1369,8 +1371,8 @@ TEST_F(AdvancedScorerTest,
   EmbeddingQueryResults embedding_query_results;
   embedding_query_results
       .result_infos[/*query_vector_index=*/0]
-                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
-                    [/*document_id=*/0]
+                   [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                   [/*document_id=*/0]
       .AppendScore(/*semantic_score=*/0.1);
 
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
@@ -1470,13 +1472,13 @@ TEST_F(AdvancedScorerTest,
   EmbeddingQueryResults embedding_query_results;
   embedding_query_results
       .result_infos[/*query_vector_index=*/0]
-                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
-                    [/*document_id=*/0]
+                   [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                   [/*document_id=*/0]
       .AppendScore(/*semantic_score=*/0.1);
   embedding_query_results
       .result_infos[/*query_vector_index=*/1]
-                    [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
-                    [/*document_id=*/1]
+                   [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
+                   [/*document_id=*/1]
       .AppendScore(/*semantic_score=*/0.2);
 
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
@@ -1609,7 +1611,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   score_map =
       &embedding_query_results
            .result_infos[0]
-                         [SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN];
+                        [SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.7, document_id_0);
   AddEntryToEmbeddingQueryScoreMap(*score_map,

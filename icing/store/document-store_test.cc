@@ -36,6 +36,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
@@ -286,6 +287,7 @@ class DocumentStoreTest
         PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
         PortableFileBackedProtoLog<
             DocumentWrapper>::kDefaultCompressionThresholdBytes,
+        protobuf_ports::kDefaultMemLevel,
         /*initialize_stats=*/nullptr);
   }
 
@@ -3060,7 +3062,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
-  // Make sure that all the other fields are stll valid/the same
+  // Make sure that all the other fields are still valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
   EXPECT_THAT(email_data.uri_fingerprint(),
               Eq(tc3farmhash::Fingerprint64(email_document.uri())));
@@ -3075,7 +3077,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
-  // Make sure that all the other fields are stll valid/the same
+  // Make sure that all the other fields are still valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
   EXPECT_THAT(message_data.uri_fingerprint(),
               Eq(tc3farmhash::Fingerprint64(message_document.uri())));
@@ -4354,7 +4356,7 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           PortableFileBackedProtoLog<
               DocumentWrapper>::kDefaultCompressionThresholdBytes,
-          &initialize_stats));
+          protobuf_ports::kDefaultMemLevel, &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   // The document log is using the legacy v0 format so that a migration is
@@ -4581,7 +4583,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
-            &initialize_stats));
+            protobuf_ports::kDefaultMemLevel, &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4820,6 +4822,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -5022,7 +5025,7 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           PortableFileBackedProtoLog<
               DocumentWrapper>::kDefaultCompressionThresholdBytes,
-          &initialize_stats));
+          protobuf_ports::kDefaultMemLevel, &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -5265,6 +5268,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
@@ -5309,7 +5313,7 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
-            &initialize_stats));
+            protobuf_ports::kDefaultMemLevel, &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::IO_ERROR));
 
@@ -5355,6 +5359,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
@@ -5396,7 +5401,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
-            &initialize_stats));
+            protobuf_ports::kDefaultMemLevel, &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
 
@@ -5435,6 +5440,7 @@ TEST_P(DocumentStoreTest, GetDocumentId_expiredDocument) {
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           PortableFileBackedProtoLog<
               DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
           /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -5471,6 +5477,7 @@ TEST_P(DocumentStoreTest, GetDocumentId_deletedDocument) {
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           PortableFileBackedProtoLog<
               DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
           /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
@@ -5506,6 +5513,7 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
           PortableFileBackedProtoLog<
               DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
           /*initialize_stats=*/nullptr));
 
   std::unique_ptr<DocumentStore> doc_store =

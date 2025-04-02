@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
@@ -80,8 +81,8 @@ class ResultStateManager {
       std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
       std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
       const ResultSpecProto& result_spec, const DocumentStore& document_store,
-      const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
-      ICING_LOCKS_EXCLUDED(mutex_);
+      const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
+      QueryStatsProto* query_stats = nullptr) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves and returns PageResult for the next page.
   // The returned results won't exist in ResultStateManager anymore. If the
@@ -153,7 +154,7 @@ class ResultStateManager {
 
   // Helper method to remove old states to make room for incoming states with
   // size num_hits_to_add.
-  void RemoveStatesIfNeeded(int num_hits_to_add)
+  void RemoveStatesIfNeeded(int num_hits_to_add, QueryStatsProto* query_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to remove a result state from result_state_map_, the token

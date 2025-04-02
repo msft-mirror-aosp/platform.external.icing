@@ -550,6 +550,18 @@ jbyteArray nativeReset(JNIEnv* env, jclass clazz, jobject object) {
   return SerializeProtoToJniByteArray(env, reset_result_proto);
 }
 
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeClearAndDestroy(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::ResetResultProto clear_and_destroy_proto =
+      icing->ClearAndDestroy();
+
+  return SerializeProtoToJniByteArray(env, clear_and_destroy_proto);
+}
+
 jbyteArray nativeSearchSuggestions(JNIEnv* env, jclass clazz, jobject object,
                                    jbyteArray suggestion_spec_bytes) {
   icing::lib::IcingSearchEngine* icing =

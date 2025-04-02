@@ -47,6 +47,7 @@
 #include "icing/index/property-existence-indexing-handler.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
@@ -246,6 +247,7 @@ class QueryVisitorTest
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 

@@ -193,6 +193,9 @@ public interface IcingSearchEngineInterface extends Closeable {
   /** Clears all data from the current icing instance, and reinitializes it. */
   ResetResultProto reset();
 
+  /** Clears all data from the current icing instance. */
+  ResetResultProto clearAndDestroy();
+
   /** Closes the current icing instance. */
   @Override
   void close();
