@@ -22,6 +22,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/random-string.h"
@@ -66,7 +67,8 @@ std::unique_ptr<PortableFileBackedProtoLog<DocumentProto>> CreateProtoLog(
                  PortableFileBackedProtoLog<
                      DocumentProto>::kDefaultCompressionLevel,
                  PortableFileBackedProtoLog<
-                     DocumentProto>::kDefaultCompressionThresholdBytes))
+                     DocumentProto>::kDefaultCompressionThresholdBytes,
+                 protobuf_ports::kDefaultMemLevel))
       .ValueOrDie()
       .proto_log;
 }

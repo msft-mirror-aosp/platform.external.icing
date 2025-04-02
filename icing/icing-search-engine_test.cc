@@ -1780,6 +1780,49 @@ TEST_F(IcingSearchEngineTest, GetDebugInfoWithSchemaNoDocumentsSucceeds) {
   ASSERT_THAT(result.status(), ProtoIsOk());
 }
 
+TEST_F(IcingSearchEngineTest, ClearAndDestroySucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+
+  // Obtain empty size of the base directory.
+  int64_t empty_state_size =
+      filesystem()->GetFileDiskUsage(GetTestBaseDir().c_str());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Simple put and get
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() =
+      CreateMessageDocument("namespace", "uri");
+  ASSERT_THAT(
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+
+  // Sanity check that things have been added
+  EXPECT_THAT(filesystem()->GetDiskUsage(GetTestBaseDir().c_str()),
+              Gt(empty_state_size));
+  EXPECT_EQ(filesystem()->DirectoryExists(GetTestBaseDir().c_str()), true);
+
+  // Clear all data for the icing instance
+  ResetResultProto clear_result = icing.ClearAndDestroy();
+  EXPECT_THAT(clear_result.status(), ProtoIsOk());
+
+  // Check that the directory no longer exists after deletion.
+  EXPECT_EQ(filesystem()->DirectoryExists(GetTestBaseDir().c_str()), false);
+
+  // Try to put and get again, but it should fail since the instance is
+  // uninitialized.
+  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+}
 }  // namespace
 }  // namespace lib
 }  // namespace icing

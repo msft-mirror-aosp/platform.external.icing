@@ -30,6 +30,7 @@
 #include "icing/index/index.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
@@ -121,6 +122,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       PortableFileBackedProtoLog<
           DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 

@@ -22,6 +22,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/mutex.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
@@ -47,7 +48,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
     std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
     const ResultSpecProto& result_spec, const DocumentStore& document_store,
-    const ResultRetrieverV2& result_retriever, int64_t current_time_ms) {
+    const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
+    QueryStatsProto* query_stats) {
   if (ranker == nullptr) {
     return absl_ports::InvalidArgumentError("Should not provide null ranker");
   }
@@ -91,7 +93,7 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
                                           current_time_ms);
     // Remove states to make room for this new state.
-    RemoveStatesIfNeeded(num_hits_to_add);
+    RemoveStatesIfNeeded(num_hits_to_add, query_stats);
     // Generate a new unique token and add it into result_state_map_.
     next_page_token = Add(std::move(result_state), current_time_ms);
   }
@@ -185,7 +187,8 @@ uint64_t ResultStateManager::GetUniqueToken() {
   return new_token;
 }
 
-void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
+void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add,
+                                              QueryStatsProto* query_stats) {
   if (result_state_map_.empty() || token_queue_.empty()) {
     return;
   }
@@ -216,15 +219,25 @@ void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
   // possible that num_total_hits_ is non-zero and still greater than
   // max_total_hits_ when token_queue_ is empty. Still "eventually" it will be
   // decremented after the last thread releases the shared pointer.
+  int num_states_evicted = 0;
   while (!token_queue_.empty() && num_total_hits_ > max_total_hits_) {
     ICING_LOG(WARNING) << "Evicting result state from token_queue_ due to "
                           "budget limit. Current num_total_hits_: "
                        << num_total_hits_;
 
     InternalInvalidateResultState(token_queue_.front().first);
+    ++num_states_evicted;
     token_queue_.pop();
   }
   invalidated_token_set_.clear();
+  if (num_states_evicted > 0) {
+    ICING_LOG(WARNING) << "Evicted " << num_states_evicted
+                       << " states. After eviction: " << num_total_hits_
+                       << " hits and " << token_queue_.size() << " states.";
+    if (query_stats != nullptr) {
+      query_stats->set_num_result_states_evicted(num_states_evicted);
+    }
+  }
 }
 
 void ResultStateManager::InternalInvalidateResultState(uint64_t token) {

@@ -32,6 +32,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/query/query-utils.h"
@@ -66,6 +67,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
       PortableFileBackedProtoLog<
           DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
