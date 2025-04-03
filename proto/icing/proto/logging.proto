@@ -206,7 +206,7 @@ message PutDocumentStatsProto {
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 28
+// Next tag: 30
 message QueryStatsProto {
   // TODO(b/305098009): deprecate. Use parent_search_stats instead.
   // The UTF-8 length of the query string
@@ -348,6 +348,28 @@ message QueryStatsProto {
 
   // Byte size of the unsorted tail of the lite index hit buffer.
   optional int64 lite_index_hit_buffer_unsorted_byte_size = 27;
+
+  message PageTokenType {
+    enum Code {
+      // Default. Usually used when it is the first page.
+      NONE = 0;
+
+      VALID = 1;
+
+      // The current page token is not found in ResultStateManager. This is
+      // usually caused by cache eviction.
+      NOT_FOUND = 2;
+
+      // The current page token is empty (kInvalidNextPageToken).
+      EMPTY = 3;
+    }
+  }
+  // The type of the input page token.
+  optional PageTokenType.Code page_token_type = 28;
+
+  // Number of result states being force-evicted from ResultStateManager due to
+  // budget limit. This doesn't include expired or invalidated states.
+  optional int32 num_result_states_evicted = 29;
 
   reserved 9;
 }

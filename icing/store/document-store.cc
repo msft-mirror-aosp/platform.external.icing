@@ -286,14 +286,12 @@ void RemoveAliveBlobHandles(
 
 }  // namespace
 
-DocumentStore::DocumentStore(const Filesystem* filesystem,
-                             const std::string_view base_dir,
-                             const Clock* clock,
-                             const SchemaStore* schema_store,
-                             const FeatureFlags* feature_flags,
-                             bool pre_mapping_fbv, bool use_persistent_hash_map,
-                             int32_t compression_level,
-                             uint32_t compression_threshold_bytes)
+DocumentStore::DocumentStore(
+    const Filesystem* filesystem, const std::string_view base_dir,
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags* feature_flags, bool pre_mapping_fbv,
+    bool use_persistent_hash_map, int32_t compression_level,
+    uint32_t compression_threshold_bytes, int32_t compression_mem_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
@@ -303,7 +301,8 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       pre_mapping_fbv_(pre_mapping_fbv),
       use_persistent_hash_map_(use_persistent_hash_map),
       compression_level_(compression_level),
-      compression_threshold_bytes_(compression_threshold_bytes) {}
+      compression_threshold_bytes_(compression_threshold_bytes),
+      compression_mem_level_(compression_mem_level) {}
 
 libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
@@ -333,7 +332,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const FeatureFlags* feature_flags,
     bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
     bool use_persistent_hash_map, int32_t compression_level,
-    uint32_t compression_threshold_bytes,
+    uint32_t compression_threshold_bytes, int32_t compression_mem_level,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
@@ -342,7 +341,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
       filesystem, base_dir, clock, schema_store, feature_flags, pre_mapping_fbv,
-      use_persistent_hash_map, compression_level, compression_threshold_bytes));
+      use_persistent_hash_map, compression_level, compression_threshold_bytes,
+      compression_mem_level));
   ICING_ASSIGN_OR_RETURN(
       InitializeResult initialize_result,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -407,7 +407,8 @@ libtextclassifier3::StatusOr<DocumentStore::InitializeResult>
 DocumentStore::Initialize(bool force_recovery_and_revalidate_documents,
                           InitializeStatsProto* initialize_stats) {
   auto create_result_or = DocumentLogCreator::Create(
-      filesystem_, base_dir_, compression_level_, compression_threshold_bytes_);
+      filesystem_, base_dir_, compression_level_, compression_threshold_bytes_,
+      compression_mem_level_);
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -2142,12 +2143,12 @@ DocumentStore::OptimizeInto(
 
   ICING_ASSIGN_OR_RETURN(
       auto doc_store_create_result,
-      DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
-                            &feature_flags_,
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            pre_mapping_fbv_, use_persistent_hash_map_,
-                            compression_level_, compression_threshold_bytes_,
-                            /*initialize_stats=*/nullptr));
+      DocumentStore::Create(
+          filesystem_, new_directory, &clock_, schema_store_, &feature_flags_,
+          /*force_recovery_and_revalidate_documents=*/false, pre_mapping_fbv_,
+          use_persistent_hash_map_, compression_level_,
+          compression_threshold_bytes_, compression_mem_level_,
+          /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
 
