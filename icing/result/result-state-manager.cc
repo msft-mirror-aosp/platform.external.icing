@@ -14,18 +14,22 @@
 
 #include "icing/result/result-state-manager.h"
 
+#include <cstdint>
 #include <memory>
 #include <queue>
 #include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -187,10 +191,10 @@ void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
   }
 
   // 1. Check if this new result_state would take up the entire result state
-  // manager budget.
+  //    manager budget.
   if (num_hits_to_add > max_total_hits_) {
     // This single result state will exceed our budget. Drop everything else to
-    // accomodate it.
+    // accommodate it.
     InternalInvalidateAllResultStates();
     return;
   }
@@ -204,7 +208,8 @@ void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
   }
 
   // 3. If we're over budget, remove states from oldest to newest until we fit
-  // into our budget.
+  //    into our budget.
+  //
   // Note: num_total_hits_ may not be decremented immediately after invalidating
   // a result state, since other threads may still hold the shared pointer.
   // Thus, we have to check if token_queue_ is empty or not, since it is
@@ -212,6 +217,10 @@ void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
   // max_total_hits_ when token_queue_ is empty. Still "eventually" it will be
   // decremented after the last thread releases the shared pointer.
   while (!token_queue_.empty() && num_total_hits_ > max_total_hits_) {
+    ICING_LOG(WARNING) << "Evicting result state from token_queue_ due to "
+                          "budget limit. Current num_total_hits_: "
+                       << num_total_hits_;
+
     InternalInvalidateResultState(token_queue_.front().first);
     token_queue_.pop();
   }
