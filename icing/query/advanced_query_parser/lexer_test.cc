@@ -15,6 +15,8 @@
 #include "icing/query/advanced_query_parser/lexer.h"
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -47,22 +49,22 @@ TEST(LexerTest, SimpleQuery) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("foo", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("fooAND", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("fooAND", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("ORfoo", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("ORfoo", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("fooANDbar", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("fooANDbar",
                                                    Lexer::TokenType::TEXT)));
 }
@@ -71,46 +73,50 @@ TEST(LexerTest, PrefixQuery) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("foo*", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
-              ElementsAre(EqualsLexerToken("foo*", Lexer::TokenType::TEXT)));
+              ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("", Lexer::TokenType::STAR)));
 
   lexer = std::make_unique<Lexer>("fooAND*", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
-              ElementsAre(EqualsLexerToken("fooAND*", Lexer::TokenType::TEXT)));
+              ElementsAre(EqualsLexerToken("fooAND", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("", Lexer::TokenType::STAR)));
 
   lexer = std::make_unique<Lexer>("*ORfoo", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
-              ElementsAre(EqualsLexerToken("*ORfoo", Lexer::TokenType::TEXT)));
+              ElementsAre(EqualsLexerToken("", Lexer::TokenType::STAR),
+                          EqualsLexerToken("ORfoo", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("fooANDbar*", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
-  EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("fooANDbar*",
-                                                   Lexer::TokenType::TEXT)));
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
+  EXPECT_THAT(tokens,
+              ElementsAre(EqualsLexerToken("fooANDbar", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("", Lexer::TokenType::STAR)));
 }
 
 TEST(LexerTest, SimpleStringQuery) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("\"foo\"", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::STRING)));
 
   lexer = std::make_unique<Lexer>("\"fooAND\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("fooAND",
                                                    Lexer::TokenType::STRING)));
 
   lexer = std::make_unique<Lexer>("\"ORfoo\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("ORfoo", Lexer::TokenType::STRING)));
 
   lexer = std::make_unique<Lexer>("\"fooANDbar\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("fooANDbar",
                                                    Lexer::TokenType::STRING)));
 }
@@ -119,28 +125,28 @@ TEST(LexerTest, TwoTermQuery) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("foo AND bar", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
                           EqualsLexerToken("bar", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("foo && bar", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
                           EqualsLexerToken("bar", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("foo&&bar", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
                           EqualsLexerToken("bar", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("foo OR \"bar\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::OR),
@@ -152,34 +158,34 @@ TEST(LexerTest, QueryWithSpecialSymbol) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("foo\\ \\&\\&bar", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("foo &&bar",
                                                    Lexer::TokenType::TEXT)));
   lexer = std::make_unique<Lexer>("foo\\&\\&bar&&baz", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo&&bar", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
                           EqualsLexerToken("baz", Lexer::TokenType::TEXT)));
   lexer = std::make_unique<Lexer>("foo\\\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo\"", Lexer::TokenType::TEXT)));
 
   // With quotation marks
   lexer = std::make_unique<Lexer>("\"foo &&bar\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("foo &&bar",
                                                    Lexer::TokenType::STRING)));
   lexer = std::make_unique<Lexer>("\"foo&&bar\"&&baz", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(
       tokens,
       ElementsAre(EqualsLexerToken("foo&&bar", Lexer::TokenType::STRING),
                   EqualsLexerToken(Lexer::TokenType::AND),
                   EqualsLexerToken("baz", Lexer::TokenType::TEXT)));
   lexer = std::make_unique<Lexer>("\"foo\\\"\"", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("foo\\\"",
                                                    Lexer::TokenType::STRING)));
 }
@@ -188,7 +194,7 @@ TEST(LexerTest, TextInStringShouldBeOriginal) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("\"foo\\nbar\"", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens, ElementsAre(EqualsLexerToken("foo\\nbar",
                                                    Lexer::TokenType::STRING)));
 }
@@ -197,7 +203,7 @@ TEST(LexerTest, QueryWithFunctionCalls) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("foo AND fun(bar)", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(
       tokens,
       ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
@@ -209,7 +215,7 @@ TEST(LexerTest, QueryWithFunctionCalls) {
 
   // Not a function call
   lexer = std::make_unique<Lexer>("foo AND fun (bar)", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
@@ -223,14 +229,14 @@ TEST(LexerTest, QueryWithComparator) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("name: foo", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("name", Lexer::TokenType::TEXT),
                           EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
                           EqualsLexerToken("foo", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("email.name:foo", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("email", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::DOT),
@@ -239,42 +245,42 @@ TEST(LexerTest, QueryWithComparator) {
                           EqualsLexerToken("foo", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age > 20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken(">", Lexer::TokenType::COMPARATOR),
                           EqualsLexerToken("20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age>=20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken(">=", Lexer::TokenType::COMPARATOR),
                           EqualsLexerToken("20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age <20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken("<", Lexer::TokenType::COMPARATOR),
                           EqualsLexerToken("20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age<= 20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken("<=", Lexer::TokenType::COMPARATOR),
                           EqualsLexerToken("20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age == 20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken("==", Lexer::TokenType::COMPARATOR),
                           EqualsLexerToken("20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age != 20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken("!=", Lexer::TokenType::COMPARATOR),
@@ -287,7 +293,7 @@ TEST(LexerTest, ComplexQuery) {
       "NOT verbatimSearch(\"hello world\")",
       Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(
       tokens,
       ElementsAre(
@@ -296,7 +302,8 @@ TEST(LexerTest, ComplexQuery) {
           EqualsLexerToken("sender", Lexer::TokenType::TEXT),
           EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
           EqualsLexerToken(Lexer::TokenType::LPAREN),
-          EqualsLexerToken("foo*", Lexer::TokenType::TEXT),
+          EqualsLexerToken("foo", Lexer::TokenType::TEXT),
+          EqualsLexerToken("", Lexer::TokenType::STAR),
           EqualsLexerToken(Lexer::TokenType::AND),
           EqualsLexerToken("bar", Lexer::TokenType::TEXT),
           EqualsLexerToken(Lexer::TokenType::OR),
@@ -333,7 +340,7 @@ TEST(LexerTest, UTF8WhiteSpace) {
       "\xe2\x80\x8a",
       Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken("bar", Lexer::TokenType::TEXT)));
@@ -343,7 +350,7 @@ TEST(LexerTest, CJKT) {
   std::unique_ptr<Lexer> lexer = std::make_unique<Lexer>(
       "我 && 每天 || 走路 OR 去 -上班", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("我", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
@@ -357,7 +364,7 @@ TEST(LexerTest, CJKT) {
 
   lexer = std::make_unique<Lexer>("私&& は ||毎日 AND 仕事 -に 歩い て い ます",
                                   Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("私", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::AND),
@@ -375,15 +382,14 @@ TEST(LexerTest, CJKT) {
 
   lexer = std::make_unique<Lexer>("ញុំ&&ដើរទៅ||ធ្វើការ-រាល់ថ្ងៃ",
                                   Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
-  EXPECT_THAT(tokens,
-              ElementsAre(EqualsLexerToken("ញុំ", Lexer::TokenType::TEXT),
-                          EqualsLexerToken(Lexer::TokenType::AND),
-                          EqualsLexerToken("ដើរទៅ", Lexer::TokenType::TEXT),
-                          EqualsLexerToken(Lexer::TokenType::OR),
-                          EqualsLexerToken("ធ្វើការ", Lexer::TokenType::TEXT),
-                          EqualsLexerToken(Lexer::TokenType::MINUS),
-                          EqualsLexerToken("រាល់ថ្ងៃ", Lexer::TokenType::TEXT)));
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
+  EXPECT_THAT(
+      tokens,
+      ElementsAre(EqualsLexerToken("ញុំ", Lexer::TokenType::TEXT),
+                  EqualsLexerToken(Lexer::TokenType::AND),
+                  EqualsLexerToken("ដើរទៅ", Lexer::TokenType::TEXT),
+                  EqualsLexerToken(Lexer::TokenType::OR),
+                  EqualsLexerToken("ធ្វើការ-រាល់ថ្ងៃ", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>(
       "나는"
@@ -392,7 +398,7 @@ TEST(LexerTest, CJKT) {
       "\xe2\x80\x89"  // White Space
       "출근합니다",
       Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(
       tokens,
       ElementsAre(EqualsLexerToken("나는", Lexer::TokenType::TEXT),
@@ -403,15 +409,15 @@ TEST(LexerTest, CJKT) {
 TEST(LexerTest, SyntaxError) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("\"foo", Lexer::Language::QUERY);
-  EXPECT_THAT(lexer->ExtractTokens(),
+  EXPECT_THAT(std::move(*lexer).ExtractTokens(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   lexer = std::make_unique<Lexer>("\"foo\\", Lexer::Language::QUERY);
-  EXPECT_THAT(lexer->ExtractTokens(),
+  EXPECT_THAT(std::move(*lexer).ExtractTokens(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   lexer = std::make_unique<Lexer>("foo\\", Lexer::Language::QUERY);
-  EXPECT_THAT(lexer->ExtractTokens(),
+  EXPECT_THAT(std::move(*lexer).ExtractTokens(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -421,24 +427,24 @@ TEST(LexerTest, SpecialSymbolAsText) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("age=20", Lexer::Language::QUERY);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age=20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("age !20", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("age", Lexer::TokenType::TEXT),
                           EqualsLexerToken("!20", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("foo& bar", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo&", Lexer::TokenType::TEXT),
                           EqualsLexerToken("bar", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("foo | bar", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
                           EqualsLexerToken("|", Lexer::TokenType::TEXT),
@@ -449,14 +455,14 @@ TEST(LexerTest, ScoringArithmetic) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("1 + 2", Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::PLUS),
                           EqualsLexerToken("2", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1+2*3/4", Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken(Lexer::TokenType::PLUS),
@@ -468,16 +474,18 @@ TEST(LexerTest, ScoringArithmetic) {
 
   // Arithmetic operators will not be produced in query language.
   lexer = std::make_unique<Lexer>("1 + 2", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken("+", Lexer::TokenType::TEXT),
                           EqualsLexerToken("2", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1+2*3/4", Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
-              ElementsAre(EqualsLexerToken("1+2*3/4", Lexer::TokenType::TEXT)));
+              ElementsAre(EqualsLexerToken("1+2", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("", Lexer::TokenType::STAR),
+                          EqualsLexerToken("3/4", Lexer::TokenType::TEXT)));
 }
 
 // Currently, in scoring language, the lexer will view these logic operators as
@@ -486,26 +494,26 @@ TEST(LexerTest, LogicOperatorNotInScoring) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("1 && 2", Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken("&&", Lexer::TokenType::TEXT),
                           EqualsLexerToken("2", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1&&2", Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1&&2", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1&&2 ||3", Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1&&2", Lexer::TokenType::TEXT),
                           EqualsLexerToken("||3", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1 AND 2 OR 3 AND NOT 4",
                                   Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken("AND", Lexer::TokenType::TEXT),
@@ -521,20 +529,20 @@ TEST(LexerTest, ComparatorNotInScoring) {
   std::unique_ptr<Lexer> lexer =
       std::make_unique<Lexer>("1 > 2", Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken(">", Lexer::TokenType::TEXT),
                           EqualsLexerToken("2", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1>2", Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1>2", Lexer::TokenType::TEXT)));
 
   lexer = std::make_unique<Lexer>("1>2>=3 <= 4:5== 6<7<=8!= 9",
                                   Lexer::Language::SCORING);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1>2>=3", Lexer::TokenType::TEXT),
                           EqualsLexerToken("<=", Lexer::TokenType::TEXT),
@@ -545,7 +553,7 @@ TEST(LexerTest, ComparatorNotInScoring) {
   // Comparator should be produced in query language.
   lexer = std::make_unique<Lexer>("1>2>=3 <= 4:5== 6<7<=8!= 9",
                                   Lexer::Language::QUERY);
-  ICING_ASSERT_OK_AND_ASSIGN(tokens, lexer->ExtractTokens());
+  ICING_ASSERT_OK_AND_ASSIGN(tokens, std::move(*lexer).ExtractTokens());
   EXPECT_THAT(tokens,
               ElementsAre(EqualsLexerToken("1", Lexer::TokenType::TEXT),
                           EqualsLexerToken(">", Lexer::TokenType::COMPARATOR),
@@ -572,7 +580,7 @@ TEST(LexerTest, ComplexScoring) {
       ") * pow(2.3, DocumentScore())",
       Lexer::Language::SCORING);
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
-                             lexer->ExtractTokens());
+                             std::move(*lexer).ExtractTokens());
   EXPECT_THAT(
       tokens,
       ElementsAre(
@@ -607,6 +615,85 @@ TEST(LexerTest, ComplexScoring) {
           EqualsLexerToken(Lexer::TokenType::LPAREN),
           EqualsLexerToken(Lexer::TokenType::RPAREN),
           EqualsLexerToken(Lexer::TokenType::RPAREN)));
+}
+
+// foo:bar:baz is considered an invalid query as proposed in
+// http://go/appsearch-advanced-query-impl-plan#bookmark=id.yoeyepokmbc5 ; this
+// ensures that the lexer consistently tokenizes colons independently.
+TEST(LexerTest, NoAmbiguousTokenizing) {
+  // This is an invalid query; the lexer doesn't treat `bar:baz` as one token.
+  std::unique_ptr<Lexer> lexer =
+      std::make_unique<Lexer>("foo:bar:baz", Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> invalidQueryTokens,
+                             std::move(*lexer).ExtractTokens());
+  EXPECT_THAT(invalidQueryTokens,
+              ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("bar", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("baz", Lexer::TokenType::TEXT)));
+
+  lexer = std::make_unique<Lexer>("foo:\"bar:baz\"", Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> validQueryTokens,
+                             std::move(*lexer).ExtractTokens());
+  EXPECT_THAT(
+      validQueryTokens,
+      ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
+                  EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                  EqualsLexerToken("bar:baz", Lexer::TokenType::STRING)));
+}
+
+TEST(LexerTest, WhiteSpacesDoNotAffectColonTokenization) {
+  std::unique_ptr<Lexer> lexer =
+      std::make_unique<Lexer>("a:b c : d e: f g :h", Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
+                             std::move(*lexer).ExtractTokens());
+  EXPECT_THAT(tokens,
+              ElementsAre(EqualsLexerToken("a", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("b", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("c", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("d", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("e", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("f", Lexer::TokenType::TEXT),
+                          EqualsLexerToken("g", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("h", Lexer::TokenType::TEXT)));
+}
+
+// For the "bar:baz" part to be treated as a TEXT token in a query like
+// foo:bar:baz, an explicit escape is required, so use foo:bar\:baz instead.
+TEST(LexerTest, ColonInTextRequiresExplicitEscaping) {
+  std::unique_ptr<Lexer> lexer =
+      std::make_unique<Lexer>("foo:bar\\:baz", Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
+                             std::move(*lexer).ExtractTokens());
+  EXPECT_THAT(tokens,
+              ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("bar:baz", Lexer::TokenType::TEXT)));
+}
+
+TEST(LexerTest, QueryShouldRejectTokensBeyondLimit) {
+  std::string query;
+  for (int i = 0; i < Lexer::kMaxNumTokens + 1; ++i) {
+    query.push_back('(');
+  }
+  Lexer lexer(query, Lexer::Language::QUERY);
+  EXPECT_THAT(std::move(lexer).ExtractTokens(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(LexerTest, ScoringShouldRejectTokensBeyondLimit) {
+  std::string scoring;
+  for (int i = 0; i < Lexer::kMaxNumTokens + 1; ++i) {
+    scoring.push_back('(');
+  }
+  Lexer lexer(scoring, Lexer::Language::SCORING);
+  EXPECT_THAT(std::move(lexer).ExtractTokens(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace lib

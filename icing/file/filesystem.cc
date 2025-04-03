@@ -72,7 +72,7 @@ void LogOpenFileDescriptors() {
         << ") too large.";
     fd_lim = kMaxFileDescriptorsToStat;
   }
-  ICING_LOG(ERROR) << "Listing up to " << fd_lim << " file descriptors.";
+  ICING_LOG(INFO) << "Listing up to " << fd_lim << " file descriptors.";
 
   // Verify that /proc/self/fd is a directory. If not, procfs is not mounted or
   // inaccessible for some other reason. In that case, there's no point trying
@@ -94,12 +94,12 @@ void LogOpenFileDescriptors() {
     if (len >= 0) {
       // Zero-terminate the buffer, because readlink() won't.
       target[len < target_size ? len : target_size - 1] = '\0';
-      ICING_LOG(ERROR) << "fd " << fd << " -> \"" << target << "\"";
+      ICING_LOG(INFO) << "fd " << fd << " -> \"" << target << "\"";
     } else if (errno != ENOENT) {
       ICING_LOG(ERROR) << "fd " << fd << " -> ? (errno=" << errno << ")";
     }
   }
-  ICING_LOG(ERROR) << "File descriptor list complete.";
+  ICING_LOG(INFO) << "File descriptor list complete.";
 }
 
 // Logs an error formatted as: desc1 + file_name + desc2 + strerror(errnum).
@@ -108,7 +108,11 @@ void LogOpenFileDescriptors() {
 // file descriptors (see LogOpenFileDescriptors() above).
 void LogOpenError(const char* desc1, const char* file_name, const char* desc2,
                   int errnum) {
-  ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);
+  if (errnum == ENOENT) {
+    ICING_VLOG(1) << desc1 << file_name << desc2 << strerror(errnum);
+  } else {
+    ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);  
+  }
   if (errnum == EMFILE) {
     LogOpenFileDescriptors();
   }
@@ -127,6 +131,9 @@ bool ListDirectoryInternal(const char* dir_name,
     return false;
   }
 
+  // According to linux man page
+  // (https://man7.org/linux/man-pages/man3/readdir.3.html#RETURN_VALUE), dirent
+  // may be statically allocated, so don't free it.
   dirent* p;
   // readdir's implementation seems to be thread safe.
   while ((p = readdir(dir)) != nullptr) {
@@ -358,7 +365,11 @@ int Filesystem::OpenForRead(const char* file_name) const {
 int64_t Filesystem::GetFileSize(int fd) const {
   struct stat st;
   if (fstat(fd, &st) < 0) {
-    ICING_LOG(ERROR) << "Unable to stat file: " << strerror(errno);
+    if (errno == ENOENT) {
+      ICING_VLOG(1) << "Unable to stat file: " << strerror(errno);
+    } else {
+      ICING_LOG(WARNING) << "Unable to stat file: " << strerror(errno);
+    }
     return kBadFileSize;
   }
   return st.st_size;

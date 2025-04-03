@@ -15,51 +15,64 @@
 #ifndef ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
 #define ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
 
-#include <algorithm>
 #include <cstdint>
 #include <random>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/document-builder.h"
 #include "icing/monkey_test/monkey-test-common-words.h"
+#include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
-#include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/schema/section.h"
 #include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
 
-using MonkeyTestRandomEngine = std::mt19937;
-
 // A random schema generator used for monkey testing.
 class MonkeySchemaGenerator {
  public:
-  explicit MonkeySchemaGenerator(MonkeyTestRandomEngine* random)
-      : random_(random) {}
+  struct UpdateSchemaResult {
+    SchemaProto schema;
+    bool is_invalid_schema;
+    std::unordered_set<std::string> schema_types_deleted;
+    std::unordered_set<std::string> schema_types_incompatible;
+    std::unordered_set<std::string> schema_types_index_incompatible;
+  };
 
-  // To ensure that the random schema is generated with the best quality, the
-  // number of properties for each type will only be randomly picked from the
-  // list of possible_num_properties, instead of picking it from a range.
-  // For example, a vector of [1, 2, 3, 4] means each generated types have a 25%
-  // chance of getting 1 property, 2 properties, 3 properties and 4 properties.
-  SchemaProto GenerateSchema(
-      int num_types, const std::vector<int>& possible_num_properties) const;
+  explicit MonkeySchemaGenerator(
+      MonkeyTestRandomEngine* random,
+      const IcingMonkeyTestRunnerConfiguration* config)
+      : random_(random), config_(config) {}
+
+  SchemaProto GenerateSchema();
+
+  UpdateSchemaResult UpdateSchema(const SchemaProto& schema);
 
  private:
   PropertyConfigProto GenerateProperty(
-      std::string_view name, TermMatchType::Code term_match_type) const;
+      const SchemaTypeConfigProto& type_config,
+      PropertyConfigProto::Cardinality::Code cardinality, bool indexable);
 
-  SchemaTypeConfigProto GenerateType(std::string_view name,
-                                     int num_properties) const;
+  void UpdateProperty(const SchemaTypeConfigProto& type_config,
+                      PropertyConfigProto& property,
+                      UpdateSchemaResult& result);
 
-  // Does not own.
-  MonkeyTestRandomEngine* random_;
+  SchemaTypeConfigProto GenerateType();
+
+  void UpdateType(SchemaTypeConfigProto& type_config,
+                  UpdateSchemaResult& result);
+
+  int num_types_generated_ = 0;
+  // A map from type name to the number of properties generated in the
+  // corresponding types.
+  std::unordered_map<std::string, int> num_properties_generated_;
+
+  MonkeyTestRandomEngine* random_;                    // Does not own.
+  const IcingMonkeyTestRunnerConfiguration* config_;  // Does not own.
 };
 
 // A random document generator used for monkey testing.
@@ -68,16 +81,10 @@ class MonkeySchemaGenerator {
 // Same for num_namespaces.
 class MonkeyDocumentGenerator {
  public:
-  explicit MonkeyDocumentGenerator(MonkeyTestRandomEngine* random,
-                                   const SchemaProto* schema,
-                                   std::vector<int> possible_num_tokens,
-                                   uint32_t num_namespaces,
-                                   uint32_t num_uris = 0)
-      : random_(random),
-        schema_(schema),
-        possible_num_tokens_(std::move(possible_num_tokens)),
-        num_namespaces_(num_namespaces),
-        num_uris_(num_uris) {}
+  explicit MonkeyDocumentGenerator(
+      MonkeyTestRandomEngine* random, const SchemaProto* schema,
+      const IcingMonkeyTestRunnerConfiguration* config)
+      : random_(random), schema_(schema), config_(config) {}
 
   const SchemaTypeConfigProto& GetType() const {
     std::uniform_int_distribution<> dist(0, schema_->types_size() - 1);
@@ -93,26 +100,28 @@ class MonkeyDocumentGenerator {
     return kCommonWords[dist(*random_)];
   }
 
+  PropertyProto::VectorProto GetRandomVector() const;
+
   std::string GetNamespace() const;
 
   std::string GetUri() const;
 
   int GetNumTokens() const;
 
-  std::vector<std::string> GetPropertyContent() const;
+  int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
+
+  std::vector<std::string> GetStringPropertyContent() const;
+
+  std::vector<PropertyProto::VectorProto> GetVectorPropertyContent(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
 
   MonkeyTokenizedDocument GenerateDocument();
 
  private:
-  MonkeyTestRandomEngine* random_;  // Does not own.
-  const SchemaProto* schema_;       // Does not own.
+  MonkeyTestRandomEngine* random_;                    // Does not own.
+  const SchemaProto* schema_;                         // Does not own.
+  const IcingMonkeyTestRunnerConfiguration* config_;  // Does not own.
 
-  // The possible number of tokens that may appear in generated documents, with
-  // a noise factor from 0.5 to 1 applied.
-  std::vector<int> possible_num_tokens_;
-
-  uint32_t num_namespaces_;
-  uint32_t num_uris_;
   uint32_t num_docs_generated_ = 0;
   Clock clock_;
 };
