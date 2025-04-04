@@ -447,6 +447,10 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
 }  // namespace
 
 extern "C" int AVmPayload_main() {
+  // TODO(b/401363381): Remove this once we have a better way to log to
+  // /dev/hvc2 in isolated storage.
+  // Force logging to /dev/hvc2 in isolated storage.
+  icing::lib::SetForceDebugLogging(true);
   ICING_LOG(INFO) << "IsolatedStorageService VM Payload starting";
   auto service = ndk::SharedRefBase::make<IsolatedStorageServiceImpl>();
   auto callback = []([[maybe_unused]] void* param) {
