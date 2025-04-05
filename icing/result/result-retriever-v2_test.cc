@@ -232,6 +232,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
       /*initialize_stats=*/nullptr);
 }
 

@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 36
+// Next tag: 37
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -368,6 +368,11 @@ message IcingSearchEngineOptions {
   // - Otherwise, the page byte size enforcement works as a soft limit, i.e. it
   //   will keep adding documents until exceeding the threshold.
   optional bool enable_strict_page_byte_size_limit = 35;
+
+  // The threshold in bytes for compressing documents. If a document is larger
+  // than or equal to this threshold, it will be compressed based on
+  // compression_level. 0 means always compress.
+  optional uint32 compression_threshold_bytes = 36;
 
   reserved 2, 20;
 }

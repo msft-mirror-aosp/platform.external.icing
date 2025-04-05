@@ -16,21 +16,24 @@
 #define ICING_RESULT_RESULT_STATE_MANAGER_H_
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <queue>
 #include <random>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
-#include "icing/util/clock.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
