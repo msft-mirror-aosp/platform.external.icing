@@ -274,6 +274,12 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeReset(this);
   }
 
+  @Nullable
+  public byte[] clearAndDestroy() {
+    throwIfClosed();
+    return nativeClearAndDestroy(this);
+  }
+
   public static boolean shouldLog(short severity) {
     return shouldLog(severity, (short) 0);
   }
@@ -381,6 +387,8 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGetStorageInfo(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeReset(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeClearAndDestroy(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeSearchSuggestions(
       IcingSearchEngineImpl instance, byte[] suggestionSpecBytes);

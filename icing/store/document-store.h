@@ -151,7 +151,7 @@ class DocumentStore {
       const FeatureFlags* feature_flags,
       bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
-      uint32_t compression_threshold_bytes,
+      uint32_t compression_threshold_bytes, int32_t compression_mem_level,
       InitializeStatsProto* initialize_stats);
 
   // Discards all derived data in the document store.
@@ -602,7 +602,8 @@ class DocumentStore {
                          const FeatureFlags* feature_flags,
                          bool pre_mapping_fbv, bool use_persistent_hash_map,
                          int32_t compression_level,
-                         uint32_t compression_threshold_bytes);
+                         uint32_t compression_threshold_bytes,
+                         int32_t compression_mem_level);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -627,6 +628,9 @@ class DocumentStore {
 
   const int32_t compression_level_;
   const uint32_t compression_threshold_bytes_;
+
+  // Level of memory usage for compression.
+  const int32_t compression_mem_level_;
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
@@ -674,7 +678,7 @@ class DocumentStore {
   std::unique_ptr<KeyMapper<NamespaceId>> namespace_mapper_;
 
   // Maps a corpus, i.e. a (namespace, schema type) pair, to a densely-assigned
-  // unique id. A coprus is assigned an
+  // unique id. A corpus is assigned an
   // id when the first document belonging to that corpus is added to the
   // DocumentStore. Corpus ids may be removed from the mapper during compaction.
   std::unique_ptr<

@@ -793,7 +793,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
           InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
-                              options_.blob_store_compression_level()));
+                              options_.blob_store_compression_level(),
+                              options_.blob_store_compression_mem_level()));
     }
 
     // Initialize (empty) document store.
@@ -828,7 +829,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
           InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
-                              options_.blob_store_compression_level()));
+                              options_.blob_store_compression_level(),
+                              options_.blob_store_compression_mem_level()));
     }
 
     // Initialize document store. This also rebuilds all derived files in the
@@ -871,7 +873,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     if (options_.enable_blob_store()) {
       ICING_RETURN_IF_ERROR(
           InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
-                              options_.blob_store_compression_level()));
+                              options_.blob_store_compression_level(),
+                              options_.blob_store_compression_mem_level()));
     }
 
     // Initialize document store. This also rebuilds all derived files in the
@@ -967,13 +970,14 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
           &feature_flags_, force_recovery_and_revalidate_documents,
           /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           options_.compression_level(), options_.compression_threshold_bytes(),
-          initialize_stats));
+          options_.compression_mem_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
   return create_result.derived_files_regenerated;
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
-    int32_t orphan_blob_time_to_live_ms, int32_t blob_store_compression_level) {
+    int32_t orphan_blob_time_to_live_ms, int32_t blob_store_compression_level,
+    int32_t blob_store_compression_mem_level) {
   std::string blob_dir = MakeBlobDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(blob_dir.c_str())) {
@@ -983,10 +987,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
 
   ICING_ASSIGN_OR_RETURN(
       auto blob_store_or,
-      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get(),
-                        orphan_blob_time_to_live_ms,
-                        blob_store_compression_level,
-                        options_.manage_blob_files()));
+      BlobStore::Create(
+          filesystem_.get(), blob_dir, clock_.get(),
+          orphan_blob_time_to_live_ms, blob_store_compression_level,
+          blob_store_compression_mem_level, options_.manage_blob_files()));
   blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
   return libtextclassifier3::Status::OK;
 }
@@ -2782,7 +2786,7 @@ SearchResultProto IcingSearchEngine::InternalSearch(
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
           std::move(ranker), std::move(parent_result_adjustment_info),
           std::move(child_result_adjustment_info), result_spec,
-          *document_store_, *result_retriever, current_time_ms);
+          *document_store_, *result_retriever, current_time_ms, query_stats);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -2947,6 +2951,10 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
     if (absl_ports::IsNotFound(page_result_info_or.status())) {
       // NOT_FOUND means an empty result.
       result_status->set_code(StatusProto::OK);
+      query_stats->set_page_token_type(
+          next_page_token == kInvalidNextPageToken
+              ? QueryStatsProto::PageTokenType::EMPTY
+              : QueryStatsProto::PageTokenType::NOT_FOUND);
     } else {
       // Real error, pass up.
       TransformStatus(page_result_info_or.status(), result_status);
@@ -2986,6 +2994,7 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   query_stats->set_num_results_with_snippets(
       page_result_info.second.num_results_with_snippets);
   query_stats->set_num_joined_results_returned_current_page(child_count);
+  query_stats->set_page_token_type(QueryStatsProto::PageTokenType::VALID);
 
   return result_proto;
 }
@@ -3119,6 +3128,8 @@ IcingSearchEngine::OptimizeDocumentStore(
 
   // result_state_manager_ depends on document_store_. So we need to reset it at
   // the same time that we reset the document_store_.
+  ICING_LOG(INFO) << "Resetting result state manager due to optimize. All "
+                     "existing result states will be invalidated.";
   result_state_manager_.reset();
   document_store_.reset();
 
@@ -3147,6 +3158,7 @@ IcingSearchEngine::OptimizeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/false,
         /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
         options_.compression_level(), options_.compression_threshold_bytes(),
+        options_.compression_mem_level(),
         /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
@@ -3176,6 +3188,7 @@ IcingSearchEngine::OptimizeDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       options_.compression_level(), options_.compression_threshold_bytes(),
+      options_.compression_mem_level(),
       /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
@@ -3605,6 +3618,29 @@ libtextclassifier3::Status IcingSearchEngine::ClearAllIndices() {
   return libtextclassifier3::Status::OK;
 }
 
+ResetResultProto IcingSearchEngine::ClearAndDestroy() {
+  absl_ports::unique_lock l(&mutex_);
+  return ClearAndDestroyInternal();
+}
+
+ResetResultProto IcingSearchEngine::ClearAndDestroyInternal() {
+  ICING_LOG(INFO) << "Removing Icing Search Engine directory: "
+                  << options_.base_dir() << ".";
+
+  ResetResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  initialized_ = false;
+  ResetMembers();
+  if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
+    result_status->set_code(StatusProto::INTERNAL);
+    return result_proto;
+  }
+
+  result_status->set_code(StatusProto::OK);
+  return result_proto;
+}
+
 ResetResultProto IcingSearchEngine::Reset() {
   absl_ports::unique_lock l(&mutex_);
   return ResetInternal();
@@ -3616,9 +3652,7 @@ ResetResultProto IcingSearchEngine::ResetInternal() {
   ResetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
-  initialized_ = false;
-  ResetMembers();
-  if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
+  if (ClearAndDestroyInternal().status().code() != StatusProto::OK) {
     result_status->set_code(StatusProto::INTERNAL);
     return result_proto;
   }

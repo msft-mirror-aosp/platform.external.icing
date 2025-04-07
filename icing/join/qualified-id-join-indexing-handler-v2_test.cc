@@ -32,6 +32,7 @@
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/join/qualified-id.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -163,6 +164,7 @@ class QualifiedIdJoinIndexingHandlerV2Test : public ::testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 

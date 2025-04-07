@@ -28,6 +28,7 @@
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -89,6 +90,7 @@ class ResultStateV2Test : public ::testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 

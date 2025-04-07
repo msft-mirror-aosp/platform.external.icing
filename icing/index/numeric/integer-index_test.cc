@@ -20,15 +20,20 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -36,6 +41,7 @@
 #include "icing/index/numeric/integer-index-storage.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
@@ -46,6 +52,9 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
+#include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -102,6 +111,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
@@ -180,6 +190,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return std::move(doc_store_optimize_result.document_id_old_to_new);

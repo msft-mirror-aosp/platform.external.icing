@@ -26,6 +26,9 @@ interface IIcingSearchEngine {
   void close();
 
   @nullable
+  /*ResetResultProto*/ byte[] clearAndDestroy();
+
+  @nullable
   /*ResetResultProto*/ byte[] reset();
 
   @nullable
