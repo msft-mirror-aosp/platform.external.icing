@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 37
+// Next tag: 39
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -192,6 +192,16 @@ message IcingSearchEngineOptions {
   // Valid values: [0, 9]
   // Optional.
   optional int32 compression_level = 7 [default = 3];
+
+  // Memory level for compression.
+  // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
+  // maximum memory for optimal speed and compression ratio.
+  // Icing historically used a memLevel of 8. Therefore, that value will be the
+  // default.
+  //
+  // Valid values: [1, 9]
+  // Optional.
+  optional int32 compression_mem_level = 37 [default = 8];
 
   // OPTIONAL: Whether to allow circular references between schema types for
   // the schema definition.
@@ -289,6 +299,16 @@ message IcingSearchEngineOptions {
   // Valid values: [0, 9]
   // Optional.
   optional int32 blob_store_compression_level = 23 [default = 3];
+
+  // Memory level for compression in blob store.
+  // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
+  // maximum memory for optimal speed and compression ratio.
+  // Icing historically used a memLevel of 8. Therefore, that value will be the
+  // default.
+  //
+  // Valid values: [1, 9]
+  // Optional.
+  optional int32 blob_store_compression_mem_level = 38 [default = 8];
 
   // Whether to allow repeated fields to have a joinable value type.
   optional bool enable_repeated_field_joins = 24;

@@ -4731,6 +4731,7 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 1 result with 0 snippets
@@ -4748,6 +4749,42 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Fetch the next page with kInvalidNextPageToken.
+  search_result = icing.GetNextPage(kInvalidNextPageToken);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+}
+
+TEST_F(IcingSearchEngineSearchTest, GetNextPage_withNotFoundPageToken) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(5);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Call GetNextPage with a not found page token.
+  SearchResultProto search_result = icing.GetNextPage(/*next_page_token=*/123);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  QueryStatsProto exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::NOT_FOUND);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 
@@ -5034,6 +5071,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(1);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 0 child docs.
@@ -5052,6 +5090,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_results_with_snippets(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   ASSERT_THAT(search_result,
               EqualsSearchResultIgnoreStatsAndScores(expected_result3));
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
@@ -5066,6 +5105,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats = QueryStatsProto();
   exp_stats.set_is_first_page(false);
   exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 

@@ -32,6 +32,7 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
@@ -139,6 +140,7 @@ class ResultStateManagerTest : public testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
@@ -1439,6 +1441,7 @@ TEST_F(ResultStateManagerTest,
   auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
       {/*document_id=*/5, /*document_id=*/6, /*document_id=*/7,
        /*document_id=*/8, /*document_id=*/9, /*document_id=*/10});
+  QueryStatsProto query_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
@@ -1448,8 +1451,11 @@ TEST_F(ResultStateManagerTest,
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
+          clock()->GetSystemTimeMilliseconds(), &query_stats));
   EXPECT_THAT(page_result_info3.first, Not(Eq(kInvalidNextPageToken)));
+  // Should set num_result_states_evicted since result state 1 and 2 were
+  // evicted.
+  EXPECT_THAT(query_stats.num_result_states_evicted(), Eq(2));
 
   // GetNextPage for result state 1 and 2 should return NOT_FOUND.
   EXPECT_THAT(result_state_manager.GetNextPage(

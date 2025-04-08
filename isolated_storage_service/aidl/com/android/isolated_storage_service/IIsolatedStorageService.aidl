@@ -36,4 +36,11 @@ interface IIsolatedStorageService {
    * @return An Icing connection for the given uid.
    */
   IIcingSearchEngine getOrCreateIcingConnection(int uid);
+
+  /**
+   * Removes an Icing connection for the given uid
+   *
+   * @param uid The uid of the caller.
+   */
+  oneway void removeIcingConnection(int uid);
 }
