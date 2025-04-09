@@ -29,6 +29,11 @@ interface IIsolatedStorageService {
   oneway void quit();
 
   /**
+   * Trims the memory used by the pVM.
+   */
+  oneway void trimMemory();
+
+  /**
    * Returns an Icing connection for the given uid. Creates a new Icing connection if one does not
    * already exist for the given uid.
    *

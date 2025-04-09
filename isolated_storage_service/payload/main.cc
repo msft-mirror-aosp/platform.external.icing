@@ -1,6 +1,7 @@
 #include <android/binder_auto_utils.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
+#include <unistd.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -70,6 +71,10 @@ using ::icing::lib::UsageReport;
 using BlobHandleProto = ::icing::lib::PropertyProto::BlobHandleProto;
 using ::icing::lib::INFO;
 using ::ndk::ScopedAStatus;
+
+namespace {
+void vmShrinkRay() { sync(); }
+}  // namespace
 
 // This class implements the AIDL interface for the Icing connection.
 class IcingConnectionImpl
@@ -433,6 +438,12 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
     for (const auto& [unused, connection] : icing_connections_) {
       connection->close();
     }
+    exit(0);
+  }
+
+  ScopedAStatus trimMemory() override {
+    ICING_LOG(INFO) << "Received trim memory request, trimming";
+    vmShrinkRay();
     exit(0);
   }
 
