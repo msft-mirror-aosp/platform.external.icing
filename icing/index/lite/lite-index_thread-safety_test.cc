@@ -13,15 +13,25 @@
 // limitations under the License.
 
 #include <array>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/filesystem.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/lite/lite-index.h"
 #include "icing/index/term-id-codec.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -109,9 +119,11 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousFetchHits_singleTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
-               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   Hit doc_hit1(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId1,
-               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit1));
 
@@ -155,9 +167,11 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousFetchHits_multipleTerms) {
     ICING_ASSERT_OK_AND_ASSIGN(uint32_t term_id,
                                term_id_codec_->EncodeTvi(tvi, TviType::LITE));
     Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
-                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     Hit doc_hit1(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId1,
-                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit0));
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit1));
   }
@@ -208,7 +222,8 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousAddHitAndFetchHits_singleTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
-               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
 
   // Create kNumThreads threads. Every even-numbered thread calls FetchHits and
@@ -228,7 +243,8 @@ TEST_F(LiteIndexThreadSafetyTest, SimultaneousAddHitAndFetchHits_singleTerm) {
     } else {
       // Odd-numbered thread calls AddHit.
       Hit doc_hit(/*section_id=*/thread_id / 2, /*document_id=*/kDocumentId0,
-                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+                  /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
       ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
     }
   };
@@ -273,7 +289,8 @@ TEST_F(LiteIndexThreadSafetyTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
-               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+               Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+               /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit0));
 
   // Create kNumThreads threads. Every even-numbered thread calls FetchHits and
@@ -302,7 +319,8 @@ TEST_F(LiteIndexThreadSafetyTest,
       // Odd-numbered thread calls AddHit.
       // AddHit to section 0 of a new doc.
       Hit doc_hit(/*section_id=*/kSectionId0, /*document_id=*/thread_id / 2,
-                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+                  Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+                  /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
       ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit));
     }
   };
@@ -335,9 +353,11 @@ TEST_F(LiteIndexThreadSafetyTest, ManyAddHitAndOneFetchHits_multipleTerms) {
     ICING_ASSERT_OK_AND_ASSIGN(uint32_t term_id,
                                term_id_codec_->EncodeTvi(tvi, TviType::LITE));
     Hit doc_hit0(/*section_id=*/kSectionId0, /*document_id=*/kDocumentId0,
-                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     Hit doc_hit1(/*section_id=*/kSectionId1, /*document_id=*/kDocumentId0,
-                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false);
+                 Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/false,
+                 /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit0));
     ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit1));
   }
@@ -370,7 +390,8 @@ TEST_F(LiteIndexThreadSafetyTest, ManyAddHitAndOneFetchHits_multipleTerms) {
       // AddHit to section (thread_id % 5 + 1) of doc 0.
       Hit doc_hit(/*section_id=*/thread_id % 5 + 1,
                   /*document_id=*/kDocumentId0, Hit::kDefaultTermFrequency,
-                  /*is_in_prefix_section=*/false);
+                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                  /*is_stemmed_hit=*/false);
       ICING_ASSERT_OK(lite_index_->AddHit(term_id, doc_hit));
     }
   };
