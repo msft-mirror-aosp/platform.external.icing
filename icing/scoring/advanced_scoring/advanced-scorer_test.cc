@@ -35,6 +35,7 @@
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/join/join-children-fetcher-impl-deprecated.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -80,14 +81,18 @@ class AdvancedScorerTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates the schema
@@ -1365,10 +1370,10 @@ TEST_F(AdvancedScorerTest,
        MatchedSemanticScoresFunctionScoreExpressionTypeError) {
   EmbeddingQueryResults embedding_query_results;
   embedding_query_results
-      .result_scores[/*query_vector_index=*/0]
-                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
-                    [/*document_id=*/0]
-      .push_back(/*semantic_score=*/0.1);
+      .result_infos[/*query_vector_index=*/0]
+                   [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                   [/*document_id=*/0]
+      .AppendScore(/*semantic_score=*/0.1);
 
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
       AdvancedScorer::Create(
@@ -1466,15 +1471,15 @@ TEST_F(AdvancedScorerTest,
        MatchedSemanticScoresFunctionScoreExpressionNotQueried) {
   EmbeddingQueryResults embedding_query_results;
   embedding_query_results
-      .result_scores[/*query_vector_index=*/0]
-                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
-                    [/*document_id=*/0]
-      .push_back(/*semantic_score=*/0.1);
+      .result_infos[/*query_vector_index=*/0]
+                   [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                   [/*document_id=*/0]
+      .AppendScore(/*semantic_score=*/0.1);
   embedding_query_results
-      .result_scores[/*query_vector_index=*/1]
-                    [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
-                    [/*document_id=*/1]
-      .push_back(/*semantic_score=*/0.2);
+      .result_infos[/*query_vector_index=*/1]
+                   [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
+                   [/*document_id=*/1]
+      .AppendScore(/*semantic_score=*/0.2);
 
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
       AdvancedScorer::Create(CreateAdvancedScoringSpec(
@@ -1564,9 +1569,9 @@ TEST_F(AdvancedScorerTest,
 }
 
 void AddEntryToEmbeddingQueryScoreMap(
-    EmbeddingQueryResults::EmbeddingQueryScoreMap& score_map,
+    EmbeddingQueryResults::EmbeddingQueryMatchInfoMap& score_map,
     double semantic_score, DocumentId document_id) {
-  score_map[document_id].push_back(semantic_score);
+  score_map[document_id].AppendScore(semantic_score);
 }
 
 TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
@@ -1586,9 +1591,9 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   // EUCLIDEAN:
   //   Document 0: 0.7
   //   Document 1: 0.8
-  EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* score_map =
       &embedding_query_results
-           .result_scores[0][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
+           .result_infos[0][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.1, document_id_0);
   AddEntryToEmbeddingQueryScoreMap(*score_map,
@@ -1597,7 +1602,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
                                    /*semantic_score=*/0.3, document_id_1);
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.4, document_id_1);
-  score_map = &embedding_query_results.result_scores
+  score_map = &embedding_query_results.result_infos
                    [0][SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.5, document_id_0);
@@ -1605,8 +1610,8 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
                                    /*semantic_score=*/0.6, document_id_1);
   score_map =
       &embedding_query_results
-           .result_scores[0]
-                         [SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN];
+           .result_infos[0]
+                        [SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.7, document_id_0);
   AddEntryToEmbeddingQueryScoreMap(*score_map,
@@ -1616,7 +1621,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   // DOT_PRODUCT:
   //   Document 0: 0.1
   //   Document 1: 0.2
-  score_map = &embedding_query_results.result_scores
+  score_map = &embedding_query_results.result_infos
                    [1][SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.1, document_id_0);
@@ -1718,9 +1723,9 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
   // - this.matchedSemanticScores(getEmbeddingParameter(1)) returns an empty
   //   list.
   EmbeddingQueryResults embedding_query_results;
-  EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* score_map =
       &embedding_query_results
-           .result_scores[0][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
+           .result_infos[0][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/4, document_id_0);
   AddEntryToEmbeddingQueryScoreMap(*score_map,
@@ -1733,7 +1738,7 @@ TEST_F(AdvancedScorerTest, ListRelatedFunctions) {
                                    /*semantic_score=*/3, document_id_0);
   score_map =
       &embedding_query_results
-           .result_scores[1][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
+           .result_infos[1][SearchSpecProto::EmbeddingQueryMetricType::COSINE];
 
   // maxOrDefault({4, 5, 2, 1, 3}, 100) = 5
   ICING_ASSERT_OK_AND_ASSIGN(

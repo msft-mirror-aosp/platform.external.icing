@@ -41,6 +41,7 @@ sourceSets {
 dependencies {
     compileOnly("androidx.annotation:annotation:1.1.0")
     compileOnly(SdkHelperKt.getSdkDependency(project))
+    compileOnly(libs.jspecify)
     compileOnly(libs.protobufLite)
 }
 

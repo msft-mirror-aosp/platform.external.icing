@@ -14,23 +14,36 @@
 
 #include "icing/result/result-state-manager.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/portable/platform.h"
+#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -38,10 +51,10 @@
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
@@ -117,20 +130,25 @@ class ResultStateManagerTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        result_retriever_, ResultRetrieverV2::Create(
-                               document_store_.get(), schema_store_.get(),
-                               language_segmenter_.get(), normalizer_.get()));
+        result_retriever_,
+        ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
   }
 
   void TearDown() override {
@@ -462,32 +480,38 @@ TEST_F(ResultStateManagerTest,
 
   // Set time as 1s and add state 1.
   clock()->SetSystemTimeMilliseconds(1000);
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits1), /*is_descending=*/true);
+  std::unordered_set<DocumentId> documents_to_snippet =
+      ranker->GetTopKDocumentIds(result_spec.snippet_spec().num_to_snippet());
+  std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info =
+      std::make_unique<ResultAdjustmentInfo>(
+          search_spec, scoring_spec, result_spec, &schema_store(),
+          EmbeddingQueryResults(), std::move(documents_to_snippet),
+          query_terms);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits1), /*is_descending=*/true),
-          /*parent_adjustment_info=*/
-          std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
-                                                 result_spec, &schema_store(),
-                                                 query_terms),
+          std::move(ranker), std::move(parent_adjustment_info),
           /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
 
   // Set time as 1hr1s and add state 2.
   clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
+  ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits2), /*is_descending=*/true);
+  documents_to_snippet =
+      ranker->GetTopKDocumentIds(result_spec.snippet_spec().num_to_snippet());
+  parent_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+      search_spec, scoring_spec, result_spec, &schema_store(),
+      EmbeddingQueryResults(), std::move(documents_to_snippet), query_terms);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits2), /*is_descending=*/true),
-          /*parent_adjustment_info=*/
-          std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
-                                                 result_spec, &schema_store(),
-                                                 query_terms),
+          std::move(ranker), std::move(parent_adjustment_info),
           /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever(), clock()->GetSystemTimeMilliseconds()));
 
@@ -1417,6 +1441,7 @@ TEST_F(ResultStateManagerTest,
   auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
       {/*document_id=*/5, /*document_id=*/6, /*document_id=*/7,
        /*document_id=*/8, /*document_id=*/9, /*document_id=*/10});
+  QueryStatsProto query_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
@@ -1426,8 +1451,11 @@ TEST_F(ResultStateManagerTest,
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
+          clock()->GetSystemTimeMilliseconds(), &query_stats));
   EXPECT_THAT(page_result_info3.first, Not(Eq(kInvalidNextPageToken)));
+  // Should set num_result_states_evicted since result state 1 and 2 were
+  // evicted.
+  EXPECT_THAT(query_stats.num_result_states_evicted(), Eq(2));
 
   // GetNextPage for result state 1 and 2 should return NOT_FOUND.
   EXPECT_THAT(result_state_manager.GetNextPage(
