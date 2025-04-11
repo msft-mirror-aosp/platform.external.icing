@@ -177,7 +177,7 @@ class DocumentStore {
   // of deleted or expired documents.
   int num_documents() const { return document_id_mapper_->num_elements(); }
 
-  // Puts the document into document store.
+  // Puts a single document into document store.
   //
   // If put_document_stats is present, the fields related to DocumentStore will
   // be populated.
@@ -200,10 +200,7 @@ class DocumentStore {
     }
   };
   libtextclassifier3::StatusOr<PutResult> Put(
-      const DocumentProto& document, int32_t num_tokens = 0,
-      PutDocumentStatsProto* put_document_stats = nullptr);
-  libtextclassifier3::StatusOr<PutResult> Put(
-      DocumentProto&& document, int32_t num_tokens = 0,
+      const DocumentWrapper& document_wrapper,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Finds and returns the document identified by the given key (namespace +
@@ -787,7 +784,7 @@ class DocumentStore {
   bool HeaderExists();
 
   libtextclassifier3::StatusOr<PutResult> InternalPut(
-      DocumentProto&& document,
+      const DocumentWrapper& document_wrapper,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Helper function to do batch deletes. Documents with the given

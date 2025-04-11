@@ -75,6 +75,7 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::Lt;
+using ::testing::Ne;
 using ::testing::Return;
 using ::testing::SizeIs;
 
@@ -230,14 +231,15 @@ TEST_F(IcingSearchEngineOptimizeTest,
       document2;
   SearchResultProto search_result_proto =
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
-  EXPECT_THAT(search_result_proto.next_page_token(), Gt(kInvalidNextPageToken));
   uint64_t next_page_token = search_result_proto.next_page_token();
+
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
-  // Now document1 is still to be fetched.
 
+  // Now there are more pages to be fetched (document1). Call Optimize.
   OptimizeResultProto optimize_result_proto;
   optimize_result_proto.mutable_status()->set_code(StatusProto::OK);
   optimize_result_proto.mutable_status()->set_message("");
@@ -246,9 +248,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
   ASSERT_THAT(actual_result, EqualsProto(optimize_result_proto));
 
   // Tries to fetch the second page, no results since all tokens have been
-  // invalidated during Optimize()
+  // invalidated during Optimize().
   expected_search_result_proto.clear_results();
   expected_search_result_proto.clear_next_page_token();
+  expected_search_result_proto.set_page_token_not_found(true);
   search_result_proto = icing.GetNextPage(next_page_token);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));

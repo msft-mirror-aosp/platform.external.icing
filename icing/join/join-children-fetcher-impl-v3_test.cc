@@ -70,6 +70,8 @@ class JoinChildrenFetcherImplV3Test : public ::testing::Test {
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    fake_clock_.SetSystemTimeMilliseconds(123);
+
     base_dir_ = GetTestTempDir() + "/icing_test";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
                 IsTrue());
@@ -163,12 +165,15 @@ class JoinChildrenFetcherImplV3Test : public ::testing::Test {
 
   libtextclassifier3::StatusOr<DocumentId> PutAndIndexDocument(
       const DocumentProto& document) {
-    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
-                           doc_store_->Put(document));
     ICING_ASSIGN_OR_RETURN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                  document));
+        TokenizedDocument::Create(
+            schema_store_.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+            std::move(document)));
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::PutResult put_result,
+        doc_store_->Put(tokenized_document.document_wrapper()));
 
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
