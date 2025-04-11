@@ -97,6 +97,7 @@
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
@@ -1592,7 +1593,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    ICING_EXPECT_OK(document_store->Put(message2));
+    ICING_EXPECT_OK(
+        document_store->Put(document_util::CreateDocumentWrapper(message2)));
   }
 
   // Mock filesystem to observe and check the behavior of all indices.
@@ -6219,8 +6221,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                               document_store->Put(message));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::PutResult put_result,
+        document_store->Put(document_util::CreateDocumentWrapper(message)));
     DocumentId doc_id = put_result.new_document_id;
 
     // Index doc_id with incorrect data
@@ -6286,8 +6289,10 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store.get(), lang_segmenter_.get(),
-                                  std::move(incorrect_message)));
+        TokenizedDocument::Create(
+            schema_store.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock.GetSystemTimeMilliseconds(),
+            std::move(incorrect_message)));
     ICING_ASSERT_OK(index_processor.IndexDocument(tokenized_document, doc_id,
                                                   put_result.old_document_id));
 
