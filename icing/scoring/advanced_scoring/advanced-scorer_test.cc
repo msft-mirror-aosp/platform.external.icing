@@ -35,6 +35,7 @@
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/join/join-children-fetcher-impl-deprecated.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -51,6 +52,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -80,14 +82,18 @@ class AdvancedScorerTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates the schema
@@ -286,7 +292,8 @@ TEST_F(AdvancedScorerTest, InvalidAdvancedScoringSpec) {
 TEST_F(AdvancedScorerTest, SimpleExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri"))));
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -307,7 +314,8 @@ TEST_F(AdvancedScorerTest, SimpleExpression) {
 TEST_F(AdvancedScorerTest, BasicPureArithmeticExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri"))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -376,7 +384,8 @@ TEST_F(AdvancedScorerTest, BasicPureArithmeticExpression) {
 TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri"))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -515,9 +524,9 @@ TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
 TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument(
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
           "namespace", "uri", /*score=*/123,
-          /*creation_timestamp_ms=*/kDefaultCreationTimestampMs)));
+          /*creation_timestamp_ms=*/kDefaultCreationTimestampMs))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -558,7 +567,8 @@ TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
 TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri"))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -615,7 +625,8 @@ TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
 TEST_F(AdvancedScorerTest, DocumentUsageFunctionOutOfRange) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri"))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -667,8 +678,10 @@ TEST_F(AdvancedScorerTest, RelevanceScoreFunctionScoreExpression) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
@@ -691,17 +704,20 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateDocument("namespace", "uri1")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri1"))));
   DocumentId document_id_1 = put_result1.new_document_id;
   DocHitInfo docHitInfo1 = DocHitInfo(document_id_1);
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateDocument("namespace", "uri2")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri2"))));
   DocumentId document_id_2 = put_result2.new_document_id;
   DocHitInfo docHitInfo2 = DocHitInfo(document_id_2);
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateDocument("namespace", "uri3")));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri3"))));
   DocumentId document_id_3 = put_result3.new_document_id;
   DocHitInfo docHitInfo3 = DocHitInfo(document_id_3);
 
@@ -803,14 +819,20 @@ TEST_F(AdvancedScorerTest, PropertyWeightsFunctionScoreExpression) {
   DocumentProto test_document_3 =
       DocumentBuilder().SetKey("namespace", "uri3").SetSchema("person").Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(test_document_1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(test_document_1)));
   DocumentId document_id_1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(test_document_2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(test_document_2)));
   DocumentId document_id_2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(test_document_3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(test_document_3)));
   DocumentId document_id_3 = put_result3.new_document_id;
 
   ScoringSpecProto spec_proto = CreateAdvancedScoringSpec("");
@@ -900,11 +922,15 @@ TEST_F(AdvancedScorerTest,
   DocumentProto test_document_2 =
       DocumentBuilder().SetKey("namespace", "uri2").SetSchema("person").Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(test_document_1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(test_document_1)));
   DocumentId document_id_1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(test_document_2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(test_document_2)));
   DocumentId document_id_2 = put_result2.new_document_id;
 
   ScoringSpecProto spec_proto = CreateAdvancedScoringSpec("");
@@ -1012,8 +1038,8 @@ TEST_F(AdvancedScorerTest, ComplexExpression) {
   const int64_t creation_timestamp_ms = 123;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/123,
-                                          creation_timestamp_ms)));
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "namespace", "uri", /*score=*/123, creation_timestamp_ms))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -1133,7 +1159,8 @@ TEST_F(AdvancedScorerTest, EvaluationErrorShouldReturnDefaultScore) {
   // non-constant 0.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/0)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreateDocument("namespace", "uri", /*score=*/0))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -1366,8 +1393,8 @@ TEST_F(AdvancedScorerTest,
   EmbeddingQueryResults embedding_query_results;
   embedding_query_results
       .result_infos[/*query_vector_index=*/0]
-                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
-                    [/*document_id=*/0]
+                   [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                   [/*document_id=*/0]
       .AppendScore(/*semantic_score=*/0.1);
 
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
@@ -1467,13 +1494,13 @@ TEST_F(AdvancedScorerTest,
   EmbeddingQueryResults embedding_query_results;
   embedding_query_results
       .result_infos[/*query_vector_index=*/0]
-                    [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
-                    [/*document_id=*/0]
+                   [SearchSpecProto::EmbeddingQueryMetricType::COSINE]
+                   [/*document_id=*/0]
       .AppendScore(/*semantic_score=*/0.1);
   embedding_query_results
       .result_infos[/*query_vector_index=*/1]
-                    [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
-                    [/*document_id=*/1]
+                   [SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT]
+                   [/*document_id=*/1]
       .AppendScore(/*semantic_score=*/0.2);
 
   libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>> scorer_or =
@@ -1606,7 +1633,7 @@ TEST_F(AdvancedScorerTest, MatchedSemanticScoresFunctionScoreExpression) {
   score_map =
       &embedding_query_results
            .result_infos[0]
-                         [SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN];
+                        [SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN];
   AddEntryToEmbeddingQueryScoreMap(*score_map,
                                    /*semantic_score=*/0.7, document_id_0);
   AddEntryToEmbeddingQueryScoreMap(*score_map,
@@ -1810,8 +1837,8 @@ TEST_F(AdvancedScorerTest, AdditionalScores) {
   const int64_t creation_timestamp_ms = 123;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/123,
-                                          creation_timestamp_ms)));
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "namespace", "uri", /*score=*/123, creation_timestamp_ms))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -1941,8 +1968,9 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotScorable) {
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -1977,8 +2005,9 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_PropertyNameNotExist) {
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2013,8 +2042,9 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_SomePropertiesNotScorable) {
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
       "this.documentScore() + "
@@ -2047,8 +2077,9 @@ TEST_F(AdvancedScorerTest,
                                .SetScore(100)
                                .SetCreationTimestampMs(123)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2080,8 +2111,9 @@ TEST_F(AdvancedScorerTest,
                                .SetScore(100)
                                .SetCreationTimestampMs(123)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   // getScorableProperty("aliasPerson", "frequencyScore") will return an empty
@@ -2116,8 +2148,9 @@ TEST_F(AdvancedScorerTest,
                                .SetScore(100)
                                .SetCreationTimestampMs(123)
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   // getScorableProperty("aliasPerson", "frequencyScore") will return an empty
@@ -2188,12 +2221,16 @@ TEST_F(AdvancedScorerTest,
   double expected_score_doc1 = 100 + (1 + 2 + 3);
   double expected_score_doc2 = 100 + 0;
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_from_db1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(document_from_db1)));
   DocHitInfo docHitInfo1(put_result1.new_document_id);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_from_db2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(document_from_db2)));
   DocHitInfo docHitInfo2(put_result2.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2230,8 +2267,9 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithDoubleList) {
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2265,8 +2303,9 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithInt64List) {
                                .AddInt64Property("contactTimes", 10, 20, 30)
                                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2301,8 +2340,9 @@ TEST_F(AdvancedScorerTest, GetScorableProperty_WithBoolean) {
                                .AddInt64Property("contactTimes", 10, 20, 30)
                                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2340,8 +2380,9 @@ TEST_F(AdvancedScorerTest,
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2381,8 +2422,9 @@ TEST_F(AdvancedScorerTest,
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2420,8 +2462,9 @@ TEST_F(AdvancedScorerTest,
                                .SetCreationTimestampMs(123)
                                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   // Expected score will fall back to the default score, because max() throws an
@@ -2456,8 +2499,9 @@ TEST_F(AdvancedScorerTest,
                                .SetScore(100)
                                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(
@@ -2589,8 +2633,9 @@ TEST_F(AdvancedScorerTest, ScoreWithScorableProperty_WithNestedSchemas) {
           .SetCreationTimestampMs(0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
   ScoringSpecProto scoring_spec1 = CreateAdvancedScoringSpec(
       "this.documentScore() + "
@@ -2666,8 +2711,9 @@ TEST_F(AdvancedScorerTest, SchemaTypeAliasMap_AliasSchemaTypeNotMatched) {
           .AddDoubleProperty("frequencyScore", 1.0, 2.0, 3.0)
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocHitInfo docHitInfo(put_result.new_document_id);
 
   ScoringSpecProto scoring_spec = CreateAdvancedScoringSpec(

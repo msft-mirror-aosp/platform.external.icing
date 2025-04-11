@@ -141,7 +141,7 @@ BlobProto CreateBlobProtoFromFileDescriptor(int file_descriptor) {
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
     const Filesystem* filesystem, std::string base_dir, const Clock* clock,
     int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-    bool manage_blob_files) {
+    int32_t compression_mem_level, bool manage_blob_files) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
 
@@ -173,19 +173,19 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
       PortableFileBackedProtoLog<BlobInfoProto>::Create(
           filesystem, blob_info_proto_file_name,
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
-              /*compress_in=*/true, constants::kMaxProtoSize,
-              compression_level)));
+              /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
+              /*compression_threshold_bytes=*/0, compression_mem_level)));
 
   std::unordered_map<std::string, int> blob_handle_to_offset;
   ICING_ASSIGN_OR_RETURN(
       blob_handle_to_offset,
       LoadBlobHandleToOffsetMapper(log_create_result.proto_log.get()));
 
-  return BlobStore(filesystem, std::move(base_dir), clock,
-                   orphan_blob_time_to_live_ms, compression_level,
-                   manage_blob_files, std::move(log_create_result.proto_log),
-                   std::move(blob_handle_to_offset),
-                   std::move(known_file_names));
+  return BlobStore(
+      filesystem, std::move(base_dir), clock, orphan_blob_time_to_live_ms,
+      compression_level, compression_mem_level, manage_blob_files,
+      std::move(log_create_result.proto_log), std::move(blob_handle_to_offset),
+      std::move(known_file_names));
 }
 
 BlobProto BlobStore::OpenWrite(
@@ -496,13 +496,15 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
         "Unable to delete temp file to prepare to build new blob proto file.");
   }
 
-  ICING_ASSIGN_OR_RETURN(PortableFileBackedProtoLog<BlobInfoProto>::CreateResult
-                             temp_log_create_result,
-                         PortableFileBackedProtoLog<BlobInfoProto>::Create(
-                             &filesystem_, temp_blob_info_proto_file_name,
-                             PortableFileBackedProtoLog<BlobInfoProto>::Options(
-                                 /*compress_in=*/true, constants::kMaxProtoSize,
-                                 compression_level_)));
+  ICING_ASSIGN_OR_RETURN(
+      PortableFileBackedProtoLog<BlobInfoProto>::CreateResult
+          temp_log_create_result,
+      PortableFileBackedProtoLog<BlobInfoProto>::Create(
+          &filesystem_, temp_blob_info_proto_file_name,
+          PortableFileBackedProtoLog<BlobInfoProto>::Options(
+              /*compress_in=*/true, constants::kMaxProtoSize,
+              compression_level_, /*compression_threshold_bytes=*/0,
+              compression_mem_level_)));
   std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
       std::move(temp_log_create_result.proto_log);
 
@@ -565,7 +567,8 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           &filesystem_, old_blob_info_proto_file_name,
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
-              compression_level_)));
+              compression_level_, /*compression_threshold_bytes=*/0,
+              compression_mem_level_)));
   blob_info_log_ = std::move(log_create_result.proto_log);
   blob_handle_to_offset_ = std::move(new_blob_handle_to_offset);
   return blob_file_names_to_remove;

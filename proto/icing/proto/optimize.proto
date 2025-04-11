@@ -46,7 +46,7 @@ message OptimizeResultProto {
 }
 
 // Result of a call to IcingSearchEngine.GetOptimizeInfo
-// Next tag: 5
+// Next tag: 6
 message GetOptimizeInfoResultProto {
   // Status code can be one of:
   //   OK
@@ -66,6 +66,10 @@ message GetOptimizeInfoResultProto {
 
   // The amount of time since the last optimize ran.
   optional int64 time_since_last_optimize_ms = 4;
+
+  // True if there is no previous optimize info written to disk. This would
+  // indicate that Icing has never run optimize before.
+  optional bool no_previous_optimize_info = 5;
 }
 
 // Next tag: 14

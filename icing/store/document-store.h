@@ -151,6 +151,7 @@ class DocumentStore {
       const FeatureFlags* feature_flags,
       bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
       bool use_persistent_hash_map, int32_t compression_level,
+      uint32_t compression_threshold_bytes, int32_t compression_mem_level,
       InitializeStatsProto* initialize_stats);
 
   // Discards all derived data in the document store.
@@ -176,7 +177,7 @@ class DocumentStore {
   // of deleted or expired documents.
   int num_documents() const { return document_id_mapper_->num_elements(); }
 
-  // Puts the document into document store.
+  // Puts a single document into document store.
   //
   // If put_document_stats is present, the fields related to DocumentStore will
   // be populated.
@@ -199,10 +200,7 @@ class DocumentStore {
     }
   };
   libtextclassifier3::StatusOr<PutResult> Put(
-      const DocumentProto& document, int32_t num_tokens = 0,
-      PutDocumentStatsProto* put_document_stats = nullptr);
-  libtextclassifier3::StatusOr<PutResult> Put(
-      DocumentProto&& document, int32_t num_tokens = 0,
+      const DocumentWrapper& document_wrapper,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Finds and returns the document identified by the given key (namespace +
@@ -600,7 +598,9 @@ class DocumentStore {
                          const SchemaStore* schema_store,
                          const FeatureFlags* feature_flags,
                          bool pre_mapping_fbv, bool use_persistent_hash_map,
-                         int32_t compression_level);
+                         int32_t compression_level,
+                         uint32_t compression_threshold_bytes,
+                         int32_t compression_mem_level);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -624,6 +624,10 @@ class DocumentStore {
   bool use_persistent_hash_map_;
 
   const int32_t compression_level_;
+  const uint32_t compression_threshold_bytes_;
+
+  // Level of memory usage for compression.
+  const int32_t compression_mem_level_;
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
@@ -671,7 +675,7 @@ class DocumentStore {
   std::unique_ptr<KeyMapper<NamespaceId>> namespace_mapper_;
 
   // Maps a corpus, i.e. a (namespace, schema type) pair, to a densely-assigned
-  // unique id. A coprus is assigned an
+  // unique id. A corpus is assigned an
   // id when the first document belonging to that corpus is added to the
   // DocumentStore. Corpus ids may be removed from the mapper during compaction.
   std::unique_ptr<
@@ -780,7 +784,7 @@ class DocumentStore {
   bool HeaderExists();
 
   libtextclassifier3::StatusOr<PutResult> InternalPut(
-      DocumentProto&& document,
+      const DocumentWrapper& document_wrapper,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Helper function to do batch deletes. Documents with the given

@@ -32,6 +32,7 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
@@ -54,6 +55,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
@@ -129,20 +131,25 @@ class ResultStateManagerTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        result_retriever_, ResultRetrieverV2::Create(
-                               document_store_.get(), schema_store_.get(),
-                               language_segmenter_.get(), normalizer_.get()));
+        result_retriever_,
+        ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
   }
 
   void TearDown() override {
@@ -157,10 +164,15 @@ class ResultStateManagerTest : public testing::Test {
     document.set_uri(std::to_string(document_id));
     document.set_schema("Document");
     document.set_creation_timestamp_ms(1574365086666 + document_id);
-    document_store_->Put(document);
+
+    DocumentWrapper document_wrapper;
+    *document_wrapper.mutable_document() = std::move(document);
+
+    document_store_->Put(document_wrapper);
+
     return std::make_pair(
         ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1),
-        std::move(document));
+        std::move(*document_wrapper.mutable_document()));
   }
 
   std::pair<std::vector<ScoredDocumentHit>, std::vector<DocumentProto>>
@@ -207,14 +219,20 @@ class ResultStateManagerTest : public testing::Test {
 };
 
 TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
@@ -249,20 +267,30 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
 }
 
 TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store().Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             document_store().Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
@@ -357,11 +385,15 @@ TEST_F(ResultStateManagerTest, EmptyRankerShouldReturnEmptyFirstPage) {
 }
 
 TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
@@ -396,17 +428,25 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
 }
 
 TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store().Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
@@ -617,23 +657,35 @@ TEST_F(ResultStateManagerTest,
 }
 
 TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store().Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             document_store().Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result6,
-                             document_store().Put(CreateDocument(/*id=*/6)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/6))));
   DocumentId document_id6 = put_result6.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits1 = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
@@ -1435,6 +1487,7 @@ TEST_F(ResultStateManagerTest,
   auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
       {/*document_id=*/5, /*document_id=*/6, /*document_id=*/7,
        /*document_id=*/8, /*document_id=*/9, /*document_id=*/10});
+  QueryStatsProto query_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
@@ -1444,8 +1497,11 @@ TEST_F(ResultStateManagerTest,
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
+          clock()->GetSystemTimeMilliseconds(), &query_stats));
   EXPECT_THAT(page_result_info3.first, Not(Eq(kInvalidNextPageToken)));
+  // Should set num_result_states_evicted since result state 1 and 2 were
+  // evicted.
+  EXPECT_THAT(query_stats.num_result_states_evicted(), Eq(2));
 
   // GetNextPage for result state 1 and 2 should return NOT_FOUND.
   EXPECT_THAT(result_state_manager.GetNextPage(

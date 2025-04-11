@@ -71,9 +71,10 @@ using ::testing::DoubleEq;
 using ::testing::DoubleNear;
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::IsFalse;
+using ::testing::IsTrue;
 using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::SizeIs;
@@ -936,10 +937,11 @@ TEST_F(IcingSearchEngineSearchTest, SearchShouldReturnMultiplePages) {
       document4;
   SearchResultProto search_result_proto =
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
-  EXPECT_THAT(search_result_proto.next_page_token(), Gt(kInvalidNextPageToken));
   uint64_t next_page_token = search_result_proto.next_page_token();
+
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 
@@ -950,6 +952,7 @@ TEST_F(IcingSearchEngineSearchTest, SearchShouldReturnMultiplePages) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
   search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 
@@ -961,12 +964,8 @@ TEST_F(IcingSearchEngineSearchTest, SearchShouldReturnMultiplePages) {
   // token.
   expected_search_result_proto.clear_next_page_token();
   search_result_proto = icing.GetNextPage(next_page_token);
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
-
-  // No more results
-  expected_search_result_proto.clear_results();
-  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(),
+              Eq(kInvalidNextPageToken));  // No more results.
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 }
@@ -1008,10 +1007,11 @@ TEST_F(IcingSearchEngineSearchTest,
       document4;
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
-  EXPECT_THAT(search_result_proto.next_page_token(), Gt(kInvalidNextPageToken));
   uint64_t next_page_token = search_result_proto.next_page_token();
+
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 
@@ -1022,6 +1022,7 @@ TEST_F(IcingSearchEngineSearchTest,
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
   search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 
@@ -1033,12 +1034,8 @@ TEST_F(IcingSearchEngineSearchTest,
   // token.
   expected_search_result_proto.clear_next_page_token();
   search_result_proto = icing.GetNextPage(next_page_token);
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
-
-  // No more results
-  expected_search_result_proto.clear_results();
-  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(),
+              Eq(kInvalidNextPageToken));  // No more results.
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 }
@@ -1094,7 +1091,7 @@ TEST_F(IcingSearchEngineSearchTest, ShouldReturnMultiplePagesWithSnippets) {
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   ASSERT_THAT(search_result.status(), ProtoIsOk());
   ASSERT_THAT(search_result.results(), SizeIs(2));
-  ASSERT_THAT(search_result.next_page_token(), Gt(kInvalidNextPageToken));
+  ASSERT_THAT(search_result.next_page_token(), Ne(kInvalidNextPageToken));
 
   const DocumentProto& document_result_1 = search_result.results(0).document();
   EXPECT_THAT(document_result_1, EqualsProto(document5));
@@ -1123,7 +1120,7 @@ TEST_F(IcingSearchEngineSearchTest, ShouldReturnMultiplePagesWithSnippets) {
   search_result = icing.GetNextPage(search_result.next_page_token());
   ASSERT_THAT(search_result.status(), ProtoIsOk());
   ASSERT_THAT(search_result.results(), SizeIs(2));
-  ASSERT_THAT(search_result.next_page_token(), Gt(kInvalidNextPageToken));
+  ASSERT_THAT(search_result.next_page_token(), Ne(kInvalidNextPageToken));
 
   const DocumentProto& document_result_3 = search_result.results(0).document();
   EXPECT_THAT(document_result_3, EqualsProto(document3));
@@ -1173,7 +1170,7 @@ TEST_F(IcingSearchEngineSearchTest, ShouldInvalidateNextPageToken) {
       document2;
   SearchResultProto search_result_proto =
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
-  EXPECT_THAT(search_result_proto.next_page_token(), Gt(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   uint64_t next_page_token = search_result_proto.next_page_token();
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
@@ -1184,9 +1181,12 @@ TEST_F(IcingSearchEngineSearchTest, ShouldInvalidateNextPageToken) {
   // Invalidates token
   icing.InvalidateNextPageToken(next_page_token);
 
-  // Tries to fetch the second page, no result since it's invalidated
+  // Tries to fetch the second page, no result since it's invalidated. Also
+  // page_token_not_found should be set to true in order to hint the client that
+  // the pagination is incomplete.
   expected_search_result_proto.clear_results();
   expected_search_result_proto.clear_next_page_token();
+  expected_search_result_proto.set_page_token_not_found(true);
   search_result_proto = icing.GetNextPage(next_page_token);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
@@ -4720,7 +4720,7 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   search_result = icing.GetNextPage(search_result.next_page_token());
   ASSERT_THAT(search_result.status(), ProtoIsOk());
   ASSERT_THAT(search_result.results(), SizeIs(2));
-  ASSERT_THAT(search_result.next_page_token(), Gt(kInvalidNextPageToken));
+  ASSERT_THAT(search_result.next_page_token(), Ne(kInvalidNextPageToken));
 
   exp_stats = QueryStatsProto();
   exp_stats.set_is_first_page(false);
@@ -4731,6 +4731,7 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 1 result with 0 snippets
@@ -4748,6 +4749,75 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Fetch the next page with kInvalidNextPageToken.
+  search_result = icing.GetNextPage(kInvalidNextPageToken);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+}
+
+TEST_F(IcingSearchEngineSearchTest, GetNextPage_withNotFoundPageToken) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(5);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Call GetNextPage with a not found page token.
+  SearchResultProto search_result = icing.GetNextPage(/*next_page_token=*/123);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+  // page_token_not_found is set to true.
+  // - Usually the client uses a valid page token to fetch the next page. If the
+  //   page token is not found, it is "likely" that the corresponding
+  //   ResultState has been removed due to cache eviction.
+  // - If the client really tries to fetch the next page with an non-existing
+  //   page token, then we cannot tell whether the search is "invalid" or
+  //   "incomplete". Still, it is just a hint warning field for the 1st case.
+  EXPECT_THAT(search_result.page_token_not_found(), IsTrue());
+
+  QueryStatsProto exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::NOT_FOUND);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+}
+
+TEST_F(IcingSearchEngineSearchTest, GetNextPage_withInvalidPageToken) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(5);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Call GetNextPage with kInvalidNextPageToken.
+  SearchResultProto search_result = icing.GetNextPage(kInvalidNextPageToken);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+  // page_token_not_found should be false.
+  EXPECT_THAT(search_result.page_token_not_found(), IsFalse());
+
+  QueryStatsProto exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 
@@ -5034,6 +5104,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(1);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 0 child docs.
@@ -5052,6 +5123,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_results_with_snippets(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   ASSERT_THAT(search_result,
               EqualsSearchResultIgnoreStatsAndScores(expected_result3));
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
@@ -5066,6 +5138,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats = QueryStatsProto();
   exp_stats.set_is_first_page(false);
   exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 

@@ -27,6 +27,7 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -55,6 +56,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
@@ -200,14 +202,18 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -282,8 +288,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -295,8 +302,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -330,7 +338,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
@@ -380,8 +389,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -400,8 +410,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -434,7 +445,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'sender.name'
   // property.
@@ -495,8 +507,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -515,8 +528,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -549,7 +563,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'sender'
   // property and all of the subproperties of 'sender'.
@@ -613,8 +628,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -633,8 +649,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -668,7 +685,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'sender.name' and
   // 'sender.address' properties.
@@ -724,8 +742,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -737,8 +756,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -770,7 +790,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
@@ -808,8 +829,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -821,8 +843,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -855,7 +878,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
@@ -893,8 +917,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -906,8 +931,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -941,7 +967,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
@@ -983,8 +1010,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -995,8 +1023,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1029,7 +1058,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results have all of their properties.
@@ -1073,8 +1103,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1085,8 +1116,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1121,7 +1153,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results only contain the 'name' property.
@@ -1165,8 +1198,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1177,8 +1211,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1217,7 +1252,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'body'
   // property and the returned Person results  only contain the 'name' property.
@@ -1270,8 +1306,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                   .AddStringProperty("emailAddress", "mr.body123@gmail.com")
                   .Build())
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1282,8 +1319,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1322,7 +1360,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results only contain the 'name' property.
@@ -1379,8 +1418,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                   .AddStringProperty("emailAddress", "mr.body123@gmail.com")
                   .Build())
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1391,8 +1431,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1431,7 +1472,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results contain no properties.
@@ -1476,8 +1518,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(person_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(person_document)));
   DocumentId person_document_id = put_result1.new_document_id;
 
   // 2. Add two Email documents
@@ -1491,8 +1535,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(put_result1,
-                             document_store_->Put(email_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result1, document_store_->Put(
+                       document_util::CreateDocumentWrapper(email_document1)));
   DocumentId email_document_id1 = put_result1.new_document_id;
 
   DocumentProto email_document2 =
@@ -1504,8 +1549,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(email_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(email_document2)));
   DocumentId email_document_id2 = put_result2.new_document_id;
 
   // 3. Setup the joined scored results.
@@ -1569,7 +1616,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 7. Verify that the returned results:
   //    - Person docs only contain the "name" property.
@@ -1628,8 +1676,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1640,8 +1689,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           .AddStringProperty("name", "Joe Artist")
           .AddStringProperty("emailAddress", "artist@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1674,7 +1724,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Person and Artist results only contain the
   // 'name' property.
@@ -1716,8 +1767,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1728,8 +1780,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           .AddStringProperty("name", "Joe Musician")
           .AddStringProperty("emailAddress", "Musician@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1762,7 +1815,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Person and Musician results only contain the
   // 'name' property.
@@ -1804,8 +1858,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                .SetSchema("Artist")
                                .AddStringProperty("name", "Joe Artist")
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocumentId document_id = put_result.new_document_id;
 
   // 2. Setup the scored results.
@@ -1838,7 +1893,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned person document does not contain any property,
   // since 'emailAddress' is missing.
@@ -1867,8 +1923,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1879,8 +1936,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           .AddStringProperty("name", "Joe Artist")
           .AddStringProperty("emailAddress", "artist@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1918,7 +1976,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned Person results only contain the 'name'
   // property and the returned Artist results contain both the 'name' and
@@ -1963,8 +2022,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
                                .AddStringProperty("phoneNumber", "12345")
                                .AddStringProperty("phoneModel", "pixel")
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocumentId document_id = put_result.new_document_id;
 
   // 2. Setup the scored results.
@@ -2003,7 +2063,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // 5. Verify that the returned document only contains the 'name' and the
   // 'phoneNumber' property.

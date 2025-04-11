@@ -75,6 +75,7 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::Lt;
+using ::testing::Ne;
 using ::testing::Return;
 using ::testing::SizeIs;
 
@@ -230,14 +231,15 @@ TEST_F(IcingSearchEngineOptimizeTest,
       document2;
   SearchResultProto search_result_proto =
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
-  EXPECT_THAT(search_result_proto.next_page_token(), Gt(kInvalidNextPageToken));
   uint64_t next_page_token = search_result_proto.next_page_token();
+
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
-  // Now document1 is still to be fetched.
 
+  // Now there are more pages to be fetched (document1). Call Optimize.
   OptimizeResultProto optimize_result_proto;
   optimize_result_proto.mutable_status()->set_code(StatusProto::OK);
   optimize_result_proto.mutable_status()->set_message("");
@@ -246,9 +248,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
   ASSERT_THAT(actual_result, EqualsProto(optimize_result_proto));
 
   // Tries to fetch the second page, no results since all tokens have been
-  // invalidated during Optimize()
+  // invalidated during Optimize().
   expected_search_result_proto.clear_results();
   expected_search_result_proto.clear_next_page_token();
+  expected_search_result_proto.set_page_token_not_found(true);
   search_result_proto = icing.GetNextPage(next_page_token);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
@@ -385,6 +388,7 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -395,6 +399,7 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     // Deletes document1
     ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
@@ -404,6 +409,7 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(1));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Gt(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
     int64_t first_estimated_optimizable_bytes =
         optimize_info.estimated_optimizable_bytes();
 
@@ -418,6 +424,7 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(),
                 Gt(first_estimated_optimizable_bytes));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     // Optimize
     ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
@@ -440,6 +447,7 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(4000));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
   }
 }
 
@@ -487,6 +495,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     // Call some APIs
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -501,6 +510,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -536,6 +546,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(500));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -567,6 +578,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(1300));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
 
     // Optimize again -- this should fail because of the mock filesystem, but
     // the time since last optimize should be populated.
@@ -598,6 +610,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(2700));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -655,6 +668,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     // Call some APIs
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -669,6 +683,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -704,6 +719,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(500));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -740,6 +756,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(1300));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -764,6 +781,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(4000));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -2170,6 +2188,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
           .Build();
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
   icing_options.set_compression_level(3);
+  icing_options.set_compression_threshold_bytes(0);
   int64_t document_log_size_compression_3;
   int64_t document_log_size_after_opti_no_compression;
   int64_t document_log_size_after_opti_compression_3;

@@ -29,6 +29,7 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -58,6 +59,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/snippet-helpers.h"
 #include "unicode/uloc.h"
@@ -147,14 +149,18 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -305,15 +311,18 @@ TEST_F(ResultRetrieverV2SnippetTest,
        DefaultSnippetSpecShouldDisableSnippeting) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
@@ -326,7 +335,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/3);
 
@@ -361,15 +371,18 @@ TEST_F(ResultRetrieverV2SnippetTest,
 TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
@@ -382,7 +395,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/3);
@@ -476,15 +490,18 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
 TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
@@ -497,7 +514,8 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -560,15 +578,18 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
 TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {
@@ -582,7 +603,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -738,15 +760,18 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
 TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {
@@ -760,7 +785,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -863,15 +889,18 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
@@ -884,7 +913,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -927,15 +957,18 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
 TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
@@ -948,7 +981,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -993,15 +1027,18 @@ TEST_F(ResultRetrieverV2SnippetTest,
        ShouldNotSnippetAnyResultsForNonPositiveNumMatchesPerProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "subject"),
@@ -1014,7 +1051,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
@@ -1060,28 +1098,34 @@ TEST_F(ResultRetrieverV2SnippetTest,
 TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result1,
-      document_store_->Put(CreatePersonDocument(/*id=*/1)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/1))));
   DocumentId person_document_id1 = person_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result2,
-      document_store_->Put(CreatePersonDocument(/*id=*/2)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/2))));
   DocumentId person_document_id2 = person_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result3,
-      document_store_->Put(CreatePersonDocument(/*id=*/3)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/3))));
   DocumentId person_document_id3 = person_put_result3.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId email_document_id1 = email_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId email_document_id2 = email_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId email_document_id3 = email_put_result3.new_document_id;
 
   std::vector<SectionId> person_hit_section_ids = {
@@ -1124,7 +1168,8 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/3);
@@ -1304,24 +1349,29 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result1,
-      document_store_->Put(CreatePersonDocument(/*id=*/1)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/1))));
   DocumentId person_document_id1 = person_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result2,
-      document_store_->Put(CreatePersonDocument(/*id=*/2)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/2))));
   DocumentId person_document_id2 = person_put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId email_document_id1 = email_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId email_document_id2 = email_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId email_document_id3 = email_put_result3.new_document_id;
 
   std::vector<SectionId> person_hit_section_ids = {
@@ -1359,7 +1409,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto parent_snippet_spec = CreateSnippetSpec();
@@ -1432,24 +1483,29 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
 TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result1,
-      document_store_->Put(CreatePersonDocument(/*id=*/1)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/1))));
   DocumentId person_document_id1 = person_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult person_put_result2,
-      document_store_->Put(CreatePersonDocument(/*id=*/2)));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          CreatePersonDocument(/*id=*/2))));
   DocumentId person_document_id2 = person_put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result1,
-      document_store_->Put(CreateEmailDocument(/*id=*/1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
   DocumentId email_document_id1 = email_put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result2,
-      document_store_->Put(CreateEmailDocument(/*id=*/2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/2))));
   DocumentId email_document_id2 = email_put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult email_put_result3,
-      document_store_->Put(CreateEmailDocument(/*id=*/3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/3))));
   DocumentId email_document_id3 = email_put_result3.new_document_id;
 
   std::vector<SectionId> person_hit_section_ids = {
@@ -1487,7 +1543,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto::SnippetSpecProto parent_snippet_spec = CreateSnippetSpec();
