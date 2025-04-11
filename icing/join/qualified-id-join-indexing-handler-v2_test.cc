@@ -272,14 +272,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(referenced_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(ref_tokenized_document.document_wrapper()));
   DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
-      doc_store_->GetNamespaceId(referenced_document.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
-      /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
+      /*namespace_id=*/ref_doc_ns_id,
+      /*target_str=*/ref_tokenized_document.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
@@ -291,12 +302,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleJoinableProperty) {
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result, doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
   // Handle document.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -331,15 +345,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleNestedJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store_->Put(referenced_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document1,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store_->Put(ref_tokenized_document1.document_wrapper()));
   DocumentId ref_doc_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id1,
-      doc_store_->GetNamespaceId(referenced_document1.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document1.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint1(
       /*namespace_id=*/ref_doc_ns_id1,
-      /*target_str=*/referenced_document1.uri());
+      /*target_str=*/ref_tokenized_document1.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint1),
               IsOkAndHolds(ref_doc_id1));
 
@@ -351,15 +375,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleNestedJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "two")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store_->Put(referenced_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document2,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store_->Put(ref_tokenized_document2.document_wrapper()));
   DocumentId ref_doc_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id2,
-      doc_store_->GetNamespaceId(referenced_document2.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document2.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint2(
       /*namespace_id=*/ref_doc_ns_id2,
-      /*target_str=*/referenced_document2.uri());
+      /*target_str=*/ref_tokenized_document2.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint2),
               IsOkAndHolds(ref_doc_id2));
 
@@ -383,25 +417,28 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleNestedJoinableProperty) {
           .AddStringProperty(std::string(kPropertyQualifiedId2),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(nested_document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                nested_document));
+      TokenizedDocument nested_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(nested_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(nested_tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
-  // Handle nested_document.
+  // Handle nested_tokenized_document.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
                                              qualified_id_join_index_.get()));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
-                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  nested_tokenized_document, doc_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle().
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(), Eq(doc_id));
@@ -445,13 +482,16 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              std::string(kInvalidFormatQualifiedId))
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
   // Handle document. Should ignore invalid format qualified id.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -489,13 +529,16 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
               std::string(kPropertyQualifiedId),
               absl_ports::StrCat(kUnknownNamespace, "#", "ref_type/1"))
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
   // Handle document.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -525,13 +568,17 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleShouldSkipEmptyQualifiedId) {
                                .SetKey("icing", "fake_type/1")
                                .SetSchema(std::string(kFakeType))
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
+
   ASSERT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
 
   // Handle document.
@@ -567,14 +614,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(referenced_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(ref_tokenized_document.document_wrapper()));
   DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
-      doc_store_->GetNamespaceId(referenced_document.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
-      /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
+      /*namespace_id=*/ref_doc_ns_id,
+      /*target_str=*/ref_tokenized_document.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
@@ -586,11 +644,13 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK(doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK(doc_store_->Put(tokenized_document.document_wrapper()));
 
   qualified_id_join_index_->set_last_added_document_id(ref_doc_id);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -642,14 +702,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(referenced_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(ref_tokenized_document.document_wrapper()));
   DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
-      doc_store_->GetNamespaceId(referenced_document.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
-      /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
+      /*namespace_id=*/ref_doc_ns_id,
+      /*target_str=*/ref_tokenized_document.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
@@ -661,12 +732,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result, doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
@@ -720,14 +794,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(referenced_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(ref_tokenized_document.document_wrapper()));
   DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
-      doc_store_->GetNamespaceId(referenced_document.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
-      /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
+      /*namespace_id=*/ref_doc_ns_id,
+      /*target_str=*/ref_tokenized_document.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
@@ -739,12 +824,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result, doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
@@ -779,14 +867,25 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             doc_store_->Put(referenced_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument ref_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(referenced_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      doc_store_->Put(ref_tokenized_document.document_wrapper()));
   DocumentId ref_doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       NamespaceId ref_doc_ns_id,
-      doc_store_->GetNamespaceId(referenced_document.namespace_()));
+      doc_store_->GetNamespaceId(
+          ref_tokenized_document.document_wrapper().document().namespace_()));
   NamespaceIdFingerprint ref_doc_nsid_uri_fingerprint(
-      /*namespace_id=*/ref_doc_ns_id, /*target_str=*/referenced_document.uri());
+      /*namespace_id=*/ref_doc_ns_id,
+      /*target_str=*/ref_tokenized_document.document_wrapper()
+          .document()
+          .uri());
   ASSERT_THAT(doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint),
               IsOkAndHolds(ref_doc_id));
 
@@ -798,12 +897,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, doc_store_->Put(document));
-  DocumentId doc_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result, doc_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId doc_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,

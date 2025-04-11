@@ -382,7 +382,7 @@ message SnippetProto {
 }
 
 // Icing lib-supplied results from a search results.
-// Next tag: 6
+// Next tag: 7
 message SearchResultProto {
   // Status code can be one of:
   //   OK
@@ -442,6 +442,14 @@ message SearchResultProto {
 
   // Stats for query execution performance.
   optional QueryStatsProto query_stats = 5;
+
+  // This field is used only in the GetNextPage API.
+  //
+  // Whether GetNextPage returning an empty result is due to page token not
+  // found (mostly caused by cache eviction). If the client needs the entire set
+  // of result documents (as their ground truth), then they should restart the
+  // query via Search API when this field is true.
+  optional bool page_token_not_found = 6;
 }
 
 // Next tag: 3
