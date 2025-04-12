@@ -29,6 +29,11 @@ interface IIsolatedStorageService {
   oneway void quit();
 
   /**
+   * Trims the memory used by the pVM.
+   */
+  oneway void trimMemory();
+
+  /**
    * Returns an Icing connection for the given uid. Creates a new Icing connection if one does not
    * already exist for the given uid.
    *
@@ -36,4 +41,11 @@ interface IIsolatedStorageService {
    * @return An Icing connection for the given uid.
    */
   IIcingSearchEngine getOrCreateIcingConnection(int uid);
+
+  /**
+   * Removes an Icing connection for the given uid
+   *
+   * @param uid The uid of the caller.
+   */
+  oneway void removeIcingConnection(int uid);
 }

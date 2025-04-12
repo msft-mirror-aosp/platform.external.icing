@@ -1,6 +1,7 @@
 #include <android/binder_auto_utils.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
+#include <unistd.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -71,6 +72,10 @@ using BlobHandleProto = ::icing::lib::PropertyProto::BlobHandleProto;
 using ::icing::lib::INFO;
 using ::ndk::ScopedAStatus;
 
+namespace {
+void vmShrinkRay() { sync(); }
+}  // namespace
+
 // This class implements the AIDL interface for the Icing connection.
 class IcingConnectionImpl
     : public aidl::com::android::isolated_storage_service::BnIcingSearchEngine {
@@ -94,6 +99,16 @@ class IcingConnectionImpl
     ICING_LOG(INFO) << "IsolatedStorageService closing Icing connection.";
     icing_->PersistToDisk(icing::lib::PersistType::FULL);
     return ScopedAStatus::ok();
+  }
+
+  ScopedAStatus clearAndDestroy(
+      std::optional<std::vector<uint8_t>>* clear_and_destroy_result_proto) {
+    CHECK_ICING_INIT(icing_);
+    ICING_LOG(INFO)
+        << "IsolatedStorageService clear and destroy icing instance.";
+    ResetResultProto clear_and_destroy_result = icing_->ClearAndDestroy();
+    SERIALIZE_AND_RETURN_ASTATUS(clear_and_destroy_result,
+                                 clear_and_destroy_result_proto);
   }
 
   ScopedAStatus reset(std::optional<std::vector<uint8_t>>* reset_result_proto) {
@@ -426,6 +441,12 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
     exit(0);
   }
 
+  ScopedAStatus trimMemory() override {
+    ICING_LOG(INFO) << "Received trim memory request, trimming";
+    vmShrinkRay();
+    exit(0);
+  }
+
   ScopedAStatus getOrCreateIcingConnection(
       int32_t uid,
       std::shared_ptr<
@@ -439,6 +460,15 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
     icing_connections_[uid] =
         ndk::SharedRefBase::make<IcingConnectionImpl>(uid);
     *icing_server = icing_connections_[uid];
+    return ScopedAStatus::ok();
+  }
+
+  ScopedAStatus removeIcingConnection(int uid) override {
+    ICING_LOG(INFO) << "Removing Icing connection for user " << uid;
+    auto connection = icing_connections_.find(uid);
+    if (connection != icing_connections_.end()) {
+      icing_connections_.erase(connection);
+    }
     return ScopedAStatus::ok();
   }
 

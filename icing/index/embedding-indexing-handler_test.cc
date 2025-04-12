@@ -31,6 +31,7 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -208,6 +209,7 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
                 DocumentWrapper>::kDefaultCompressionLevel,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
 
