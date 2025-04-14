@@ -47,6 +47,7 @@
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 
 // This is an overall benchmark for ScoringProcessor, Scorer, and Ranker. It
 // shows how performance varies when we score different numbers of document
@@ -84,6 +85,12 @@ SchemaProto CreateSchemaWithEmailType() {
   subject->set_data_type(PropertyConfigProto::DataType::STRING);
   subject->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
   return schema;
+}
+
+DocumentWrapper CreateDocumentWrapper(DocumentProto document,
+                                      int32_t num_string_tokens) {
+  document.mutable_internal_fields()->set_length_in_tokens(num_string_tokens);
+  return document_util::CreateDocumentWrapper(std::move(document));
 }
 
 DocumentProto CreateEmailDocument(int id, int document_score,
@@ -164,9 +171,10 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result,
-        document_store->Put(CreateEmailDocument(
-            /*id=*/i, /*document_score=*/distribution(random_generator),
-            /*creation_timestamp_ms=*/1)));
+        document_store->Put(
+            document_util::CreateDocumentWrapper(CreateEmailDocument(
+                /*id=*/i, /*document_score=*/distribution(random_generator),
+                /*creation_timestamp_ms=*/1))));
     DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
@@ -277,9 +285,10 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result,
-        document_store->Put(CreateEmailDocument(
-            /*id=*/i, /*document_score=*/1,
-            /*creation_timestamp_ms=*/distribution(random_generator))));
+        document_store->Put(
+            document_util::CreateDocumentWrapper(CreateEmailDocument(
+                /*id=*/i, /*document_score=*/1,
+                /*creation_timestamp_ms=*/distribution(random_generator)))));
     DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
@@ -386,8 +395,9 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result,
-        document_store->Put(CreateEmailDocument(/*id=*/i, /*document_score=*/1,
-                                                /*creation_timestamp_ms=*/1)));
+        document_store->Put(document_util::CreateDocumentWrapper(
+            CreateEmailDocument(/*id=*/i, /*document_score=*/1,
+                                /*creation_timestamp_ms=*/1))));
     DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
@@ -501,10 +511,10 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::PutResult put_result,
-        document_store->Put(CreateEmailDocument(
-                                /*id=*/i, /*document_score=*/1,
+        document_store->Put(CreateDocumentWrapper(
+            CreateEmailDocument(/*id=*/i, /*document_score=*/1,
                                 /*creation_timestamp_ms=*/1),
-                            /*num_tokens=*/10));
+            /*num_string_tokens=*/10)));
     DocumentId document_id = put_result.new_document_id;
     DocHitInfoTermFrequencyPair doc_hit =
         DocHitInfo(document_id, section_id_mask);
