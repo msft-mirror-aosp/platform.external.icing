@@ -132,8 +132,12 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
     return persistent_hash_map_->GetElementsSize();
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() override {
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() override {
     return persistent_hash_map_->UpdateChecksums();
+  }
+
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const override {
+    return persistent_hash_map_->GetChecksum();
   }
 
  private:

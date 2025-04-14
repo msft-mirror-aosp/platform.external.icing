@@ -14,18 +14,19 @@
 
 #include "icing/tokenization/plain-tokenizer.h"
 
+#include <string>
 #include <string_view>
 
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -40,7 +41,7 @@ class PlainTokenizerTest : public ::testing::Test {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
   }
@@ -235,6 +236,32 @@ TEST_F(PlainTokenizerTest, SpecialCharacters) {
       plain_tokenizer->TokenizeAll("$50"),
       IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "$"),
                                EqualsToken(Token::Type::REGULAR, "50"))));
+}
+
+TEST_F(PlainTokenizerTest, NullTerminator) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
+
+  // Plain tokenizer should not produce a token for null terminator.
+  EXPECT_THAT(
+      plain_tokenizer->TokenizeAll(std::string("Hello\0World", 11)),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "World"))));
+  EXPECT_THAT(
+      plain_tokenizer->TokenizeAll(std::string("Hello\0\0World", 12)),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "World"))));
+  EXPECT_THAT(
+      plain_tokenizer->TokenizeAll(std::string("Hello\0World\0", 12)),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "World"))));
 }
 
 TEST_F(PlainTokenizerTest, CJKT) {
