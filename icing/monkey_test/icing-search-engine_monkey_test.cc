@@ -12,9 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
+#include <random>
+#include <utility>
+
 #include "gtest/gtest.h"
 #include "icing/monkey_test/icing-monkey-test-runner.h"
+#include "icing/monkey_test/monkey-test-util.h"
 #include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/schema/section.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -36,7 +44,9 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
                                     kTotalNumSections,
                                     kTotalNumSections + 1,
                                     kTotalNumSections * 2};
-  config.possible_num_tokens_ = {0, 1, 4, 16, 64, 256};
+  config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
+  config.possible_num_vectors = {0, 1, 4};
+  config.possible_vector_dimensions = {128, 512, 768};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
       {&IcingMonkeyTestRunner::DoSearch, 200},
@@ -44,13 +54,14 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
       {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
       {&IcingMonkeyTestRunner::DoDelete, 50},
       {&IcingMonkeyTestRunner::DoDeleteByNamespace, 50},
-      {&IcingMonkeyTestRunner::DoDeleteBySchemaType, 50},
+      {&IcingMonkeyTestRunner::DoDeleteBySchemaType, 45},
       {&IcingMonkeyTestRunner::DoDeleteByQuery, 20},
       {&IcingMonkeyTestRunner::DoOptimize, 5},
+      {&IcingMonkeyTestRunner::DoUpdateSchema, 5},
       {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
   uint32_t num_iterations = IsAndroidArm() ? 1000 : 5000;
-  IcingMonkeyTestRunner runner(config);
-  ASSERT_NO_FATAL_FAILURE(runner.CreateIcingSearchEngineWithSchema());
+  IcingMonkeyTestRunner runner(std::move(config));
+  ASSERT_NO_FATAL_FAILURE(runner.Initialize());
   ASSERT_NO_FATAL_FAILURE(runner.Run(num_iterations));
 }
 
@@ -65,7 +76,9 @@ TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
   // Due to the large amount of documents, we need to make each document smaller
   // to finish the test.
   config.possible_num_properties = {0, 1, 2};
-  config.possible_num_tokens_ = {0, 1, 4};
+  config.possible_num_tokens = {0, 1, 4};
+  config.possible_num_vectors = {0, 1, 2};
+  config.possible_vector_dimensions = {128};
 
   // No deletion is performed to preserve a large number of documents.
   config.monkey_api_schedules = {
@@ -75,8 +88,8 @@ TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
       {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
       {&IcingMonkeyTestRunner::DoOptimize, 5},
       {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
-  IcingMonkeyTestRunner runner(config);
-  ASSERT_NO_FATAL_FAILURE(runner.CreateIcingSearchEngineWithSchema());
+  IcingMonkeyTestRunner runner(std::move(config));
+  ASSERT_NO_FATAL_FAILURE(runner.Initialize());
   // Pre-fill with 4 million documents
   SetLoggingLevel(LogSeverity::WARNING);
   for (int i = 0; i < 4000000; i++) {

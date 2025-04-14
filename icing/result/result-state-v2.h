@@ -22,13 +22,11 @@
 #include <vector>
 
 #include "icing/absl_ports/mutex.h"
-#include "icing/proto/scoring.pb.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/proto/search.pb.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/snippet-context.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -39,8 +37,8 @@ class ResultStateV2 {
  public:
   explicit ResultStateV2(
       std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker_in,
-      SectionRestrictQueryTermsMap query_terms,
-      const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+      std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
+      std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
       const ResultSpecProto& result_spec, const DocumentStore& document_store);
 
   ~ResultStateV2();
@@ -60,14 +58,28 @@ class ResultStateV2 {
   void IncrementNumTotalHits(int increment_by)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
-  const SnippetContext& snippet_context() const
-      ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return snippet_context_;
+  // Returns a nullable pointer to parent adjustment info.
+  ResultAdjustmentInfo* parent_adjustment_info()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
+    return parent_adjustment_info_.get();
   }
 
-  const std::unordered_map<std::string, ProjectionTree>& projection_tree_map()
-      const ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return projection_tree_map_;
+  // Returns a nullable pointer to parent adjustment info.
+  const ResultAdjustmentInfo* parent_adjustment_info() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return parent_adjustment_info_.get();
+  }
+
+  // Returns a nullable pointer to child adjustment info.
+  ResultAdjustmentInfo* child_adjustment_info()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
+    return child_adjustment_info_.get();
+  }
+
+  // Returns a nullable pointer to child adjustment info.
+  const ResultAdjustmentInfo* child_adjustment_info() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return child_adjustment_info_.get();
   }
 
   const std::unordered_map<int32_t, int>& entry_id_group_id_map() const
@@ -75,13 +87,18 @@ class ResultStateV2 {
     return entry_id_group_id_map_;
   }
 
-  int num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
+  int32_t num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
     return num_per_page_;
   }
 
   int32_t num_total_bytes_per_page_threshold() const
       ICING_SHARED_LOCKS_REQUIRED(mutex) {
     return num_total_bytes_per_page_threshold_;
+  }
+
+  int32_t max_joined_children_per_parent_to_return() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return max_joined_children_per_parent_to_return_;
   }
 
   ResultSpecProto::ResultGroupingType result_group_type()
@@ -110,11 +127,16 @@ class ResultStateV2 {
   int num_returned ICING_GUARDED_BY(mutex);
 
  private:
-  // Information needed for snippeting.
-  SnippetContext snippet_context_ ICING_GUARDED_BY(mutex);
+  // Adjustment information for parent documents, including snippet and
+  // projection. Can be nullptr if there is no adjustment info for parent
+  // documents.
+  std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info_
+      ICING_GUARDED_BY(mutex);
 
-  // Information needed for projection.
-  std::unordered_map<std::string, ProjectionTree> projection_tree_map_
+  // Adjustment information for child documents, including snippet and
+  // projection. This is only used for join query. Can be nullptr if there is no
+  // adjustment info for child documents.
+  std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info_
       ICING_GUARDED_BY(mutex);
 
   // A map between result grouping entry id and the id of the group that it
@@ -123,7 +145,7 @@ class ResultStateV2 {
       ICING_GUARDED_BY(mutex);
 
   // Number of results to return in each page.
-  int num_per_page_ ICING_GUARDED_BY(mutex);
+  int32_t num_per_page_ ICING_GUARDED_BY(mutex);
 
   // The threshold of total bytes of all documents to cutoff, in order to limit
   // # of bytes in a single page.
@@ -132,6 +154,10 @@ class ResultStateV2 {
   // cutoff, and only guarantees total bytes of search results won't exceed the
   // threshold too much.
   int32_t num_total_bytes_per_page_threshold_ ICING_GUARDED_BY(mutex);
+
+  // Max # of joined child documents to be attached in the result for each
+  // parent document.
+  int32_t max_joined_children_per_parent_to_return_ ICING_GUARDED_BY(mutex);
 
   // Pointer to a global counter to sum up the size of scored_document_hits in
   // all ResultStates.

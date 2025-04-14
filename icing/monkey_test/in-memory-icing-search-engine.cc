@@ -14,15 +14,28 @@
 
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
+#include <random>
+#include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/str_join.h"
+#include "icing/index/embed/embedding-scorer.h"
+#include "icing/monkey_test/monkey-tokenized-document.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/store/document-id.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -38,37 +51,198 @@ bool IsPrefix(std::string_view s1, std::string_view s2) {
   return s1 == s2.substr(0, s1.length());
 }
 
-bool DoesDocumentMatchQuery(const MonkeyTokenizedDocument &document,
-                            const std::string &query,
-                            TermMatchType::Code term_match_type) {
+const std::string_view kSemanticSearchPrefix =
+    "semanticSearch(getEmbeddingParameter(0)";
+
+libtextclassifier3::StatusOr<std::pair<double, double>> GetEmbeddingSearchRange(
+    std::string_view s) {
+  std::vector<double> values;
+  std::string current_number;
+  int i = s.find(kSemanticSearchPrefix) + kSemanticSearchPrefix.length();
+  for (; i < s.size(); ++i) {
+    char c = s[i];
+    if (c == '.' || c == '-' || (c >= '0' && c <= '9')) {
+      current_number += c;
+    } else {
+      if (!current_number.empty()) {
+        values.push_back(std::stod(current_number));
+        current_number.clear();
+      }
+    }
+  }
+  if (values.size() != 2) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("Not an embedding search.", s));
+  }
+  return std::make_pair(values[0], values[1]);
+}
+
+bool DoesVectorsMatch(const EmbeddingScorer *scorer,
+                      std::pair<double, double> embedding_search_range,
+                      const PropertyProto::VectorProto &vector1,
+                      const PropertyProto::VectorProto &vector2) {
+  if (vector1.model_signature() != vector2.model_signature() ||
+      vector1.values_size() != vector2.values_size()) {
+    return false;
+  }
+  float score = scorer->Score(vector1.values_size(), vector1.values().data(),
+                              vector2.values().data());
+  return embedding_search_range.first <= score &&
+         score <= embedding_search_range.second;
+}
+
+}  // namespace
+
+libtextclassifier3::StatusOr<const PropertyConfigProto *>
+InMemoryIcingSearchEngine::GetPropertyConfig(
+    const std::string &schema_type, const std::string &property_name) const {
+  auto schema_iter = property_config_map_.find(schema_type);
+  if (schema_iter == property_config_map_.end()) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Schema type: ", schema_type, " is not found."));
+  }
+  auto property_iter = schema_iter->second.find(property_name);
+  if (property_iter == schema_iter->second.end()) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Property: ", property_name, " is not found."));
+  }
+  return &property_iter->second;
+}
+
+libtextclassifier3::StatusOr<InMemoryIcingSearchEngine::PropertyIndexInfo>
+InMemoryIcingSearchEngine::GetPropertyIndexInfo(
+    const std::string &schema_type,
+    const MonkeyTokenizedSection &section) const {
+  bool in_indexable_properties_list = false;
+  bool all_indexable_from_top = true;
+
+  std::vector<std::string_view> properties_in_path =
+      absl_ports::StrSplit(section.path, ".");
+  if (properties_in_path.empty()) {
+    return absl_ports::InvalidArgumentError("Got empty path.");
+  }
+  std::string curr_schema_type = schema_type;
+  for (int i = 0; i < properties_in_path.size(); ++i) {
+    ICING_ASSIGN_OR_RETURN(
+        const PropertyConfigProto *prop,
+        GetPropertyConfig(curr_schema_type,
+                          std::string(properties_in_path[i])));
+    if (prop->data_type() == PropertyConfigProto::DataType::STRING) {
+      TermMatchType::Code term_match_type =
+          prop->string_indexing_config().term_match_type();
+      bool indexable = term_match_type != TermMatchType::UNKNOWN;
+      return PropertyIndexInfo{indexable, term_match_type};
+    }
+    if (prop->data_type() == PropertyConfigProto::DataType::VECTOR) {
+      bool indexable =
+          prop->embedding_indexing_config().embedding_indexing_type() !=
+          EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+      return PropertyIndexInfo{indexable};
+    }
+
+    if (prop->data_type() != PropertyConfigProto::DataType::DOCUMENT) {
+      return PropertyIndexInfo{/*indexable=*/false};
+    }
+
+    bool old_all_indexable_from_top = all_indexable_from_top;
+    all_indexable_from_top &=
+        prop->document_indexing_config().index_nested_properties();
+    if (!all_indexable_from_top && !in_indexable_properties_list) {
+      // Only try to update in_indexable_properties_list if this is the first
+      // level with index_nested_properties=false.
+      if (old_all_indexable_from_top) {
+        auto &indexable_properties =
+            prop->document_indexing_config().indexable_nested_properties_list();
+        std::string relative_path =
+            absl_ports::StrCatPieces(std::vector<std::string_view>(
+                properties_in_path.begin() + i + 1, properties_in_path.end()));
+        in_indexable_properties_list =
+            std::find(indexable_properties.begin(), indexable_properties.end(),
+                      relative_path) != indexable_properties.end();
+      }
+      // Check in_indexable_properties_list again.
+      if (!in_indexable_properties_list) {
+        return PropertyIndexInfo{/*indexable=*/false};
+      }
+    }
+    curr_schema_type = prop->document_indexing_config().GetTypeName();
+  }
+  return PropertyIndexInfo{/*indexable=*/false};
+}
+
+libtextclassifier3::StatusOr<bool>
+InMemoryIcingSearchEngine::DoesDocumentMatchQuery(
+    const MonkeyTokenizedDocument &document,
+    const SearchSpecProto &search_spec) const {
+  std::string_view query = search_spec.query();
   std::vector<std::string_view> strs = absl_ports::StrSplit(query, ":");
-  std::string_view query_term;
   std::string_view section_restrict;
   if (strs.size() > 1) {
     section_restrict = strs[0];
-    query_term = strs[1];
-  } else {
-    query_term = query;
+    query = strs[1];
   }
+
+  // Preprocess for embedding search.
+  libtextclassifier3::StatusOr<std::pair<double, double>>
+      embedding_search_range_or = GetEmbeddingSearchRange(query);
+  std::unique_ptr<EmbeddingScorer> embedding_scorer;
+  if (embedding_search_range_or.ok()) {
+    ICING_ASSIGN_OR_RETURN(
+        embedding_scorer,
+        EmbeddingScorer::Create(search_spec.embedding_query_metric_type()));
+  }
+
   for (const MonkeyTokenizedSection &section : document.tokenized_sections) {
     if (!section_restrict.empty() && section.path != section_restrict) {
       continue;
     }
-    for (const std::string &token : section.token_sequence) {
-      if (section.term_match_type == TermMatchType::EXACT_ONLY ||
-          term_match_type == TermMatchType::EXACT_ONLY) {
-        if (token == query_term) {
+    ICING_ASSIGN_OR_RETURN(
+        PropertyIndexInfo property_index_info,
+        GetPropertyIndexInfo(document.document.schema(), section));
+    if (!property_index_info.indexable) {
+      // Skip non-indexable property.
+      continue;
+    }
+
+    if (embedding_search_range_or.ok()) {
+      // Process embedding search.
+      for (const PropertyProto::VectorProto &vector :
+           section.embedding_vectors) {
+        if (DoesVectorsMatch(embedding_scorer.get(),
+                             embedding_search_range_or.ValueOrDie(),
+                             search_spec.embedding_query_vectors(0), vector)) {
           return true;
         }
-      } else if (IsPrefix(query_term, token)) {
-        return true;
+      }
+    } else {
+      // Process term search.
+      for (const std::string &token : section.token_sequence) {
+        if (property_index_info.term_match_type == TermMatchType::EXACT_ONLY ||
+            search_spec.term_match_type() == TermMatchType::EXACT_ONLY) {
+          if (token == query) {
+            return true;
+          }
+        } else if (IsPrefix(query, token)) {
+          return true;
+        }
       }
     }
   }
   return false;
 }
 
-}  // namespace
+void InMemoryIcingSearchEngine::SetSchema(SchemaProto &&schema) {
+  schema_ = std::make_unique<SchemaProto>(std::move(schema));
+  property_config_map_.clear();
+  for (const SchemaTypeConfigProto &type_config : schema_->types()) {
+    auto &curr_property_map = property_config_map_[type_config.schema_type()];
+    for (const PropertyConfigProto &property_config :
+         type_config.properties()) {
+      curr_property_map.insert(
+          {property_config.property_name(), property_config});
+    }
+  }
+}
 
 InMemoryIcingSearchEngine::PickDocumentResult
 InMemoryIcingSearchEngine::RandomPickDocument(float p_alive, float p_all,
@@ -121,7 +295,7 @@ InMemoryIcingSearchEngine::RandomPickDocument(float p_alive, float p_all,
 
 void InMemoryIcingSearchEngine::Put(const MonkeyTokenizedDocument &document) {
   // Delete the old one if existing.
-  Delete(document.document.namespace_(), document.document.uri());
+  Delete(document.document.namespace_(), document.document.uri()).IgnoreError();
   existing_doc_ids_.push_back(documents_.size());
   namespace_uri_docid_map[document.document.namespace_()]
                          [document.document.uri()] = documents_.size();
@@ -192,7 +366,8 @@ InMemoryIcingSearchEngine::DeleteBySchemaType(const std::string &schema_type) {
 
 libtextclassifier3::StatusOr<uint32_t> InMemoryIcingSearchEngine::DeleteByQuery(
     const SearchSpecProto &search_spec) {
-  std::vector<DocumentId> doc_ids_to_delete = InternalSearch(search_spec);
+  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> doc_ids_to_delete,
+                         InternalSearch(search_spec));
   for (DocumentId doc_id : doc_ids_to_delete) {
     const DocumentProto &document = documents_[doc_id].document;
     if (!Delete(document.namespace_(), document.uri()).ok()) {
@@ -204,9 +379,10 @@ libtextclassifier3::StatusOr<uint32_t> InMemoryIcingSearchEngine::DeleteByQuery(
   return doc_ids_to_delete.size();
 }
 
-std::vector<DocumentProto> InMemoryIcingSearchEngine::Search(
-    const SearchSpecProto &search_spec) const {
-  std::vector<DocumentId> matched_doc_ids = InternalSearch(search_spec);
+libtextclassifier3::StatusOr<std::vector<DocumentProto>>
+InMemoryIcingSearchEngine::Search(const SearchSpecProto &search_spec) const {
+  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> matched_doc_ids,
+                         InternalSearch(search_spec));
   std::vector<DocumentProto> result;
   result.reserve(matched_doc_ids.size());
   for (DocumentId doc_id : matched_doc_ids) {
@@ -229,12 +405,14 @@ libtextclassifier3::StatusOr<DocumentId> InMemoryIcingSearchEngine::InternalGet(
       " is not found by InMemoryIcingSearchEngine::InternalGet."));
 }
 
-std::vector<DocumentId> InMemoryIcingSearchEngine::InternalSearch(
+libtextclassifier3::StatusOr<std::vector<DocumentId>>
+InMemoryIcingSearchEngine::InternalSearch(
     const SearchSpecProto &search_spec) const {
   std::vector<DocumentId> matched_doc_ids;
   for (DocumentId doc_id : existing_doc_ids_) {
-    if (DoesDocumentMatchQuery(documents_[doc_id], search_spec.query(),
-                               search_spec.term_match_type())) {
+    ICING_ASSIGN_OR_RETURN(
+        bool match, DoesDocumentMatchQuery(documents_[doc_id], search_spec));
+    if (match) {
       matched_doc_ids.push_back(doc_id);
     }
   }

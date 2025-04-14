@@ -13,30 +13,45 @@
 // limitations under the License.
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <memory>
 #include <optional>
+#include <string>
 #include <thread>  // NOLINT
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/portable/platform.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -49,26 +64,23 @@ using ::testing::Not;
 using ::testing::SizeIs;
 using PageResultInfo = std::pair<uint64_t, PageResult>;
 
-ScoringSpecProto CreateScoringSpec() {
-  ScoringSpecProto scoring_spec;
-  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  return scoring_spec;
-}
-
 ResultSpecProto CreateResultSpec(int num_per_page) {
   ResultSpecProto result_spec;
   result_spec.set_num_per_page(num_per_page);
   return result_spec;
 }
 
-DocumentProto CreateDocument(int document_id) {
-  return DocumentBuilder()
-      .SetNamespace("namespace")
-      .SetUri(std::to_string(document_id))
-      .SetSchema("Document")
-      .SetCreationTimestampMs(1574365086666 + document_id)
-      .SetScore(document_id)
-      .Build();
+DocumentWrapper CreateDocument(int document_id) {
+  DocumentWrapper document_wrapper;
+  *document_wrapper.mutable_document() =
+      DocumentBuilder()
+          .SetNamespace("namespace")
+          .SetUri(std::to_string(document_id))
+          .SetSchema("Document")
+          .SetCreationTimestampMs(1574365086666 + document_id)
+          .SetScore(document_id)
+          .Build();
+  return document_wrapper;
 }
 
 class ResultStateManagerThreadSafetyTest : public testing::Test {
@@ -79,10 +91,11 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -94,25 +107,39 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, clock_.get()));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           clock_.get(), feature_flags_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
-                              schema_store_.get()));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        result_retriever_, ResultRetrieverV2::Create(
-                               document_store_.get(), schema_store_.get(),
-                               language_segmenter_.get(), normalizer_.get()));
+        result_retriever_,
+        ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
   }
 
   void TearDown() override {
@@ -120,6 +147,7 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
     clock_.reset();
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<FakeClock> clock_;
@@ -152,7 +180,7 @@ TEST_F(ResultStateManagerThreadSafetyTest,
 
   constexpr int kNumPerPage = 100;
   ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments,
-                                          *document_store_, clock_.get());
+                                          *document_store_);
 
   // Retrieve the first page.
   // Documents are ordered by score *ascending*, so the first page should
@@ -163,9 +191,9 @@ TEST_F(ResultStateManagerThreadSafetyTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
-          *result_retriever_));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -183,11 +211,12 @@ TEST_F(ResultStateManagerThreadSafetyTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<ResultRetrieverV2> result_retriever,
         ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  normalizer_.get()));
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         PageResultInfo page_result_info,
-        result_state_manager.GetNextPage(next_page_token, *result_retriever));
+        result_state_manager.GetNextPage(next_page_token, *result_retriever,
+                                         clock_->GetSystemTimeMilliseconds()));
     page_results[thread_id] =
         std::make_optional<PageResultInfo>(std::move(page_result_info));
   };
@@ -253,7 +282,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
 
   constexpr int kNumPerPage = 100;
   ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments,
-                                          *document_store_, clock_.get());
+                                          *document_store_);
 
   // Retrieve the first page.
   // Documents are ordered by score *ascending*, so the first page should
@@ -264,9 +293,9 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
-          *result_retriever_));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -285,11 +314,12 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<ResultRetrieverV2> result_retriever,
         ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  normalizer_.get()));
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
 
     libtextclassifier3::StatusOr<PageResultInfo> page_result_info_or =
-        result_state_manager.GetNextPage(next_page_token, *result_retriever);
+        result_state_manager.GetNextPage(next_page_token, *result_retriever,
+                                         clock_->GetSystemTimeMilliseconds());
     if (page_result_info_or.ok()) {
       page_results[thread_id] = std::make_optional<PageResultInfo>(
           std::move(page_result_info_or).ValueOrDie());
@@ -366,8 +396,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
   constexpr int kNumThreads = 50;
   constexpr int kNumPerPage = 30;
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/kNumDocuments * kNumThreads, *document_store_,
-      clock_.get());
+      /*max_total_hits=*/kNumDocuments * kNumThreads, *document_store_);
 
   // Create kNumThreads threads to:
   // - Call CacheAndRetrieveFirstPage() once to create its own ResultState.
@@ -380,8 +409,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<ResultRetrieverV2> result_retriever,
         ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                  language_segmenter_.get(),
-                                  normalizer_.get()));
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
 
     // Retrieve the first page.
     // Documents are ordered by score *ascending*, so the first page should
@@ -394,9 +423,10 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
             std::make_unique<
                 PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
                 std::move(scored_document_hits_copy), /*is_descending=*/false),
-            /*query_terms=*/{}, SearchSpecProto::default_instance(),
-            CreateScoringSpec(), CreateResultSpec(kNumPerPage),
-            *document_store_, *result_retriever));
+            /*parent_adjustment_info=*/nullptr,
+            /*child_adjustment_info=*/nullptr, CreateResultSpec(kNumPerPage),
+            *document_store_, *result_retriever,
+            clock_->GetSystemTimeMilliseconds()));
     EXPECT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
     for (int i = 0; i < kNumPerPage; ++i) {
       EXPECT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -415,9 +445,10 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
     // each thread should retrieve 1, 2, 3, ..., kNumThreads pages.
     int num_subsequent_pages_to_retrieve = thread_id;
     for (int i = 0; i < num_subsequent_pages_to_retrieve; ++i) {
-      ICING_ASSERT_OK_AND_ASSIGN(
-          PageResultInfo page_result_info,
-          result_state_manager.GetNextPage(next_page_token, *result_retriever));
+      ICING_ASSERT_OK_AND_ASSIGN(PageResultInfo page_result_info,
+                                 result_state_manager.GetNextPage(
+                                     next_page_token, *result_retriever,
+                                     clock_->GetSystemTimeMilliseconds()));
       EXPECT_THAT(page_result_info.second.results, SizeIs(kNumPerPage));
       for (int j = 0; j < kNumPerPage; ++j) {
         EXPECT_THAT(page_result_info.second.results[j].score(),

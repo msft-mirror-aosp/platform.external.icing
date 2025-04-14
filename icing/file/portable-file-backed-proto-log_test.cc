@@ -16,16 +16,24 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <string>
+#include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/file/mock-filesystem.h"
+#include "icing/file/memory-mapped-file.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -33,14 +41,11 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
-using ::testing::A;
 using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::NotNull;
-using ::testing::Pair;
-using ::testing::Return;
 
 using Header = PortableFileBackedProtoLog<DocumentProto>::Header;
 
@@ -54,6 +59,19 @@ Header ReadHeader(Filesystem filesystem, const std::string& file_path) {
 void WriteHeader(Filesystem filesystem, const std::string& file_path,
                  Header& header) {
   filesystem.Write(file_path.c_str(), &header, sizeof(Header));
+}
+
+libtextclassifier3::StatusOr<std::pair<int64_t, int64_t>>
+WriteProtoAndReturnOffsetAndSize(
+    PortableFileBackedProtoLog<DocumentProto>* proto_log,
+    const DocumentProto& document) {
+  ICING_ASSIGN_OR_RETURN(int64_t document_log_size_before,
+                         proto_log->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(int64_t offset, proto_log->WriteProto(document));
+  ICING_ASSIGN_OR_RETURN(int64_t document_log_size_after,
+                         proto_log->GetElementsFileSize());
+  int64_t size_written = document_log_size_after - document_log_size_before;
+  return std::make_pair(offset, size_written);
 }
 
 class PortableFileBackedProtoLogTest : public ::testing::Test {
@@ -73,24 +91,22 @@ class PortableFileBackedProtoLogTest : public ::testing::Test {
   const Filesystem filesystem_;
   std::string file_path_;
   bool compress_ = true;
+  int32_t compression_level_ =
+      PortableFileBackedProtoLog<DocumentProto>::kDefaultCompressionLevel;
+  uint32_t compression_threshold_bytes_ = PortableFileBackedProtoLog<
+      DocumentProto>::kDefaultCompressionThresholdBytes;
+  int32_t compression_mem_level_ = protobuf_ports::kDefaultMemLevel;
   int64_t max_proto_size_ = 256 * 1024;  // 256 KiB
 };
 
 TEST_F(PortableFileBackedProtoLogTest, Initialize) {
-  // max_proto_size must be greater than 0
-  int invalid_max_proto_size = 0;
-  ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
-                  &filesystem_, file_path_,
-                  PortableFileBackedProtoLog<DocumentProto>::Options(
-                      compress_, invalid_max_proto_size)),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
   ICING_ASSERT_OK_AND_ASSIGN(
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size_)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
   EXPECT_THAT(create_result.proto_log, NotNull());
   EXPECT_FALSE(create_result.has_data_loss());
   EXPECT_FALSE(create_result.recalculated_checksum);
@@ -99,8 +115,67 @@ TEST_F(PortableFileBackedProtoLogTest, Initialize) {
   ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
                   &filesystem_, file_path_,
                   PortableFileBackedProtoLog<DocumentProto>::Options(
-                      !compress_, max_proto_size_)),
+                      !compress_, max_proto_size_, compression_level_,
+                      compression_threshold_bytes_, compression_mem_level_)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(PortableFileBackedProtoLogTest, InitializeValidatesOptions) {
+  // max_proto_size must be greater than 0
+  int invalid_max_proto_size = 0;
+  ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
+                  &filesystem_, file_path_,
+                  PortableFileBackedProtoLog<DocumentProto>::Options(
+                      compress_, invalid_max_proto_size, compression_level_,
+                      compression_threshold_bytes_, compression_mem_level_)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // max_proto_size must be under 16 MiB
+  invalid_max_proto_size = 16 * 1024 * 1024;
+  ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
+                  &filesystem_, file_path_,
+                  PortableFileBackedProtoLog<DocumentProto>::Options(
+                      compress_, invalid_max_proto_size, compression_level_,
+                      compression_threshold_bytes_, compression_mem_level_)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // compression_level must be between 0 and 9 inclusive
+  int invalid_compression_level = -1;
+  ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
+                  &filesystem_, file_path_,
+                  PortableFileBackedProtoLog<DocumentProto>::Options(
+                      compress_, max_proto_size_, invalid_compression_level,
+                      compression_threshold_bytes_, compression_mem_level_)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // compression_level must be between 0 and 9 inclusive
+  invalid_compression_level = 10;
+  ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
+                  &filesystem_, file_path_,
+                  PortableFileBackedProtoLog<DocumentProto>::Options(
+                      compress_, max_proto_size_, invalid_compression_level,
+                      compression_threshold_bytes_, compression_mem_level_)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // compression_mem_level must be between 1 and 9 inclusive
+  int invalid_compression_mem_level = 0;
+  ASSERT_THAT(
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, invalid_compression_mem_level)),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // compression_mem_level must be between 1 and 9 inclusive
+  invalid_compression_mem_level = 10;
+  ASSERT_THAT(
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, invalid_compression_mem_level)),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(PortableFileBackedProtoLogTest, ReservedSpaceForHeader) {
@@ -108,8 +183,9 @@ TEST_F(PortableFileBackedProtoLogTest, ReservedSpaceForHeader) {
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size_)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
 
   // With no protos written yet, the log should be minimum the size of the
   // reserved header space.
@@ -123,8 +199,9 @@ TEST_F(PortableFileBackedProtoLogTest, WriteProtoTooLarge) {
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
   auto proto_log = std::move(create_result.proto_log);
   ASSERT_FALSE(create_result.has_data_loss());
 
@@ -140,8 +217,9 @@ TEST_F(PortableFileBackedProtoLogTest, ReadProtoWrongKProtoMagic) {
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size_)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
   auto proto_log = std::move(create_result.proto_log);
   ASSERT_FALSE(create_result.has_data_loss());
 
@@ -175,7 +253,8 @@ TEST_F(PortableFileBackedProtoLogTest, ReadWriteUncompressedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                /*compress_in=*/false, max_proto_size_)));
+                /*compress_in=*/false, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -222,7 +301,8 @@ TEST_F(PortableFileBackedProtoLogTest, ReadWriteUncompressedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                /*compress_in=*/false, max_proto_size_)));
+                /*compress_in=*/false, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -244,7 +324,8 @@ TEST_F(PortableFileBackedProtoLogTest, ReadWriteCompressedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                /*compress_in=*/true, max_proto_size_)));
+                /*compress_in=*/true, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -291,7 +372,8 @@ TEST_F(PortableFileBackedProtoLogTest, ReadWriteCompressedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                /*compress_in=*/true, max_proto_size_)));
+                /*compress_in=*/true, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -304,6 +386,493 @@ TEST_F(PortableFileBackedProtoLogTest, ReadWriteCompressedProto) {
   }
 }
 
+TEST_F(PortableFileBackedProtoLogTest, ReadWriteDifferentCompressionLevel) {
+  int document1_offset;
+  int document2_offset;
+  int document3_offset;
+
+  // The first proto to write that's close to the max size. Leave some room for
+  // the rest of the proto properties.
+  std::string long_str(max_proto_size_ - 1024, 'a');
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .AddStringProperty("long_str", long_str)
+                                .Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace2", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace3", "uri3").Build();
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/3,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Write the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(document1_offset,
+                               proto_log->WriteProto(document1));
+
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+  }
+
+  // Make a new proto_log with the same file_path but different compression
+  // level, and make sure we can still read from and write to the same
+  // underlying file.
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/9,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
+    auto recreated_proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Check the first proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Write a second proto
+    ICING_ASSERT_OK_AND_ASSIGN(document2_offset,
+                               recreated_proto_log->WriteProto(document2));
+
+    ASSERT_GT(document2_offset, document1_offset);
+
+    // Check the second proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+
+    ICING_ASSERT_OK(recreated_proto_log->PersistToDisk());
+  }
+
+  // One more time but with 0 compression level
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/0,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
+    auto recreated_proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Check the first proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Check the second proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+
+    // Write a third proto
+    ICING_ASSERT_OK_AND_ASSIGN(document3_offset,
+                               recreated_proto_log->WriteProto(document3));
+
+    ASSERT_GT(document3_offset, document2_offset);
+
+    // Check the third proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document3_offset),
+                IsOkAndHolds(EqualsProto(document3)));
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest, ReadWriteDifferentCompressionMemLevel) {
+  int document1_offset;
+  int document2_offset;
+  int document3_offset;
+
+  // The first proto to write that's close to the max size. Leave some room for
+  // the rest of the proto properties.
+  std::string long_str(max_proto_size_ - 1024, 'a');
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .AddStringProperty("long_str", long_str)
+                                .Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace2", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace3", "uri3").Build();
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_, compression_level_,
+                compression_threshold_bytes_,
+                /*compression_mem_level_in=*/8)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Write the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(document1_offset,
+                               proto_log->WriteProto(document1));
+
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+  }
+
+  // Make a new proto_log with the same file_path but different compression mem
+  // level, and make sure we can still read from and write to the same
+  // underlying file.
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_, compression_level_,
+                compression_threshold_bytes_,
+                /*compression_mem_level_in=*/1)));
+    auto recreated_proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Check the first proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Write a second proto
+    ICING_ASSERT_OK_AND_ASSIGN(document2_offset,
+                               recreated_proto_log->WriteProto(document2));
+
+    ASSERT_GT(document2_offset, document1_offset);
+
+    // Check the second proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+
+    ICING_ASSERT_OK(recreated_proto_log->PersistToDisk());
+  }
+
+  // One more time but with 9 compression mem level
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_, compression_level_,
+                compression_threshold_bytes_,
+                /*compression_mem_level_in=*/9)));
+    auto recreated_proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Check the first proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Check the second proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+
+    // Write a third proto
+    ICING_ASSERT_OK_AND_ASSIGN(document3_offset,
+                               recreated_proto_log->WriteProto(document3));
+
+    ASSERT_GT(document3_offset, document2_offset);
+
+    // Check the third proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document3_offset),
+                IsOkAndHolds(EqualsProto(document3)));
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       WriteDifferentCompressionLevelDifferentSizes) {
+  int document_log_size_with_compression_3;
+  int document_log_size_with_no_compression;
+
+  // The first proto to write that's close to the max size. Leave some room for
+  // the rest of the proto properties.
+  std::string long_str(max_proto_size_ - 1024, 'a');
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .AddStringProperty("long_str", long_str)
+                                .Build();
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/3, compression_threshold_bytes_,
+                compression_mem_level_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Write the proto
+    ICING_ASSERT_OK(proto_log->WriteProto(document1));
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+    document_log_size_with_compression_3 =
+        filesystem_.GetFileSize(file_path_.c_str());
+  }
+
+  // Delete the proto_log so we can reuse the file_path
+  filesystem_.DeleteFile(file_path_.c_str());
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/0, compression_threshold_bytes_,
+                compression_mem_level_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Write the proto
+    ICING_ASSERT_OK(proto_log->WriteProto(document1));
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+    document_log_size_with_no_compression =
+        filesystem_.GetFileSize(file_path_.c_str());
+
+    // Uncompressed document file size should be larger than original compressed
+    // document file size
+    ASSERT_GT(document_log_size_with_no_compression,
+              document_log_size_with_compression_3);
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest, CompressionThreshold) {
+  // Create document1 with size of 1024 bytes.
+  int64_t document1_size = 1024;
+  int64_t document1_offset;
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .AddStringProperty("long_str", std::string(990, 'a'))
+          .Build();
+  ASSERT_THAT(document1.ByteSizeLong(), Eq(document1_size));
+
+  // Create document2 with size of 900 bytes.
+  int64_t document2_size = 900;
+  int64_t document2_offset;
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .AddStringProperty("long_str", std::string(866, 'a'))
+          .Build();
+  ASSERT_THAT(document2.ByteSizeLong(), Eq(document2_size));
+
+  {
+    // Create a proto_log with compression threshold of 1000 bytes
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/3,
+                /*compression_threshold_bytes_in=*/1000,
+                compression_mem_level_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto document1_write_result,
+        WriteProtoAndReturnOffsetAndSize(proto_log.get(), document1));
+    document1_offset = document1_write_result.first;
+    int64_t document1_size_written = document1_write_result.second;
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+    // The document should be compressed since it's size is larger than the
+    // compression threshold.
+    ASSERT_LT(document1_size_written, document1_size);
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto document2_write_result,
+        WriteProtoAndReturnOffsetAndSize(proto_log.get(), document2));
+    document2_offset = document2_write_result.first;
+    int64_t document2_size_written = document2_write_result.second;
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+    // The document should be uncompressed since it's size is smaller than the
+    // compression threshold.
+    ASSERT_GE(document2_size_written, document2_size);
+
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+  }
+
+  {
+    // Make a new proto_log with the same file_path, and make sure we can still
+    // read and write to the same underlying file.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/3,
+                /*compression_threshold_bytes_in=*/1000,
+                compression_mem_level_)));
+    auto recreated_proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Check the first proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Check the second proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+
+    // Write a third proto
+    DocumentProto document3 =
+        DocumentBuilder().SetKey("namespace3", "uri3").Build();
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document3_offset,
+                               recreated_proto_log->WriteProto(document3));
+    ASSERT_GT(document3_offset, document2_offset);
+    // Check the third proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document3_offset),
+                IsOkAndHolds(EqualsProto(document3)));
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest, ChangingCompressionThresholdIsOk) {
+  // Create document1 with size of 1024 bytes.
+  int64_t document1_size = 1024;
+  int64_t document1_offset;
+  int64_t document1_size_written;
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .AddStringProperty("long_str", std::string(990, 'a'))
+          .Build();
+  ASSERT_THAT(document1.ByteSizeLong(), Eq(document1_size));
+
+  // Create document2 with size of 900 bytes.
+  int64_t document2_size = 900;
+  int64_t document2_offset;
+  int64_t document2_size_written;
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .AddStringProperty("long_str", std::string(866, 'a'))
+          .Build();
+  ASSERT_THAT(document2.ByteSizeLong(), Eq(document2_size));
+
+  {
+    // Create a proto_log with compression threshold of 1000 bytes
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/3,
+                /*compression_threshold_bytes_in=*/1000,
+                compression_mem_level_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto document1_write_result,
+        WriteProtoAndReturnOffsetAndSize(proto_log.get(), document1));
+    document1_offset = document1_write_result.first;
+    document1_size_written = document1_write_result.second;
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+    // The document should be compressed since it's size is larger than the
+    // compression threshold.
+    ASSERT_LT(document1_size_written, document1_size);
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto document2_write_result,
+        WriteProtoAndReturnOffsetAndSize(proto_log.get(), document2));
+    document2_offset = document2_write_result.first;
+    document2_size_written = document2_write_result.second;
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+    // The document should be uncompressed since it's size is smaller than the
+    // compression threshold.
+    ASSERT_GE(document2_size_written, document2_size);
+
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+  }
+
+  {
+    // Make a new proto_log with the same file_path with a different compression
+    // threshold, and make sure we can still read and write to the same
+    // underlying file.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                /*compress_in=*/true, max_proto_size_,
+                /*compression_level_in=*/3,
+                /*compression_threshold_bytes_in=*/100,
+                compression_mem_level_)));
+    auto recreated_proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Check the first proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document1_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Check the second proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document2_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+
+    // Write document1 again as the third proto;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto document3_write_result,
+        WriteProtoAndReturnOffsetAndSize(recreated_proto_log.get(), document1));
+    int64_t document3_offset = document3_write_result.first;
+    int64_t document3_size_written = document3_write_result.second;
+    // With this new compression threshold, document1 should still be
+    // compressed.
+    ASSERT_EQ(document3_size_written, document1_size_written);
+    ASSERT_GT(document3_offset, document2_offset);
+    // Check the third proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document3_offset),
+                IsOkAndHolds(EqualsProto(document1)));
+
+    // Write document2 again as the fourth proto;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto document4_write_result,
+        WriteProtoAndReturnOffsetAndSize(recreated_proto_log.get(), document2));
+    int64_t document4_offset = document4_write_result.first;
+    int64_t document4_size_written = document4_write_result.second;
+    // With this new compression threshold, document2 should now be compressed.
+    ASSERT_LT(document4_size_written, document2_size_written);
+    ASSERT_LT(document4_size_written, document2_size);
+    ASSERT_GT(document4_offset, document3_offset);
+    // Check the fourth proto
+    ASSERT_THAT(recreated_proto_log->ReadProto(document4_offset),
+                IsOkAndHolds(EqualsProto(document2)));
+  }
+}
+
 TEST_F(PortableFileBackedProtoLogTest, CorruptHeader) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -311,7 +880,8 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptHeader) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
   }
@@ -328,7 +898,8 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptHeader) {
     ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
                     &filesystem_, file_path_,
                     PortableFileBackedProtoLog<DocumentProto>::Options(
-                        compress_, max_proto_size_)),
+                        compress_, max_proto_size_, compression_level_,
+                        compression_threshold_bytes_, compression_mem_level_)),
                 StatusIs(libtextclassifier3::StatusCode::INTERNAL,
                          HasSubstr("Invalid header checksum")));
   }
@@ -341,7 +912,8 @@ TEST_F(PortableFileBackedProtoLogTest, DifferentMagic) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
 
@@ -360,7 +932,8 @@ TEST_F(PortableFileBackedProtoLogTest, DifferentMagic) {
     ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
                     &filesystem_, file_path_,
                     PortableFileBackedProtoLog<DocumentProto>::Options(
-                        compress_, max_proto_size_)),
+                        compress_, max_proto_size_, compression_level_,
+                        compression_threshold_bytes_, compression_mem_level_)),
                 StatusIs(libtextclassifier3::StatusCode::INTERNAL,
                          HasSubstr("Invalid header kMagic")));
   }
@@ -383,7 +956,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
 
@@ -410,7 +984,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
@@ -432,7 +1007,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -478,7 +1054,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     EXPECT_TRUE(create_result.has_data_loss());
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
@@ -507,7 +1084,8 @@ TEST_F(PortableFileBackedProtoLogTest, DirtyBitFalseAlarmKeepsData) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -537,7 +1115,8 @@ TEST_F(PortableFileBackedProtoLogTest, DirtyBitFalseAlarmKeepsData) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
 
@@ -569,7 +1148,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -615,7 +1195,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_TRUE(create_result.has_data_loss());
     ASSERT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
@@ -640,7 +1221,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -663,7 +1245,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
 
     // We previously persisted to disk so everything should be in a perfect
     // state.
@@ -683,7 +1266,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -707,7 +1291,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
 
     // We previously persisted to disk so everything should be in a perfect
     // state.
@@ -726,7 +1311,8 @@ TEST_F(PortableFileBackedProtoLogTest, DirtyBitIsFalseAfterPutAndDestructor) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -751,7 +1337,8 @@ TEST_F(PortableFileBackedProtoLogTest, DirtyBitIsFalseAfterPutAndDestructor) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
 
     // We previously persisted to disk so everything should be in a perfect
     // state.
@@ -771,7 +1358,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -797,7 +1385,8 @@ TEST_F(PortableFileBackedProtoLogTest,
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
 
     // We previously persisted to disk so everything should be in a perfect
     // state.
@@ -819,8 +1408,9 @@ TEST_F(PortableFileBackedProtoLogTest, Iterator) {
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size_)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
   auto proto_log = std::move(create_result.proto_log);
   ASSERT_FALSE(create_result.has_data_loss());
 
@@ -848,21 +1438,9 @@ TEST_F(PortableFileBackedProtoLogTest, Iterator) {
     ASSERT_THAT(iterator.Advance(),
                 StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   }
-
-  {
-    // Iterator with bad filesystem
-    ScopedFd sfd(filesystem_.OpenForRead(file_path_.c_str()));
-    MockFilesystem mock_filesystem;
-    ON_CALL(mock_filesystem, GetFileSize(A<int>()))
-        .WillByDefault(Return(Filesystem::kBadFileSize));
-    PortableFileBackedProtoLog<DocumentProto>::Iterator bad_iterator(
-        mock_filesystem, sfd.get(), /*initial_offset=*/0);
-    ASSERT_THAT(bad_iterator.Advance(),
-                StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
-  }
 }
 
-TEST_F(PortableFileBackedProtoLogTest, ComputeChecksum) {
+TEST_F(PortableFileBackedProtoLogTest, UpdateChecksum) {
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
   Crc32 checksum;
 
@@ -872,16 +1450,19 @@ TEST_F(PortableFileBackedProtoLogTest, ComputeChecksum) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
     ICING_EXPECT_OK(proto_log->WriteProto(document));
 
-    ICING_ASSERT_OK_AND_ASSIGN(checksum, proto_log->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(checksum, proto_log->GetChecksum());
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
     // Calling it twice with no changes should get us the same checksum
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
   }
 
   {
@@ -890,20 +1471,25 @@ TEST_F(PortableFileBackedProtoLogTest, ComputeChecksum) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
     // Checksum should be consistent across instances
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+    ICING_ASSERT_OK_AND_ASSIGN(checksum, proto_log->GetChecksum());
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
     // PersistToDisk shouldn't affect the checksum value
     ICING_EXPECT_OK(proto_log->PersistToDisk());
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
     // Check that modifying the log leads to a different checksum
     ICING_EXPECT_OK(proto_log->WriteProto(document));
-    EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+    EXPECT_THAT(proto_log->UpdateChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Not(Eq(checksum))));
   }
 }
 
@@ -915,8 +1501,9 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldSetZero) {
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size_)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
   auto proto_log = std::move(create_result.proto_log);
   ASSERT_FALSE(create_result.has_data_loss());
 
@@ -934,7 +1521,8 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldSetZero) {
 
   // document1_offset + sizeof(int) is the start byte of the proto where
   // sizeof(int) is the size of the proto metadata.
-  mmapped_file.Remap(document1_offset + sizeof(int), file_size - 1);
+  ICING_ASSERT_OK(
+      mmapped_file.Remap(document1_offset + sizeof(int), file_size - 1));
   for (size_t i = 0; i < mmapped_file.region_size(); ++i) {
     ASSERT_THAT(mmapped_file.region()[i], Eq(0));
   }
@@ -950,8 +1538,9 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldReturnNotFound) {
       PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
       PortableFileBackedProtoLog<DocumentProto>::Create(
           &filesystem_, file_path_,
-          PortableFileBackedProtoLog<DocumentProto>::Options(compress_,
-                                                             max_proto_size_)));
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_)));
   auto proto_log = std::move(create_result.proto_log);
   ASSERT_FALSE(create_result.has_data_loss());
 
@@ -993,7 +1582,8 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -1009,7 +1599,7 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     // rewind position is 0.
     ICING_ASSERT_OK(proto_log->EraseProto(document1_offset));
 
-    EXPECT_THAT(proto_log->ComputeChecksum(),
+    EXPECT_THAT(proto_log->UpdateChecksum(),
                 IsOkAndHolds(Eq(Crc32(2175574628))));
   }  // New checksum is updated in destructor.
 
@@ -1021,7 +1611,8 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -1029,7 +1620,7 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     // is updated.
     ICING_ASSERT_OK(proto_log->EraseProto(document2_offset));
 
-    EXPECT_THAT(proto_log->ComputeChecksum(),
+    EXPECT_THAT(proto_log->UpdateChecksum(),
                 IsOkAndHolds(Eq(Crc32(790877774))));
   }
 
@@ -1041,7 +1632,8 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
@@ -1052,7 +1644,7 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     // is updated.
     ICING_ASSERT_OK(proto_log->EraseProto(document3_offset));
 
-    EXPECT_THAT(proto_log->ComputeChecksum(),
+    EXPECT_THAT(proto_log->UpdateChecksum(),
                 IsOkAndHolds(Eq(Crc32(2344803210))));
   }  // Checksum is updated with the newly appended document.
 
@@ -1063,7 +1655,8 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
         PortableFileBackedProtoLog<DocumentProto>::Create(
             &filesystem_, file_path_,
             PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_)));
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
     auto proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
   }

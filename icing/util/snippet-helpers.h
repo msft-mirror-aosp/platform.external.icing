@@ -45,14 +45,14 @@ std::vector<std::string_view> GetSubMatches(
     std::string_view content, const SnippetProto::EntryProto& snippet_proto);
 
 // Retrieves the string value held in the document corresponding to the
-// property_path.
+// property_path_expr.
 // Example:
 //   - GetString(doc, "foo") will retrieve the first string value in the
 //     property "foo" in document or an empty string if it doesn't exist.
 //   - GetString(doc, "foo[1].bar[2]") will retrieve the third string value in
 //     the subproperty "bar" of the second document value in the property "foo".
 std::string_view GetString(const DocumentProto* document,
-                           std::string_view property_path);
+                           std::string_view property_path_expr);
 
 }  // namespace lib
 }  // namespace icing

@@ -19,14 +19,13 @@
 #include <vector>
 
 #include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
 
 namespace icing {
 namespace lib {
 
 class ProjectionTree {
  public:
-  static constexpr std::string_view kSchemaTypeWildcard = "*";
-
   struct Node {
     explicit Node(std::string name = "") : name(std::move(name)) {}
 
@@ -38,7 +37,8 @@ class ProjectionTree {
     }
   };
 
-  explicit ProjectionTree(const TypePropertyMask& type_field_mask);
+  explicit ProjectionTree(
+      const SchemaStore::ExpandedTypePropertyMask& type_field_mask);
 
   const Node& root() const { return root_; }
 
