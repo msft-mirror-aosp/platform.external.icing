@@ -28,11 +28,14 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
+
+class SectionRestrictData;
 
 // Data structure that maps a single matched query term to its section mask
 // and the list of term frequencies.
@@ -214,11 +217,15 @@ class DocHitInfoIterator {
 
   virtual bool is_leaf() { return false; }
 
-  // Whether the iterator has already been applied all the required section
-  // restrictions.
-  // If true, calling DocHitInfoIteratorSectionRestrict::ApplyRestrictions on
-  // this iterator will have no effect.
-  virtual bool full_section_restriction_applied() const { return false; }
+  // Try to internally handle the provided section restriction in the iterator.
+  //
+  // Returns:
+  //   - false if the iterator does not support handling section restriction.
+  //   - true if the iterator supports handling section restriction, and the
+  //     section restriction has been applied.
+  virtual bool HandleSectionRestriction(SectionRestrictData* other_data) {
+    return false;
+  }
 
   virtual ~DocHitInfoIterator() = default;
 

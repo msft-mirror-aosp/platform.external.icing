@@ -40,7 +40,9 @@ namespace {
 using testing::ContainerEq;
 using testing::ElementsAre;
 using testing::Eq;
+using testing::IsEmpty;
 using testing::Not;
+using testing::SizeIs;
 
 constexpr std::string_view kKeys[] = {
     "", "ab", "ac", "abd", "bac", "bb", "bacd", "abbb", "abcdefg",
@@ -946,10 +948,14 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenRootIsLeaf) {
   uint32_t value = 1;
   ASSERT_THAT(trie.Insert("foo", &value), IsOk());
   ASSERT_TRUE(trie.Find("foo", &value));
+  ASSERT_THAT(trie, SizeIs(1));
+  ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes the key.
   EXPECT_TRUE(trie.Delete("foo"));
   EXPECT_FALSE(trie.Find("foo", &value));
+  EXPECT_THAT(trie, SizeIs(0));  // Explicitly test size() method.
+  EXPECT_THAT(trie, IsEmpty());
 }
 
 TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenLastCharIsLeaf) {
@@ -972,11 +978,15 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenLastCharIsLeaf) {
   ASSERT_THAT(trie.Insert("ba", &value), IsOk());
   ASSERT_TRUE(trie.Find("bar", &value));
   ASSERT_TRUE(trie.Find("ba", &value));
+  ASSERT_THAT(trie, SizeIs(2));
+  ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "bar". "r" is a leaf node in the trie.
   EXPECT_TRUE(trie.Delete("bar"));
   EXPECT_FALSE(trie.Find("bar", &value));
   EXPECT_TRUE(trie.Find("ba", &value));
+  EXPECT_THAT(trie, SizeIs(1));
+  EXPECT_THAT(trie, Not(IsEmpty()));
 }
 
 TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithTerminationNode) {
@@ -999,11 +1009,15 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithTerminationNode) {
   ASSERT_THAT(trie.Insert("ba", &value), IsOk());
   ASSERT_TRUE(trie.Find("bar", &value));
   ASSERT_TRUE(trie.Find("ba", &value));
+  ASSERT_THAT(trie, SizeIs(2));
+  ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "ba" which is a key with termination node in the trie.
   EXPECT_TRUE(trie.Delete("ba"));
   EXPECT_FALSE(trie.Find("ba", &value));
   EXPECT_TRUE(trie.Find("bar", &value));
+  EXPECT_THAT(trie, SizeIs(1));
+  EXPECT_THAT(trie, Not(IsEmpty()));
 }
 
 TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleNexts) {
@@ -1028,6 +1042,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleNexts) {
   ASSERT_TRUE(trie.Find("bb", &value));
   ASSERT_TRUE(trie.Find("bc", &value));
   ASSERT_TRUE(trie.Find("bd", &value));
+  ASSERT_THAT(trie, SizeIs(4));
+  ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "bc".
   EXPECT_TRUE(trie.Delete("bc"));
@@ -1035,6 +1051,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleNexts) {
   EXPECT_TRUE(trie.Find("ba", &value));
   EXPECT_TRUE(trie.Find("bb", &value));
   EXPECT_TRUE(trie.Find("bd", &value));
+  EXPECT_THAT(trie, SizeIs(3));
+  EXPECT_THAT(trie, Not(IsEmpty()));
 }
 
 TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleTrieBranches) {
@@ -1065,12 +1083,49 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleTrieBranches) {
   ASSERT_TRUE(trie.Find("batter", &value));
   ASSERT_TRUE(trie.Find("battle", &value));
   ASSERT_TRUE(trie.Find("bar", &value));
+  ASSERT_THAT(trie, SizeIs(3));
+  ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "batter".
   EXPECT_TRUE(trie.Delete("batter"));
   EXPECT_FALSE(trie.Find("batter", &value));
   EXPECT_TRUE(trie.Find("battle", &value));
   EXPECT_TRUE(trie.Find("bar", &value));
+  EXPECT_THAT(trie, SizeIs(2));
+  EXPECT_THAT(trie, Not(IsEmpty()));
+}
+
+TEST_F(IcingDynamicTrieTest, DeletionShouldResetEmptyStateIfAllKeysAreDeleted) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  uint32_t value1 = 1;
+  ASSERT_THAT(trie.Insert("foo", &value1), IsOk());
+
+  uint32_t value2 = 2;
+  ASSERT_THAT(trie.Insert("bar", &value2), IsOk());
+
+  uint32_t value3 = 3;
+  ASSERT_THAT(trie.Insert("baz", &value3), IsOk());
+
+  ASSERT_THAT(trie, SizeIs(3));
+  ASSERT_THAT(trie, Not(IsEmpty()));
+
+  // Delete "foo", "bar", "baz".
+  EXPECT_TRUE(trie.Delete("foo"));
+  EXPECT_TRUE(trie.Delete("bar"));
+  EXPECT_TRUE(trie.Delete("baz"));
+
+  EXPECT_THAT(trie, SizeIs(0));  // Explicitly test size() method.
+  EXPECT_THAT(trie, IsEmpty());
+
+  uint32_t value;
+  EXPECT_FALSE(trie.Find("foo", &value));
+  EXPECT_FALSE(trie.Find("bar", &value));
+  EXPECT_FALSE(trie.Find("baz", &value));
 }
 
 TEST_F(IcingDynamicTrieTest, InsertionShouldWorkAfterDeletion) {
@@ -1128,6 +1183,43 @@ TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterDeletion) {
     results.push_back(std::string(iterator_b.GetKey()));
   }
   EXPECT_THAT(results, ElementsAre("bar"));
+}
+
+TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterAllKeysAreDeleted) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts some keys.
+  uint32_t value = 1;
+  ASSERT_THAT(trie.Insert("bar", &value), IsOk());
+  ASSERT_THAT(trie.Insert("bed", &value), IsOk());
+  ASSERT_THAT(trie.Insert("foo", &value), IsOk());
+
+  // Deletes all keys
+  ASSERT_TRUE(trie.Delete("bar"));
+  ASSERT_TRUE(trie.Delete("bed"));
+  ASSERT_TRUE(trie.Delete("foo"));
+
+  EXPECT_THAT(trie, IsEmpty());
+
+  // Iterates through all keys
+  IcingDynamicTrie::Iterator iterator_all(trie, "");
+  std::vector<std::string> results;
+  for (; iterator_all.IsValid(); iterator_all.Advance()) {
+    results.push_back(std::string(iterator_all.GetKey()));
+  }
+  EXPECT_THAT(results, IsEmpty());
+
+  // Iterates through keys that start with "b"
+  IcingDynamicTrie::Iterator iterator_b(trie, "b");
+  results.clear();
+  for (; iterator_b.IsValid(); iterator_b.Advance()) {
+    results.push_back(std::string(iterator_b.GetKey()));
+  }
+  EXPECT_THAT(results, IsEmpty());
 }
 
 TEST_F(IcingDynamicTrieTest, DeletingNonExistingKeyShouldReturnTrue) {

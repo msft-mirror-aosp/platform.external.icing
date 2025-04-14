@@ -21,6 +21,7 @@
 #include "gtest/gtest.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {
@@ -307,10 +308,12 @@ TEST(HitTest, Comparison) {
                         hit_with_all_flags_enabled,
                         stemmed_hit};
   std::sort(hits.begin(), hits.end());
-  EXPECT_THAT(hits,
-              ElementsAre(higher_document_id_hit, hit, term_frequency_hit,
-                          stemmed_hit, hit_in_prefix_section, prefix_hit,
-                          hit_with_all_flags_enabled, higher_section_id_hit));
+  EXPECT_THAT(
+      hits, ElementsAre(EqualsHit(higher_document_id_hit), EqualsHit(hit),
+                        EqualsHit(term_frequency_hit), EqualsHit(stemmed_hit),
+                        EqualsHit(hit_in_prefix_section), EqualsHit(prefix_hit),
+                        EqualsHit(hit_with_all_flags_enabled),
+                        EqualsHit(higher_section_id_hit)));
 
   Hit higher_term_frequency_hit(/*section_id=*/1, 243, /*term_frequency=*/108,
                                 /*is_in_prefix_section=*/false,

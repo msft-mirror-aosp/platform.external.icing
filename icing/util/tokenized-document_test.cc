@@ -14,6 +14,7 @@
 
 #include "icing/util/tokenized-document.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -23,9 +24,11 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/joinable-property.h"
@@ -33,11 +36,13 @@
 #include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -84,41 +89,43 @@ static constexpr JoinablePropertyId kQualifiedId2JoinablePropertyId = 1;
 
 const SectionMetadata kIndexableInteger1SectionMetadata(
     kIndexableInteger1SectionId, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
-    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kIndexableIntegerProperty1));
 
 const SectionMetadata kIndexableInteger2SectionMetadata(
     kIndexableInteger2SectionId, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
-    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_RANGE, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kIndexableIntegerProperty2));
 
 const SectionMetadata kIndexableVector1SectionMetadata(
     kIndexableVector1SectionId, TYPE_VECTOR, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
     NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_LINEAR_SEARCH,
-    std::string(kIndexableVectorProperty1));
+    QUANTIZATION_TYPE_NONE, std::string(kIndexableVectorProperty1));
 
 const SectionMetadata kIndexableVector2SectionMetadata(
     kIndexableVector2SectionId, TYPE_VECTOR, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
     NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_LINEAR_SEARCH,
-    std::string(kIndexableVectorProperty2));
+    QUANTIZATION_TYPE_QUANTIZE_8_BIT, std::string(kIndexableVectorProperty2));
 
 const SectionMetadata kStringExactSectionMetadata(
     kStringExactSectionId, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
-    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kStringExactProperty));
 
 const SectionMetadata kStringPrefixSectionMetadata(
     kStringPrefixSectionId, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_PREFIX,
-    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN,
+    NUMERIC_MATCH_UNKNOWN, EMBEDDING_INDEXING_UNKNOWN, QUANTIZATION_TYPE_NONE,
     std::string(kStringPrefixProperty));
 
 const JoinablePropertyMetadata kQualifiedId1JoinablePropertyMetadata(
     kQualifiedId1JoinablePropertyId, TYPE_STRING,
-    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId1));
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, DELETE_PROPAGATION_TYPE_PROPAGATE_FROM,
+    std::string(kQualifiedId1));
 
 const JoinablePropertyMetadata kQualifiedId2JoinablePropertyMetadata(
     kQualifiedId2JoinablePropertyId, TYPE_STRING,
-    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId2));
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, DELETE_PROPAGATION_TYPE_NONE,
+    std::string(kQualifiedId2));
 
 // Other non-indexable/joinable properties.
 constexpr std::string_view kUnindexedStringProperty = "unindexedString";
@@ -128,6 +135,7 @@ constexpr std::string_view kUnindexedVectorProperty = "unindexedVector";
 class TokenizedDocumentTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     test_dir_ = GetTestTempDir() + "/icing";
     schema_store_dir_ = test_dir_ + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
@@ -135,7 +143,7 @@ class TokenizedDocumentTest : public ::testing::Test {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -145,8 +153,8 @@ class TokenizedDocumentTest : public ::testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -181,7 +189,8 @@ class TokenizedDocumentTest : public ::testing::Test {
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName(kIndexableVectorProperty2)
-                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                               QUANTIZATION_TYPE_QUANTIZE_8_BIT)
                             .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kStringExactProperty)
@@ -196,17 +205,18 @@ class TokenizedDocumentTest : public ::testing::Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kQualifiedId1)
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kQualifiedId2)
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_NONE)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -223,6 +233,7 @@ class TokenizedDocumentTest : public ::testing::Test {
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
   std::string test_dir_;
@@ -231,7 +242,15 @@ class TokenizedDocumentTest : public ::testing::Test {
   std::unique_ptr<SchemaStore> schema_store_;
 };
 
+DocumentWrapper CreateDocumentWrapper(DocumentProto document,
+                                      int32_t num_string_tokens) {
+  document.mutable_internal_fields()->set_length_in_tokens(num_string_tokens);
+  return document_util::CreateDocumentWrapper(std::move(document));
+}
+
 TEST_F(TokenizedDocumentTest, CreateAll) {
+  int64_t current_time_ms = 123;
+
   PropertyProto::VectorProto vector1;
   vector1.set_model_signature("my_model1");
   vector1.add_values(1.0f);
@@ -244,6 +263,7 @@ TEST_F(TokenizedDocumentTest, CreateAll) {
 
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kUnindexedStringProperty),
@@ -265,9 +285,11 @@ TEST_F(TokenizedDocumentTest, CreateAll) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/9)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(9));
 
   // string sections
@@ -318,8 +340,11 @@ TEST_F(TokenizedDocumentTest, CreateAll) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateNoIndexableIntegerProperties) {
+  int64_t current_time_ms = 123;
+
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddInt64Property(std::string(kUnindexedIntegerProperty), 789)
@@ -328,9 +353,11 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableIntegerProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -347,8 +374,11 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableIntegerProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateMultipleIndexableIntegerProperties) {
+  int64_t current_time_ms = 123;
+
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddInt64Property(std::string(kUnindexedIntegerProperty), 789)
@@ -359,9 +389,11 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableIntegerProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -386,8 +418,11 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableIntegerProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateNoIndexableStringProperties) {
+  int64_t current_time_ms = 123;
+
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kUnindexedStringProperty),
@@ -397,9 +432,11 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableStringProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -416,8 +453,11 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableStringProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateMultipleIndexableStringProperties) {
+  int64_t current_time_ms = 123;
+
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kUnindexedStringProperty),
@@ -430,9 +470,11 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableStringProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/9)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(9));
 
   // string sections
@@ -459,12 +501,15 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableStringProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateNoIndexableVectorProperties) {
+  int64_t current_time_ms = 123;
+
   PropertyProto::VectorProto vector;
   vector.set_model_signature("my_model");
   vector.add_values(1.0f);
 
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddVectorProperty(std::string(kUnindexedVectorProperty), vector)
@@ -473,9 +518,11 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableVectorProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -492,6 +539,8 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableVectorProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateMultipleIndexableVectorProperties) {
+  int64_t current_time_ms = 123;
+
   PropertyProto::VectorProto vector1;
   vector1.set_model_signature("my_model1");
   vector1.add_values(1.0f);
@@ -504,6 +553,7 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableVectorProperties) {
 
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddVectorProperty(std::string(kUnindexedVectorProperty), vector1)
@@ -515,9 +565,11 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableVectorProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -542,8 +594,11 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableVectorProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateNoJoinQualifiedIdProperties) {
+  int64_t current_time_ms = 123;
+
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kUnindexedStringProperty),
@@ -553,9 +608,11 @@ TEST_F(TokenizedDocumentTest, CreateNoJoinQualifiedIdProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -572,8 +629,11 @@ TEST_F(TokenizedDocumentTest, CreateNoJoinQualifiedIdProperties) {
 }
 
 TEST_F(TokenizedDocumentTest, CreateMultipleJoinQualifiedIdProperties) {
+  int64_t current_time_ms = 123;
+
   DocumentProto document =
       DocumentBuilder()
+          .SetCreationTimestampMs(current_time_ms)
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kUnindexedStringProperty),
@@ -585,9 +645,11 @@ TEST_F(TokenizedDocumentTest, CreateMultipleJoinQualifiedIdProperties) {
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+                                current_time_ms, document));
 
-  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper(),
+      EqualsProto(CreateDocumentWrapper(document, /*num_string_tokens=*/0)));
   EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
 
   // string sections
@@ -609,6 +671,40 @@ TEST_F(TokenizedDocumentTest, CreateMultipleJoinQualifiedIdProperties) {
               Eq(kQualifiedId2JoinablePropertyMetadata));
   EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(1).values,
               ElementsAre("pkg$db/ns#uri2"));
+}
+
+TEST_F(TokenizedDocumentTest,
+       CreateShouldSetCreationTimestampToCurrentTimeIfUnset) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/1")
+                               .SetSchema(std::string(kFakeType))
+                               .Build();
+  ASSERT_THAT(document.creation_timestamp_ms(), Eq(0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                /*current_time_ms=*/123, document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper().document().creation_timestamp_ms(),
+      Eq(123));
+}
+
+TEST_F(TokenizedDocumentTest,
+       CreateShouldNotOverwriteExistingCreationTimestamp) {
+  DocumentProto document = DocumentBuilder()
+                               .SetCreationTimestampMs(123)
+                               .SetKey("icing", "fake_type/1")
+                               .SetSchema(std::string(kFakeType))
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                /*current_time_ms=*/456, document));
+  EXPECT_THAT(
+      tokenized_document.document_wrapper().document().creation_timestamp_ms(),
+      Eq(123));
 }
 
 }  // namespace

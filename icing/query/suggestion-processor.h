@@ -20,9 +20,11 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/index/term-metadata.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -50,7 +52,8 @@ class SuggestionProcessor {
          const EmbeddingIndex* embedding_index,
          const LanguageSegmenter* language_segmenter,
          const Normalizer* normalizer, const DocumentStore* document_store,
-         const SchemaStore* schema_store, const Clock* clock);
+         const SchemaStore* schema_store, const Clock* clock,
+         const FeatureFlags* feature_flags);
 
   // Query suggestions based on the given SuggestionSpecProto.
   //
@@ -62,14 +65,12 @@ class SuggestionProcessor {
       const SuggestionSpecProto& suggestion_spec, int64_t current_time_ms);
 
  private:
-  explicit SuggestionProcessor(Index* index,
-                               const NumericIndex<int64_t>* numeric_index,
-                               const EmbeddingIndex* embedding_index,
-                               const LanguageSegmenter* language_segmenter,
-                               const Normalizer* normalizer,
-                               const DocumentStore* document_store,
-                               const SchemaStore* schema_store,
-                               const Clock* clock);
+  explicit SuggestionProcessor(
+      Index* index, const NumericIndex<int64_t>* numeric_index,
+      const EmbeddingIndex* embedding_index,
+      const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const Clock* clock, const FeatureFlags* feature_flags);
 
   // Not const because we could modify/sort the TermMetaData buffer in the lite
   // index.
@@ -81,6 +82,7 @@ class SuggestionProcessor {
   const DocumentStore& document_store_;          // Does not own.
   const SchemaStore& schema_store_;              // Does not own.
   const Clock& clock_;                           // Does not own.
+  const FeatureFlags& feature_flags_;            // Does not own.
 };
 
 }  // namespace lib
