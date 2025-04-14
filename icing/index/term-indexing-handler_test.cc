@@ -266,12 +266,14 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -331,12 +333,14 @@ TEST_F(TermIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -410,29 +414,35 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document0,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document0)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document0)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result0,
-      document_store_->Put(tokenized_document0.document()));
+      document_store_->Put(tokenized_document0.document_wrapper()));
   DocumentId document_id0 = put_result0.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   DocumentId document_id1 = put_result1.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
@@ -558,29 +568,35 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document0,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document0)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document0)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result0,
-      document_store_->Put(tokenized_document0.document()));
+      document_store_->Put(tokenized_document0.document_wrapper()));
   DocumentId document_id0 = put_result0.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   DocumentId document_id1 = put_result1.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 

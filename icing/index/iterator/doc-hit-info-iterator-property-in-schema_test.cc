@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -41,6 +42,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -139,8 +141,9 @@ class DocHitInfoIteratorPropertyInSchemaTest : public ::testing::Test {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithIndexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1_)));
   DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
@@ -160,8 +163,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        AdvanceToDocumentWithUnindexedProperty) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1_)));
   DocumentId document_id = put_result.new_document_id;
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
@@ -179,7 +183,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 }
 
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest, NoMatchWithUndefinedProperty) {
-  ICING_EXPECT_OK(document_store_->Put(document1_));
+  ICING_EXPECT_OK(
+      document_store_->Put(document_util::CreateDocumentWrapper(document1_)));
 
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());
@@ -194,8 +199,9 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest, NoMatchWithUndefinedProperty) {
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        CorrectlySetsSectionIdMasksAndPopulatesTermMatchInfo) {
   // Populate the DocumentStore's FilterCache with this document's data
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1_)));
   DocumentId document_id = put_result.new_document_id;
 
   // Arbitrary section ids for the documents in the DocHitInfoIterators.
@@ -257,11 +263,13 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
 TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
        FindPropertyDefinedByMultipleTypes) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1_)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2_)));
   DocumentId document_id2 = put_result2.new_document_id;
   auto original_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
       document_store_->num_documents());

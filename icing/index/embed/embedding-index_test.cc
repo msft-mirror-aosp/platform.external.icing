@@ -49,6 +49,7 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -127,12 +128,12 @@ class EmbeddingIndexTest : public Test {
                             .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build(),
         /*ignore_errors_and_delete_documents=*/false));
-    ICING_ASSERT_OK(document_store_->Put(
-        DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
-    ICING_ASSERT_OK(document_store_->Put(
-        DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
-    ICING_ASSERT_OK(document_store_->Put(
-        DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
+    ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+        DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build())));
+    ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+        DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build())));
+    ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+        DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build())));
   }
 
   void TearDown() override {

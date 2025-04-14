@@ -67,6 +67,7 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/document-util.h"
 #include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/scorable_property_set.h"
@@ -108,12 +109,6 @@ constexpr int32_t kUriHashKeyMapperKVByteSize = 13 + 1 + sizeof(DocumentId);
 // max of 128 KiB for storage.
 constexpr int32_t kNamespaceMapperMaxSize = 3 * 128 * 1024;  // 384 KiB
 constexpr int32_t kCorpusMapperMaxSize = 3 * 128 * 1024;     // 384 KiB
-
-DocumentWrapper CreateDocumentWrapper(DocumentProto&& document) {
-  DocumentWrapper document_wrapper;
-  *document_wrapper.mutable_document() = std::move(document);
-  return document_wrapper;
-}
 
 std::string MakeHeaderFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentStoreHeaderFilename);
@@ -305,16 +300,9 @@ DocumentStore::DocumentStore(
       compression_mem_level_(compression_mem_level) {}
 
 libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
-    const DocumentProto& document, int32_t num_tokens,
+    const DocumentWrapper& document_wrapper,
     PutDocumentStatsProto* put_document_stats) {
-  return Put(DocumentProto(document), num_tokens, put_document_stats);
-}
-
-libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
-    DocumentProto&& document, int32_t num_tokens,
-    PutDocumentStatsProto* put_document_stats) {
-  document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
-  return InternalPut(std::move(document), put_document_stats);
+  return InternalPut(document_wrapper, put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -1144,36 +1132,30 @@ bool DocumentStore::HeaderExists() {
 }
 
 libtextclassifier3::StatusOr<DocumentStore::PutResult>
-DocumentStore::InternalPut(DocumentProto&& document,
+DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
                            PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
-  ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
   if (put_document_stats != nullptr) {
-    put_document_stats->set_document_size(document.ByteSizeLong());
+    put_document_stats->set_document_size(
+        document_wrapper.document().ByteSizeLong());
   }
 
   // Copy fields needed before they are moved
-  std::string name_space = document.namespace_();
-  std::string uri = document.uri();
-  std::string schema = document.schema();
-  int document_score = document.score();
-  int32_t length_in_tokens = document.internal_fields().length_in_tokens();
-  int64_t creation_timestamp_ms = document.creation_timestamp_ms();
-
-  // Sets the creation timestamp if caller hasn't specified.
-  if (document.creation_timestamp_ms() == 0) {
-    creation_timestamp_ms = clock_.GetSystemTimeMilliseconds();
-    document.set_creation_timestamp_ms(creation_timestamp_ms);
-  }
-
-  int64_t expiration_timestamp_ms =
-      CalculateExpirationTimestampMs(creation_timestamp_ms, document.ttl_ms());
+  std::string name_space = document_wrapper.document().namespace_();
+  std::string uri = document_wrapper.document().uri();
+  std::string schema = document_wrapper.document().schema();
+  int document_score = document_wrapper.document().score();
+  int32_t length_in_tokens =
+      document_wrapper.document().internal_fields().length_in_tokens();
+  int64_t creation_timestamp_ms =
+      document_wrapper.document().creation_timestamp_ms();
+  int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
+      creation_timestamp_ms, document_wrapper.document().ttl_ms());
 
   // Update ground truth first
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  DocumentWrapper document_wrapper = CreateDocumentWrapper(std::move(document));
   auto offset_or = document_log_->WriteProto(document_wrapper);
   if (!offset_or.ok()) {
     ICING_LOG(ERROR) << offset_or.status().error_message()
@@ -2196,6 +2178,9 @@ DocumentStore::OptimizeInto(
               "Failed to retrieve Document for DocumentId %d", document_id));
     }
 
+    // TODO(b/405467475): add a new Get method to return DocumentWrapper and
+    // change document_to_keep to DocumentWrapper.
+
     // Guaranteed to have a document now.
     DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
     // Remove blobs that still have reference are removed from the
@@ -2205,8 +2190,10 @@ DocumentStore::OptimizeInto(
 
     libtextclassifier3::StatusOr<PutResult> put_result_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
+      // Create a TokenizedDocument. length_in_tokens will be set there.
       auto tokenized_document_or = TokenizedDocument::Create(
-          schema_store_, lang_segmenter, document_to_keep);
+          schema_store_, lang_segmenter, current_time_ms,
+          std::move(document_to_keep));
       if (!tokenized_document_or.ok()) {
         return absl_ports::Annotate(
             tokenized_document_or.status(),
@@ -2215,12 +2202,12 @@ DocumentStore::OptimizeInto(
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      put_result_or = new_doc_store->Put(
-          std::move(document_to_keep), tokenized_document.num_string_tokens());
+      put_result_or = new_doc_store->Put(tokenized_document.document_wrapper());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      put_result_or = new_doc_store->InternalPut(std::move(document_to_keep));
+      put_result_or = new_doc_store->InternalPut(
+          document_util::CreateDocumentWrapper(std::move(document_to_keep)));
     }
     if (!put_result_or.ok()) {
       ICING_LOG(ERROR) << put_result_or.status().error_message()
