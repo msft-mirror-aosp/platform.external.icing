@@ -2348,13 +2348,14 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     return result_proto;
   }
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
   // Read the optimize status to get the time that we last ran.
   std::string optimize_status_filename =
       absl_ports::StrCat(options_.base_dir(), "/", kOptimizeStatusFilename);
   FileBackedProto<OptimizeStatusProto> optimize_status_file(
       *filesystem_, optimize_status_filename);
   auto optimize_status_or = optimize_status_file.Read();
-  int64_t current_time = clock_->GetSystemTimeMilliseconds();
 
   if (!optimize_status_or.ok()) {
     // We have trouble reading the status; or we've never run optimize before.
@@ -2363,14 +2364,18 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     int64_t time_since_last_optimize_ms;
     if (options_.calculate_time_since_last_attempted_optimize()) {
       time_since_last_optimize_ms = GetTimeSinceLastOptimizeMs(
-          current_time, *optimize_status_or.ValueOrDie());
+          current_time_ms, *optimize_status_or.ValueOrDie());
     } else {
       time_since_last_optimize_ms =
-          current_time - optimize_status_or.ValueOrDie()
-                             ->last_successful_optimize_run_time_ms();
+          current_time_ms - optimize_status_or.ValueOrDie()
+                                ->last_successful_optimize_run_time_ms();
     }
     result_proto.set_time_since_last_optimize_ms(time_since_last_optimize_ms);
   }
+
+  // Get stats from ResultStateManager.
+  result_proto.set_num_active_result_states(
+      result_state_manager_->GetNumActiveResultStates(current_time_ms));
 
   // Get stats from DocumentStore
   auto doc_store_optimize_info_or = document_store_->GetOptimizeInfo();
