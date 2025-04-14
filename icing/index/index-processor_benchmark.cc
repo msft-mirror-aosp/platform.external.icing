@@ -44,6 +44,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -165,10 +166,9 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
-  return normalizer_factory::Create(
-
-             /*max_term_byte_size=*/std::numeric_limits<int>::max())
-      .ValueOrDie();
+  NormalizerOptions normalizer_options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  return normalizer_factory::Create(normalizer_options).ValueOrDie();
 }
 
 std::unique_ptr<SchemaStore> CreateSchemaStore(
@@ -184,8 +184,7 @@ std::unique_ptr<SchemaStore> CreateSchemaStore(
   SchemaProto schema;
   CreateFakeTypeConfig(schema.add_types());
   auto set_schema_status = schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false);
+      schema, /*ignore_errors_and_delete_documents=*/false);
 
   if (!set_schema_status.ok()) {
     ICING_LOG(ERROR) << set_schema_status.status().error_message();
@@ -259,8 +258,9 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
 
   DocumentProto input_document = CreateDocumentWithOneProperty(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;
@@ -339,8 +339,9 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   DocumentProto input_document =
       CreateDocumentWithTenProperties(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;
@@ -419,8 +420,9 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   DocumentProto input_document =
       CreateDocumentWithDiacriticLetters(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;
@@ -498,8 +500,9 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
 
   DocumentProto input_document = CreateDocumentWithHiragana(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;

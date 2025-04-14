@@ -29,6 +29,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -42,6 +43,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -72,14 +74,18 @@ class ScoreExpressionUtilTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates the schema
@@ -95,8 +101,7 @@ class ScoreExpressionUtilTest : public testing::Test {
             .Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        std::move(test_schema), /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        std::move(test_schema), /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -205,8 +210,8 @@ TEST_F(ScoreExpressionUtilTest,
 TEST_F(ScoreExpressionUtilTest, SimpleExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/10,
-                                          /*creation_timestamp_ms=*/100)));
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "namespace", "uri", /*score=*/10, /*creation_timestamp_ms=*/100))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo doc_hit_info = DocHitInfo(document_id);
 
@@ -229,8 +234,8 @@ TEST_F(ScoreExpressionUtilTest, SimpleExpression) {
 TEST_F(ScoreExpressionUtilTest, DocumentFunctionsWithoutOptionalDependencies) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/10,
-                                          /*creation_timestamp_ms=*/100)));
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "namespace", "uri", /*score=*/10, /*creation_timestamp_ms=*/100))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo doc_hit_info = DocHitInfo(document_id);
 

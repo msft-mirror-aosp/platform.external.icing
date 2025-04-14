@@ -689,13 +689,13 @@ SchemaUtil::BuildTransitiveInheritanceGraph(const SchemaProto& schema) {
 }
 
 libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
-    const SchemaProto& schema, const FeatureFlags& feature_flags,
-    bool allow_circular_schema_definitions) {
+    const SchemaProto& schema, const FeatureFlags& feature_flags) {
   // 1. Build the dependent map. This will detect any cycles, non-existent or
   // duplicate types in the schema.
   ICING_ASSIGN_OR_RETURN(
       SchemaUtil::DependentMap dependent_map,
-      BuildTransitiveDependentGraph(schema, allow_circular_schema_definitions));
+      BuildTransitiveDependentGraph(
+          schema, feature_flags.allow_circular_schema_definitions()));
 
   // Tracks PropertyConfigs within a SchemaTypeConfig that we've validated
   // already.

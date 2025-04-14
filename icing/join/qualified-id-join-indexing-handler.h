@@ -77,11 +77,7 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
         doc_store_(*doc_store),
         qualified_id_join_index_(*qualified_id_join_index) {}
 
-  // TODO(b/275121148): deprecate v1, v2 after rollout v3.
-
-  // Helper function to handle indexing for QualfiedIdJoinIndexImplV1.
-  libtextclassifier3::Status HandleV1(
-      const TokenizedDocument& tokenized_document, DocumentId document_id);
+  // TODO(b/275121148): deprecate v2 after rollout v3.
 
   // Helper function to handle indexing for QualfiedIdJoinIndexImplV2.
   libtextclassifier3::Status HandleV2(

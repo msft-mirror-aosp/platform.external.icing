@@ -33,11 +33,11 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/join-children-fetcher.h"
-#include "icing/join/qualified-id-join-index-impl-v1.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
 #include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -76,7 +76,7 @@ using ::testing::Ne;
 using ::testing::UnorderedElementsAre;
 
 // TODO(b/275121148): remove template after deprecating
-// QualifiedIdJoinIndexImplV1.
+// QualifiedIdJoinIndexImplV2.
 template <typename T>
 class JoinProcessorTest : public ::testing::Test {
  protected:
@@ -84,6 +84,8 @@ class JoinProcessorTest : public ::testing::Test {
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    fake_clock_.SetSystemTimeMilliseconds(123);
+
     test_dir_ = GetTestTempDir() + "/icing_join_processor_test";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()),
                 IsTrue());
@@ -180,22 +182,25 @@ class JoinProcessorTest : public ::testing::Test {
 
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()),
                 IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
@@ -218,14 +223,6 @@ class JoinProcessorTest : public ::testing::Test {
 
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
-  CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV1>() {
-    return QualifiedIdJoinIndexImplV1::Create(
-        filesystem_, qualified_id_join_index_dir_, /*pre_mapping_fbv=*/false,
-        /*use_persistent_hash_map=*/false);
-  }
-
-  template <>
-  libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV2>() {
     return QualifiedIdJoinIndexImplV2::Create(filesystem_,
                                               qualified_id_join_index_dir_,
@@ -241,12 +238,15 @@ class JoinProcessorTest : public ::testing::Test {
 
   libtextclassifier3::StatusOr<DocumentId> PutAndIndexDocument(
       const DocumentProto& document) {
-    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
-                           doc_store_->Put(document));
     ICING_ASSIGN_OR_RETURN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                  document));
+        TokenizedDocument::Create(
+            schema_store_.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+            std::move(document)));
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::PutResult put_result,
+        doc_store_->Put(tokenized_document.document_wrapper()));
 
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
@@ -291,8 +291,7 @@ class JoinProcessorTest : public ::testing::Test {
 };
 
 using TestTypes =
-    ::testing::Types<QualifiedIdJoinIndexImplV1, QualifiedIdJoinIndexImplV2,
-                     QualifiedIdJoinIndexImplV3>;
+    ::testing::Types<QualifiedIdJoinIndexImplV2, QualifiedIdJoinIndexImplV3>;
 TYPED_TEST_SUITE(JoinProcessorTest, TestTypes);
 
 TYPED_TEST(JoinProcessorTest, JoinByQualifiedId_allDocuments) {
