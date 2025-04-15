@@ -150,6 +150,14 @@ ResultStateManager::GetNextPage(uint64_t next_page_token,
   return std::make_pair(next_page_token, std::move(page_result));
 }
 
+int ResultStateManager::GetNumActiveResultStates(int64_t current_time_ms) {
+  absl_ports::unique_lock l(&mutex_);
+
+  InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
+                                        current_time_ms);
+  return result_state_map_.size();
+}
+
 void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {
   if (next_page_token == kInvalidNextPageToken) {
     return;
