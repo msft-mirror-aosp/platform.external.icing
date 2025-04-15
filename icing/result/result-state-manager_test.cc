@@ -1676,6 +1676,113 @@ TEST_F(ResultStateManagerTest,
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
+TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
+  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
+      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+  auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
+      {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
+  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
+      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
+                  /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),
+              Eq(3));
+}
+
+TEST_F(ResultStateManagerTest,
+       GetNumActiveResultStatesShouldInvalidateExpiredResultStates) {
+  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
+      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+  auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
+      {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
+  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
+      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+
+  // Set time as 1s and add state.
+  clock()->SetSystemTimeMilliseconds(1000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // Set time as 10s and add state 2, state 3.
+  clock()->SetSystemTimeMilliseconds(10000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // 1. Set time as 1hr1s.
+  // 2. Then calling GetNumActiveResultStates() should invalidate state 1 and
+  //    return 2.
+  clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
+  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
+                  /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),
+              Eq(2));
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing
