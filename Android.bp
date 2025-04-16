@@ -66,12 +66,16 @@ cc_library_shared {
     shared_libs: [
         "libbinder_ndk",
         "libvm_payload#current",
-        "libprotobuf-cpp-lite",
         "liblog",
         "libicu",
         "libbase",
     ],
+    // In the future, if AppSearch bundles additional standalone shared/jni libs that may
+    // have common shared deps, we should consider revisiting the static linking below as the
+    // benefits on apk size may diminish.
+    stl: "libc++_static",
     static_libs: [
+        "libprotobuf-cpp-lite",
         "libicing.microdroid",
         "icing-c-proto",
         "libutf",
@@ -80,6 +84,7 @@ cc_library_shared {
     ],
     min_sdk_version: "Tiramisu",
     apex_available: ["com.android.appsearch"],
+    version_script: "isolated_storage_service/iss.lds",
 }
 
 // Microdroid version of Icing has statically linked libz.
