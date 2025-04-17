@@ -238,11 +238,13 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle document.
@@ -290,11 +292,13 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(nested_document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(nested_document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle nested_document.
@@ -355,11 +359,13 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle document. Index data should remain unchanged since there is no
@@ -398,9 +404,11 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
-  ICING_ASSERT_OK(document_store_->Put(tokenized_document.document()));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK(document_store_->Put(tokenized_document.document_wrapper()));
 
   static constexpr DocumentId kCurrentDocumentId = 3;
   integer_index_->set_last_added_document_id(kCurrentDocumentId);
@@ -459,11 +467,13 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerSectionIndexingHandler> handler,
@@ -537,18 +547,22 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerSectionIndexingHandler> handler,

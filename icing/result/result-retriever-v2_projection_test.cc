@@ -56,6 +56,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
@@ -287,8 +288,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -300,8 +302,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -386,8 +389,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -406,8 +410,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -502,8 +507,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -522,8 +528,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -621,8 +628,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -641,8 +649,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -733,8 +742,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -746,8 +756,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -818,8 +829,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -831,8 +843,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -904,8 +917,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -917,8 +931,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -995,8 +1010,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1007,8 +1023,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1086,8 +1103,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1098,8 +1116,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1179,8 +1198,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty(
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1191,8 +1211,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1285,8 +1306,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                   .AddStringProperty("emailAddress", "mr.body123@gmail.com")
                   .Build())
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1297,8 +1319,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1395,8 +1418,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                   .AddStringProperty("emailAddress", "mr.body123@gmail.com")
                   .Build())
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1407,8 +1431,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1493,8 +1518,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(person_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(person_document)));
   DocumentId person_document_id = put_result1.new_document_id;
 
   // 2. Add two Email documents
@@ -1508,8 +1535,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(put_result1,
-                             document_store_->Put(email_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result1, document_store_->Put(
+                       document_util::CreateDocumentWrapper(email_document1)));
   DocumentId email_document_id1 = put_result1.new_document_id;
 
   DocumentProto email_document2 =
@@ -1521,8 +1549,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .AddStringProperty("body",
                              "Count all the sheep and tell them 'Hello'.")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(email_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(email_document2)));
   DocumentId email_document_id2 = put_result2.new_document_id;
 
   // 3. Setup the joined scored results.
@@ -1646,8 +1676,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1658,8 +1689,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           .AddStringProperty("name", "Joe Artist")
           .AddStringProperty("emailAddress", "artist@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1735,8 +1767,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1747,8 +1780,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           .AddStringProperty("name", "Joe Musician")
           .AddStringProperty("emailAddress", "Musician@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1824,8 +1858,9 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                .SetSchema("Artist")
                                .AddStringProperty("name", "Joe Artist")
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocumentId document_id = put_result.new_document_id;
 
   // 2. Setup the scored results.
@@ -1888,8 +1923,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document_one));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_one)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document_two =
@@ -1900,8 +1936,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           .AddStringProperty("name", "Joe Artist")
           .AddStringProperty("emailAddress", "artist@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document_two));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document_two)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // 2. Setup the scored results.
@@ -1985,8 +2022,9 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
                                .AddStringProperty("phoneNumber", "12345")
                                .AddStringProperty("phoneModel", "pixel")
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document)));
   DocumentId document_id = put_result.new_document_id;
 
   // 2. Setup the scored results.

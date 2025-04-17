@@ -44,6 +44,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -198,8 +199,10 @@ TEST_P(ScorerTest, ShouldGetDefaultDocumentScore) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
@@ -226,8 +229,10 @@ TEST_P(ScorerTest, ShouldGetCorrectDocumentScore) {
           .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
@@ -256,8 +261,10 @@ TEST_P(ScorerTest, QueryIteratorNullRelevanceScoreShouldReturnDefaultScore) {
           .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
@@ -291,11 +298,15 @@ TEST_P(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
           .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store()->Put(test_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store()->Put(test_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document2)));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
@@ -325,8 +336,10 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
@@ -382,8 +395,10 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
@@ -439,8 +454,10 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
@@ -496,8 +513,10 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
@@ -575,8 +594,10 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
@@ -654,8 +675,10 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   // Create 3 scorers for 3 different usage types.
@@ -769,8 +792,10 @@ TEST_P(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
           .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store()->Put(
+          document_util::CreateDocumentWrapper(test_document)));
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
