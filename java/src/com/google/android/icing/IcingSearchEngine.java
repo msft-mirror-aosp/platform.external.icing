@@ -14,6 +14,8 @@
 
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchGetResultProto;
+import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
@@ -35,6 +37,7 @@ import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PropertyProto;
+import com.google.android.icing.proto.PutDocumentRequest;
 import com.google.android.icing.proto.PutResultProto;
 import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
@@ -43,13 +46,14 @@ import com.google.android.icing.proto.SchemaProto;
 import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
+import com.google.android.icing.proto.SetSchemaRequestProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.SuggestionResponse;
 import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.UsageReport;
-
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Java wrapper to access {@link IcingSearchEngineImpl}.
@@ -87,7 +91,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull SetSchemaResultProto setSchema(@NonNull SchemaProto schema) {
-    return setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    return setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false);
   }
 
   @Override
@@ -95,6 +99,13 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
       @NonNull SchemaProto schema, boolean ignoreErrorsAndDeleteDocuments) {
     return IcingSearchEngineUtils.byteArrayToSetSchemaResultProto(
         icingSearchEngineImpl.setSchema(schema.toByteArray(), ignoreErrorsAndDeleteDocuments));
+  }
+
+  @Override
+  public @NonNull SetSchemaResultProto setSchemaWithRequestProto(
+      @NonNull SetSchemaRequestProto setSchemaRequest) {
+    return IcingSearchEngineUtils.byteArrayToSetSchemaResultProto(
+        icingSearchEngineImpl.setSchemaWithRequestProto(setSchemaRequest.toByteArray()));
   }
 
   @Override
@@ -115,6 +126,8 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
         icingSearchEngineImpl.getSchemaType(schemaType));
   }
 
+  // TODO(b/394875109) We can remove this after we make the change in AppSearch, or keep it and make
+  // it call the batch version.
   @Override
   public @NonNull PutResultProto put(@NonNull DocumentProto document) {
     return IcingSearchEngineUtils.byteArrayToPutResultProto(
@@ -122,10 +135,22 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   }
 
   @Override
+  public @NonNull BatchPutResultProto batchPut(@NonNull PutDocumentRequest documents) {
+    return IcingSearchEngineUtils.byteArrayToBatchPutResultProto(
+        icingSearchEngineImpl.batchPut(documents.toByteArray()));
+  }
+
+  @Override
   public @NonNull GetResultProto get(
       @NonNull String namespace, @NonNull String uri, @NonNull GetResultSpecProto getResultSpec) {
     return IcingSearchEngineUtils.byteArrayToGetResultProto(
         icingSearchEngineImpl.get(namespace, uri, getResultSpec.toByteArray()));
+  }
+
+  @Override
+  public @NonNull BatchGetResultProto batchGet(@NonNull GetResultSpecProto getResultSpec) {
+    return IcingSearchEngineUtils.byteArrayToBatchGetResultProto(
+        icingSearchEngineImpl.batchGet(getResultSpec.toByteArray()));
   }
 
   @Override
@@ -193,7 +218,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull SuggestionResponse searchSuggestions(
-          @NonNull SuggestionSpecProto suggestionSpec) {
+      @NonNull SuggestionSpecProto suggestionSpec) {
     return IcingSearchEngineUtils.byteArrayToSuggestionResponse(
         icingSearchEngineImpl.searchSuggestions(suggestionSpec.toByteArray()));
   }
@@ -212,7 +237,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull DeleteByQueryResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
-    return deleteByQuery(searchSpec, /*returnDeletedDocumentInfo=*/ false);
+    return deleteByQuery(searchSpec, /* returnDeletedDocumentInfo= */ false);
   }
 
   @Override
@@ -224,7 +249,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull PersistToDiskResultProto persistToDisk(
-          PersistType.@NonNull Code persistTypeCode) {
+      PersistType.@NonNull Code persistTypeCode) {
     return IcingSearchEngineUtils.byteArrayToPersistToDiskResultProto(
         icingSearchEngineImpl.persistToDisk(persistTypeCode.getNumber()));
   }
@@ -257,6 +282,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
     return IcingSearchEngineUtils.byteArrayToResetResultProto(icingSearchEngineImpl.reset());
   }
 
+  @Override
+  public @NonNull ResetResultProto clearAndDestroy() {
+    return IcingSearchEngineUtils.byteArrayToResetResultProto(
+        icingSearchEngineImpl.clearAndDestroy());
+  }
+
   public static boolean shouldLog(LogSeverity.Code severity) {
     return shouldLog(severity, (short) 0);
   }
@@ -273,7 +304,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
     return IcingSearchEngineImpl.setLoggingLevel((short) severity.getNumber(), verbosity);
   }
 
-  public static @NonNull String getLoggingTag() {
+  public static @Nullable String getLoggingTag() {
     return IcingSearchEngineImpl.getLoggingTag();
   }
 }

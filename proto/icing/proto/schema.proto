@@ -423,6 +423,37 @@ message SchemaProto {
   repeated SchemaTypeConfigProto types = 1;
 }
 
+// Request for a call to IcingSearchEngine.SetSchema
+// Next tag: 4
+message SetSchemaRequestProto {
+  // REQUIRED: The new schema to set. This will replace the existing schema
+  // stored in IcingSearchEngine.
+  //
+  // schema.types is allowed to be empty. In this case, the SetSchema call will
+  // try to delete all types and indexed documents for the provided database,
+  // which is only allowed if ignore_errors_and_delete_documents=true
+  optional SchemaProto schema = 1;
+
+  // OPTIONAL: The database for the set schema request. Only schema types for
+  // this database will be modified.
+  //
+  // For a valid set schema request, this must match the database fields of
+  // schema.types.
+  //
+  // If unset, the default empty database is assumed for the set schema request.
+  optional string database = 2;
+
+  // OPTIONAL: Whether to ignore errors and delete documents when setting the
+  // schema.
+  //
+  // If true, then Icing will try to set the schema even if it is incompatible.
+  // In that case, documents that are invalidated by the new schema would be
+  // deleted from Icing. This cannot be used to force set an invalid schema.
+  //
+  // The default value is false.
+  optional bool ignore_errors_and_delete_documents = 3;
+}
+
 // Result of a call to IcingSearchEngine.SetSchema
 // Next tag: 9
 message SetSchemaResultProto {

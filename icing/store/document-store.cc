@@ -31,7 +31,6 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
-#include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file-backed-proto-log.h"
@@ -68,6 +67,7 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/document-util.h"
 #include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/scorable_property_set.h"
@@ -109,12 +109,6 @@ constexpr int32_t kUriHashKeyMapperKVByteSize = 13 + 1 + sizeof(DocumentId);
 // max of 128 KiB for storage.
 constexpr int32_t kNamespaceMapperMaxSize = 3 * 128 * 1024;  // 384 KiB
 constexpr int32_t kCorpusMapperMaxSize = 3 * 128 * 1024;     // 384 KiB
-
-DocumentWrapper CreateDocumentWrapper(DocumentProto&& document) {
-  DocumentWrapper document_wrapper;
-  *document_wrapper.mutable_document() = std::move(document);
-  return document_wrapper;
-}
 
 std::string MakeHeaderFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentStoreHeaderFilename);
@@ -287,13 +281,12 @@ void RemoveAliveBlobHandles(
 
 }  // namespace
 
-DocumentStore::DocumentStore(const Filesystem* filesystem,
-                             const std::string_view base_dir,
-                             const Clock* clock,
-                             const SchemaStore* schema_store,
-                             const FeatureFlags* feature_flags,
-                             bool pre_mapping_fbv, bool use_persistent_hash_map,
-                             int32_t compression_level)
+DocumentStore::DocumentStore(
+    const Filesystem* filesystem, const std::string_view base_dir,
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags* feature_flags, bool pre_mapping_fbv,
+    bool use_persistent_hash_map, int32_t compression_level,
+    uint32_t compression_threshold_bytes, int32_t compression_mem_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
@@ -302,19 +295,14 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       document_validator_(schema_store),
       pre_mapping_fbv_(pre_mapping_fbv),
       use_persistent_hash_map_(use_persistent_hash_map),
-      compression_level_(compression_level) {}
+      compression_level_(compression_level),
+      compression_threshold_bytes_(compression_threshold_bytes),
+      compression_mem_level_(compression_mem_level) {}
 
 libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
-    const DocumentProto& document, int32_t num_tokens,
+    const DocumentWrapper& document_wrapper,
     PutDocumentStatsProto* put_document_stats) {
-  return Put(DocumentProto(document), num_tokens, put_document_stats);
-}
-
-libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
-    DocumentProto&& document, int32_t num_tokens,
-    PutDocumentStatsProto* put_document_stats) {
-  document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
-  return InternalPut(std::move(document), put_document_stats);
+  return InternalPut(document_wrapper, put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -332,6 +320,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const FeatureFlags* feature_flags,
     bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
     bool use_persistent_hash_map, int32_t compression_level,
+    uint32_t compression_threshold_bytes, int32_t compression_mem_level,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
@@ -340,7 +329,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
       filesystem, base_dir, clock, schema_store, feature_flags, pre_mapping_fbv,
-      use_persistent_hash_map, compression_level));
+      use_persistent_hash_map, compression_level, compression_threshold_bytes,
+      compression_mem_level));
   ICING_ASSIGN_OR_RETURN(
       InitializeResult initialize_result,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -404,8 +394,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 libtextclassifier3::StatusOr<DocumentStore::InitializeResult>
 DocumentStore::Initialize(bool force_recovery_and_revalidate_documents,
                           InitializeStatsProto* initialize_stats) {
-  auto create_result_or =
-      DocumentLogCreator::Create(filesystem_, base_dir_, compression_level_);
+  auto create_result_or = DocumentLogCreator::Create(
+      filesystem_, base_dir_, compression_level_, compression_threshold_bytes_,
+      compression_mem_level_);
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -1141,36 +1132,30 @@ bool DocumentStore::HeaderExists() {
 }
 
 libtextclassifier3::StatusOr<DocumentStore::PutResult>
-DocumentStore::InternalPut(DocumentProto&& document,
+DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
                            PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
-  ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
   if (put_document_stats != nullptr) {
-    put_document_stats->set_document_size(document.ByteSizeLong());
+    put_document_stats->set_document_size(
+        document_wrapper.document().ByteSizeLong());
   }
 
   // Copy fields needed before they are moved
-  std::string name_space = document.namespace_();
-  std::string uri = document.uri();
-  std::string schema = document.schema();
-  int document_score = document.score();
-  int32_t length_in_tokens = document.internal_fields().length_in_tokens();
-  int64_t creation_timestamp_ms = document.creation_timestamp_ms();
-
-  // Sets the creation timestamp if caller hasn't specified.
-  if (document.creation_timestamp_ms() == 0) {
-    creation_timestamp_ms = clock_.GetSystemTimeMilliseconds();
-    document.set_creation_timestamp_ms(creation_timestamp_ms);
-  }
-
-  int64_t expiration_timestamp_ms =
-      CalculateExpirationTimestampMs(creation_timestamp_ms, document.ttl_ms());
+  std::string name_space = document_wrapper.document().namespace_();
+  std::string uri = document_wrapper.document().uri();
+  std::string schema = document_wrapper.document().schema();
+  int document_score = document_wrapper.document().score();
+  int32_t length_in_tokens =
+      document_wrapper.document().internal_fields().length_in_tokens();
+  int64_t creation_timestamp_ms =
+      document_wrapper.document().creation_timestamp_ms();
+  int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
+      creation_timestamp_ms, document_wrapper.document().ttl_ms());
 
   // Update ground truth first
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  DocumentWrapper document_wrapper = CreateDocumentWrapper(std::move(document));
   auto offset_or = document_log_->WriteProto(document_wrapper);
   if (!offset_or.ok()) {
     ICING_LOG(ERROR) << offset_or.status().error_message()
@@ -1472,9 +1457,8 @@ DocumentStore::GetNonDeletedDocumentFilterData(DocumentId document_id) const {
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
-    // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
-    // document doesn't exist.
+    // already have checked the status or validated their document_id.
+    // Regardless, return std::nullopt since the document doesn't exist.
     return std::nullopt;
   }
 
@@ -1488,9 +1472,8 @@ bool DocumentStore::IsDeleted(DocumentId document_id) const {
   if (!file_offset_or.ok()) {
     // This would only happen if document_id is out of range of the
     // document_id_mapper, meaning we got some invalid document_id. Callers
-    // should already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return true since the
-    // document doesn't exist.
+    // should already have checked the status or validated their document_id.
+    // Regardless, return true since the document doesn't exist.
     return true;
   }
   int64_t file_offset = *file_offset_or.ValueOrDie();
@@ -1506,9 +1489,8 @@ DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id,
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
-    // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
-    // document doesn't exist.
+    // already have checked the status or validated their document_id.
+    // Regardless, return std::nullopt since the document doesn't exist.
     return std::nullopt;
   }
   DocumentFilterData document_filter_data = filter_data_or.ValueOrDie();
@@ -2147,6 +2129,7 @@ DocumentStore::OptimizeInto(
           filesystem_, new_directory, &clock_, schema_store_, &feature_flags_,
           /*force_recovery_and_revalidate_documents=*/false, pre_mapping_fbv_,
           use_persistent_hash_map_, compression_level_,
+          compression_threshold_bytes_, compression_mem_level_,
           /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
@@ -2195,6 +2178,9 @@ DocumentStore::OptimizeInto(
               "Failed to retrieve Document for DocumentId %d", document_id));
     }
 
+    // TODO(b/405467475): add a new Get method to return DocumentWrapper and
+    // change document_to_keep to DocumentWrapper.
+
     // Guaranteed to have a document now.
     DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
     // Remove blobs that still have reference are removed from the
@@ -2204,8 +2190,10 @@ DocumentStore::OptimizeInto(
 
     libtextclassifier3::StatusOr<PutResult> put_result_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
+      // Create a TokenizedDocument. length_in_tokens will be set there.
       auto tokenized_document_or = TokenizedDocument::Create(
-          schema_store_, lang_segmenter, document_to_keep);
+          schema_store_, lang_segmenter, current_time_ms,
+          std::move(document_to_keep));
       if (!tokenized_document_or.ok()) {
         return absl_ports::Annotate(
             tokenized_document_or.status(),
@@ -2214,12 +2202,12 @@ DocumentStore::OptimizeInto(
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      put_result_or = new_doc_store->Put(
-          std::move(document_to_keep), tokenized_document.num_string_tokens());
+      put_result_or = new_doc_store->Put(tokenized_document.document_wrapper());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      put_result_or = new_doc_store->InternalPut(std::move(document_to_keep));
+      put_result_or = new_doc_store->InternalPut(
+          document_util::CreateDocumentWrapper(std::move(document_to_keep)));
     }
     if (!put_result_or.ok()) {
       ICING_LOG(ERROR) << put_result_or.status().error_message()

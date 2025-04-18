@@ -14,26 +14,21 @@
 
 #include <unistd.h>
 
-#include <fstream>
-#include <iostream>
 #include <memory>
-#include <ostream>
 #include <random>
-#include <sstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_set>
-#include <vector>
+#include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
@@ -44,6 +39,8 @@
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
+#include "icing/util/logging.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
@@ -84,14 +81,15 @@ class DestructibleDirectory {
   std::string dir_;
 };
 
-DocumentProto CreateDocument(const std::string namespace_,
-                             const std::string uri) {
-  return DocumentBuilder()
-      .SetKey(namespace_, uri)
-      .SetSchema("email")
-      .AddStringProperty("subject", "subject foo")
-      .AddStringProperty("body", "body bar")
-      .Build();
+DocumentWrapper CreateDocument(const std::string namespace_,
+                               const std::string uri) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey(namespace_, uri)
+                               .SetSchema("email")
+                               .AddStringProperty("subject", "subject foo")
+                               .AddStringProperty("body", "body bar")
+                               .Build();
+  return document_util::CreateDocumentWrapper(std::move(document));
 }
 
 SchemaProto CreateSchema() {
@@ -138,6 +136,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
@@ -204,7 +205,7 @@ void BM_Put(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  DocumentProto document = CreateDocument("namespace", "uri");
+  DocumentWrapper document = CreateDocument("namespace", "uri");
 
   for (auto s : state) {
     // It's ok that this is the same document over and over. We'll create a new
@@ -262,7 +263,7 @@ void BM_Delete(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  DocumentProto document = CreateDocument("namespace", "uri");
+  DocumentWrapper document = CreateDocument("namespace", "uri");
 
   for (auto s : state) {
     state.PauseTiming();
@@ -298,7 +299,7 @@ void BM_Create(benchmark::State& state) {
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    DocumentProto document = CreateDocument("namespace", "uri");
+    DocumentWrapper document = CreateDocument("namespace", "uri");
     ICING_ASSERT_OK(document_store->Put(document));
     ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
   }
@@ -336,7 +337,7 @@ void BM_UpdateChecksum(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  DocumentProto document = CreateDocument("namespace", "uri");
+  DocumentWrapper document = CreateDocument("namespace", "uri");
   ICING_ASSERT_OK(document_store->Put(document));
   ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::LITE));
 
