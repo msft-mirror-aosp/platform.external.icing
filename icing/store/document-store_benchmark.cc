@@ -14,25 +14,19 @@
 
 #include <unistd.h>
 
-#include <fstream>
-#include <iostream>
 #include <memory>
-#include <ostream>
 #include <random>
-#include <sstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_set>
-#include <vector>
+#include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -44,6 +38,7 @@
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
+#include "icing/util/logging.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
@@ -121,8 +116,7 @@ std::unique_ptr<SchemaStore> CreateSchemaStore(
           .ValueOrDie();
 
   auto set_schema_status = schema_store->SetSchema(
-      CreateSchema(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false);
+      CreateSchema(), /*ignore_errors_and_delete_documents=*/false);
   if (!set_schema_status.ok()) {
     ICING_LOG(ERROR) << set_schema_status.status().error_message();
   }
@@ -139,6 +133,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 

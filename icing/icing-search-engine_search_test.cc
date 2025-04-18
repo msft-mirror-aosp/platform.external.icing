@@ -77,6 +77,7 @@ using ::testing::IsEmpty;
 using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::SizeIs;
+using ::testing::UnorderedElementsAre;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -136,8 +137,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_scorable_properties(true);
   icing_options.set_enable_embedding_quantization(true);
-  icing_options.set_enable_qualified_id_join_index_v3_and_delete_propagate_from(
-      true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
 
@@ -223,6 +224,16 @@ SchemaProto CreatePersonAndEmailSchema() {
                                    "Person", /*index_nested_properties=*/true)
                                .SetCardinality(CARDINALITY_OPTIONAL)))
       .Build();
+}
+
+EmbeddingMatchSnippetProto CreateEmbeddingMatchSnippetProto(
+    double score, int query_index,
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) {
+  EmbeddingMatchSnippetProto match_snippet;
+  match_snippet.set_semantic_score(score);
+  match_snippet.set_embedding_query_vector_index(query_index);
+  match_snippet.set_embedding_query_metric_type(metric_type);
+  return match_snippet;
 }
 
 ScoringSpecProto GetDefaultScoringSpec() {
@@ -4720,6 +4731,7 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 1 result with 0 snippets
@@ -4737,6 +4749,42 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Fetch the next page with kInvalidNextPageToken.
+  search_result = icing.GetNextPage(kInvalidNextPageToken);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+}
+
+TEST_F(IcingSearchEngineSearchTest, GetNextPage_withNotFoundPageToken) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(5);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Call GetNextPage with a not found page token.
+  SearchResultProto search_result = icing.GetNextPage(/*next_page_token=*/123);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  QueryStatsProto exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::NOT_FOUND);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 
@@ -5023,6 +5071,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(1);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 0 child docs.
@@ -5041,6 +5090,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_results_with_snippets(0);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::VALID);
   ASSERT_THAT(search_result,
               EqualsSearchResultIgnoreStatsAndScores(expected_result3));
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
@@ -5055,6 +5105,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats = QueryStatsProto();
   exp_stats.set_is_first_page(false);
   exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 
@@ -6401,6 +6452,216 @@ TEST_F(IcingSearchEngineSearchTest, JoinSnippet) {
               ElementsAre("test"));
 }
 
+TEST_F(IcingSearchEngineSearchTest, JoinSnippetWithEmbedding) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first name")
+          .AddStringProperty("lastName", "last")
+          .AddStringProperty("emailAddress", "email@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(1)
+          .Build();
+
+  DocumentProto email0 =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .AddVectorProperty(
+              "embedding1",
+              CreateVector("my_model_v1", {0.1, 0.2, 0.3, 0.4, 0.5}),
+              CreateVector("my_model_v1", {1, 2, 3, 4, 5}),
+              CreateVector("my_model_v1", {0.6, 0.7, 0.8, 0.9, -1}))
+          .AddVectorProperty(
+              "embedding2",
+              CreateVector("my_model_v1", {-0.1, -0.2, -0.3, 0.4, 0.5}),
+              CreateVector("my_model_v2", {0.6, 0.7, 0.8}))
+          .Build();
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .AddVectorProperty(
+              "embedding1",
+              CreateVector("my_model_v1", {-0.1, 0.2, -0.3, -0.4, 0.5}))
+          .AddVectorProperty("embedding2",
+                             CreateVector("my_model_v2", {0.6, 0.7, -0.8}))
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::MAX);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+
+  // Child SearchSpec
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  nested_search_spec->add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *nested_search_spec->add_embedding_query_vectors() =
+      CreateVector("my_model_v1", {1, -1, -1, 1, -1});
+  *nested_search_spec->add_embedding_query_vectors() =
+      CreateVector("my_model_v2", {-1, -1, 1});
+  // Create a hybrid query that matches email0 because of term-based search
+  // and email1 because of embedding-based search.
+  //
+  // The matched embeddings for each doc are:
+  // - document 1: -2.1 (embedding2)
+  // The scoring expression for each doc will be evaluated as:
+  // - document 0: sum({}) = 0
+  // - document 1: sum({-2.1}) = -2.1
+  nested_search_spec->set_query(
+      "subject:test OR semanticSearch(getEmbeddingParameter(1), -10, -1)");
+
+  // Child ScoringSpec
+  ScoringSpecProto* nested_scoring_spec = nested_spec->mutable_scoring_spec();
+  nested_scoring_spec->set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  nested_scoring_spec->set_advanced_scoring_expression(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
+
+  // Child ResultSpec (with snippet)
+  ResultSpecProto* nested_result_spec = nested_spec->mutable_result_spec();
+  nested_result_spec->mutable_snippet_spec()->set_max_window_utf32_length(64);
+  nested_result_spec->mutable_snippet_spec()->set_num_matches_per_property(1);
+  nested_result_spec->mutable_snippet_spec()->set_num_to_snippet(2);
+  nested_result_spec->mutable_snippet_spec()->set_get_embedding_match_info(
+      true);
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(1);
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(64);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(1);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(1);
+
+  SearchResultProto result =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_THAT(result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  ASSERT_THAT(result.results(), SizeIs(1));
+  // Check parent doc (person).
+  const DocumentProto& result_parent_document = result.results(0).document();
+  const SnippetProto& result_parent_snippet = result.results(0).snippet();
+  EXPECT_THAT(result_parent_document, EqualsProto(person));
+  EXPECT_THAT(result_parent_snippet.entries(0).property_name(),
+              Eq("firstName"));
+  std::string_view content =
+      GetString(&result_parent_document,
+                result_parent_snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_parent_snippet.entries(0)),
+              ElementsAre("first name"));
+  EXPECT_THAT(GetMatches(content, result_parent_snippet.entries(0)),
+              ElementsAre("first"));
+
+  // Check child doc
+  ASSERT_THAT(result.results(0).joined_results(), SizeIs(2));
+  // Email1
+  DocumentProto result_child_document =
+      std::move(result.results(0).joined_results(0).document());
+  SnippetProto result_child_snippet =
+      std::move(result.results(0).joined_results(0).snippet());
+  EXPECT_THAT(result_child_document, EqualsProto(email1));
+  EXPECT_THAT(result_child_snippet.entries(0).property_name(),
+              Eq("embedding2"));
+  EXPECT_THAT(
+      result_child_snippet.entries(0).embedding_matches(),
+      ElementsAre(
+          EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+              /*score=*/-2.1, /*query_index=*/1,
+              SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+
+  // Email0
+  result_child_document =
+      std::move(result.results(0).joined_results(1).document());
+  result_child_snippet =
+      std::move(result.results(0).joined_results(1).snippet());
+  EXPECT_THAT(result_child_document, EqualsProto(email0));
+  ASSERT_THAT(result_child_snippet.entries(), SizeIs(1));
+  EXPECT_THAT(result_child_snippet.entries(0).property_name(), Eq("subject"));
+  content = GetString(&result_child_document,
+                      result_child_snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_child_snippet.entries(0)),
+              ElementsAre("test subject"));
+  EXPECT_THAT(GetMatches(content, result_child_snippet.entries(0)),
+              ElementsAre("test"));
+}
+
 TEST_F(IcingSearchEngineSearchTest, JoinProjection) {
   SchemaProto schema =
       SchemaBuilder()
@@ -7523,7 +7784,36 @@ TEST_F(IcingSearchEngineSearchTest, HasPropertyQueryNestedDocument) {
   EXPECT_THAT(results.results(), IsEmpty());
 }
 
-TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
+class IcingSearchEngineEmbeddingSearchTest
+    : public ::testing::TestWithParam<bool> {
+ protected:
+  void SetUp() override {
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      // If we've specified using the reverse-JNI method for segmentation (i.e.
+      // not ICU), then we won't have the ICU data file included to set up.
+      // Technically, we could choose to use reverse-JNI for segmentation AND
+      // include an ICU data file, but that seems unlikely and our current BUILD
+      // setup doesn't do this.
+      // File generated via icu_data_file rule in //icing/BUILD.
+      std::string icu_data_file_path =
+          GetTestFilePath("icing/icu.dat");
+      ICING_ASSERT_OK(
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
+    }
+    filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
+  }
+
+  void TearDown() override {
+    filesystem_.DeleteDirectoryRecursively(GetTestBaseDir().c_str());
+  }
+
+  const Filesystem* filesystem() const { return &filesystem_; }
+
+ private:
+  Filesystem filesystem_;
+};
+
+TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -7552,7 +7842,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
           .AddStringProperty("body", "foo")
           .AddVectorProperty(
               "embedding1",
-              CreateVector("my_model_v1", {0.1, 0.2, 0.3, 0.4, 0.5}))
+              CreateVector("my_model_v1", {0.1, 0.2, 0.3, 0.4, 0.5}),
+              CreateVector("my_model_v1", {1, 2, 3, 4, 5}),
+              CreateVector("my_model_v1", {0.6, 0.7, 0.8, 0.9, -1}))
           .AddVectorProperty(
               "embedding2",
               CreateVector("my_model_v1", {-0.1, -0.2, -0.3, 0.4, 0.5}),
@@ -7584,102 +7876,211 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
       std::string(kListFilterQueryLanguageFeature));
 
   // Add an embedding query with semantic scores:
-  // - document 0: -0.5 (embedding1), 0.3 (embedding2)
-  // - document 1: -0.9 (embedding1)
+  // - document 0: -0.5 (embedding1[0]), -5 (embedding1[1]), 1 (embedding1[2]),
+  //                0.3 (embedding2[0])
+  // - document 1: -0.9 (embedding1[0])
   *search_spec.add_embedding_query_vectors() =
       CreateVector("my_model_v1", {1, -1, -1, 1, -1});
   // Add an embedding query with semantic scores:
-  // - document 0: -0.5 (embedding2)
-  // - document 1: -2.1 (embedding2)
+  // - document 0: -0.5 (embedding2[1])
+  // - document 1: -2.1 (embedding2[0])
   *search_spec.add_embedding_query_vectors() =
       CreateVector("my_model_v2", {-1, -1, 1});
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
 
+  bool get_embedding_match_info = GetParam();
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(3);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(
+      get_embedding_match_info);
+
   // Match documents that have embeddings with a similarity closer to 0 that is
   // greater than -1.
   //
   // The matched embeddings for each doc are:
-  // - document 0: -0.5 (embedding1), 0.3 (embedding2)
-  // - document 1: -0.9 (embedding1)
+  // - document 0: -0.5 (embedding1[0]), 1 (embedding1[2]), 0.3 (embedding2[0])
+  // - document 1: -0.9 (embedding1[0])
   // The scoring expression for each doc will be evaluated as:
-  // - document 0: sum({-0.5, 0.3}) + sum({}) = -0.2
+  // - document 0: sum({-0.5, 1, 0.3}) + sum({}) = 0.8
   // - document 1: sum({-0.9}) + sum({}) = -0.9
   search_spec.set_query("semanticSearch(getEmbeddingParameter(0), -1)");
   scoring_spec.set_advanced_scoring_expression(
       "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
-  SearchResultProto results = icing.Search(search_spec, scoring_spec,
-                                           ResultSpecProto::default_instance());
+  SearchResultProto results =
+      icing.Search(search_spec, scoring_spec, result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(2));
   EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
-  EXPECT_THAT(results.results(0).score(), DoubleNear(-0.5 + 0.3, kEps));
+  EXPECT_THAT(results.results(0).score(), DoubleNear(-0.5 + 1 + 0.3, kEps));
   EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
   EXPECT_THAT(results.results(1).score(), DoubleNear(-0.9, kEps));
+  if (get_embedding_match_info) {
+    // Document 0
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(3));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding1[0]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(1).property_name(),
+                Eq("embedding1[2]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/1, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(2).property_name(),
+                Eq("embedding2[0]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(2).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/0.3, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+
+    // Document 1
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(1).snippet().entries(0).property_name(),
+                Eq("embedding1"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.9, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  } else {
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(0));
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(0));
+  }
 
   // Create a query the same as above but with a section restriction, which
   // still matches document 0 and document 1 but the semantic score 0.3 should
   // be removed from document 0.
   //
   // The matched embeddings for each doc are:
-  // - document 0: -0.5 (embedding1)
+  // - document 0: -0.5 (embedding1[0]), 1 (embedding1[2]),
   // - document 1: -0.9 (embedding1)
   // The scoring expression for each doc will be evaluated as:
-  // - document 0: sum({-0.5}) = -0.5
+  // - document 0: sum({-0.5}, 1) = 0.5
   // - document 1: sum({-0.9}) = -0.9
   search_spec.set_query(
       "embedding1:semanticSearch(getEmbeddingParameter(0), -1)");
   scoring_spec.set_advanced_scoring_expression(
       "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
-  results = icing.Search(search_spec, scoring_spec,
-                         ResultSpecProto::default_instance());
+  results = icing.Search(search_spec, scoring_spec, result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(2));
   EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
-  EXPECT_THAT(results.results(0).score(), DoubleNear(-0.5, kEps));
+  EXPECT_THAT(results.results(0).score(), DoubleNear(-0.5 + 1, kEps));
   EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
   EXPECT_THAT(results.results(1).score(), DoubleNear(-0.9, kEps));
+  if (get_embedding_match_info) {
+    // Document 0
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(2));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding1[0]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(1).property_name(),
+                Eq("embedding1[2]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/1, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    // Document 1
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(1).snippet().entries(0).property_name(),
+                Eq("embedding1"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.9, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  } else {
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(0));
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(0));
+  }
 
   // Create a query that only matches document 0.
   //
   // The matched embeddings for each doc are:
-  // - document 0: -0.5 (embedding2)
+  // - document 0: -0.5 (embedding2[1])
   // The scoring expression for each doc will be evaluated as:
   // - document 0: sum({-0.5}) = -0.5
   search_spec.set_query("semanticSearch(getEmbeddingParameter(1), -1.5)");
   scoring_spec.set_advanced_scoring_expression(
       "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
-  results = icing.Search(search_spec, scoring_spec,
-                         ResultSpecProto::default_instance());
+  results = icing.Search(search_spec, scoring_spec, result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(1));
   EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
   EXPECT_THAT(results.results(0).score(), DoubleNear(-0.5, kEps));
+  if (get_embedding_match_info) {
+    // Document 0
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding2[1]"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  } else {
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(0));
+  }
 
   // Create a query that only matches document 1.
   //
   // The matched embeddings for each doc are:
-  // - document 1: -2.1 (embedding2)
+  // - document 1: -2.1 (embedding2])
   // The scoring expression for each doc will be evaluated as:
   // - document 1: sum({-2.1}) = -2.1
   search_spec.set_query("semanticSearch(getEmbeddingParameter(1), -10, -1)");
   scoring_spec.set_advanced_scoring_expression(
       "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
-  results = icing.Search(search_spec, scoring_spec,
-                         ResultSpecProto::default_instance());
+  results = icing.Search(search_spec, scoring_spec, result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(1));
   EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
   EXPECT_THAT(results.results(0).score(), DoubleNear(-2.1, kEps));
+  if (get_embedding_match_info) {
+    // Document 1
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding2"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-2.1, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  } else {
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(0));
+  }
 
   // Create a complex query that matches all hits from all documents.
   //
   // The matched embeddings for each doc are:
-  // - document 0: -0.5 (embedding1), 0.3 (embedding2), -0.5 (embedding2)
+  // - document 0: -0.5 (embedding1[0]), -5 (embedding1[1]), 1 (embedding1[2]),
+  //               0.3 (embedding2[0]), -0.5 (embedding2[1])
   // - document 1: -0.9 (embedding1), -2.1 (embedding2)
   // The scoring expression for each doc will be evaluated as:
-  // - document 0: sum({-0.5, 0.3}) + sum({-0.5}) = -0.7
+  // - document 0: sum({-0.5, -5, 1, 0.3}) + sum({-0.5}) = -0.7
   // - document 1: sum({-0.9}) + sum({-2.1}) = -3
   search_spec.set_query(
       "semanticSearch(getEmbeddingParameter(0)) OR "
@@ -7687,14 +8088,79 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   scoring_spec.set_advanced_scoring_expression(
       "sum(this.matchedSemanticScores(getEmbeddingParameter(0))) + "
       "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
-  results = icing.Search(search_spec, scoring_spec,
-                         ResultSpecProto::default_instance());
+  results = icing.Search(search_spec, scoring_spec, result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(2));
-  EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
-  EXPECT_THAT(results.results(0).score(), DoubleNear(-0.5 + 0.3 - 0.5, kEps));
-  EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
-  EXPECT_THAT(results.results(1).score(), DoubleNear(-0.9 - 2.1, kEps));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
+  EXPECT_THAT(results.results(0).score(), DoubleNear(-0.9 - 2.1, kEps));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+  EXPECT_THAT(results.results(1).score(),
+              DoubleNear(-0.5 - 5 + 1 + 0.3 - 0.5, kEps));
+  if (get_embedding_match_info) {
+    // Document 0
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(5));
+    EXPECT_THAT(results.results(1).snippet().entries(0).property_name(),
+                Eq("embedding1[0]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(1).property_name(),
+                Eq("embedding1[1]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-5, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(2).property_name(),
+                Eq("embedding1[2]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(2).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/1, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(3).property_name(),
+                Eq("embedding2[0]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(3).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/0.3, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(1).snippet().entries(4).property_name(),
+                Eq("embedding2[1]"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(4).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.5, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    // Document 1
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(2));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("embedding1"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-0.9, /*query_index=*/0,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+    EXPECT_THAT(results.results(0).snippet().entries(1).property_name(),
+                Eq("embedding2"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(1).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-2.1, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  } else {
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(0));
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(0));
+  }
 
   // Create a hybrid query that matches document 0 because of term-based search
   // and document 1 because of embedding-based search.
@@ -7708,8 +8174,7 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
       "foo OR semanticSearch(getEmbeddingParameter(1), -10, -1)");
   scoring_spec.set_advanced_scoring_expression(
       "sum(this.matchedSemanticScores(getEmbeddingParameter(1)))");
-  results = icing.Search(search_spec, scoring_spec,
-                         ResultSpecProto::default_instance());
+  results = icing.Search(search_spec, scoring_spec, result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(2));
   EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
@@ -7717,7 +8182,36 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearch) {
   EXPECT_THAT(results.results(0).score(), DoubleNear(0, kEps));
   EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
   EXPECT_THAT(results.results(1).score(), DoubleNear(-2.1, kEps));
+  if (get_embedding_match_info) {
+    // Document 0
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("body"));
+    EXPECT_THAT(
+        results.results(0).snippet().entries(0).embedding_matches_size(),
+        Eq(0));
+    // Document 1
+    EXPECT_THAT(results.results(1).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(1).snippet().entries(0).property_name(),
+                Eq("embedding2"));
+    EXPECT_THAT(
+        results.results(1).snippet().entries(0).embedding_matches(),
+        ElementsAre(
+            EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+                /*score=*/-2.1, /*query_index=*/1,
+                SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  } else {
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(1));
+    EXPECT_THAT(results.results(0).snippet().entries(0).property_name(),
+                Eq("body"));
+    EXPECT_THAT(results.results(0).snippet().entries(), SizeIs(1));
+  }
 }
+
+INSTANTIATE_TEST_SUITE_P(IcingSearchEngineEmbeddingSearchTest,
+                         IcingSearchEngineEmbeddingSearchTest,
+                         testing::Values(/*enable_embedding_quantization=*/true,
+                                         false));
 
 TEST_F(IcingSearchEngineSearchTest, CannotScoreUnqueriedEmbedding) {
   SchemaProto schema =
@@ -8621,27 +9115,18 @@ TEST_F(IcingSearchEngineSearchTest,
        SearchWithRankingByScorableProperty_WithInvalidPropertyName) {
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("Person")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("name")
-                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                          .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("income")
-                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)
-                          .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("income")
+                  .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                  .SetScorableType(SCORABLE_TYPE_ENABLED)
+                  .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   DocumentProto document0 = DocumentBuilder()
                                 .SetKey("icing", "person0")
                                 .SetSchema("Person")
                                 .SetScore(10)
                                 .SetCreationTimestampMs(1)
-                                .AddStringProperty("name", "John")
                                 .AddDoubleProperty("income", 10000, 20000)
                                 .Build();
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -8659,17 +9144,17 @@ TEST_F(IcingSearchEngineSearchTest,
   AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
   scoring_spec.add_scoring_feature_types_enabled(
       ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(
-      StatusProto::INVALID_ARGUMENT);
-  expected_search_result_proto.mutable_status()->set_message(
-      "'not_exist' is not defined as a scorable property under schema type 0");
+  int expected_score = /*documentScore=*/10 + /*getScorableProperty=*/0;
 
-  SearchResultProto actual_search_result_proto = icing.Search(
+  SearchResultProto search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
-  EXPECT_THAT(
-      actual_search_result_proto,
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Verify that the search results are ranked as expected.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(expected_score));
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -9220,17 +9705,14 @@ TEST_F(IcingSearchEngineSearchTest,
   scoring_spec.set_advanced_scoring_expression(
       "sum(getScorableProperty(\"Person\", \"income\"))");
 
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(
-      StatusProto::INVALID_ARGUMENT);
-  expected_search_result_proto.mutable_status()->set_message(
-      "'income' is not defined as a scorable property under schema type 0");
-
   SearchResultProto actual_search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
-  EXPECT_THAT(
-      actual_search_result_proto,
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(actual_search_result_proto.status(), ProtoIsOk());
+
+  EXPECT_THAT(GetUrisFromSearchResults(actual_search_result_proto),
+              UnorderedElementsAre("person0", "person1"));
+  EXPECT_THAT(GetScoresFromSearchResults(actual_search_result_proto),
+              ElementsAre(0, 0));
 
   // Update the schema to set Person.income as a scorable property.
   SchemaProto new_schema =
@@ -9326,16 +9808,15 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(
-      StatusProto::INVALID_ARGUMENT);
-  expected_search_result_proto.mutable_status()->set_message(
-      "'income' is not defined as a scorable property under schema type 0");
-  SearchResultProto actual_search_result_proto = icing.Search(
+
+  SearchResultProto search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
-  EXPECT_THAT(
-      actual_search_result_proto,
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  // Check the search results.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person0"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto), ElementsAre(0));
 
   // Update the schema to set Person.income as scorable again. It would
   // re-populate the scorable property cache.
@@ -9358,8 +9839,8 @@ TEST_F(IcingSearchEngineSearchTest,
           .Build();
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
-  SearchResultProto search_result_proto = icing.Search(
-      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  search_result_proto = icing.Search(search_spec, scoring_spec,
+                                     ResultSpecProto::default_instance());
   EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
 
   // Check the search results.

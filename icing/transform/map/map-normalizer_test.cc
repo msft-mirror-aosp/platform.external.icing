@@ -16,12 +16,11 @@
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/character-iterator.h"
 
@@ -29,24 +28,29 @@ namespace icing {
 namespace lib {
 
 namespace {
+
 using ::testing::Eq;
 
 TEST(MapNormalizerTest, Creation) {
-  EXPECT_THAT(normalizer_factory::Create(
-                  /*max_term_byte_size=*/5),
+  NormalizerOptions options1(/*max_term_byte_size=*/5);
+  EXPECT_THAT(normalizer_factory::Create(options1),
               IsOk());
-  EXPECT_THAT(normalizer_factory::Create(
-                  /*max_term_byte_size=*/0),
+
+  NormalizerOptions options2(/*max_term_byte_size=*/0);
+  EXPECT_THAT(normalizer_factory::Create(options2),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(normalizer_factory::Create(
-                  /*max_term_byte_size=*/-1),
+
+  NormalizerOptions options3(/*max_term_byte_size=*/-1);
+
+  EXPECT_THAT(normalizer_factory::Create(options3),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 // Strings that are already normalized won't change if normalized again.
 TEST(MapNormalizerTest, AlreadyNormalized) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   EXPECT_THAT(normalizer->NormalizeTerm(""), EqualsNormalizedTerm(""));
   EXPECT_THAT(normalizer->NormalizeTerm("hello world"),
@@ -59,8 +63,9 @@ TEST(MapNormalizerTest, AlreadyNormalized) {
 }
 
 TEST(MapNormalizerTest, UppercaseToLowercase) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   EXPECT_THAT(normalizer->NormalizeTerm("MDI"), EqualsNormalizedTerm("mdi"));
   EXPECT_THAT(normalizer->NormalizeTerm("Icing"),
@@ -68,8 +73,9 @@ TEST(MapNormalizerTest, UppercaseToLowercase) {
 }
 
 TEST(MapNormalizerTest, LatinLetterRemoveAccent) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   EXPECT_THAT(normalizer->NormalizeTerm("Zürich"),
               EqualsNormalizedTerm("zurich"));
@@ -127,8 +133,9 @@ TEST(MapNormalizerTest, LatinLetterRemoveAccent) {
 // Accent / diacritic marks won't be removed in non-latin chars, e.g. in
 // Japanese and Greek
 TEST(MapNormalizerTest, NonLatinLetterNotRemoveAccent) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   // Katakana
   EXPECT_THAT(normalizer->NormalizeTerm("ダヂヅデド"),
@@ -144,8 +151,9 @@ TEST(MapNormalizerTest, NonLatinLetterNotRemoveAccent) {
 }
 
 TEST(MapNormalizerTest, FullWidthCharsToASCII) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   // Full-width punctuation to ASCII punctuation
   EXPECT_THAT(normalizer->NormalizeTerm("‘’．，！？：“”"),
@@ -164,15 +172,17 @@ TEST(MapNormalizerTest, FullWidthCharsToASCII) {
 }
 
 TEST(MapNormalizerTest, IdeographicToASCII) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   EXPECT_THAT(normalizer->NormalizeTerm("，。"), EqualsNormalizedTerm(",."));
 }
 
 TEST(MapNormalizerTest, HiraganaToKatakana) {
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   EXPECT_THAT(normalizer->NormalizeTerm("あいうえお"),
               EqualsNormalizedTerm("アイウエオ"));
@@ -209,8 +219,9 @@ TEST(MapNormalizerTest, HiraganaToKatakana) {
 
 TEST(MapNormalizerTest, Truncate) {
   {
+    NormalizerOptions options(/*max_term_byte_size=*/5);
     ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                    /*max_term_byte_size=*/5));
+        options));
 
     // Won't be truncated
     EXPECT_THAT(normalizer->NormalizeTerm("hi"), EqualsNormalizedTerm("hi"));
@@ -232,8 +243,9 @@ TEST(MapNormalizerTest, Truncate) {
   }
 
   {
+    NormalizerOptions options(/*max_term_byte_size=*/2);
     ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                    /*max_term_byte_size=*/2));
+        options));
     // The Japanese character has 3 bytes, truncating it results in an empty
     // string.
     EXPECT_THAT(normalizer->NormalizeTerm("キ"), EqualsNormalizedTerm(""));
@@ -244,8 +256,9 @@ TEST(MapNormalizerTest, PrefixMatchLength) {
   // Verify that FindNormalizedMatchEndPosition will properly find the length of
   // the prefix match when given a non-normalized term and a normalized term
   // is a prefix of the non-normalized one.
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   // Upper to lower
   std::string term = "MDI";
@@ -293,8 +306,9 @@ TEST(MapNormalizerTest, SharedPrefixMatchLength) {
   // Verify that FindNormalizedMatchEndPosition will properly find the length of
   // the prefix match when given a non-normalized term and a normalized term
   // that share a common prefix.
+  NormalizerOptions options(/*max_term_byte_size=*/1000);
   ICING_ASSERT_OK_AND_ASSIGN(auto normalizer, normalizer_factory::Create(
-                                                  /*max_term_byte_size=*/1000));
+      options));
 
   // Upper to lower
   std::string term = "MDI";

@@ -17,6 +17,8 @@
 
 #include <cstdint>
 #include <limits>
+#include <utility>
+#include <vector>
 
 namespace icing {
 namespace lib {
@@ -89,6 +91,38 @@ inline uint32_t NextPowerOf2(uint32_t n) {
     return UINT32_C(1) << (32 - __builtin_clz(n));
   }
   return n;
+}
+
+// Applies a permutation to multiple containers in-place, which permutes
+// elements within the given containers according to the provided permutation
+// vector. permutation[i] specifies the new index for the element originally at
+// index i.
+template <typename... ContainerTypes>
+static void ApplyPermutation(const std::vector<int> &permutation,
+                             ContainerTypes &...values) {
+  std::vector<bool> done(permutation.size());
+  // Apply permutation
+  for (int i = 0; i < permutation.size(); ++i) {
+    if (done[i]) {
+      continue;
+    }
+    done[i] = true;
+    int curr = i;
+    int next = permutation[i];
+    // Since every finite permutation is formed by disjoint cycles, we can
+    // start with the current element, at index i, and swap the element at
+    // this position with whatever element that *should* be here. Then,
+    // continue to swap the original element, at its updated positions, with
+    // the element that should be occupying that position until the original
+    // element has reached *its* correct position. This completes applying the
+    // single cycle in the permutation.
+    while (next != i) {
+      (std::swap(values[curr], values[next]), ...);
+      done[next] = true;
+      curr = next;
+      next = permutation[next];
+    }
+  }
 }
 
 }  // namespace math_util

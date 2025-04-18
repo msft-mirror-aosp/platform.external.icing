@@ -550,8 +550,18 @@ class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
   int64_t current_time_ms_;
-  // A doc hit is evaluated by this function only if its schema type id is in
-  // this set.
+
+  // A set of schema type ids that have been validated.
+  //
+  // When Parsing the getScorableProperty(schema_type_alias, property_path)
+  // function, Icing first looks up the schema_type_alias_map with the
+  // schema_type_alias, and for each matched schema type, Icing validates that:
+  //   - The schema type is valid in the schema store.
+  //   - The |property_path_| is defined as scorable under the schema type.
+  //
+  // At the query evaluation time, Icing will check each doc's schema type id
+  // against this set. If it is not in the set, then an empty list will be
+  // returned.
   std::unordered_set<SchemaTypeId> schema_type_ids_;
   std::string property_path_;
 };

@@ -32,6 +32,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -105,6 +106,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
@@ -133,9 +137,9 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
@@ -244,9 +248,9 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
@@ -358,9 +362,9 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
@@ -466,9 +470,9 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);

@@ -17,12 +17,13 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -33,7 +34,9 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
@@ -61,8 +64,11 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/icu-data-file-helper.h"
+#include "icing/util/logging.h"
 #include "icing/util/scorable_property_set.h"
 #include "unicode/uloc.h"
 
@@ -243,8 +249,7 @@ class DocumentStoreTest
         schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
@@ -280,6 +285,9 @@ class DocumentStoreTest
         /*force_recovery_and_revalidate_documents=*/false,
         GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
         PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+        PortableFileBackedProtoLog<
+            DocumentWrapper>::kDefaultCompressionThresholdBytes,
+        protobuf_ports::kDefaultMemLevel,
         /*initialize_stats=*/nullptr);
   }
 
@@ -817,8 +825,7 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeOk) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -960,8 +967,7 @@ TEST_P(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -1060,8 +1066,7 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -1121,8 +1126,7 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      new_schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      new_schema, /*ignore_errors_and_delete_documents=*/true));
 
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2966,8 +2970,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
             .AddType(SchemaTypeConfigBuilder().SetType("message"))
             .Build();
     ICING_EXPECT_OK(schema_store->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                                schema_store->GetSchemaTypeId("email"));
@@ -3037,8 +3040,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3060,7 +3062,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
       document_store->GetAliveDocumentFilterData(
           email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
-  // Make sure that all the other fields are stll valid/the same
+  // Make sure that all the other fields are still valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
   EXPECT_THAT(email_data.uri_fingerprint(),
               Eq(tc3farmhash::Fingerprint64(email_document.uri())));
@@ -3075,7 +3077,7 @@ TEST_P(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
       document_store->GetAliveDocumentFilterData(
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
-  // Make sure that all the other fields are stll valid/the same
+  // Make sure that all the other fields are still valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
   EXPECT_THAT(message_data.uri_fingerprint(),
               Eq(tc3farmhash::Fingerprint64(message_document.uri())));
@@ -3100,8 +3102,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3156,16 +3157,16 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
               Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
-  // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
+  // Add a new schema type. Since SchemaTypeId is assigned based on order,
   // this should change the SchemaTypeIds.
   schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
+               .AddType(SchemaTypeConfigBuilder().SetType("newType"))
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
+               .AddType(SchemaTypeConfigBuilder().SetType("message"))
                .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3216,8 +3217,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -3271,8 +3271,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
       PropertyConfigProto::Cardinality::REQUIRED);
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -3303,8 +3302,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -3352,8 +3350,7 @@ TEST_P(DocumentStoreTest,
 
   ICING_EXPECT_OK(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -3383,8 +3380,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3437,18 +3433,18 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
               Eq(tc3farmhash::Fingerprint64(message_document.uri())));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
-  // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
+  // Add a new schema type. Since SchemaTypeId is assigned based on order,
   // this should change the SchemaTypeIds.
   schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
+               .AddType(SchemaTypeConfigBuilder().SetType("newType"))
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
+               .AddType(SchemaTypeConfigBuilder().SetType("message"))
                .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/false,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3500,8 +3496,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -3557,8 +3552,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -3590,8 +3584,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -3640,8 +3633,7 @@ TEST_P(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -4139,6 +4131,68 @@ TEST_P(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
+TEST_P(DocumentStoreTest, DeletedDocumentsShouldNotBeReplacements) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(test_document1_));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
+
+  // Delete the document.
+  ICING_ASSERT_OK(document_store->Delete(
+      document_id, fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Re-add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+
+  // Because the document was deleted, it should not be a replacement.
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+}
+
+TEST_P(DocumentStoreTest, ExpiredDocumentsShouldNotBeReplacements) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add the document.
+  DocumentProto doc1 = test_document1_;
+  doc1.set_ttl_ms(1);
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store->Put(doc1));
+  EXPECT_THAT(put_result1.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result1.was_replacement());
+  DocumentId document_id = put_result1.new_document_id;
+
+  // Expire the document by advancing the clock by two milliseconds.
+  fake_clock_.SetSystemTimeMilliseconds(
+      fake_clock_.GetSystemTimeMilliseconds() + 2);
+
+  // Re-add the document.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store->Put(test_document1_));
+
+  // Because the document was expired, it should not be a replacement.
+  EXPECT_THAT(put_result2.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result2.was_replacement());
+  DocumentId updated_document_id = put_result2.new_document_id;
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+}
+
 TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
   {
     // Can put and delete fine.
@@ -4300,7 +4354,9 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
-          &initialize_stats));
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel, &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   // The document log is using the legacy v0 format so that a migration is
@@ -4448,8 +4504,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -4507,8 +4562,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
           .AddType(email_type_config)
           .Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
@@ -4520,14 +4574,16 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/true,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel, &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4569,8 +4625,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -4628,8 +4683,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
           .AddType(email_type_config)
           .Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
@@ -4681,8 +4735,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentProto docWithBody =
@@ -4752,8 +4805,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
 
   {
@@ -4761,14 +4813,17 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     CorruptDocStoreHeaderChecksumFile();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/true,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4805,8 +4860,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                           feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentProto docWithBody =
@@ -4876,8 +4930,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
 
   {
@@ -4926,8 +4979,7 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
                           feature_flags_.get()));
 
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // Create dst directory that we'll initialize the DocumentStore over.
@@ -4971,7 +5023,9 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
-          &initialize_stats));
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel, &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -5059,8 +5113,7 @@ TEST_P(DocumentStoreTest, GetDebugInfo) {
                           feature_flags_.get()));
 
   ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5206,14 +5259,17 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -5255,7 +5311,9 @@ TEST_P(DocumentStoreTest, SwitchKeyMapperTypeShouldRegenerateDerivedFiles) {
             /*use_persistent_hash_map=*/switch_key_mapper_flag,
             PortableFileBackedProtoLog<
                 DocumentWrapper>::kDefaultCompressionLevel,
-            &initialize_stats));
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel, &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::IO_ERROR));
 
@@ -5292,14 +5350,17 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
 
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
@@ -5331,14 +5392,16 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              GetParam().pre_mapping_fbv,
-                              GetParam().use_persistent_hash_map,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel, &initialize_stats));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
 
@@ -5366,11 +5429,7 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
   }
 }
 
-TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
-  std::string dynamic_trie_uri_mapper_dir =
-      document_store_dir_ + "/key_mapper_dir";
-  std::string persistent_hash_map_uri_mapper_dir =
-      document_store_dir_ + "/uri_mapper";
+TEST_P(DocumentStoreTest, GetDocumentId_expiredDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
@@ -5379,6 +5438,82 @@ TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
           /*force_recovery_and_revalidate_documents=*/false,
           GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
+          /*initialize_stats=*/nullptr));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  fake_clock_.SetSystemTimeMilliseconds(0);
+  DocumentProto foo_document = DocumentBuilder()
+                                   .SetCreationTimestampMs(0)
+                                   .SetTtlMs(1000)
+                                   .SetKey("namespace", "uri")
+                                   .SetSchema("email")
+                                   .SetCreationTimestampMs(0)
+                                   .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(foo_document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
+
+  // Adjust the clock to make the document expired. GetDocumentId should still
+  // return the original document id.
+  fake_clock_.SetSystemTimeMilliseconds(2000);
+  EXPECT_THAT(doc_store->GetDocumentId("namespace", "uri"),
+              IsOkAndHolds(document_id));
+}
+
+TEST_P(DocumentStoreTest, GetDocumentId_deletedDocument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
+          /*initialize_stats=*/nullptr));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto foo_document = DocumentBuilder()
+                                   .SetKey("namespace", "uri")
+                                   .SetSchema("email")
+                                   .SetCreationTimestampMs(0)
+                                   .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
+                             doc_store->Put(foo_document));
+  EXPECT_THAT(put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(put_result.was_replacement());
+  DocumentId document_id = put_result.new_document_id;
+
+  // Delete the document. GetDocumentId should still return the original
+  // document id.
+  ICING_ASSERT_OK(doc_store->Delete(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->GetDocumentId("namespace", "uri"),
+              IsOkAndHolds(document_id));
+}
+
+TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceIdFingerprint) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          feature_flags_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          GetParam().pre_mapping_fbv, GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
           /*initialize_stats=*/nullptr));
 
   std::unique_ptr<DocumentStore> doc_store =
@@ -5422,8 +5557,7 @@ TEST_P(DocumentStoreTest, PutDocumentWithNoScorablePropertiesInSchema) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5514,8 +5648,7 @@ TEST_P(DocumentStoreTest, PutDocumentWithScorablePropertyThenRead) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5672,8 +5805,7 @@ TEST_P(DocumentStoreTest, ReadScorablePropertyAfterOptimization) {
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -5788,8 +5920,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -5825,8 +5956,7 @@ TEST_P(DocumentStoreTest,
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
                              schema_store->GetSchemaTypeId("Person"));
@@ -5864,8 +5994,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -5903,8 +6032,7 @@ TEST_P(DocumentStoreTest,
                        .SetCardinality(CARDINALITY_REPEATED)))
                .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId schema_type_id,
                              schema_store->GetSchemaTypeId("Person"));
@@ -5944,8 +6072,7 @@ TEST_P(DocumentStoreTest,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
                           feature_flags_.get()));
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -5992,8 +6119,7 @@ TEST_P(DocumentStoreTest,
           .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/false));
   ICING_EXPECT_OK(doc_store->UpdateSchemaStore(schema_store.get()));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaTypeId person_schema_type_id,
                              schema_store->GetSchemaTypeId("Person"));

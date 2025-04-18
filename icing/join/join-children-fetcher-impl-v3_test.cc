@@ -29,10 +29,10 @@
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-join-index-impl-v1.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
 #include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -125,22 +125,25 @@ class JoinChildrenFetcherImplV3Test : public ::testing::Test {
 
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()),
                 IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -232,14 +235,6 @@ TEST_F(JoinChildrenFetcherImplV3Test,
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::ASC);
 
-  std::string qualified_id_join_index_dir_v1 =
-      qualified_id_join_index_dir_ + "_v1";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinIndexImplV1> qualified_id_join_index_v1,
-      QualifiedIdJoinIndexImplV1::Create(
-          filesystem_, std::move(qualified_id_join_index_dir_v1),
-          /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true));
-
   std::string qualified_id_join_index_dir_v2 =
       qualified_id_join_index_dir_ + "_v2";
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -247,13 +242,6 @@ TEST_F(JoinChildrenFetcherImplV3Test,
       QualifiedIdJoinIndexImplV2::Create(
           filesystem_, std::move(qualified_id_join_index_dir_v2),
           /*pre_mapping_fbv=*/false));
-
-  EXPECT_THAT(JoinChildrenFetcherImplV3::Create(
-                  join_spec, schema_store_.get(), doc_store_.get(),
-                  qualified_id_join_index_v1.get(),
-                  /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
-                  /*child_scored_document_hits=*/{}),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(JoinChildrenFetcherImplV3::Create(
                   join_spec, schema_store_.get(), doc_store_.get(),

@@ -152,8 +152,7 @@ class ScorablePropertySetTest : public ::testing::Test {
                                      .SetCardinality(CARDINALITY_REPEATED)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema_proto, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema_proto, /*ignore_errors_and_delete_documents=*/false));
     email_schema_type_id_ =
         schema_store_->GetSchemaTypeId("email").ValueOrDie();
     person_schema_type_id_ =

@@ -31,7 +31,6 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
-#include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file-backed-proto-log.h"
@@ -287,13 +286,12 @@ void RemoveAliveBlobHandles(
 
 }  // namespace
 
-DocumentStore::DocumentStore(const Filesystem* filesystem,
-                             const std::string_view base_dir,
-                             const Clock* clock,
-                             const SchemaStore* schema_store,
-                             const FeatureFlags* feature_flags,
-                             bool pre_mapping_fbv, bool use_persistent_hash_map,
-                             int32_t compression_level)
+DocumentStore::DocumentStore(
+    const Filesystem* filesystem, const std::string_view base_dir,
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags* feature_flags, bool pre_mapping_fbv,
+    bool use_persistent_hash_map, int32_t compression_level,
+    uint32_t compression_threshold_bytes, int32_t compression_mem_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
@@ -302,7 +300,9 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       document_validator_(schema_store),
       pre_mapping_fbv_(pre_mapping_fbv),
       use_persistent_hash_map_(use_persistent_hash_map),
-      compression_level_(compression_level) {}
+      compression_level_(compression_level),
+      compression_threshold_bytes_(compression_threshold_bytes),
+      compression_mem_level_(compression_mem_level) {}
 
 libtextclassifier3::StatusOr<DocumentStore::PutResult> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
@@ -332,6 +332,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const FeatureFlags* feature_flags,
     bool force_recovery_and_revalidate_documents, bool pre_mapping_fbv,
     bool use_persistent_hash_map, int32_t compression_level,
+    uint32_t compression_threshold_bytes, int32_t compression_mem_level,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
@@ -340,7 +341,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
       filesystem, base_dir, clock, schema_store, feature_flags, pre_mapping_fbv,
-      use_persistent_hash_map, compression_level));
+      use_persistent_hash_map, compression_level, compression_threshold_bytes,
+      compression_mem_level));
   ICING_ASSIGN_OR_RETURN(
       InitializeResult initialize_result,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -404,8 +406,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 libtextclassifier3::StatusOr<DocumentStore::InitializeResult>
 DocumentStore::Initialize(bool force_recovery_and_revalidate_documents,
                           InitializeStatsProto* initialize_stats) {
-  auto create_result_or =
-      DocumentLogCreator::Create(filesystem_, base_dir_, compression_level_);
+  auto create_result_or = DocumentLogCreator::Create(
+      filesystem_, base_dir_, compression_level_, compression_threshold_bytes_,
+      compression_mem_level_);
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -1243,7 +1246,6 @@ DocumentStore::InternalPut(DocumentProto&& document,
     // The old document exists, copy over the usage scores and delete the old
     // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
-    put_result.old_document_id = old_document_id;
 
     ICING_RETURN_IF_ERROR(
         usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
@@ -1253,7 +1255,11 @@ DocumentStore::InternalPut(DocumentProto&& document,
     // been deleted previously.
     auto delete_status =
         Delete(old_document_id, clock_.GetSystemTimeMilliseconds());
-    if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+    if (delete_status.ok()) {
+      // The old document had existed and was not previously deleted. Return its
+      // document id to mark it as a replacement.
+      put_result.old_document_id = old_document_id;
+    } else if (!absl_ports::IsNotFound(delete_status)) {
       // Real error, pass it up.
       return delete_status;
     }
@@ -1469,9 +1475,8 @@ DocumentStore::GetNonDeletedDocumentFilterData(DocumentId document_id) const {
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
-    // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
-    // document doesn't exist.
+    // already have checked the status or validated their document_id.
+    // Regardless, return std::nullopt since the document doesn't exist.
     return std::nullopt;
   }
 
@@ -1485,9 +1490,8 @@ bool DocumentStore::IsDeleted(DocumentId document_id) const {
   if (!file_offset_or.ok()) {
     // This would only happen if document_id is out of range of the
     // document_id_mapper, meaning we got some invalid document_id. Callers
-    // should already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return true since the
-    // document doesn't exist.
+    // should already have checked the status or validated their document_id.
+    // Regardless, return true since the document doesn't exist.
     return true;
   }
   int64_t file_offset = *file_offset_or.ValueOrDie();
@@ -1503,9 +1507,8 @@ DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id,
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
-    // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return std::nullopt since the
-    // document doesn't exist.
+    // already have checked the status or validated their document_id.
+    // Regardless, return std::nullopt since the document doesn't exist.
     return std::nullopt;
   }
   DocumentFilterData document_filter_data = filter_data_or.ValueOrDie();
@@ -2144,6 +2147,7 @@ DocumentStore::OptimizeInto(
           filesystem_, new_directory, &clock_, schema_store_, &feature_flags_,
           /*force_recovery_and_revalidate_documents=*/false, pre_mapping_fbv_,
           use_persistent_hash_map_, compression_level_,
+          compression_threshold_bytes_, compression_mem_level_,
           /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
