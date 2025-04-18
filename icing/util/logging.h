@@ -39,6 +39,16 @@ bool ShouldLog(LogSeverity::Code severity, int16_t verbosity = 0);
 // The function will always return false when verbosity is negative.
 bool SetLoggingLevel(LogSeverity::Code severity, int16_t verbosity = 0);
 
+// TODO(b/401363381): Remove this once we have a better way to log to
+// /dev/hvc2 in isolated storage.
+// Indicate whether we should force logging to /dev/hvc2 for ICING_LOG.
+void SetForceDebugLogging(bool force);
+
+// TODO(b/401363381): Remove this once we have a better way to log to
+// /dev/hvc2 in isolated storage.
+// Get whether or not we should force logging to /dev/hvc2 for ICING_LOG.
+bool GetForceDebugLogging();
+
 // A tiny code footprint string stream for assembling log messages.
 struct LoggingStringStream {
   explicit LoggingStringStream(bool should_log) : should_log_(should_log) {}
@@ -123,6 +133,7 @@ class LogMessage {
   const LogSeverity::Code severity_;
   const uint16_t verbosity_;
   const bool should_log_;
+  const bool force_debug_logs_;
 
   // Stream that "prints" all info into a string (not to a file).  We construct
   // here the entire logging message and next print it in one operation.

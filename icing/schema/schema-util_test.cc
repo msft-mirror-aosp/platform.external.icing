@@ -4435,7 +4435,9 @@ TEST_P(SchemaUtilTest,
       /*enable_embedding_quantization=*/true,
       /*enable_repeated_field_joins=*/false,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true);
+      /*enable_schema_database=*/true,
+      /*release_backup_schema_file_if_overlay_present=*/true,
+      /*enable_strict_page_byte_size_limit=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4496,7 +4498,9 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_embedding_quantization=*/true,
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true);
+      /*enable_schema_database=*/true,
+      /*release_backup_schema_file_if_overlay_present=*/true,
+      /*enable_strict_page_byte_size_limit=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5822,14 +5826,18 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_embedding_quantization=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true),
+                        /*enable_schema_database=*/true,
+                        /*release_backup_schema_file_if_overlay_present=*/true,
+                        /*enable_strict_page_byte_size_limit=*/true),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
                         /*enable_embedding_quantization=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true)));
+                        /*enable_schema_database=*/true,
+                        /*release_backup_schema_file_if_overlay_present=*/true,
+                        /*enable_strict_page_byte_size_limit=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

@@ -691,8 +691,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::TransferIndex(
        old_parent_doc_id <
        parent_document_id_to_child_array_info_->num_elements();
        ++old_parent_doc_id) {
-    if (old_parent_doc_id >= document_id_old_to_new.size() ||
-        document_id_old_to_new[old_parent_doc_id] == kInvalidDocumentId) {
+    if (old_parent_doc_id < 0 ||
+        old_parent_doc_id >= document_id_old_to_new.size()) {
+      // If it happens, then the data is corrupted. Return error and let the
+      // caller rebuild everything.
+      return absl_ports::InternalError(
+          "Qualified id join index data parent document id is out of range. "
+          "The index may have been corrupted.");
+    }
+
+    if (document_id_old_to_new[old_parent_doc_id] == kInvalidDocumentId) {
       // Skip if the old parent document id is invalid after optimization.
       continue;
     }
@@ -712,11 +720,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::TransferIndex(
     new_child_doc_join_id_pairs.reserve(array_info->length);
     for (int i = 0; i < array_info->used_length; ++i) {
       DocumentId old_child_doc_id = ptr[i].document_id();
-      DocumentId new_child_doc_id =
-          old_child_doc_id >= 0 &&
-                  old_child_doc_id < document_id_old_to_new.size()
-              ? document_id_old_to_new[old_child_doc_id]
-              : kInvalidDocumentId;
+      if (old_child_doc_id < 0 ||
+          old_child_doc_id >= document_id_old_to_new.size()) {
+        // If it happens, then the data is corrupted. Return error and let the
+        // caller rebuild everything.
+        return absl_ports::InternalError(
+            "Qualified id join index data child document id is out of range. "
+            "The index may have been corrupted.");
+      }
+
+      DocumentId new_child_doc_id = document_id_old_to_new[old_child_doc_id];
       if (new_child_doc_id == kInvalidDocumentId) {
         continue;
       }
