@@ -771,14 +771,17 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
                          old_pl_accessor.GetNextHitsBatch());
   while (!tmp.empty()) {
     for (const Hit& hit : tmp) {
-      // A safety check to add robustness to the codebase, so to make sure that
-      // we never access invalid memory, in case that hit from the posting list
-      // is corrupted.
-      if (hit.document_id() < 0 ||
-          hit.document_id() >= document_id_old_to_new.size()) {
-        continue;
+      DocumentId old_document_id = hit.document_id();
+      if (old_document_id < 0 ||
+          old_document_id >= document_id_old_to_new.size()) {
+        // If it happens, then the posting list is corrupted. Return error and
+        // let the caller rebuild everything.
+        return absl_ports::InternalError(
+            "Main index hit document id is out of range. The index may have "
+            "been corrupted.");
       }
-      DocumentId new_document_id = document_id_old_to_new[hit.document_id()];
+
+      DocumentId new_document_id = document_id_old_to_new[old_document_id];
       // Transfer the document id of the hit, if the document is not deleted
       // or outdated.
       if (new_document_id != kInvalidDocumentId) {

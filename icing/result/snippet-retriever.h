@@ -21,9 +21,10 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
-#include "icing/query/query-terms.h"
+#include "icing/result/snippet-context.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 
@@ -52,16 +53,15 @@ class SnippetRetriever {
       const LanguageSegmenter* language_segmenter,
       const Normalizer* normalizer);
 
-  // Retrieve the snippet information for content in document. terms in
+  // Retrieve the snippet information for content in document. Terms in
   // query_terms are matched to content in document according to match_type.
   // Only sections identified in section_id_mask are considered.
   //
   // Returns an empty SnippetProto if no snippets were found.
-  SnippetProto RetrieveSnippet(
-      const SectionRestrictQueryTermsMap& query_terms,
-      TermMatchType::Code match_type,
-      const ResultSpecProto::SnippetSpecProto& snippet_spec,
-      const DocumentProto& document, SectionIdMask section_id_mask) const;
+  SnippetProto RetrieveSnippet(const SnippetContext& snippet_context,
+                               const DocumentProto& document,
+                               DocumentId document_id,
+                               SectionIdMask section_id_mask) const;
 
  private:
   explicit SnippetRetriever(const SchemaStore* schema_store,
