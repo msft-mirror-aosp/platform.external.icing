@@ -67,6 +67,11 @@ bool GetRandomBoolean(MonkeyTestRandomEngine* random) {
   return dist(*random) == 1;
 }
 
+int GetRandomInt(MonkeyTestRandomEngine* random, int min, int max) {
+  std::uniform_int_distribution<> dist(min, max);
+  return dist(*random);
+}
+
 SearchSpecProto GenerateRandomSearchSpecProto(
     MonkeyTestRandomEngine* random,
     MonkeyDocumentGenerator* document_generator) {
@@ -553,6 +558,8 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
       GetRandomBoolean(&random_));
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_embedding_quantization(GetRandomBoolean(&random_));
+  icing_options.set_compression_threshold_bytes(
+      GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
