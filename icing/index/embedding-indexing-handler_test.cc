@@ -276,11 +276,13 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(embedding_index_->last_added_document_id(),
@@ -351,11 +353,13 @@ TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(embedding_index_->last_added_document_id(),
@@ -408,11 +412,13 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   ASSERT_THAT(embedding_index_->last_added_document_id(),
@@ -487,9 +493,11 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
-  ICING_ASSERT_OK(document_store_->Put(tokenized_document.document()));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK(document_store_->Put(tokenized_document.document_wrapper()));
 
   static constexpr DocumentId kCurrentDocumentId = 3;
   embedding_index_->set_last_added_document_id(kCurrentDocumentId);
@@ -551,11 +559,13 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -632,19 +642,23 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
   DocumentId document_id2 = put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(

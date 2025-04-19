@@ -100,6 +100,12 @@ class ResultStateManager {
       uint64_t next_page_token, const ResultRetrieverV2& result_retriever,
       int64_t current_time_ms) ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Returns the number of active result states currently in ResultStateManager.
+  // Note that this will invalidate expired result states before counting the
+  // number.
+  int GetNumActiveResultStates(int64_t current_time_ms)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Invalidates the result state associated with the given next-page token.
   void InvalidateResultState(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);

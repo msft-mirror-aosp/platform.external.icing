@@ -70,14 +70,17 @@ ResultSpecProto CreateResultSpec(int num_per_page) {
   return result_spec;
 }
 
-DocumentProto CreateDocument(int document_id) {
-  return DocumentBuilder()
-      .SetNamespace("namespace")
-      .SetUri(std::to_string(document_id))
-      .SetSchema("Document")
-      .SetCreationTimestampMs(1574365086666 + document_id)
-      .SetScore(document_id)
-      .Build();
+DocumentWrapper CreateDocument(int document_id) {
+  DocumentWrapper document_wrapper;
+  *document_wrapper.mutable_document() =
+      DocumentBuilder()
+          .SetNamespace("namespace")
+          .SetUri(std::to_string(document_id))
+          .SetSchema("Document")
+          .SetCreationTimestampMs(1574365086666 + document_id)
+          .SetScore(document_id)
+          .Build();
+  return document_wrapper;
 }
 
 class ResultStateManagerThreadSafetyTest : public testing::Test {
