@@ -2,16 +2,14 @@
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
 #include <unistd.h>
+#include <vm_payload.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
-#include <optional>
-#include <vector>
 
 #include "aidl/com/android/isolated_storage_service/BnIcingSearchEngine.h"
 #include "aidl/com/android/isolated_storage_service/BnIsolatedStorageService.h"
-#include <vm_payload.h>
 #include "icing/icing-search-engine.h"
 #include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
@@ -80,7 +78,7 @@ void vmShrinkRay() { sync(); }
 class IcingConnectionImpl
     : public aidl::com::android::isolated_storage_service::BnIcingSearchEngine {
  public:
-  explicit IcingConnectionImpl(uint32_t uid) : uid_(uid) {}
+  explicit IcingConnectionImpl(uint32_t user_id) : user_id_(user_id) {}
 
   ScopedAStatus initialize(
       const std::vector<uint8_t>& icing_search_engine_options_proto,
@@ -88,7 +86,8 @@ class IcingConnectionImpl
     IcingSearchEngineOptions options;
     DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
     options.set_base_dir(std::string(AVmPayload_getEncryptedStoragePath()) +
-                         "/" + std::to_string(uid_) + "/" + options.base_dir());
+                         "/" + std::to_string(user_id_) + "/" +
+                         options.base_dir());
     icing_ = std::make_unique<IcingSearchEngine>(options);
     InitializeResultProto initialize_result = icing_->Initialize();
     SERIALIZE_AND_RETURN_ASTATUS(initialize_result, initialize_result_proto);
@@ -169,8 +168,9 @@ class IcingConnectionImpl
     SERIALIZE_AND_RETURN_ASTATUS(put_result, put_result_proto);
   }
 
-  ScopedAStatus batchPut(const std::vector<uint8_t>& put_document_request_proto,
-                         std::optional<std::vector<uint8_t>>* batch_put_result_proto) {
+  ScopedAStatus batchPut(
+      const std::vector<uint8_t>& put_document_request_proto,
+      std::optional<std::vector<uint8_t>>* batch_put_result_proto) {
     CHECK_ICING_INIT(icing_);
 
     PutDocumentRequest request;
@@ -195,15 +195,15 @@ class IcingConnectionImpl
   }
 
   ScopedAStatus batchGet(
-          const std::vector<uint8_t>& get_result_spec_proto,
-          std::optional<std::vector<uint8_t>>* batch_get_result_proto) {
+      const std::vector<uint8_t>& get_result_spec_proto,
+      std::optional<std::vector<uint8_t>>* batch_get_result_proto) {
     CHECK_ICING_INIT(icing_);
 
     GetResultSpecProto get_result_spec;
     DESERIALIZE_OR_RETURN(get_result_spec_proto, get_result_spec);
 
-    BatchGetResultProto batch_get_result = icing_->BatchGet(
-            std::move(get_result_spec));
+    BatchGetResultProto batch_get_result =
+        icing_->BatchGet(std::move(get_result_spec));
     SERIALIZE_AND_RETURN_ASTATUS(batch_get_result, batch_get_result_proto);
   }
 
@@ -425,7 +425,7 @@ class IcingConnectionImpl
 
  protected:
   std::unique_ptr<icing::lib::IcingSearchEngine> icing_ = nullptr;
-  uint32_t uid_;
+  uint32_t user_id_;
 };
 
 class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
@@ -448,24 +448,24 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
   }
 
   ScopedAStatus getOrCreateIcingConnection(
-      int32_t uid,
+      int32_t user_id,
       std::shared_ptr<
           aidl::com::android::isolated_storage_service::IIcingSearchEngine>*
           icing_server) override {
-    auto connection = icing_connections_.find(uid);
+    auto connection = icing_connections_.find(user_id);
     if (connection != icing_connections_.end()) {
       *icing_server = connection->second;
       return ScopedAStatus::ok();
     }
-    icing_connections_[uid] =
-        ndk::SharedRefBase::make<IcingConnectionImpl>(uid);
-    *icing_server = icing_connections_[uid];
+    icing_connections_[user_id] =
+        ndk::SharedRefBase::make<IcingConnectionImpl>(user_id);
+    *icing_server = icing_connections_[user_id];
     return ScopedAStatus::ok();
   }
 
-  ScopedAStatus removeIcingConnection(int uid) override {
-    ICING_LOG(INFO) << "Removing Icing connection for user " << uid;
-    auto connection = icing_connections_.find(uid);
+  ScopedAStatus removeIcingConnection(int user_id) override {
+    ICING_LOG(INFO) << "Removing Icing connection for user " << user_id;
+    auto connection = icing_connections_.find(user_id);
     if (connection != icing_connections_.end()) {
       icing_connections_.erase(connection);
     }
