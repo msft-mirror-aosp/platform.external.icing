@@ -68,7 +68,6 @@ cc_library_shared {
         "libvm_payload#current",
         "liblog",
         "libicu",
-        "libbase",
     ],
     // In the future, if AppSearch bundles additional standalone shared/jni libs that may
     // have common shared deps, we should consider revisiting the static linking below as the
@@ -76,6 +75,7 @@ cc_library_shared {
     stl: "libc++_static",
     static_libs: [
         "libprotobuf-cpp-lite",
+        "libbase",
         "libicing.microdroid",
         "icing-c-proto",
         "libutf",

@@ -34,18 +34,18 @@ interface IIsolatedStorageService {
   oneway void trimMemory();
 
   /**
-   * Returns an Icing connection for the given uid. Creates a new Icing connection if one does not
-   * already exist for the given uid.
+   * Returns an Icing connection for the given userId. Creates a new Icing connection if one does
+   * not already exist for the given userId.
    *
-   * @param uid The uid of the caller.
-   * @return An Icing connection for the given uid.
+   * @param userId The userId of the caller.
+   * @return An Icing connection for the given userId.
    */
-  IIcingSearchEngine getOrCreateIcingConnection(int uid);
+  IIcingSearchEngine getOrCreateIcingConnection(int userId);
 
   /**
-   * Removes an Icing connection for the given uid
+   * Removes an Icing connection for the given userId.
    *
-   * @param uid The uid of the caller.
+   * @param userId The userId of the caller.
    */
-  oneway void removeIcingConnection(int uid);
+  oneway void removeIcingConnection(int userId);
 }
