@@ -62,10 +62,20 @@ constexpr Feature kHasPropertyFunctionFeature =
 constexpr Feature kEmbeddingSearchFeatureDeprecated =
     "EMBEDDING_SEARCH";  // Features#EMBEDDING_SEARCH
 
+// This feature relates to the use of the
+// "matchScoreExpression(scoring_expression, low, high)" function.
+//
+// Features#MATCH_SCORE_EXPRESSION_FUNCTION
+constexpr Feature kMatchScoreExpressionFunctionFeature =
+    "MATCH_SCORE_EXPRESSION_FUNCTION";
+
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
-  return {kNumericSearchFeature,           kVerbatimSearchFeature,
-          kListFilterQueryLanguageFeature, kHasPropertyFunctionFeature,
-          kEmbeddingSearchFeatureDeprecated};
+  return {kNumericSearchFeature,
+          kVerbatimSearchFeature,
+          kListFilterQueryLanguageFeature,
+          kHasPropertyFunctionFeature,
+          kEmbeddingSearchFeatureDeprecated,
+          kMatchScoreExpressionFunctionFeature};
 }
 
 }  // namespace lib

@@ -15,6 +15,7 @@
 #ifndef ICING_FILE_MEMORY_MAPPED_FILE_BACKED_PROTO_LOG_H_
 #define ICING_FILE_MEMORY_MAPPED_FILE_BACKED_PROTO_LOG_H_
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -83,6 +84,22 @@ class MemoryMappedFileBackedProtoLog {
   //   Checksum on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
+  //
+  // Returns:
+  //   Disk usage on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the file size of the all the elements held in the log. File size
+  // is in bytes. This excludes the size of the header of the log file.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
   // Reads the proto at the given index.
   //
@@ -160,6 +177,18 @@ MemoryMappedFileBackedProtoLog<ProtoT>::UpdateChecksum() {
 }
 
 template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+MemoryMappedFileBackedProtoLog<ProtoT>::GetDiskUsage() const {
+  return proto_fbv_->GetDiskUsage();
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+MemoryMappedFileBackedProtoLog<ProtoT>::GetElementsFileSize() const {
+  return proto_fbv_->GetElementsFileSize();
+}
+
+template <typename ProtoT>
 libtextclassifier3::StatusOr<
     std::unique_ptr<MemoryMappedFileBackedProtoLog<ProtoT>>>
 MemoryMappedFileBackedProtoLog<ProtoT>::Create(const Filesystem& filesystem,
@@ -187,9 +216,10 @@ MemoryMappedFileBackedProtoLog<ProtoT>::Read(int32_t index) const {
         IcingStringUtil::StringPrintf("Index, %d, is less than 0", index));
   }
   if (index + sizeof(ProtoMetadata) >= proto_fbv_->num_elements()) {
+    uint64_t upper_index = proto_fbv_->num_elements() - sizeof(ProtoMetadata);
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-        "Index, %d, is greater/equal than the upper bound, %d", index,
-        proto_fbv_->num_elements() - sizeof(ProtoMetadata)));
+        "Index, %" PRId32 ", is greater/equal than the upper bound, %" PRIu64,
+        index,  upper_index));
   }
 
   ProtoMetadata proto_metadata;

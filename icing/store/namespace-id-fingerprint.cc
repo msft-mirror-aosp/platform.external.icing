@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 
 #include <cstdint>
 #include <string>
@@ -28,9 +28,8 @@
 namespace icing {
 namespace lib {
 
-/* static */ libtextclassifier3::StatusOr<NamespaceFingerprintIdentifier>
-NamespaceFingerprintIdentifier::DecodeFromCString(
-    std::string_view encoded_cstr) {
+/* static */ libtextclassifier3::StatusOr<NamespaceIdFingerprint>
+NamespaceIdFingerprint::DecodeFromCString(std::string_view encoded_cstr) {
   if (encoded_cstr.size() < kMinEncodedLength) {
     return absl_ports::InvalidArgumentError("Invalid length");
   }
@@ -39,15 +38,15 @@ NamespaceFingerprintIdentifier::DecodeFromCString(
       encoded_cstr.substr(0, kEncodedNamespaceIdLength));
   uint64_t fingerprint = encode_util::DecodeIntFromCString(
       encoded_cstr.substr(kEncodedNamespaceIdLength));
-  return NamespaceFingerprintIdentifier(namespace_id, fingerprint);
+  return NamespaceIdFingerprint(namespace_id, fingerprint);
 }
 
-NamespaceFingerprintIdentifier::NamespaceFingerprintIdentifier(
-    NamespaceId namespace_id, std::string_view target_str)
+NamespaceIdFingerprint::NamespaceIdFingerprint(NamespaceId namespace_id,
+                                               std::string_view target_str)
     : namespace_id_(namespace_id),
       fingerprint_(tc3farmhash::Fingerprint64(target_str)) {}
 
-std::string NamespaceFingerprintIdentifier::EncodeToCString() const {
+std::string NamespaceIdFingerprint::EncodeToCString() const {
   // encoded_namespace_id_str should be 1 to 3 bytes based on the value of
   // namespace_id.
   std::string encoded_namespace_id_str =
