@@ -1,13 +1,12 @@
 #include <android/binder_auto_utils.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
+#include <unistd.h>
 #include <vm_payload.h>
 
 #include <cstdint>
 #include <cstdlib>
-#include <dlfcn.h>
 #include <memory>
-#include <unistd.h>
 
 #include "aidl/com/android/isolated_storage_service/BnIcingSearchEngine.h"
 #include "aidl/com/android/isolated_storage_service/BnIsolatedStorageService.h"
@@ -68,40 +67,12 @@ using ::icing::lib::SuggestionSpecProto;
 using ::icing::lib::TermMatchType;
 using ::icing::lib::UsageReport;
 using BlobHandleProto = ::icing::lib::PropertyProto::BlobHandleProto;
-using ::icing::lib::ERROR;
 using ::icing::lib::INFO;
 using ::ndk::ScopedAStatus;
 
 namespace {
 void vmShrinkRay() { sync(); }
 }  // namespace
-
-// TODO(b/413761935) move better or equivalent solution into AVF
-// TODO - is there a way to make dlopen automatically fill in weak symbols?
-// please tell smoreland@
-struct AVmPayloadLazy {
-    decltype(AVmPayload_getEncryptedStoragePath)* AVmPayload_getEncryptedStoragePath = nullptr;
-    decltype(AVmPayload_notifyPayloadReady)* AVmPayload_notifyPayloadReady = nullptr;
-    decltype(AVmPayload_runVsockRpcServer)* AVmPayload_runVsockRpcServer = nullptr;
-
-    void load() {
-      void* libvmpayload = dlopen("libvm_payload.so", RTLD_NOW | RTLD_GLOBAL);
-      if (libvmpayload == nullptr) {
-        ICING_LOG(ERROR) << "Failed to load libvm_payload.so: " << dlerror();
-        abort();
-      }
-#define LOAD_ONE(sym) do { \
-    sym = (decltype(sym)) dlsym(libvmpayload, #sym); \
-    if (sym == nullptr) { ICING_LOG(ERROR) << "Failed to load " #sym << dlerror(); } \
-    } while(false)
-
-      LOAD_ONE(AVmPayload_getEncryptedStoragePath);
-      LOAD_ONE(AVmPayload_notifyPayloadReady);
-      LOAD_ONE(AVmPayload_runVsockRpcServer);
-
-#undef LOAD_ONE
-    }
-} gVmPayloadLazy;
 
 // This class implements the AIDL interface for the Icing connection.
 class IcingConnectionImpl
@@ -114,7 +85,7 @@ class IcingConnectionImpl
       std::optional<std::vector<uint8_t>>* initialize_result_proto) {
     IcingSearchEngineOptions options;
     DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
-    options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
+    options.set_base_dir(std::string(AVmPayload_getEncryptedStoragePath()) +
                          "/" + std::to_string(user_id_) + "/" +
                          options.base_dir());
     icing_ = std::make_unique<IcingSearchEngine>(options);
@@ -506,8 +477,6 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
 }  // namespace
 
 extern "C" int AVmPayload_main() {
-  gVmPayloadLazy.load();
-
   // TODO(b/401363381): Remove this once we have a better way to log to
   // /dev/hvc2 in isolated storage.
   // Force logging to /dev/hvc2 in isolated storage.
@@ -516,8 +485,8 @@ extern "C" int AVmPayload_main() {
   auto service = ndk::SharedRefBase::make<IsolatedStorageServiceImpl>();
   auto callback = []([[maybe_unused]] void* param) {
     ICING_LOG(INFO) << "IsolatedStorageService VM Payload ready";
-    gVmPayloadLazy.AVmPayload_notifyPayloadReady();
+    AVmPayload_notifyPayloadReady();
   };
-  gVmPayloadLazy.AVmPayload_runVsockRpcServer(service->asBinder().get(), service->PORT,
+  AVmPayload_runVsockRpcServer(service->asBinder().get(), service->PORT,
                                callback, /*param=*/nullptr);
 }

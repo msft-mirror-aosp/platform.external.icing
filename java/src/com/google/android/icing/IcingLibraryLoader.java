@@ -6,7 +6,7 @@ package com.google.android.icing;
  */
 final class IcingLibraryLoader {
   public static void loadLibrary() {
-    System.loadLibrary("icing_anywhere");
+    System.loadLibrary("icing");
   }
 
   private IcingLibraryLoader() {}

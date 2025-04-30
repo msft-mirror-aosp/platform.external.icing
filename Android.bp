@@ -61,39 +61,35 @@ cc_defaults {
 }
 
 cc_library_shared {
-    name: "libicing_anywhere",
+    name: "libisolated_storage_service",
     srcs: ["isolated_storage_service/payload/*.cc"],
     shared_libs: [
         "libbinder_ndk",
+        "libvm_payload#current",
         "liblog",
         "libicu",
-
-        // TODO(b/413761935)
-        // not available on host, so has to be loaded dynamically when this is used in the VM
-        // "libvm_payload#current",
     ],
-    header_libs: ["vm_payload_headers"],
+    // In the future, if AppSearch bundles additional standalone shared/jni libs that may
+    // have common shared deps, we should consider revisiting the static linking below as the
+    // benefits on apk size may diminish.
     stl: "libc++_static",
     static_libs: [
         "libprotobuf-cpp-lite",
         "libbase",
+        "libicing.microdroid",
         "icing-c-proto",
         "libutf",
         "libz",
         "com.android.isolated_storage_service.aidl-ndk",
-    ],
-    whole_static_libs: [
-        "libicing",
     ],
     min_sdk_version: "Tiramisu",
     apex_available: ["com.android.appsearch"],
     version_script: "isolated_storage_service/iss.lds",
 }
 
-// TODO(b/193244409): Use the filegroup libicing_test_common along with
-//                    libicing_defaults to build libicing.
+// Microdroid version of Icing has statically linked libz.
 cc_library_static {
-    name: "libicing",
+    name: "libicing.microdroid",
     defaults: ["libicing_defaults"],
     srcs: [
         "icing/**/*.cc",
@@ -115,15 +111,49 @@ cc_library_static {
         "icing-c-proto",
         "libutf",
         "libz",
-        "libprotobuf-cpp-lite",
     ],
     shared_libs: [
         "libicu",
         "liblog",
+        "libprotobuf-cpp-lite",
     ],
     version_script: "icing/jni.lds",
     min_sdk_version: "Tiramisu",
-    visibility: [":__subpackages__"],
+}
+
+// TODO(b/193244409): Use the filegroup libicing_test_common along with
+//                    libicing_defaults to build libicing.
+cc_library_shared {
+    name: "libicing",
+    defaults: ["libicing_defaults"],
+    srcs: [
+        "icing/**/*.cc",
+    ],
+    exclude_srcs: [
+        "icing/**/*-test-*",
+        "icing/**/*-test.*",
+        "icing/**/*_test.cc",
+        "icing/**/*_benchmark.cc",
+        "icing/testing/**/*",
+        "icing/tokenization/reverse_jni/**/*",
+        "icing/tokenization/simple/**/*",
+        "icing/tools/**/*",
+        "icing/transform/map/**/*",
+        "icing/transform/simple/**/*",
+    ],
+    header_libs: ["jni_headers"],
+    static_libs: [
+        "icing-c-proto",
+        "libutf",
+    ],
+    shared_libs: [
+        "libicu",
+        "liblog",
+        "libprotobuf-cpp-lite",
+        "libz",
+    ],
+    version_script: "icing/jni.lds",
+    min_sdk_version: "Tiramisu",
 }
 
 filegroup {
