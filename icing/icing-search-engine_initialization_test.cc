@@ -4483,7 +4483,8 @@ TEST_F(IcingSearchEngineInitializationTest,
         QualifiedIdJoinIndexImplV3::Create(
             filesystem, GetQualifiedIdJoinIndexDir(), *feature_flags_));
     EXPECT_THAT(qualified_id_join_index, Pointee(IsEmpty()));
-    EXPECT_THAT(qualified_id_join_index->Get(/*parent_document_id=*/0),
+    EXPECT_THAT(qualified_id_join_index->GetDocumentJoinIdPairArrayView(
+                    /*parent_document_id=*/0),
                 IsOkAndHolds(IsEmpty()));
   }
 }
@@ -7192,18 +7193,12 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
     // 1. Set schema.
     if (options.enable_schema_database()) {
-      // Can only set schema for a single database at a time.
+      // Use the SetSchemaRequestProto with empty database field to populate
+      // both databases at once.
       ASSERT_THAT(icing
                       .SetSchema(CreateSetSchemaRequestProto(
-                          previous_version_db1_schema,
-                          previous_version_db1_schema.types(0).database(),
-                          /*ignore_errors_and_delete_documents=*/false))
-                      .status(),
-                  ProtoIsOk());
-      ASSERT_THAT(icing
-                      .SetSchema(CreateSetSchemaRequestProto(
-                          previous_version_db2_schema,
-                          previous_version_db2_schema.types(0).database(),
+                          previous_version_schema,
+                          /*database=*/"",
                           /*ignore_errors_and_delete_documents=*/false))
                       .status(),
                   ProtoIsOk());

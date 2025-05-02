@@ -732,6 +732,175 @@ TEST_F(SchemaStoreTest, SetEmptyDatabaseSchemaOk) {
   EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
 }
 
+TEST_F(SchemaStoreTest, SetSchemaWithEmptyDatabaseResetsEntireSchema) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("email");
+  result.schema_types_new_by_name.insert("message");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
+
+  // Reset the schema using an empty database. This should ignore the
+  // database field in the schema type configs and reset the entire schema.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/email_v1")
+                            .SetDatabase("db1/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/message_v1")
+                            .SetDatabase("db1/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db2/email_v2")
+                            .SetDatabase("db2/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db2/message_v2")
+                            .SetDatabase("db2/"))
+               .Build();
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_new_by_name.insert("db1/email_v1");
+  result.schema_types_new_by_name.insert("db1/message_v1");
+  result.schema_types_new_by_name.insert("db2/email_v2");
+  result.schema_types_new_by_name.insert("db2/message_v2");
+  result.schema_types_deleted_by_name.insert("email");
+  result.schema_types_deleted_by_name.insert("message");
+  result.schema_types_deleted_by_id.insert(0);
+  result.schema_types_deleted_by_id.insert(1);
+
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"",
+                  /*ignore_errors_and_delete_documents=*/true)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(schema))));
+
+  // The empty database should be replaced by db1/ and db2/.
+  EXPECT_THAT(schema_store->GetSchema(""),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      schema_store->GetSchema("db1/"),
+      IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db1/email_v1")
+                                                .SetDatabase("db1/"))
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db1/message_v1")
+                                                .SetDatabase("db1/"))
+                                   .Build())));
+  EXPECT_THAT(
+      schema_store->GetSchema("db2/"),
+      IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db2/email_v2")
+                                                .SetDatabase("db2/"))
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db2/message_v2")
+                                                .SetDatabase("db2/"))
+                                   .Build())));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithUnpopulatedDatabaseResetsEntireSchema) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("email");
+  result.schema_types_new_by_name.insert("message");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
+
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/email_v1")
+                            .SetDatabase("db1/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/message_v1")
+                            .SetDatabase("db1/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db2/email_v2")
+                            .SetDatabase("db2/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db2/message_v2")
+                            .SetDatabase("db2/"))
+               .Build();
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_new_by_name.insert("db1/email_v1");
+  result.schema_types_new_by_name.insert("db1/message_v1");
+  result.schema_types_new_by_name.insert("db2/email_v2");
+  result.schema_types_new_by_name.insert("db2/message_v2");
+  result.schema_types_deleted_by_name.insert("email");
+  result.schema_types_deleted_by_name.insert("message");
+  result.schema_types_deleted_by_id.insert(0);
+  result.schema_types_deleted_by_id.insert(1);
+
+  // Reset the schema without populating the database field in the
+  // SetSchemaRequestProto. This should ignore the database field in the schema
+  // type configs and reset the entire schema.
+  SetSchemaRequestProto set_schema_request;
+  *set_schema_request.mutable_schema() = schema;
+  set_schema_request.clear_database();
+  set_schema_request.set_ignore_errors_and_delete_documents(
+      /*ignore_errors_and_delete_documents=*/true);
+
+  EXPECT_THAT(schema_store->SetSchema(std::move(set_schema_request)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(schema))));
+
+  // The empty database should be replaced by db1/ and db2/.
+  EXPECT_THAT(schema_store->GetSchema(""),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      schema_store->GetSchema("db1/"),
+      IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db1/email_v1")
+                                                .SetDatabase("db1/"))
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db1/message_v1")
+                                                .SetDatabase("db1/"))
+                                   .Build())));
+  EXPECT_THAT(
+      schema_store->GetSchema("db2/"),
+      IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db2/email_v2")
+                                                .SetDatabase("db2/"))
+                                   .AddType(SchemaTypeConfigBuilder()
+                                                .SetType("db2/message_v2")
+                                                .SetDatabase("db2/"))
+                                   .Build())));
+}
+
 TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -1644,24 +1813,6 @@ TEST_F(SchemaStoreTest, SetSchemaWithMismatchedDbFails) {
           .Build();
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"db_mismatch",
-                  /*ignore_errors_and_delete_documents=*/false)),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }

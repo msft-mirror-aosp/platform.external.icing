@@ -38,7 +38,6 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/store/corpus-id.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -1188,13 +1187,13 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   entry = result_grouping->add_entry_groupings();
   entry->set_namespace_("namespace2");
 
-  // Get corpus ids.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id1, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id2, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace2", "Document"));
+  // Get result grouping entry ids.
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      int32_t entry_id1, document_store_->GetResultGroupingEntryId(
+                             result_grouping_type, "namespace1", "Document"));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      int32_t entry_id2, document_store_->GetResultGroupingEntryId(
+                             result_grouping_type, "namespace2", "Document"));
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
@@ -1207,7 +1206,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     absl_ports::shared_lock l(&result_state.mutex);
 
     ASSERT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     ASSERT_THAT(result_state.group_result_limits, ElementsAre(3, 1));
   }
 
@@ -1219,7 +1218,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // document5, document4, document1 belong to namespace2 (with max_results =
   // 1).
-  // docuemnt3, document2 belong to namespace 1 (with max_results = 3).
+  // document3, document2 belong to namespace 1 (with max_results = 3).
   // Since num_per_page is 2, we expect to get document5 and document3 in the
   // first page.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
@@ -1246,9 +1245,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // round, num_returned should still be 2, since document4 was "filtered out"
     // and should not be counted into num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(2));
-    // corpus_id_group_id_map should be unchanged.
+    // entry_id_group_id_map should be unchanged.
     EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(2, 0));
   }
@@ -1270,9 +1269,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // since document1 was "filtered out" and should not be counted into
     // num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(3));
-    // corpus_id_group_id_map should be unchanged.
+    // entry_id_group_id_map should be unchanged.
     EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(1, 0));
   }

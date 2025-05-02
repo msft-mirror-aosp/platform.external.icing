@@ -277,31 +277,35 @@ EmbeddingMatchSnippetProto CreateEmbeddingMatchSnippetProto(
 EmbeddingQueryResults CreateEmailEmbeddingQueryResults(int num_documents) {
   SectionId embedding1_section_id = 1;
   SectionId embedding2_section_id = 2;
-  EmbeddingQueryResults embedding_query_results;
+  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/2);
 
   for (int doc_id = 0; doc_id < num_documents; ++doc_id) {
     EmbeddingMatchInfos& info_model1 =
-        embedding_query_results
-            .result_infos[/*query_index=*/0][EMBEDDING_METRIC_DOT_PRODUCT]
-                         [doc_id];
-    info_model1.AppendScore(1.1 + doc_id);
-    info_model1.AppendScore(2.2 + doc_id);
+        GetOrCreateEmbeddingMatchInfosForDocument(
+            embedding_query_results, /*query_index=*/0,
+            EMBEDDING_METRIC_DOT_PRODUCT, doc_id);
+    info_model1.AppendScore(*embedding_query_results.global_scores,
+                            1.1 + doc_id);
     // {2, 3, 4 + doc_id}, position 2
     info_model1.AppendSectionInfo(
-        embedding1_section_id,
+        *embedding_query_results.global_section_infos, embedding1_section_id,
         /*position_in_section_for_dimension_and_signature=*/1);
+    info_model1.AppendScore(*embedding_query_results.global_scores,
+                            2.2 + doc_id);
     // {-1, -2, -6 + doc_id}, position 1
     info_model1.AppendSectionInfo(
-        embedding2_section_id,
+        *embedding_query_results.global_section_infos, embedding2_section_id,
         /*position_in_section_for_dimension_and_signature=*/0);
 
     EmbeddingMatchInfos& info_model2 =
-        embedding_query_results
-            .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE][doc_id];
-    info_model2.AppendScore(3.3 + doc_id);
+        GetOrCreateEmbeddingMatchInfosForDocument(
+            embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
+            doc_id);
+    info_model2.AppendScore(*embedding_query_results.global_scores,
+                            3.3 + doc_id);
     // {1, 2, 3, 4 + doc_id}, position 1
     info_model2.AppendSectionInfo(
-        embedding1_section_id,
+        *embedding_query_results.global_section_infos, embedding1_section_id,
         /*position_in_section_for_dimension_and_signature=*/0);
   }
   return embedding_query_results;
