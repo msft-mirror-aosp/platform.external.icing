@@ -141,7 +141,7 @@ std::string GetDatabaseFromSchemaType(const std::string& schema_type,
   size_t db_index = schema_type.find(database_delimeter);
   std::string database;
   if (db_index != std::string::npos) {
-    database = schema_type.substr(0, db_index);
+    database = schema_type.substr(0, db_index + 1);
   }
   return database;
 }
