@@ -620,65 +620,66 @@ TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
                           feature_flags_.get(),
                           /*initialize_stats=*/nullptr));
 
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(db1_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 
   // Set a schema in a different database
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the full schema. Databases that are updated last are appended to the
   // schema proto
-  SchemaProto expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
+  SchemaProto expected_full_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/email")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/message")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .Build();
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               IsOkAndHolds(EqualsProto(db2_schema)));
 }
 
@@ -936,49 +937,50 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto expected_full_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/email")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/message")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .Build();
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
@@ -989,16 +991,16 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema, this should not have changed
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               IsOkAndHolds(EqualsProto(db2_schema)));
 }
 
@@ -1010,74 +1012,76 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto db3_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
-  SchemaProto expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto db3_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/email")
+                                            .SetDatabase("db3/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/message")
+                                            .SetDatabase("db3/"))
+                               .Build();
+  SchemaProto expected_full_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/email")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/message")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db3/email")
+                                                      .SetDatabase("db3/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db3/message")
+                                                      .SetDatabase("db3/"))
+                                         .Build();
 
   // Set schema for db1
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db3_email");
-  result.schema_types_new_by_name.insert("db3_message");
+  result.schema_types_new_by_name.insert("db3/email");
+  result.schema_types_new_by_name.insert("db3/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db3_schema, /*database=*/"db3",
+                  db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Verify schema.
@@ -1087,20 +1091,20 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
 
   // Reset db2 with the types reordered. This should not change the existing
   // schema in any way.
-  SchemaProto reordered_db2_schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .Build();
+  SchemaProto reordered_db2_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
 
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult> actual_result =
       schema_store->SetSchema(CreateSetSchemaRequestProto(
-          reordered_db2_schema, /*database=*/"db2",
+          reordered_db2_schema, /*database=*/"db2/",
           /*ignore_errors_and_delete_documents=*/false));
   EXPECT_THAT(actual_result, IsOkAndHolds(EqualsSetSchemaResult(result)));
   EXPECT_THAT(actual_result.ValueOrDie().old_schema_type_ids_changed,
@@ -1109,16 +1113,16 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
   // Check the schema
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 
   libtextclassifier3::StatusOr<SchemaProto> actual_db2_schema =
-      schema_store->GetSchema("db2");
+      schema_store->GetSchema("db2/");
   EXPECT_THAT(actual_db2_schema, IsOkAndHolds(EqualsProto(db2_schema)));
   EXPECT_THAT(actual_db2_schema.ValueOrDie(),
               Not(EqualsProto(reordered_db2_schema)));
 
-  EXPECT_THAT(schema_store->GetSchema("db3"),
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
               IsOkAndHolds(EqualsProto(db3_schema)));
 }
 
@@ -1130,74 +1134,76 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreservesSchemaTypeIds) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto db3_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
-  SchemaProto expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto db3_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/email")
+                                            .SetDatabase("db3/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/message")
+                                            .SetDatabase("db3/"))
+                               .Build();
+  SchemaProto expected_full_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/email")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/message")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db3/email")
+                                                      .SetDatabase("db3/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db3/message")
+                                                      .SetDatabase("db3/"))
+                                         .Build();
 
   // Set schema for db1
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db3_email");
-  result.schema_types_new_by_name.insert("db3_message");
+  result.schema_types_new_by_name.insert("db3/email");
+  result.schema_types_new_by_name.insert("db3/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db3_schema, /*database=*/"db3",
+                  db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Verify schema.
@@ -1211,58 +1217,58 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreservesSchemaTypeIds) {
   // Whether or not the SchemaTypeIds for db2 change depends on the order in the
   // new db2 SchemaProto (in this case, existing type's order and ids do not
   // change)
-  db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_recipient")
-                       .SetDatabase("db2"))
-          .Build();
+  db2_schema = SchemaBuilder()
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db2/email")
+                                .SetDatabase("db2/"))
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db2/message")
+                                .SetDatabase("db2/"))
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db2/recipient")
+                                .SetDatabase("db2/"))
+                   .Build();
   expected_full_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()  // db1 types
-                       .SetType("db1_email")
-                       .SetDatabase("db1"))
+                       .SetType("db1/email")
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
+                       .SetType("db1/message")
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()  // db2 types
-                       .SetType("db2_email")
-                       .SetDatabase("db2"))
+                       .SetType("db2/email")
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
+                       .SetType("db2/message")
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()  // db3 types
-                       .SetType("db3_email")
-                       .SetDatabase("db3"))
+                       .SetType("db3/email")
+                       .SetDatabase("db3/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
+                       .SetType("db3/message")
+                       .SetDatabase("db3/"))
           .AddType(SchemaTypeConfigBuilder()  // Additional db2 type is appended
                                               // at the end
-                       .SetType("db2_recipient")
-                       .SetDatabase("db2"))
+                       .SetType("db2/recipient")
+                       .SetDatabase("db2/"))
           .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_recipient");
+  result.schema_types_new_by_name.insert("db2/recipient");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               IsOkAndHolds(EqualsProto(db2_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db3"),
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
               IsOkAndHolds(EqualsProto(db3_schema)));
 }
 
@@ -1274,101 +1280,101 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto db3_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto db3_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/email")
+                                            .SetDatabase("db3/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/message")
+                                            .SetDatabase("db3/"))
+                               .Build();
 
   // Set schema for db1
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db3_email");
-  result.schema_types_new_by_name.insert("db3_message");
+  result.schema_types_new_by_name.insert("db3/email");
+  result.schema_types_new_by_name.insert("db3/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db3_schema, /*database=*/"db3",
+                  db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema again for db2 and add a type. The added type should be appended
   // to the end of the SchemaProto.
-  db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_recipient")
-                       .SetDatabase("db2"))
-          .Build();
+  db2_schema = SchemaBuilder()
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db2/email")
+                                .SetDatabase("db2/"))
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db2/message")
+                                .SetDatabase("db2/"))
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db2/recipient")
+                                .SetDatabase("db2/"))
+                   .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_recipient");
+  result.schema_types_new_by_name.insert("db2/recipient");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   SchemaProto expected_full_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_email")  // SchemaTypeId 0
-                       .SetDatabase("db1"))
+                       .SetType("db1/email")  // SchemaTypeId 0
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")  // SchemaTypeId 1
-                       .SetDatabase("db1"))
+                       .SetType("db1/message")  // SchemaTypeId 1
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_email")  // SchemaTypeId 2
-                       .SetDatabase("db2"))
+                       .SetType("db2/email")  // SchemaTypeId 2
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")  // SchemaTypeId 3
-                       .SetDatabase("db2"))
+                       .SetType("db2/message")  // SchemaTypeId 3
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_email")  // SchemaTypeId 4
-                       .SetDatabase("db3"))
+                       .SetType("db3/email")  // SchemaTypeId 4
+                       .SetDatabase("db3/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")  // SchemaTypeId 5
-                       .SetDatabase("db3"))
+                       .SetType("db3/message")  // SchemaTypeId 5
+                       .SetDatabase("db3/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_recipient")  // SchemaTypeId 6
-                       .SetDatabase("db2"))
+                       .SetType("db2/recipient")  // SchemaTypeId 6
+                       .SetDatabase("db2/"))
           .Build();
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
@@ -1379,49 +1385,49 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
   // db2 should have their type ids changed.
   db2_schema = SchemaBuilder()
                    .AddType(SchemaTypeConfigBuilder()
-                                .SetType("db2_message")
-                                .SetDatabase("db2"))
+                                .SetType("db2/message")
+                                .SetDatabase("db2/"))
                    .Build();
   expected_full_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_email")  // SchemaTypeId 0
-                       .SetDatabase("db1"))
+                       .SetType("db1/email")  // SchemaTypeId 0
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")  // SchemaTypeId 1
-                       .SetDatabase("db1"))
+                       .SetType("db1/message")  // SchemaTypeId 1
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")  // SchemaTypeId 2
-                       .SetDatabase("db2"))
+                       .SetType("db2/message")  // SchemaTypeId 2
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_email")  // SchemaTypeId 3
-                       .SetDatabase("db3"))
+                       .SetType("db3/email")  // SchemaTypeId 3
+                       .SetDatabase("db3/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")  // SchemaTypeId 4
-                       .SetDatabase("db3"))
+                       .SetType("db3/message")  // SchemaTypeId 4
+                       .SetDatabase("db3/"))
           .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_deleted_by_name.insert("db2_email");
-  result.schema_types_deleted_by_name.insert("db2_recipient");
+  result.schema_types_deleted_by_name.insert("db2/email");
+  result.schema_types_deleted_by_name.insert("db2/recipient");
   result.schema_types_deleted_by_id.insert(2);   // db2_email
   result.schema_types_deleted_by_id.insert(6);   // db2_recipient
   result.old_schema_type_ids_changed.insert(3);  // db2_message
   result.old_schema_type_ids_changed.insert(4);  // db3_email
   result.old_schema_type_ids_changed.insert(5);  // db3_message
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/true)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               IsOkAndHolds(EqualsProto(db2_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db3"),
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
               IsOkAndHolds(EqualsProto(db3_schema)));
 }
 
@@ -1433,79 +1439,79 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto db3_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto db3_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/email")
+                                            .SetDatabase("db3/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db3/message")
+                                            .SetDatabase("db3/"))
+                               .Build();
 
   // Set schema for db1
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db3_email");
-  result.schema_types_new_by_name.insert("db3_message");
+  result.schema_types_new_by_name.insert("db3/email");
+  result.schema_types_new_by_name.insert("db3/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db3_schema, /*database=*/"db3",
+                  db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Verify schema.
   SchemaProto expected_full_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_email")  // SchemaTypeId 0
-                       .SetDatabase("db1"))
+                       .SetType("db1/email")  // SchemaTypeId 0
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")  // SchemaTypeId 1
-                       .SetDatabase("db1"))
+                       .SetType("db1/message")  // SchemaTypeId 1
+                       .SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_email")  // SchemaTypeId 2
-                       .SetDatabase("db2"))
+                       .SetType("db2/email")  // SchemaTypeId 2
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")  // SchemaTypeId 3
-                       .SetDatabase("db2"))
+                       .SetType("db2/message")  // SchemaTypeId 3
+                       .SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_email")  // SchemaTypeId 4
-                       .SetDatabase("db3"))
+                       .SetType("db3/email")  // SchemaTypeId 4
+                       .SetDatabase("db3/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")  // SchemaTypeId 5
-                       .SetDatabase("db3"))
+                       .SetType("db3/message")  // SchemaTypeId 5
+                       .SetDatabase("db3/"))
           .Build();
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
@@ -1516,40 +1522,41 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   db2_schema = SchemaProto();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_deleted_by_name.insert("db2_email");
-  result.schema_types_deleted_by_name.insert("db2_message");
+  result.schema_types_deleted_by_name.insert("db2/email");
+  result.schema_types_deleted_by_name.insert("db2/message");
   result.schema_types_deleted_by_id.insert(2);   // db2_email
   result.schema_types_deleted_by_id.insert(3);   // db2_message
   result.old_schema_type_ids_changed.insert(4);  // db3_email
   result.old_schema_type_ids_changed.insert(5);  // db3_message
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/true)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema. Schemas for db1 and db3 should be unchanged.
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db3"),
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
               IsOkAndHolds(EqualsProto(db3_schema)));
 
   // GetSchema for db2 should return NotFoundError
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db3_email").SetDatabase("db3"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db3_message")
-                       .SetDatabase("db3"))
-          .Build();
+  expected_full_schema = SchemaBuilder()
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db1/email")
+                                          .SetDatabase("db1/"))
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db1/message")
+                                          .SetDatabase("db1/"))
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db3/email")
+                                          .SetDatabase("db3/"))
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db3/message")
+                                          .SetDatabase("db3/"))
+                             .Build();
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
 }
@@ -1592,49 +1599,50 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto expected_full_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/email")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/message")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .Build();
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
@@ -1644,28 +1652,29 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
   // Make db2 incompatible by changing a type name
   SchemaProto db2_schema_incompatible =
       SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_recipient")
-                       .SetDatabase("db2"))
+                       .SetType("db2/email")
+                       .SetDatabase("db2/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db2/recipient")
+                       .SetDatabase("db2/"))
           .Build();
   result = SchemaStore::SetSchemaResult();
   result.success = false;
-  result.schema_types_deleted_by_name.insert("db2_message");
-  result.schema_types_new_by_name.insert("db2_recipient");
+  result.schema_types_deleted_by_name.insert("db2/message");
+  result.schema_types_new_by_name.insert("db2/recipient");
   result.schema_types_deleted_by_id.insert(3);  // db2_message
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema_incompatible, /*database=*/"db2",
+                  db2_schema_incompatible, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema, this should not have changed
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               IsOkAndHolds(EqualsProto(db2_schema)));
 }
 
@@ -1677,49 +1686,50 @@ TEST_F(SchemaStoreTest, SetInvalidInDifferentDatabaseFails) {
                           /*initialize_stats=*/nullptr));
 
   // Set schema for the first time
-  SchemaProto db1_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
-  SchemaProto db2_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
-  SchemaProto expected_full_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .Build();
+  SchemaProto db1_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/email")
+                                            .SetDatabase("db1/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db1/message")
+                                            .SetDatabase("db1/"))
+                               .Build();
+  SchemaProto db2_schema = SchemaBuilder()
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/email")
+                                            .SetDatabase("db2/"))
+                               .AddType(SchemaTypeConfigBuilder()
+                                            .SetType("db2/message")
+                                            .SetDatabase("db2/"))
+                               .Build();
+  SchemaProto expected_full_schema = SchemaBuilder()
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/email")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db1/message")
+                                                      .SetDatabase("db1/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/email")
+                                                      .SetDatabase("db2/"))
+                                         .AddType(SchemaTypeConfigBuilder()
+                                                      .SetType("db2/message")
+                                                      .SetDatabase("db2/"))
+                                         .Build();
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("db1_email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_new_by_name.insert("db2_email");
-  result.schema_types_new_by_name.insert("db2_message");
+  result.schema_types_new_by_name.insert("db2/email");
+  result.schema_types_new_by_name.insert("db2/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
@@ -1735,23 +1745,23 @@ TEST_F(SchemaStoreTest, SetInvalidInDifferentDatabaseFails) {
           .Build();
   SchemaProto db2_schema_incompatible = SchemaBuilder()
                                             .AddType(SchemaTypeConfigBuilder()
-                                                         .SetType("db2_email")
-                                                         .SetDatabase("db2")
+                                                         .SetType("db2/email")
+                                                         .SetDatabase("db2/")
                                                          .AddProperty(prop)
                                                          .AddProperty(prop))
                                             .Build();
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema_incompatible,
-                  /*database=*/"db2",
+                  /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               StatusIs(libtextclassifier3::StatusCode::ALREADY_EXISTS));
 
   // Check the schema, this should not have changed
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  EXPECT_THAT(schema_store->GetSchema("db2"),
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
               IsOkAndHolds(EqualsProto(db2_schema)));
 }
 
@@ -1762,21 +1772,22 @@ TEST_F(SchemaStoreTest, SetSchemaWithMultipleDbFails) {
                           feature_flags_.get(),
                           /*initialize_stats=*/nullptr));
 
-  SchemaProto combined_schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db2_email").SetDatabase("db2"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
+  SchemaProto combined_schema = SchemaBuilder()
+                                    .AddType(SchemaTypeConfigBuilder()
+                                                 .SetType("db2/email")
+                                                 .SetDatabase("db2/"))
+                                    .AddType(SchemaTypeConfigBuilder()
+                                                 .SetType("db2/message")
+                                                 .SetDatabase("db2/"))
+                                    .AddType(SchemaTypeConfigBuilder()
+                                                 .SetType("db1/email")
+                                                 .SetDatabase("db1/"))
+                                    .AddType(SchemaTypeConfigBuilder()
+                                                 .SetType("db1/message")
+                                                 .SetDatabase("db1/"))
+                                    .Build();
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  combined_schema, /*database=*/"db1",
+                  combined_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -1792,25 +1803,25 @@ TEST_F(SchemaStoreTest, SetSchemaWithMismatchedDbFails) {
       SchemaBuilder()
           // This type does not explicitly set its database, so it defaults to
           // the empty database.
-          .AddType(SchemaTypeConfigBuilder().SetType("db1_email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("db1/email"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
+                       .SetType("db1/message")
+                       .SetDatabase("db1/"))
           .Build();
 
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  schema, /*database=*/"db1",
+                  schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder().SetType("db1_email").SetDatabase("db1"))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
-          .Build();
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/email")
+                            .SetDatabase("db1/"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/message")
+                            .SetDatabase("db1/"))
+               .Build();
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"db_mismatch",
                   /*ignore_errors_and_delete_documents=*/false)),
@@ -1828,42 +1839,42 @@ TEST_F(SchemaStoreTest, SetSchemaWithDuplicateTypeNameAcrossDifferentDbFails) {
   SchemaProto db1_schema =
       SchemaBuilder()
           .AddType(
-              SchemaTypeConfigBuilder().SetType("email").SetDatabase("db1"))
+              SchemaTypeConfigBuilder().SetType("email").SetDatabase("db1/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_message")
-                       .SetDatabase("db1"))
+                       .SetType("db1/message")
+                       .SetDatabase("db1/"))
           .Build();
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert("email");
-  result.schema_types_new_by_name.insert("db1_message");
+  result.schema_types_new_by_name.insert("db1/message");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1",
+                  db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(db1_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 
   // Set schema in db2 with the same type name
   SchemaProto db2_schema =
       SchemaBuilder()
           .AddType(
-              SchemaTypeConfigBuilder().SetType("email").SetDatabase("db2"))
+              SchemaTypeConfigBuilder().SetType("email").SetDatabase("db2/"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db2_message")
-                       .SetDatabase("db2"))
+                       .SetType("db2/message")
+                       .SetDatabase("db2/"))
           .Build();
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2",
+                  db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
               StatusIs(libtextclassifier3::StatusCode::ALREADY_EXISTS));
 
   // Check schema, this should not have changed
   EXPECT_THAT(schema_store->GetSchema(),
               IsOkAndHolds(Pointee(EqualsProto(db1_schema))));
-  EXPECT_THAT(schema_store->GetSchema("db1"),
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 }
 
@@ -5118,7 +5129,7 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
   SchemaTypeConfigProto db1_email_rfc =
       SchemaTypeConfigBuilder()
           .SetType("db1/email")
-          .SetDatabase("db1")
+          .SetDatabase("db1/")
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("db1Subject")
@@ -5128,7 +5139,7 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
   SchemaTypeConfigProto db1_email_no_rfc =
       SchemaTypeConfigBuilder()
           .SetType("db1/email")
-          .SetDatabase("db1")
+          .SetDatabase("db1/")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("db1Subject")
                            .SetCardinality(CARDINALITY_OPTIONAL)
@@ -5137,7 +5148,7 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
   SchemaTypeConfigProto db2_email =
       SchemaTypeConfigBuilder()
           .SetType("db2/email")
-          .SetDatabase("db2")
+          .SetDatabase("db2/")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("db2Subject")
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -5170,41 +5181,41 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
       EXPECT_THAT(
           schema_store->GetSchema(),
           IsOkAndHolds(Pointee(EqualsProto(full_schema_with_database_no_rfc))));
-      EXPECT_THAT(schema_store->GetSchema("db1"),
+      EXPECT_THAT(schema_store->GetSchema("db1/"),
                   IsOkAndHolds(EqualsProto(db1_schema_no_rfc)));
-      EXPECT_THAT(schema_store->GetSchema("db2"),
+      EXPECT_THAT(schema_store->GetSchema("db2/"),
                   IsOkAndHolds(EqualsProto(db2_schema)));
     } else {
       EXPECT_THAT(
           schema_store->GetSchema(),
           IsOkAndHolds(Pointee(EqualsProto(full_schema_with_database_rfc))));
-      EXPECT_THAT(schema_store->GetSchema("db1"),
+      EXPECT_THAT(schema_store->GetSchema("db1/"),
                   IsOkAndHolds(EqualsProto(db1_schema_rfc)));
-      EXPECT_THAT(schema_store->GetSchema("db2"),
+      EXPECT_THAT(schema_store->GetSchema("db2/"),
                   IsOkAndHolds(EqualsProto(db2_schema)));
 
       DocumentProto db1_email_doc =
           DocumentBuilder()
               .SetKey("namespace", "uri1")
               .SetSchema("db1/email")
-              .AddStringProperty("db1Subject", "db1_subject")
+              .AddStringProperty("db1Subject", "db1/subject")
               .Build();
       DocumentProto db2_email_doc =
           DocumentBuilder()
               .SetKey("namespace", "uri3")
               .SetSchema("db2/email")
-              .AddStringProperty("db2Subject", "db2_subject")
+              .AddStringProperty("db2Subject", "db2/subject")
               .Build();
 
       // Verify that our in-memory structures are ok
       ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                                  schema_store->ExtractSections(db1_email_doc));
       EXPECT_THAT(section_group.string_sections[0].content,
-                  ElementsAre("db1_subject"));
+                  ElementsAre("db1/subject"));
       ICING_ASSERT_OK_AND_ASSIGN(section_group,
                                  schema_store->ExtractSections(db2_email_doc));
       EXPECT_THAT(section_group.string_sections[0].content,
-                  ElementsAre("db2_subject"));
+                  ElementsAre("db2/subject"));
 
       // Verify that our persisted data are ok
       EXPECT_THAT(schema_store->GetSchemaTypeId("db1/email"), IsOkAndHolds(0));

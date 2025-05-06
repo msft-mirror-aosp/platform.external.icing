@@ -7123,9 +7123,9 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaTypeConfigProto db1_email_type_with_db =
-      SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+      SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1/").Build();
   SchemaTypeConfigProto db2_email_type_with_db =
-      SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+      SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2/").Build();
 
   SchemaProto previous_version_db1_schema;
   SchemaProto previous_version_db2_schema;
@@ -7278,9 +7278,9 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
   // Verify GetSchema
   if (enable_schema_database) {
     SchemaTypeConfigProto db1_email_type_with_db =
-        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1/").Build();
     SchemaTypeConfigProto db2_email_type_with_db =
-        SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+        SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2/").Build();
     SchemaProto full_schema_with_database = SchemaBuilder()
                                                 .AddType(db1_email_type_with_db)
                                                 .AddType(db2_email_type_with_db)
@@ -7302,14 +7302,14 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     expected_get_schema_result_proto_db1.mutable_status()->set_code(
         StatusProto::OK);
     *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
-    EXPECT_THAT(icing.GetSchema("db1"),
+    EXPECT_THAT(icing.GetSchema("db1/"),
                 EqualsProto(expected_get_schema_result_proto_db1));
 
     GetSchemaResultProto expected_get_schema_result_proto_db2;
     expected_get_schema_result_proto_db2.mutable_status()->set_code(
         StatusProto::OK);
     *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
-    EXPECT_THAT(icing.GetSchema("db2"),
+    EXPECT_THAT(icing.GetSchema("db2/"),
                 EqualsProto(expected_get_schema_result_proto_db2));
   } else {
     GetSchemaResultProto expected_get_schema_result_proto;
