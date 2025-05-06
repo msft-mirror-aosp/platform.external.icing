@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -192,17 +193,17 @@ libtextclassifier3::Status ValidateResultSpec(
          result_grouping.entry_groupings()) {
       const std::string& name_space = entry.namespace_();
       const std::string& schema = entry.schema();
-      auto entry_id_or = document_store->GetResultGroupingEntryId(
-          result_grouping_type, name_space, schema);
-      if (!entry_id_or.ok()) {
+      std::optional<int32_t> entry_id =
+          document_store->GetResultGroupingEntryId(result_grouping_type,
+                                                   name_space, schema);
+      if (!entry_id.has_value()) {
         continue;
       }
-      int32_t entry_id = entry_id_or.ValueOrDie();
-      if (unique_entry_ids.find(entry_id) != unique_entry_ids.end()) {
+      if (unique_entry_ids.find(*entry_id) != unique_entry_ids.end()) {
         return absl_ports::InvalidArgumentError(
             "Entry Ids must be unique across result groups.");
       }
-      unique_entry_ids.insert(entry_id);
+      unique_entry_ids.insert(*entry_id);
     }
   }
   return libtextclassifier3::Status::OK;
@@ -510,7 +511,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_embedding_backup_generation(),
                      options_.enable_schema_database(),
                      options_.release_backup_schema_file_if_overlay_present(),
-                     options_.enable_strict_page_byte_size_limit()),
+                     options_.enable_strict_page_byte_size_limit(),
+                     options_.enable_smaller_decompression_buffer_size()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
