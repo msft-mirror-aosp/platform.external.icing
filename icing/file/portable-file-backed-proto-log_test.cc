@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -26,6 +27,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/mock-filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
@@ -118,6 +120,25 @@ TEST_F(PortableFileBackedProtoLogTest, Initialize) {
                       !compress_, max_proto_size_, compression_level_,
                       compression_threshold_bytes_, compression_mem_level_)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(PortableFileBackedProtoLogTest, NewAndEmptyFileShouldFlushHeader) {
+  // Mock the filesystem to verify that DataSync is called.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, DataSync(_)).Times(1);
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            mock_filesystem.get(), file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_)));
+    EXPECT_THAT(create_result.proto_log, NotNull());
+    EXPECT_FALSE(create_result.has_data_loss());
+    EXPECT_FALSE(create_result.recalculated_checksum);
+  }
 }
 
 TEST_F(PortableFileBackedProtoLogTest, InitializeValidatesOptions) {
