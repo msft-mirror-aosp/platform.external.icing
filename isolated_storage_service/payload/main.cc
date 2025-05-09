@@ -60,6 +60,7 @@ using ::icing::lib::SchemaProto;
 using ::icing::lib::ScoringSpecProto;
 using ::icing::lib::SearchResultProto;
 using ::icing::lib::SearchSpecProto;
+using ::icing::lib::SetSchemaRequestProto;
 using ::icing::lib::SetSchemaResultProto;
 using ::icing::lib::StatusProto;
 using ::icing::lib::StorageInfoResultProto;
@@ -156,6 +157,18 @@ class IcingConnectionImpl
 
     SetSchemaResultProto set_schema_result =
         icing_->SetSchema(schema, ignore_errors_and_delete_documents);
+    SERIALIZE_AND_RETURN_ASTATUS(set_schema_result, set_schema_result_proto);
+  }
+
+  ScopedAStatus setSchemaWithRequestProto(
+      const std::vector<uint8_t>& set_schema_request_proto,
+      std::optional<std::vector<uint8_t>>* set_schema_result_proto) {
+    CHECK_ICING_INIT(icing_);
+
+    SetSchemaRequestProto request;
+    DESERIALIZE_OR_RETURN(set_schema_request_proto, request)
+
+    SetSchemaResultProto set_schema_result = icing_->SetSchema(std::move(request));
     SERIALIZE_AND_RETURN_ASTATUS(set_schema_result, set_schema_result_proto);
   }
 
