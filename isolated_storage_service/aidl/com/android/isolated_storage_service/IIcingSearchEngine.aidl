@@ -35,6 +35,9 @@ interface IIcingSearchEngine {
   /*SetSchemaResultProto*/ byte[] setSchema(in byte[] schemaProto, boolean ignoreErrorsAndDeleteDocuments);
 
   @nullable
+  /*SetSchemaResultProto*/ byte[] setSchemaWithRequestProto(in byte[] setSchemaRequestProto);
+
+  @nullable
   /*GetSchemaResultProto*/ byte[] getSchema();
 
   @nullable
