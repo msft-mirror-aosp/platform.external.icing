@@ -124,7 +124,8 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       const FeatureFlags* feature_flags,
       PendingPropertyRestricts pending_property_restricts, bool processing_not,
       int64_t current_time_ms)
-      : index_(*index),
+      : embedding_query_results_(search_spec.embedding_query_vectors_size()),
+        index_(*index),
         numeric_index_(*numeric_index),
         embedding_index_(*embedding_index),
         document_store_(*document_store),

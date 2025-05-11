@@ -228,9 +228,13 @@ JoinProcessor::GetPropagatedChildDocumentsToDelete(
     DocumentId doc_id_to_expand = que.front();
     que.pop();
 
-    ICING_ASSIGN_OR_RETURN(std::vector<DocumentJoinIdPair> child_join_id_pairs,
-                           qualified_id_join_index_->Get(doc_id_to_expand));
-    for (const DocumentJoinIdPair& child_join_id_pair : child_join_id_pairs) {
+    ICING_ASSIGN_OR_RETURN(
+        QualifiedIdJoinIndex::DocumentJoinIdPairArrayView
+            child_join_id_pairs_array_view,
+        qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+            doc_id_to_expand));
+    for (const DocumentJoinIdPair& child_join_id_pair :
+         child_join_id_pairs_array_view) {
       if (child_documents_to_delete.find(child_join_id_pair.document_id()) !=
               child_documents_to_delete.end() ||
           deleted_document_ids.find(child_join_id_pair.document_id()) !=
