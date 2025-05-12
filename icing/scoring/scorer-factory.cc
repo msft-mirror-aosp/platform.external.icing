@@ -14,19 +14,27 @@
 
 #include "icing/scoring/scorer-factory.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/advanced-scorer.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scorer.h"
 #include "icing/scoring/section-weights.h"
-#include "icing/store/document-id.h"
+#include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 
@@ -173,17 +181,29 @@ namespace scorer_factory {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
+    SearchSpecProto::EmbeddingQueryMetricType::Code
+        default_semantic_metric_type,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher) {
+    int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
+    const EmbeddingQueryResults* embedding_query_results,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(embedding_query_results);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
-  if (!scoring_spec.advanced_scoring_expression().empty() &&
-      scoring_spec.rank_by() !=
-          ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION) {
-    return absl_ports::InvalidArgumentError(
-        "Advanced scoring is not enabled, but the advanced scoring expression "
-        "is not empty!");
+  if (scoring_spec.rank_by() !=
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION) {
+    if (!scoring_spec.advanced_scoring_expression().empty()) {
+      return absl_ports::InvalidArgumentError(
+          "Advanced scoring is not enabled, but the advanced scoring "
+          "expression is not empty!");
+    }
+    if (!scoring_spec.additional_advanced_scoring_expressions().empty()) {
+      return absl_ports::InvalidArgumentError(
+          "Advanced scoring is not enabled, but got additional advanced "
+          "scoring expressions!");
+    }
   }
 
   switch (scoring_spec.rank_by()) {
@@ -223,9 +243,10 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
         return absl_ports::InvalidArgumentError(
             "Advanced scoring is enabled, but the expression is empty!");
       }
-      return AdvancedScorer::Create(scoring_spec, default_score, document_store,
-                                    schema_store, current_time_ms,
-                                    join_children_fetcher);
+      return AdvancedScorer::Create(
+          scoring_spec, default_score, default_semantic_metric_type,
+          document_store, schema_store, current_time_ms, join_children_fetcher,
+          embedding_query_results, feature_flags);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
       // Use join aggregate score to rank. Since the aggregation score is
       // calculated by child documents after joining (in JoinProcessor), we can

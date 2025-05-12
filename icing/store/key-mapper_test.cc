@@ -224,6 +224,122 @@ TEST_P(KeyMapperTest, Iterator) {
       UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
 }
 
+TEST_P(KeyMapperTest, DeleteByKey_singleEntry) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_ASSERT_OK(key_mapper->Put("foo", /*value=*/1));
+  ASSERT_THAT(key_mapper->num_keys(), 1);
+  ASSERT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 1)));
+
+  // Delete "foo".
+  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+
+  // Verify num_keys().
+  EXPECT_THAT(key_mapper->num_keys(), 0);
+
+  // Verify Get() returns NOT_FOUND.
+  EXPECT_THAT(key_mapper->Get("foo"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Verify the iterator returns nothing.
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  // Add back "foo" a with different value and verify the key mapper.
+  EXPECT_THAT(key_mapper->Put("foo", /*value=*/12345), IsOk());
+  EXPECT_THAT(key_mapper->num_keys(), 1);
+  EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(12345));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 12345)));
+}
+
+TEST_P(KeyMapperTest, DeleteByKey_multipleEntries) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_ASSERT_OK(key_mapper->Put("foo", /*value=*/1));
+  ICING_ASSERT_OK(key_mapper->Put("bar", /*value=*/2));
+  ICING_ASSERT_OK(key_mapper->Put("baz", /*value=*/3));
+  ASSERT_THAT(key_mapper->num_keys(), 3);
+  ASSERT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
+
+  // Delete "foo".
+  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+
+  // Verify num_keys().
+  EXPECT_THAT(key_mapper->num_keys(), 2);
+
+  // Verify Get("foo") returns NOT_FOUND and Get("bar") and Get("baz") return
+  // the correct values.
+  EXPECT_THAT(key_mapper->Get("foo"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("bar"), IsOkAndHolds(2));
+  EXPECT_THAT(key_mapper->Get("baz"), IsOkAndHolds(3));
+
+  // Verify the iterator returns "bar" and "baz".
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("bar", 2), Pair("baz", 3)));
+
+  // Add back "foo" a with different value and verify the key mapper.
+  EXPECT_THAT(key_mapper->Put("foo", /*value=*/12345), IsOk());
+  EXPECT_THAT(key_mapper->num_keys(), 3);
+  EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(12345));
+  EXPECT_THAT(key_mapper->Get("bar"), IsOkAndHolds(2));
+  EXPECT_THAT(key_mapper->Get("baz"), IsOkAndHolds(3));
+  EXPECT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 12345), Pair("bar", 2), Pair("baz", 3)));
+}
+
+TEST_P(KeyMapperTest, DeleteByKey_multipleEntriesDeleteAll) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+                             CreateKeyMapper());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  ICING_ASSERT_OK(key_mapper->Put("foo", /*value=*/1));
+  ICING_ASSERT_OK(key_mapper->Put("bar", /*value=*/2));
+  ICING_ASSERT_OK(key_mapper->Put("baz", /*value=*/3));
+  ASSERT_THAT(key_mapper->num_keys(), 3);
+  ASSERT_THAT(
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
+
+  // Delete all keys.
+  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+  EXPECT_THAT(key_mapper->Delete("bar"), IsTrue());
+  EXPECT_THAT(key_mapper->Delete("baz"), IsTrue());
+
+  // Verify num_keys().
+  EXPECT_THAT(key_mapper->num_keys(), 0);
+
+  // Verify Get("foo"), Get("bar") and Get("baz") return NOT_FOUND.
+  EXPECT_THAT(key_mapper->Get("foo"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("bar"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("baz"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Verify the iterator returns nothing.
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
+
+  // Add back "foo" a with different value and verify the key mapper.
+  EXPECT_THAT(key_mapper->Put("foo", /*value=*/12345), IsOk());
+  EXPECT_THAT(key_mapper->num_keys(), 1);
+  EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(12345));
+  EXPECT_THAT(key_mapper->Get("bar"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(key_mapper->Get("baz"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 12345)));
+}
+
 INSTANTIATE_TEST_SUITE_P(
     KeyMapperTest, KeyMapperTest,
     testing::Values(KeyMapperTestParam(KeyMapperType::kDynamicTrie,

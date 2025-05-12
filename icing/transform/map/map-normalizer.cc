@@ -22,6 +22,7 @@
 
 #include "icing/absl_ports/str_cat.h"
 #include "icing/transform/map/normalization-map.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
@@ -68,7 +69,8 @@ UChar32 NormalizeChar(UChar32 c) {
 
 }  // namespace
 
-std::string MapNormalizer::NormalizeTerm(std::string_view term) const {
+Normalizer::NormalizedTerm MapNormalizer::NormalizeTerm(
+    std::string_view term) const {
   std::string normalized_text;
   normalized_text.reserve(term.length());
 
@@ -101,7 +103,7 @@ std::string MapNormalizer::NormalizeTerm(std::string_view term) const {
     i18n_utils::SafeTruncateUtf8(&normalized_text, max_term_byte_size_);
   }
 
-  return normalized_text;
+  return {std::move(normalized_text)};
 }
 
 CharacterIterator MapNormalizer::FindNormalizedMatchEndPosition(

@@ -15,17 +15,29 @@
 #include "icing/util/document-validator.h"
 
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
+static constexpr int32_t kSha256LengthBytes = 32;
 
 using PropertyConfigMap =
     std::unordered_map<std::string_view, const PropertyConfigProto*>;
@@ -123,6 +135,30 @@ libtextclassifier3::Status DocumentValidator::Validate(
     } else if (property_config.data_type() ==
                PropertyConfigProto::DataType::DOCUMENT) {
       value_size = property.document_values_size();
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::VECTOR) {
+      value_size = property.vector_values_size();
+      for (const PropertyProto::VectorProto& vector_value :
+           property.vector_values()) {
+        if (vector_value.values_size() == 0) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains empty vectors for key: (", document.namespace_(),
+              ", ", document.uri(), ")."));
+        }
+      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::BLOB_HANDLE) {
+      value_size = property.blob_handle_values_size();
+      for (const PropertyProto::BlobHandleProto& blob_handle_value :
+           property.blob_handle_values()) {
+        if (blob_handle_value.digest().size() != kSha256LengthBytes) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains non sha-256 blob digest for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
+        }
+      }
     }
 
     if (property_config.cardinality() ==

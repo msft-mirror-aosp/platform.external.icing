@@ -12,12 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -30,14 +39,19 @@
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -62,10 +76,11 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -74,28 +89,34 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
+
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
     schema.add_types()->set_schema_type("Message");
     schema.add_types()->set_schema_type("Person");
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
             &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
@@ -104,6 +125,7 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
@@ -131,8 +153,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -140,8 +164,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -168,7 +194,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Only the top ranked document in "namespace" (document2), should be
   // returned.
@@ -191,8 +218,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -200,8 +229,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -228,7 +259,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // First page: empty page
   auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
@@ -247,8 +279,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -256,8 +290,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace", "uri/3")
@@ -265,8 +301,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
                                 .SetKey("namespace", "uri/4")
@@ -274,8 +312,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -304,7 +344,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // First page: document4 and document3 should be returned.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
@@ -333,8 +374,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace1", "uri/2")
@@ -342,8 +385,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/3")
@@ -351,8 +396,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/4")
@@ -360,8 +407,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -391,7 +440,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // All documents in "namespace2" should be returned.
   PageResult page_result =
@@ -415,8 +465,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -424,8 +476,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -455,7 +509,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Only the top ranked document in "namespace" (document2), should be
   // returned. The presence of "nonexistentNamespace" in the same result
@@ -479,8 +534,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -488,8 +545,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -519,7 +578,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Only the top ranked document in "Document" (document2), should be
   // returned. The presence of "nonexistentNamespace" in the same result
@@ -544,8 +604,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace1", "uri/2")
@@ -553,8 +615,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/3")
@@ -562,8 +626,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/4")
@@ -571,8 +637,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
                                 .SetKey("namespace3", "uri/5")
@@ -580,8 +648,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   DocumentProto document6 = DocumentBuilder()
                                 .SetKey("namespace3", "uri/6")
@@ -589,8 +659,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(6)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id6,
-                             document_store_->Put(document6));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store_->Put(document_util::CreateDocumentWrapper(document6)));
+  DocumentId document_id6 = put_result6.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -628,7 +700,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Only the top-ranked result in "namespace1" (document2) should be returned.
   // Only the top-ranked results across "namespace2" and "namespace3"
@@ -655,8 +728,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -664,8 +739,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace", "uri/3")
@@ -673,8 +750,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
                                 .SetKey("namespace", "uri/4")
@@ -682,8 +761,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
                                 .SetKey("namespace", "uri/5")
@@ -691,8 +772,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   DocumentProto document6 = DocumentBuilder()
                                 .SetKey("namespace", "uri/6")
@@ -700,8 +783,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(6)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id6,
-                             document_store_->Put(document6));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store_->Put(document_util::CreateDocumentWrapper(document6)));
+  DocumentId document_id6 = put_result6.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -739,7 +824,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Only the top-ranked result in "Document" (document6) should be returned.
   // Only the top-ranked results across "Message" and "Person"
@@ -766,8 +852,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace1", "uri/2")
@@ -775,8 +863,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace1", "uri/3")
@@ -784,8 +874,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/4")
@@ -793,8 +885,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
                                 .SetKey("namespace3", "uri/5")
@@ -802,8 +896,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   DocumentProto document6 = DocumentBuilder()
                                 .SetKey("namespace3", "uri/6")
@@ -811,8 +907,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(6)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id6,
-                             document_store_->Put(document6));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store_->Put(document_util::CreateDocumentWrapper(document6)));
+  DocumentId document_id6 = put_result6.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -853,7 +951,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Only the top-ranked result in "namespace1xDocument" (document3)
   // should be returned.
@@ -881,8 +980,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -890,8 +991,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -919,7 +1022,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // All documents in "namespace" should be returned. The presence of
   // "nonexistentNamespace" should have no effect.
@@ -943,8 +1047,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri/2")
@@ -952,8 +1058,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -981,7 +1089,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // All documents in "Document" should be returned. The presence of
   // "nonexistentDocument" should have no effect.
@@ -1005,8 +1114,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace1", "uri/2")
@@ -1014,8 +1125,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace1", "uri/3")
@@ -1023,8 +1136,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
+  DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/4")
@@ -1032,8 +1147,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
+  DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
                                 .SetKey("namespace2", "uri/5")
@@ -1041,8 +1158,10 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
@@ -1068,13 +1187,13 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   entry = result_grouping->add_entry_groupings();
   entry->set_namespace_("namespace2");
 
-  // Get corpus ids.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id1, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id2, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace2", "Document"));
+  // Get result grouping entry ids.
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      int32_t entry_id1, document_store_->GetResultGroupingEntryId(
+                             result_grouping_type, "namespace1", "Document"));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      int32_t entry_id2, document_store_->GetResultGroupingEntryId(
+                             result_grouping_type, "namespace2", "Document"));
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
@@ -1087,18 +1206,19 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     absl_ports::shared_lock l(&result_state.mutex);
 
     ASSERT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     ASSERT_THAT(result_state.group_result_limits, ElementsAre(3, 1));
   }
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // document5, document4, document1 belong to namespace2 (with max_results =
   // 1).
-  // docuemnt3, document2 belong to namespace 1 (with max_results = 3).
+  // document3, document2 belong to namespace 1 (with max_results = 3).
   // Since num_per_page is 2, we expect to get document5 and document3 in the
   // first page.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
@@ -1125,9 +1245,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // round, num_returned should still be 2, since document4 was "filtered out"
     // and should not be counted into num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(2));
-    // corpus_id_group_id_map should be unchanged.
+    // entry_id_group_id_map should be unchanged.
     EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(2, 0));
   }
@@ -1149,9 +1269,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // since document1 was "filtered out" and should not be counted into
     // num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(3));
-    // corpus_id_group_id_map should be unchanged.
+    // entry_id_group_id_map should be unchanged.
     EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(1, 0));
   }
