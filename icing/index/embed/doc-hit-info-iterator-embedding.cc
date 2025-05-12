@@ -16,7 +16,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -46,12 +45,16 @@ DocHitInfoIteratorEmbedding::Create(
     const PropertyProto::VectorProto* query,
     SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
     double score_low, double score_high,
-    EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
+    EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
+    std::vector<double>* global_scores,
+    std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
+        global_section_infos,
     const EmbeddingIndex* embedding_index, const DocumentStore* document_store,
     const SchemaStore* schema_store, int64_t current_time_ms) {
   ICING_RETURN_ERROR_IF_NULL(query);
   ICING_RETURN_ERROR_IF_NULL(embedding_index);
-  ICING_RETURN_ERROR_IF_NULL(score_map);
+  ICING_RETURN_ERROR_IF_NULL(info_map);
+  ICING_RETURN_ERROR_IF_NULL(global_scores);
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -75,8 +78,9 @@ DocHitInfoIteratorEmbedding::Create(
   return std::unique_ptr<DocHitInfoIteratorEmbedding>(
       new DocHitInfoIteratorEmbedding(
           query, metric_type, std::move(embedding_scorer), score_low,
-          score_high, score_map, embedding_index, std::move(pl_accessor),
-          document_store, schema_store, current_time_ms));
+          score_high, info_map, global_scores, global_section_infos,
+          embedding_index, std::move(pl_accessor), document_store, schema_store,
+          current_time_ms));
 }
 
 libtextclassifier3::StatusOr<const EmbeddingHit*>
@@ -121,8 +125,13 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
 
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId, kSectionIdMaskNone);
   schema_type_id_ = kInvalidSchemaTypeId;
-  std::vector<double>* matched_scores = nullptr;
+  EmbeddingMatchInfos* matched_infos = nullptr;
   current_allowed_sections_mask_ = kSectionIdMaskAll;
+  SectionId current_section_id = kInvalidSectionId;
+  EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+      EmbeddingIndexingConfig::QuantizationType::NONE;
+  int current_section_match_count = 0;
+
   while (true) {
     ICING_ASSIGN_OR_RETURN(const EmbeddingHit* embedding_hit,
                            AdvanceToNextEmbeddingHit());
@@ -137,14 +146,20 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
       continue;
     }
 
-    // The schema type id is guaranteed to be valid here. Otherwise,
-    // current_allowed_sections_mask_ should be assigned to kSectionIdMaskNone
-    // by AdvanceToNextEmbeddingHit, and the embedding hit should have been
-    // skipped above.
-    ICING_ASSIGN_OR_RETURN(
-        EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-        schema_store_.GetQuantizationType(
-            schema_type_id_, embedding_hit->basic_hit().section_id()));
+    // We've reached a new section. Reset the match count and retrieve the
+    // quantization type for the new section.
+    if (current_section_id != embedding_hit->basic_hit().section_id()) {
+      current_section_match_count = 0;
+      current_section_id = embedding_hit->basic_hit().section_id();
+      // The schema type id is guaranteed to be valid here. Otherwise,
+      // current_allowed_sections_mask_ should be assigned to kSectionIdMaskNone
+      // by AdvanceToNextEmbeddingHit, and the embedding hit should have been
+      // skipped above.
+      ICING_ASSIGN_OR_RETURN(quantization_type,
+                             schema_store_.GetQuantizationType(
+                                 schema_type_id_, current_section_id));
+    }
+
     // Calculate the semantic score.
     ICING_ASSIGN_OR_RETURN(
         float semantic_score,
@@ -152,14 +167,22 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
                                            *embedding_hit, quantization_type));
 
     // If the semantic score is within the desired score range, update
-    // doc_hit_info_ and score_map_.
+    // doc_hit_info_ and info_map_.
     if (score_low_ <= semantic_score && semantic_score <= score_high_) {
       doc_hit_info_.UpdateSection(embedding_hit->basic_hit().section_id());
-      if (matched_scores == nullptr) {
-        matched_scores = &(score_map_[doc_hit_info_.document_id()]);
+      if (matched_infos == nullptr) {
+        matched_infos = &(info_map_[doc_hit_info_.document_id()]);
       }
-      matched_scores->push_back(semantic_score);
+      ICING_RETURN_IF_ERROR(
+          matched_infos->AppendScore(global_scores_, semantic_score));
+      if (global_section_infos_ != nullptr) {
+        // Add the section info for this embedding match.
+        ICING_RETURN_IF_ERROR(matched_infos->AppendSectionInfo(
+            *global_section_infos_, current_section_id,
+            current_section_match_count));
+      }
     }
+    ++current_section_match_count;
   }
 
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
