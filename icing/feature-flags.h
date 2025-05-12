@@ -27,7 +27,8 @@ class FeatureFlags {
                         bool enable_embedding_backup_generation,
                         bool enable_schema_database,
                         bool release_backup_schema_file_if_overlay_present,
-                        bool enable_strict_page_byte_size_limit)
+                        bool enable_strict_page_byte_size_limit,
+                        bool enable_smaller_decompression_buffer_size)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -36,8 +37,9 @@ class FeatureFlags {
         enable_schema_database_(enable_schema_database),
         release_backup_schema_file_if_overlay_present_(
             release_backup_schema_file_if_overlay_present),
-        enable_strict_page_byte_size_limit_(
-            enable_strict_page_byte_size_limit) {}
+        enable_strict_page_byte_size_limit_(enable_strict_page_byte_size_limit),
+        enable_smaller_decompression_buffer_size_(
+            enable_smaller_decompression_buffer_size) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -69,6 +71,10 @@ class FeatureFlags {
     return enable_strict_page_byte_size_limit_;
   }
 
+  bool enable_smaller_decompression_buffer_size() const {
+    return enable_smaller_decompression_buffer_size_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -94,6 +100,8 @@ class FeatureFlags {
   // Whether to enable strict page byte size limit enforcement in
   // ResultRetrieverV2.
   bool enable_strict_page_byte_size_limit_;
+
+  bool enable_smaller_decompression_buffer_size_;
 };
 
 }  // namespace lib

@@ -18,7 +18,6 @@ package icing.lib;
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
 // Canonical status to indicate the results of API calls.

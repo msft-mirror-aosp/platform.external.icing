@@ -499,12 +499,14 @@ TEST_F(JoinChildrenFetcherImplV3Test,
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message3_id,
                              PutAndIndexDocument(message3));
   // Sanity check for the join index.
-  ASSERT_THAT(qualified_id_join_index_->Get(person1_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message1_id, 0),
-                                       DocumentJoinIdPair(message2_id, 1),
-                                       DocumentJoinIdPair(message3_id, 0))));
-  ASSERT_THAT(qualified_id_join_index_->Get(person2_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message2_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person1_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message1_id, 0),
+                               DocumentJoinIdPair(message2_id, 1),
+                               DocumentJoinIdPair(message3_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person2_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message2_id, 0))));
 
   ScoredDocumentHit scored_doc_hit_message1(message1_id, kSectionIdMaskNone,
                                             /*score=*/1.0);
@@ -606,13 +608,16 @@ TEST_F(JoinChildrenFetcherImplV3Test,
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email3_id, PutAndIndexDocument(email3));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email4_id, PutAndIndexDocument(email4));
   // Sanity check for the join index.
-  ASSERT_THAT(qualified_id_join_index_->Get(person1_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email1_id, 0),
-                                       DocumentJoinIdPair(email2_id, 0))));
-  ASSERT_THAT(qualified_id_join_index_->Get(person2_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email3_id, 0))));
-  ASSERT_THAT(qualified_id_join_index_->Get(person3_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email4_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person1_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email1_id, 0),
+                               DocumentJoinIdPair(email2_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person2_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email3_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person3_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email4_id, 0))));
 
   ScoredDocumentHit scored_doc_hit_email1(email1_id, kSectionIdMaskNone,
                                           /*score=*/1.0);

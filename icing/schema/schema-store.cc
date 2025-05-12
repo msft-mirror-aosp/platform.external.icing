@@ -141,7 +141,7 @@ std::string GetDatabaseFromSchemaType(const std::string& schema_type,
   size_t db_index = schema_type.find(database_delimeter);
   std::string database;
   if (db_index != std::string::npos) {
-    database = schema_type.substr(0, db_index);
+    database = schema_type.substr(0, db_index + 1);
   }
   return database;
 }
@@ -875,7 +875,8 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
   bool ignore_errors_and_delete_documents =
       set_schema_request.ignore_errors_and_delete_documents();
 
-  if (feature_flags_->enable_schema_database()) {
+  if (feature_flags_->enable_schema_database() &&
+      !set_schema_request.database().empty()) {
     // Step 1: (Only required if schema database is enabled)
     // Do some preliminary checks on the new schema before formal validation and
     // delta computation. This checks that:
@@ -1417,7 +1418,8 @@ SchemaStore::ConstructBlobPropertyMap() const {
 
 libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
     const SchemaProto& new_schema, const std::string& database) const {
-  if (!feature_flags_->enable_schema_database() || new_schema.types().empty()) {
+  if (!feature_flags_->enable_schema_database() || new_schema.types().empty() ||
+      database.empty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -1456,9 +1458,11 @@ libtextclassifier3::StatusOr<SchemaProto>
 SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     SchemaProto input_database_schema,
     const std::string& database_to_update) const {
-  if (!feature_flags_->enable_schema_database()) {
-    // If the schema database is not enabled, the input schema is already the
-    // full schema, so we don't need to do any merges.
+  if (!feature_flags_->enable_schema_database() ||
+      database_to_update.empty()) {
+    // The schema database is not enabled, or we're updating using the empty
+    // schema database. This means that the input schema is already the full
+    // schema, so we don't need to do any merges.
     return input_database_schema;
   }
 
