@@ -644,6 +644,8 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
     result_status->set_message(
         "Delete propagation is enabled but qualified id join index v3 is not "
         "enabled.");
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::OPTIONS_VALIDATION);
     return result_proto;
   }
 
@@ -669,6 +671,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
   // Make sure the base directory exists
   if (!filesystem_->CreateDirectoryRecursively(options_.base_dir().c_str())) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::BASE_DIRECTORY_CREATION);
     return absl_ports::InternalError(absl_ports::StrCat(
         "Could not create directory: ", options_.base_dir()));
   }
@@ -677,6 +681,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // max number of init attempts.
   libtextclassifier3::Status status = CheckInitMarkerFile(initialize_stats);
   if (!status.ok() && !absl_ports::IsDataLoss(status)) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::INIT_MARKER_FILE);
     return status;
   }
 
@@ -690,10 +696,16 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // Read version file, determine the state change and rebuild derived files if
   // needed.
   const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
-  ICING_ASSIGN_OR_RETURN(
-      IcingSearchEngineVersionProto stored_version_proto,
-      version_util::ReadVersion(
-          *filesystem_, /*version_file_dir=*/options_.base_dir(), index_dir));
+  auto stored_version_proto_or = version_util::ReadVersion(
+      *filesystem_, /*version_file_dir=*/options_.base_dir(), index_dir);
+  if (!stored_version_proto_or.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::READ_VERSION_FILE);
+    return std::move(stored_version_proto_or).status();
+  }
+  IcingSearchEngineVersionProto stored_version_proto =
+      std::move(stored_version_proto_or).ValueOrDie();
+
   version_util::VersionInfo stored_version_info =
       version_util::GetVersionInfoFromProto(stored_version_proto);
   version_util::StateChange version_state_change =
@@ -711,10 +723,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   bool perform_schema_database_migration =
       version_util::SchemaDatabaseMigrationRequired(stored_version_proto) &&
       options_.enable_schema_database();
-  ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
+  auto migrate_status = SchemaStore::MigrateSchema(
       filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
       version_state_change, version_util::kVersion,
-      perform_schema_database_migration));
+      perform_schema_database_migration);
+  if (!migrate_status.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::MIGRATE_SCHEMA);
+    return migrate_status;
+  }
 
   // Step 2: Discard derived files that need to be rebuilt
   derived_file_util::DerivedFilesRebuildInfo required_derived_files_rebuild =
@@ -723,17 +740,32 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   if (existing_marker_proto != nullptr) {
     required_derived_files_rebuild.RebuildAll();
   }
-  ICING_RETURN_IF_ERROR(DiscardDerivedFiles(required_derived_files_rebuild));
+  auto discard_status = DiscardDerivedFiles(required_derived_files_rebuild);
+  if (!discard_status.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::DISCARD_DERIVED_FILES);
+    return discard_status;
+  }
 
   // Step 3: update version files. We need to update both the V1 and V2
   // version files.
-  ICING_RETURN_IF_ERROR(version_util::WriteV1Version(
+  auto write_version_status = version_util::WriteV1Version(
       *filesystem_, /*version_file_dir=*/options_.base_dir(),
-      version_util::GetVersionInfoFromProto(current_version_proto)));
-  ICING_RETURN_IF_ERROR(version_util::WriteV2Version(
+      version_util::GetVersionInfoFromProto(current_version_proto));
+  if (!write_version_status.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::WRITE_VERSION_FILE);
+    return write_version_status;
+  }
+  write_version_status = version_util::WriteV2Version(
       *filesystem_, /*version_file_dir=*/options_.base_dir(),
       std::make_unique<IcingSearchEngineVersionProto>(
-          std::move(current_version_proto))));
+          std::move(current_version_proto)));
+  if (!write_version_status.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::WRITE_VERSION_FILE);
+    return write_version_status;
+  }
 
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
@@ -752,13 +784,24 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
       ULOC_US, jni_cache_.get(), enable_icu);
-  TC3_ASSIGN_OR_RETURN(language_segmenter_, language_segmenter_factory::Create(
-                                                std::move(segmenter_options)));
+  auto language_segmenter_or =
+      language_segmenter_factory::Create(std::move(segmenter_options));
+  if (!language_segmenter_or.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::LANGUAGE_SEGMENTER_CREATION);
+    return std::move(language_segmenter_or).status();
+  }
+  language_segmenter_ = std::move(language_segmenter_or).ValueOrDie();
 
   NormalizerOptions normalizer_options(
       /*max_term_byte_size=*/options_.max_token_length(), enable_icu);
-  TC3_ASSIGN_OR_RETURN(normalizer_,
-                       normalizer_factory::Create(normalizer_options));
+  auto normalizer_or = normalizer_factory::Create(normalizer_options);
+  if (!normalizer_or.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::NORMALIZER_CREATION);
+    return std::move(normalizer_or).status();
+  }
+  normalizer_ = std::move(normalizer_or).ValueOrDie();
 
   libtextclassifier3::Status index_init_status;
   if (absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
@@ -786,6 +829,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
              .ok() ||
         !EmbeddingIndex::Discard(*filesystem_, embedding_index_dir).ok() ||
         !filesystem_->DeleteDirectoryRecursively(blob_store_dir.c_str())) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::DISCARD_COMPONENTS);
       return absl_ports::InternalError(absl_ports::StrCat(
           "Could not delete directories: ", index_dir, ", ", integer_index_dir,
           ", ", qualified_id_join_index_dir, ", ", embedding_index_dir, ", ",
@@ -794,10 +839,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
     // Initialize (empty) blob store.
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(
+      auto blob_store_init_status =
           InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
                               options_.blob_store_compression_level(),
-                              options_.blob_store_compression_mem_level()));
+                              options_.blob_store_compression_mem_level());
+      if (!blob_store_init_status.ok()) {
+        initialize_stats->set_failure_stage(
+            InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
+        return blob_store_init_status;
+      }
     }
 
     // Initialize (empty) document store.
@@ -830,10 +880,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // We just need to re-initialize each component here.
 
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(
+      auto blob_store_init_status =
           InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
                               options_.blob_store_compression_level(),
-                              options_.blob_store_compression_mem_level()));
+                              options_.blob_store_compression_mem_level());
+      if (!blob_store_init_status.ok()) {
+        initialize_stats->set_failure_stage(
+            InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
+        return blob_store_init_status;
+      }
     }
 
     // Initialize document store. This also rebuilds all derived files in the
@@ -874,10 +929,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
     // Initialize blob store.
     if (options_.enable_blob_store()) {
-      ICING_RETURN_IF_ERROR(
+      auto blob_store_init_status =
           InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
                               options_.blob_store_compression_level(),
-                              options_.blob_store_compression_mem_level()));
+                              options_.blob_store_compression_mem_level());
+      if (!blob_store_init_status.ok()) {
+        initialize_stats->set_failure_stage(
+            InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
+        return blob_store_init_status;
+      }
     }
 
     // Initialize document store. This also rebuilds all derived files in the
@@ -943,13 +1003,21 @@ libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
       MakeSchemaDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(schema_store_dir.c_str())) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::SCHEMA_STORE_DIRECTORY_CREATION);
     return absl_ports::InternalError(
         absl_ports::StrCat("Could not create directory: ", schema_store_dir));
   }
-  ICING_ASSIGN_OR_RETURN(
-      schema_store_,
+
+  auto schema_store_or =
       SchemaStore::Create(filesystem_.get(), schema_store_dir, clock_.get(),
-                          &feature_flags_, initialize_stats));
+                          &feature_flags_, initialize_stats);
+  if (!schema_store_or.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::SCHEMA_STORE_INSTANTIATION);
+    return schema_store_or.status();
+  }
+  schema_store_ = std::move(schema_store_or).ValueOrDie();
 
   return libtextclassifier3::Status::OK;
 }
@@ -963,17 +1031,26 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
       MakeDocumentDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(document_dir.c_str())) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::DOCUMENT_STORE_DIRECTORY_CREATION);
     return absl_ports::InternalError(
         absl_ports::StrCat("Could not create directory: ", document_dir));
   }
-  ICING_ASSIGN_OR_RETURN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(
-          filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
-          &feature_flags_, force_recovery_and_revalidate_documents,
-          /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-          options_.compression_level(), options_.compression_threshold_bytes(),
-          options_.compression_mem_level(), initialize_stats));
+
+  auto create_result_or = DocumentStore::Create(
+      filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
+      &feature_flags_, force_recovery_and_revalidate_documents,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      options_.compression_level(), options_.compression_threshold_bytes(),
+      options_.compression_mem_level(), initialize_stats);
+  if (!create_result_or.ok()) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::DOCUMENT_STORE_INSTANTIATION);
+    return std::move(create_result_or).status();
+  }
+  DocumentStore::CreateResult create_result =
+      std::move(create_result_or).ValueOrDie();
+
   document_store_ = std::move(create_result.document_store);
   return create_result.derived_files_regenerated;
 }
@@ -1006,6 +1083,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::TERM_INDEX_DIRECTORY);
     return absl_ports::InternalError(
         absl_ports::StrCat("Could not create directory: ", index_dir));
   }
@@ -1020,6 +1099,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   if (!index_or.ok()) {
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::TERM_INDEX_DIRECTORY);
       return absl_ports::InternalError(
           absl_ports::StrCat("Could not recreate directory: ", index_dir));
     }
@@ -1027,9 +1108,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     index_recovery_cause = InitializeStatsProto::IO_ERROR;
 
     // Try recreating it from scratch and re-indexing everything.
-    ICING_ASSIGN_OR_RETURN(index_,
-                           Index::Create(index_options, filesystem_.get(),
-                                         icing_filesystem_.get()));
+    index_or = Index::Create(index_options, filesystem_.get(),
+                             icing_filesystem_.get());
+    if (!index_or.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::TERM_INDEX_INSTANTIATION);
+      return std::move(index_or).status();
+    }
+    index_ = std::move(index_or).ValueOrDie();
   } else {
     // Index was created fine.
     index_ = std::move(index_or).ValueOrDie();
@@ -1047,17 +1133,27 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
                            options_.integer_index_bucket_split_threshold(),
                            options_.pre_mapping_fbv());
   if (!integer_index_or.ok()) {
-    ICING_RETURN_IF_ERROR(
-        IntegerIndex::Discard(*filesystem_, integer_index_dir));
+    auto discard_status =
+        IntegerIndex::Discard(*filesystem_, integer_index_dir);
+    if (!discard_status.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::INTEGER_INDEX_DIRECTORY);
+      return discard_status;
+    }
 
     integer_index_recovery_cause = InitializeStatsProto::IO_ERROR;
 
     // Try recreating it from scratch and re-indexing everything.
-    ICING_ASSIGN_OR_RETURN(
-        integer_index_,
+    integer_index_or =
         IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
                              options_.integer_index_bucket_split_threshold(),
-                             options_.pre_mapping_fbv()));
+                             options_.pre_mapping_fbv());
+    if (!integer_index_or.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::INTEGER_INDEX_INSTANTIATION);
+      return std::move(integer_index_or).status();
+    }
+    integer_index_ = std::move(integer_index_or).ValueOrDie();
   } else {
     // Integer index was created fine.
     integer_index_ = std::move(integer_index_or).ValueOrDie();
@@ -1076,14 +1172,25 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     // V2 qualified id join index depends on document store derived files, so we
     // have to rebuild it from scratch if
     // document_store_derived_files_regenerated is true.
-    ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
-        *filesystem_, qualified_id_join_index_dir));
+    auto discard_status = QualifiedIdJoinIndex::Discard(
+        *filesystem_, qualified_id_join_index_dir);
+    if (!discard_status.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::
+              QUALIFIED_ID_JOIN_INDEX_DIRECTORY);
+      return discard_status;
+    }
 
-    ICING_ASSIGN_OR_RETURN(
-        qualified_id_join_index_,
-        CreateQualifiedIdJoinIndex(*filesystem_,
-                                   std::move(qualified_id_join_index_dir),
-                                   options_, feature_flags_));
+    auto qualified_id_join_index_or = CreateQualifiedIdJoinIndex(
+        *filesystem_, qualified_id_join_index_dir, options_, feature_flags_);
+    if (!qualified_id_join_index_or.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::
+              QUALIFIED_ID_JOIN_INDEX_INSTANTIATION);
+      return std::move(qualified_id_join_index_or).status();
+    }
+    qualified_id_join_index_ =
+        std::move(qualified_id_join_index_or).ValueOrDie();
 
     qualified_id_join_index_recovery_cause =
         InitializeStatsProto::DEPENDENCIES_CHANGED;
@@ -1091,17 +1198,29 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     auto qualified_id_join_index_or = CreateQualifiedIdJoinIndex(
         *filesystem_, qualified_id_join_index_dir, options_, feature_flags_);
     if (!qualified_id_join_index_or.ok()) {
-      ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
-          *filesystem_, qualified_id_join_index_dir));
+      auto discard_status = QualifiedIdJoinIndex::Discard(
+          *filesystem_, qualified_id_join_index_dir);
+      if (!discard_status.ok()) {
+        initialize_stats->set_failure_stage(
+            InitializeStatsProto::FailureStage::
+                QUALIFIED_ID_JOIN_INDEX_DIRECTORY);
+        return discard_status;
+      }
 
       qualified_id_join_index_recovery_cause = InitializeStatsProto::IO_ERROR;
 
       // Try recreating it from scratch and rebuild everything.
-      ICING_ASSIGN_OR_RETURN(
-          qualified_id_join_index_,
-          CreateQualifiedIdJoinIndex(*filesystem_,
-                                     std::move(qualified_id_join_index_dir),
-                                     options_, feature_flags_));
+      qualified_id_join_index_or = CreateQualifiedIdJoinIndex(
+          *filesystem_, std::move(qualified_id_join_index_dir), options_,
+          feature_flags_);
+      if (!qualified_id_join_index_or.ok()) {
+        initialize_stats->set_failure_stage(
+            InitializeStatsProto::FailureStage::
+                QUALIFIED_ID_JOIN_INDEX_INSTANTIATION);
+        return std::move(qualified_id_join_index_or).status();
+      }
+      qualified_id_join_index_ =
+          std::move(qualified_id_join_index_or).ValueOrDie();
     } else {
       // Qualified id join index was created fine.
       qualified_id_join_index_ =
@@ -1120,15 +1239,24 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   auto embedding_index_or = EmbeddingIndex::Create(
       filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
   if (!embedding_index_or.ok()) {
-    ICING_RETURN_IF_ERROR(EmbeddingIndex::Discard(*filesystem_, embedding_dir));
+    auto discard_status = EmbeddingIndex::Discard(*filesystem_, embedding_dir);
+    if (!discard_status.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::EMBEDDING_INDEX_DIRECTORY);
+      return discard_status;
+    }
 
     embedding_index_recovery_cause = InitializeStatsProto::IO_ERROR;
 
     // Try recreating it from scratch and re-indexing everything.
-    ICING_ASSIGN_OR_RETURN(
-        embedding_index_,
-        EmbeddingIndex::Create(filesystem_.get(), embedding_dir, clock_.get(),
-                               &feature_flags_));
+    embedding_index_or = EmbeddingIndex::Create(
+        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+    if (!embedding_index_or.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::EMBEDDING_INDEX_INSTANTIATION);
+      return std::move(embedding_index_or).status();
+    }
+    embedding_index_ = std::move(embedding_index_or).ValueOrDie();
   } else {
     // Embedding index was created fine.
     embedding_index_ = std::move(embedding_index_or).ValueOrDie();
@@ -1164,6 +1292,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       initialize_stats->set_embedding_index_restoration_cause(
           embedding_index_recovery_cause);
     }
+  }
+  if (!restore_result.status.ok() &&
+      !absl_ports::IsDataLoss(restore_result.status)) {
+    initialize_stats->set_failure_stage(
+        InitializeStatsProto::FailureStage::RESTORE_INDEX);
   }
   return restore_result.status;
 }
@@ -1291,12 +1424,13 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     } else if (!set_schema_result.old_schema_type_ids_changed.empty() ||
                !set_schema_result.schema_types_incompatible_by_id.empty() ||
                !set_schema_result.schema_types_deleted_by_id.empty()) {
-      status = document_store_->OptimizedUpdateSchemaStore(schema_store_.get(),
-                                                           set_schema_result);
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
+      auto update_status_or = document_store_->OptimizedUpdateSchemaStore(
+          schema_store_.get(), set_schema_result);
+      if (!update_status_or.ok()) {
+        TransformStatus(update_status_or.status(), result_status);
         return result_proto;
       }
+      result_proto.set_deleted_document_count(update_status_or.ValueOrDie());
     }
 
     if (lost_previous_schema || index_incompatible) {
@@ -1341,7 +1475,6 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         }
       }
     }
-
     result_status->set_code(StatusProto::OK);
   } else {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
@@ -2052,7 +2185,7 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
 // 2. Copy data needed to a tmp directory.
 // 3. Swap current directory and tmp directory.
 OptimizeResultProto IcingSearchEngine::Optimize() {
-  ICING_VLOG(1) << "Optimizing icing storage";
+  ICING_LOG(INFO) << "Optimizing icing storage";
 
   OptimizeResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();

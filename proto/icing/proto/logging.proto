@@ -24,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 17
+// Next tag: 18
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -150,6 +150,64 @@ message InitializeStatsProto {
 
   // Number of documents that failed to be reindexed during index restoration.
   optional int32 num_failed_reindexed_documents = 16;
+
+  // A number indicating which stage of initialization failed.
+  message FailureStage {
+    enum Code {
+      NONE = 0;
+
+      OPTIONS_VALIDATION = 1;
+
+      BASE_DIRECTORY_CREATION = 2;
+
+      INIT_MARKER_FILE = 3;
+
+      READ_VERSION_FILE = 4;
+
+      MIGRATE_SCHEMA = 5;
+
+      DISCARD_DERIVED_FILES = 6;
+
+      WRITE_VERSION_FILE = 7;
+
+      SCHEMA_STORE_DIRECTORY_CREATION = 8;
+
+      SCHEMA_STORE_INSTANTIATION = 9;
+
+      LANGUAGE_SEGMENTER_CREATION = 10;
+
+      NORMALIZER_CREATION = 11;
+
+      // Discard any components, including delete the directory or call discard
+      // function of an index.
+      DISCARD_COMPONENTS = 12;
+
+      BLOB_STORE_INSTANTIATION = 13;
+
+      DOCUMENT_STORE_DIRECTORY_CREATION = 14;
+
+      DOCUMENT_STORE_INSTANTIATION = 15;
+
+      TERM_INDEX_DIRECTORY = 16;
+
+      TERM_INDEX_INSTANTIATION = 17;
+
+      INTEGER_INDEX_DIRECTORY = 18;
+
+      INTEGER_INDEX_INSTANTIATION = 19;
+
+      QUALIFIED_ID_JOIN_INDEX_DIRECTORY = 20;
+
+      QUALIFIED_ID_JOIN_INDEX_INSTANTIATION = 21;
+
+      EMBEDDING_INDEX_DIRECTORY = 22;
+
+      EMBEDDING_INDEX_INSTANTIATION = 23;
+
+      RESTORE_INDEX = 24;
+    }
+  }
+  optional FailureStage.Code failure_stage = 17;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().

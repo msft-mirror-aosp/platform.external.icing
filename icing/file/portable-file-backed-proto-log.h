@@ -715,9 +715,28 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
   header->SetMaxProtoSize(options.max_proto_size);
   header->SetHeaderChecksum(header->CalculateHeaderChecksum());
 
-  if (!filesystem->Write(file_path.c_str(), header.get(), sizeof(Header))) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to write header for file: ", file_path));
+  {
+    ScopedFd fd(filesystem->OpenForWrite(file_path.c_str()));
+    if (!fd.is_valid()) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to open file for write: ", file_path));
+    }
+
+    if (!filesystem->Write(fd.get(), header.get(), sizeof(Header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to write header for file: ", file_path));
+    }
+
+    // Sync the file to disk to ensure that the header is flushed to disk.
+    // - Otherwise, if the app crashes before the header is flushed, the next
+    //   initialize may fail.
+    // - This is especially important for this class, since it is used to store
+    //   ground truth data. If magic or checksum is wrong, then Icing cannot
+    //   recover it from this state and therefore end up with entire data loss.
+    if (!filesystem->DataSync(fd.get())) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to sync file: ", file_path));
+    }
   }
 
   CreateResult create_result = {
