@@ -14,27 +14,49 @@
 
 #include "icing/result/result-state-manager.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/portable/platform.h"
+#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -79,10 +101,11 @@ class ResultStateManagerTest : public testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -94,33 +117,39 @@ class ResultStateManagerTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, clock_.get()));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           clock_.get(), feature_flags_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(
             &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
+            feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        result_retriever_, ResultRetrieverV2::Create(
-                               document_store_.get(), schema_store_.get(),
-                               language_segmenter_.get(), normalizer_.get()));
+        result_retriever_,
+        ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                  language_segmenter_.get(), normalizer_.get(),
+                                  feature_flags_.get()));
   }
 
   void TearDown() override {
@@ -135,10 +164,15 @@ class ResultStateManagerTest : public testing::Test {
     document.set_uri(std::to_string(document_id));
     document.set_schema("Document");
     document.set_creation_timestamp_ms(1574365086666 + document_id);
-    document_store_->Put(document);
+
+    DocumentWrapper document_wrapper;
+    *document_wrapper.mutable_document() = std::move(document);
+
+    document_store_->Put(document_wrapper);
+
     return std::make_pair(
         ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1),
-        std::move(document));
+        std::move(*document_wrapper.mutable_document()));
   }
 
   std::pair<std::vector<ScoredDocumentHit>, std::vector<DocumentProto>>
@@ -173,6 +207,7 @@ class ResultStateManagerTest : public testing::Test {
   }
 
  private:
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<FakeClock> clock_;
@@ -184,12 +219,21 @@ class ResultStateManagerTest : public testing::Test {
 };
 
 TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
       {document_id2, kSectionIdMaskNone, /*score=*/1},
@@ -223,16 +267,31 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
 }
 
 TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store().Put(CreateDocument(/*id=*/4)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             document_store().Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
+  DocumentId document_id5 = put_result5.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
       {document_id2, kSectionIdMaskNone, /*score=*/1},
@@ -326,10 +385,16 @@ TEST_F(ResultStateManagerTest, EmptyRankerShouldReturnEmptyFirstPage) {
 }
 
 TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
       {document_id2, kSectionIdMaskNone, /*score=*/1}};
@@ -363,14 +428,26 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
 }
 
 TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store().Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
       {document_id2, kSectionIdMaskNone, /*score=*/1},
@@ -437,32 +514,38 @@ TEST_F(ResultStateManagerTest,
 
   // Set time as 1s and add state 1.
   clock()->SetSystemTimeMilliseconds(1000);
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits1), /*is_descending=*/true);
+  std::unordered_set<DocumentId> documents_to_snippet =
+      ranker->GetTopKDocumentIds(result_spec.snippet_spec().num_to_snippet());
+  std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info =
+      std::make_unique<ResultAdjustmentInfo>(
+          search_spec, scoring_spec, result_spec, &schema_store(),
+          EmbeddingQueryResults(), std::move(documents_to_snippet),
+          query_terms);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits1), /*is_descending=*/true),
-          /*parent_adjustment_info=*/
-          std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
-                                                 result_spec, &schema_store(),
-                                                 query_terms),
+          std::move(ranker), std::move(parent_adjustment_info),
           /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
 
   // Set time as 1hr1s and add state 2.
   clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
+  ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits2), /*is_descending=*/true);
+  documents_to_snippet =
+      ranker->GetTopKDocumentIds(result_spec.snippet_spec().num_to_snippet());
+  parent_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+      search_spec, scoring_spec, result_spec, &schema_store(),
+      EmbeddingQueryResults(), std::move(documents_to_snippet), query_terms);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits2), /*is_descending=*/true),
-          /*parent_adjustment_info=*/
-          std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
-                                                 result_spec, &schema_store(),
-                                                 query_terms),
+          std::move(ranker), std::move(parent_adjustment_info),
           /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever(), clock()->GetSystemTimeMilliseconds()));
 
@@ -574,18 +657,36 @@ TEST_F(ResultStateManagerTest,
 }
 
 TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store().Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store().Put(CreateDocument(/*id=*/2)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store().Put(CreateDocument(/*id=*/3)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             document_store().Put(CreateDocument(/*id=*/4)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             document_store().Put(CreateDocument(/*id=*/5)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id6,
-                             document_store().Put(CreateDocument(/*id=*/6)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
+  DocumentId document_id5 = put_result5.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/6))));
+  DocumentId document_id6 = put_result6.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits1 = {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
       {document_id2, kSectionIdMaskNone, /*score=*/1},
@@ -1386,6 +1487,7 @@ TEST_F(ResultStateManagerTest,
   auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
       {/*document_id=*/5, /*document_id=*/6, /*document_id=*/7,
        /*document_id=*/8, /*document_id=*/9, /*document_id=*/10});
+  QueryStatsProto query_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
@@ -1395,8 +1497,11 @@ TEST_F(ResultStateManagerTest,
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
+          clock()->GetSystemTimeMilliseconds(), &query_stats));
   EXPECT_THAT(page_result_info3.first, Not(Eq(kInvalidNextPageToken)));
+  // Should set num_result_states_evicted since result state 1 and 2 were
+  // evicted.
+  EXPECT_THAT(query_stats.num_result_states_evicted(), Eq(2));
 
   // GetNextPage for result state 1 and 2 should return NOT_FOUND.
   EXPECT_THAT(result_state_manager.GetNextPage(
@@ -1569,6 +1674,113 @@ TEST_F(ResultStateManagerTest,
       result_state_manager.GetNextPage(next_page_token, result_retriever(),
                                        clock()->GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
+  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
+      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+  auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
+      {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
+  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
+      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
+                  /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),
+              Eq(3));
+}
+
+TEST_F(ResultStateManagerTest,
+       GetNumActiveResultStatesShouldInvalidateExpiredResultStates) {
+  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
+      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+  auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
+      {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
+  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
+      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+
+  // Set time as 1s and add state.
+  clock()->SetSystemTimeMilliseconds(1000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // Set time as 10s and add state 2, state 3.
+  clock()->SetSystemTimeMilliseconds(10000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // 1. Set time as 1hr1s.
+  // 2. Then calling GetNumActiveResultStates() should invalidate state 1 and
+  //    return 2.
+  clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
+  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
+                  /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),
+              Eq(2));
 }
 
 }  // namespace

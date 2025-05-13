@@ -32,16 +32,25 @@ class DataIndexingHandler {
   virtual ~DataIndexingHandler() = default;
 
   // Handles the indexing process: add data into the specific type index (e.g.
-  // term index, integer index, qualified id type joinable index) for all
-  // contents in the corresponding type of data in tokenized_document.
-  // For example, IntegerSectionIndexingHandler::Handle should add data into
-  // integer index for all contents in tokenized_document.integer_sections.
+  // term index, integer index, qualified id type joinable index, embedding
+  // index) for all contents in the corresponding type of data in
+  // tokenized_document. For example, IntegerSectionIndexingHandler::Handle
+  // should add data into integer index for all contents in
+  // tokenized_document.integer_sections.
+  //
+  // old_document_id is provided. If valid, then it means the document with
+  // the same (namespace, uri) exists previously, and it is updated with new
+  // contents at this round. Each indexing handler should decide whether
+  // migrating existing data from old_document_id to (new) document_id according
+  // to each index's data logic.
   //
   // Also it should handle last added DocumentId properly (based on
   // recovery_mode_) to avoid adding previously indexed documents.
   //
   // tokenized_document: document object with different types of tokenized data.
   // document_id:        id of the document.
+  // old_document_id:    id of the document before the update. If it is a new
+  //                     document, then it will be kInvalidDocumentId.
   // recovery_mode:      decides how to handle document_id <=
   //                     last_added_document_id. If in recovery_mode, then
   //                     Handle() will simply return OK immediately. Otherwise,
@@ -57,7 +66,8 @@ class DataIndexingHandler {
   //   - Any other errors. It depends on each implementation.
   virtual libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      bool recovery_mode, PutDocumentStatsProto* put_document_stats) = 0;
+      DocumentId old_document_id, bool recovery_mode,
+      PutDocumentStatsProto* put_document_stats) = 0;
 
  protected:
   const Clock& clock_;  // Does not own.

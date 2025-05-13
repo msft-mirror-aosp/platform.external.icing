@@ -15,6 +15,7 @@
 #ifndef ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_STATUSOR_H_
 #define ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_STATUSOR_H_
 
+#include <cstdlib>
 #include <type_traits>
 #include <utility>
 

@@ -47,6 +47,9 @@ class IntegerSectionIndexingHandler : public DataIndexingHandler {
   // Handles the integer indexing process: add hits into the integer index for
   // all contents in tokenized_document.integer_sections.
   //
+  // Parameter old_document_id is unused since there is no need to migrate data
+  // from old_document_id to (new) document_id.
+  //
   // Returns:
   //   - OK on success.
   //   - INVALID_ARGUMENT_ERROR if document_id is invalid OR document_id is less
@@ -55,7 +58,8 @@ class IntegerSectionIndexingHandler : public DataIndexingHandler {
   //   - Any NumericIndex<int64_t>::Editor errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
+      DocumentId /*old_document_id*/ _, bool recovery_mode,
+      PutDocumentStatsProto* put_document_stats) override;
 
  private:
   explicit IntegerSectionIndexingHandler(const Clock* clock,
