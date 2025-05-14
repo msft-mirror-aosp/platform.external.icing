@@ -116,12 +116,20 @@ class IcingConnectionImpl
   ScopedAStatus initialize(
       const std::vector<uint8_t>& icing_search_engine_options_proto,
       std::optional<std::vector<uint8_t>>* initialize_result_proto) {
-    IcingSearchEngineOptions options;
-    DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
-    options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
-                         "/" + std::to_string(user_id_) + "/" +
-                         options.base_dir());
-    icing_ = std::make_unique<IcingSearchEngine>(options);
+    if (icing_ == nullptr) {
+      // Only create a new IcingSearchEngine instance if it is nullptr. This
+      // will avoid unnecessary object destruction and instantiation if this API
+      // is called more than one time.
+      IcingSearchEngineOptions options;
+      DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
+      options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
+                           "/" + std::to_string(user_id_) + "/" +
+                           options.base_dir());
+      icing_ = std::make_unique<IcingSearchEngine>(options);
+    }
+
+    // IcingSearchEngine::Initialize will return success directly if it has
+    // already been initialized.
     InitializeResultProto initialize_result = icing_->Initialize();
     SERIALIZE_AND_RETURN_ASTATUS(initialize_result, initialize_result_proto);
   }
