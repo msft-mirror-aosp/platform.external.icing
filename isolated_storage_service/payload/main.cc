@@ -3,9 +3,12 @@
 #include <android/binder_status.h>
 #include <vm_payload.h>
 
+#include <cinttypes>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <fstream>
 #include <memory>
 #include <unistd.h>
 
@@ -486,7 +489,36 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
   ScopedAStatus trimMemory() override {
     ICING_LOG(INFO) << "Received trim memory request, trimming";
     vmShrinkRay();
-    exit(0);
+    return ScopedAStatus::ok();
+  }
+
+  ScopedAStatus getAvailableMemory(int64_t* mem_available) override {
+    std::ifstream meminfo_file("/proc/meminfo");
+    if (!meminfo_file) {
+      return ScopedAStatus::fromExceptionCodeWithMessage(
+          EX_ILLEGAL_STATE, "Failed to open /proc/meminfo");
+    }
+    constexpr std::string_view kMemAvailableStr = "MemAvailable:";
+    std::string line;
+    while (std::getline(meminfo_file, line)) {
+      if (line.starts_with(kMemAvailableStr)) {
+        // It is possible that "kB" is in the end of the line, so let's use
+        // sscanf to parse int64_t.
+        int64_t temp_val = 0;
+        if (sscanf(line.c_str() + kMemAvailableStr.size(), "%" PRId64, &temp_val)
+            != 1) {
+          // Failed to parse int64_t. This should not happen, but let's handle
+          // it just in case.
+          return ScopedAStatus::fromExceptionCodeWithMessage(
+              EX_ILLEGAL_STATE, "Failed to parse MemAvailable");
+        }
+
+        *mem_available = temp_val;
+        return ScopedAStatus::ok();
+      }
+    }
+    return ScopedAStatus::fromExceptionCodeWithMessage(
+        EX_ILLEGAL_STATE, "Failed to find MemAvailable");
   }
 
   ScopedAStatus getOrCreateIcingConnection(
