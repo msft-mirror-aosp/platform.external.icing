@@ -2467,6 +2467,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       Filesystem::SanitizeFileSize(after_size));
 
   TransformStatus(doc_store_optimize_result_status, result_status);
+  ICING_LOG(INFO) << "Finished optimizing icing storage";
   return result_proto;
 }
 
