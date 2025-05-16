@@ -43,6 +43,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -209,8 +210,8 @@ TEST_F(ScoreExpressionUtilTest,
 TEST_F(ScoreExpressionUtilTest, SimpleExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/10,
-                                          /*creation_timestamp_ms=*/100)));
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "namespace", "uri", /*score=*/10, /*creation_timestamp_ms=*/100))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo doc_hit_info = DocHitInfo(document_id);
 
@@ -233,8 +234,8 @@ TEST_F(ScoreExpressionUtilTest, SimpleExpression) {
 TEST_F(ScoreExpressionUtilTest, DocumentFunctionsWithoutOptionalDependencies) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/10,
-                                          /*creation_timestamp_ms=*/100)));
+      document_store_->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "namespace", "uri", /*score=*/10, /*creation_timestamp_ms=*/100))));
   DocumentId document_id = put_result.new_document_id;
   DocHitInfo doc_hit_info = DocHitInfo(document_id);
 

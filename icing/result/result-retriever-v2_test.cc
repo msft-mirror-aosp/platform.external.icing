@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -61,6 +62,7 @@
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
@@ -80,17 +82,18 @@ using ::testing::Return;
 using ::testing::SizeIs;
 using EntryIdMap = std::unordered_map<int32_t, int>;
 
-// Mock the behavior of GroupResultLimiter::ShouldBeRemoved.
+// Mock the behavior of GroupResultLimiter::GetGroupResultLimitsIndex: get
+// -1 to avoid excluding documents.
 class MockGroupResultLimiter : public GroupResultLimiterV2 {
  public:
   MockGroupResultLimiter() : GroupResultLimiterV2() {
-    ON_CALL(*this, ShouldBeRemoved).WillByDefault(Return(false));
+    ON_CALL(*this, GetGroupResultLimitsIndex).WillByDefault(Return(-1));
   }
 
-  MOCK_METHOD(bool, ShouldBeRemoved,
+  MOCK_METHOD(std::optional<int>, GetGroupResultLimitsIndex,
               (const ScoredDocumentHit&, const EntryIdMap&,
-               const DocumentStore&, std::vector<int>&,
-               ResultSpecProto::ResultGroupingType, int64_t),
+               const DocumentStore&, ResultSpecProto::ResultGroupingType,
+               int64_t),
               (const, override));
 };
 
@@ -287,20 +290,30 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             doc_store->Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             doc_store->Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             doc_store->Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -386,11 +399,15 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentId invalid_document_id = -1;
@@ -471,8 +488,9 @@ TEST_P(ResultRetrieverV2Test,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(person_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(document_util::CreateDocumentWrapper(person_document1)));
   DocumentId person_document_id1 = put_result1.new_document_id;
 
   DocumentProto person_document2 =
@@ -483,8 +501,9 @@ TEST_P(ResultRetrieverV2Test,
           .AddStringProperty("name", "Meg Ryan")
           .AddStringProperty("emailAddress", "shopgirl@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(person_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(document_util::CreateDocumentWrapper(person_document2)));
   DocumentId person_document_id2 = put_result2.new_document_id;
 
   // 2. Add 4 Email documents
@@ -495,7 +514,9 @@ TEST_P(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 1")
                                       .AddStringProperty("body", "Test 1")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(put_result1, doc_store->Put(email_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result1,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document1)));
   DocumentId email_document_id1 = put_result1.new_document_id;
 
   DocumentProto email_document2 = DocumentBuilder()
@@ -505,7 +526,9 @@ TEST_P(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 2")
                                       .AddStringProperty("body", "Test 2")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(put_result2, doc_store->Put(email_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result2,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document2)));
   DocumentId email_document_id2 = put_result2.new_document_id;
 
   DocumentProto email_document3 = DocumentBuilder()
@@ -515,8 +538,9 @@ TEST_P(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 3")
                                       .AddStringProperty("body", "Test 3")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             doc_store->Put(email_document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document3)));
   DocumentId email_document_id3 = put_result3.new_document_id;
 
   DocumentProto email_document4 = DocumentBuilder()
@@ -526,8 +550,9 @@ TEST_P(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 4")
                                       .AddStringProperty("body", "Test 4")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             doc_store->Put(email_document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document4)));
   DocumentId email_document_id4 = put_result4.new_document_id;
 
   // 3. Setup the joined scored results.
@@ -625,11 +650,15 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -676,20 +705,30 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             doc_store->Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             doc_store->Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             doc_store->Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -780,11 +819,15 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits1 = {
       {document_id1, hit_section_id_mask, /*score=*/0},
@@ -805,14 +848,20 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
     ASSERT_THAT(num_total_hits_, Eq(2));
   }
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             doc_store->Put(CreateDocument(/*id=*/3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             doc_store->Put(CreateDocument(/*id=*/4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             doc_store->Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits2 = {
       {document_id3, hit_section_id_mask, /*score=*/0},
@@ -890,11 +939,15 @@ TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -953,11 +1006,15 @@ TEST_P(ResultRetrieverV2Test,
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1022,11 +1079,15 @@ TEST_P(ResultRetrieverV2Test,
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1087,11 +1148,15 @@ TEST_P(ResultRetrieverV2Test,
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -1149,6 +1214,87 @@ TEST_P(ResultRetrieverV2Test,
   EXPECT_FALSE(has_more_results2);
 }
 
+TEST_P(ResultRetrieverV2Test,
+       ResultGroupingShouldDecrementOnlyWhenResultIsIncludedInThePage) {
+  if (!feature_flags_->enable_strict_page_byte_size_limit()) {
+    GTEST_SKIP() << "Test only applies to non-strict page byte size limit.";
+  }
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get(), *feature_flags_));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  // Create a ResultSpec that limits namespace "icing" to 10 results and the
+  // total bytes per page to result1.ByteSizeLong() + 1. This will force the
+  // result retriever to move result2 to the next page.
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/10, ResultSpecProto::NAMESPACE);
+  result_spec.set_num_total_bytes_per_page_threshold(result1.ByteSizeLong() +
+                                                     1);
+
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(2);
+  entry->set_namespace_("icing");
+
+  // Creates a ResultState with 2 ScoredDocumentHits.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
+
+  // First page: result1 should be returned.
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // Has more results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page: result2 should be returned.
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     ResultRetrieverV2Test, ResultRetrieverV2Test,
     testing::Values(
@@ -1159,7 +1305,8 @@ INSTANTIATE_TEST_SUITE_P(
                      /*enable_embedding_backup_generation=*/true,
                      /*enable_schema_database=*/true,
                      /*release_backup_schema_file_if_overlay_present=*/true,
-                     /*enable_strict_page_byte_size_limit=*/false),
+                     /*enable_strict_page_byte_size_limit=*/false,
+                     /*enable_smaller_decompression_buffer_size=*/true),
         FeatureFlags(/*allow_circular_schema_definitions=*/true,
                      /*enable_scorable_properties=*/true,
                      /*enable_embedding_quantization=*/true,
@@ -1167,7 +1314,8 @@ INSTANTIATE_TEST_SUITE_P(
                      /*enable_embedding_backup_generation=*/true,
                      /*enable_schema_database=*/true,
                      /*release_backup_schema_file_if_overlay_present=*/true,
-                     /*enable_strict_page_byte_size_limit=*/true)));
+                     /*enable_strict_page_byte_size_limit=*/true,
+                     /*enable_smaller_decompression_buffer_size=*/true)));
 
 }  // namespace
 

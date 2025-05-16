@@ -145,15 +145,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Put(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>>
-QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
+libtextclassifier3::StatusOr<QualifiedIdJoinIndex::DocumentJoinIdPairArrayView>
+QualifiedIdJoinIndexImplV3::GetDocumentJoinIdPairArrayView(
+    DocumentId parent_document_id) const {
   if (parent_document_id < 0 || parent_document_id == kInvalidDocumentId) {
     return absl_ports::InvalidArgumentError("Invalid parent document id");
   }
 
   if (parent_document_id >=
       parent_document_id_to_child_array_info_->num_elements()) {
-    return std::vector<DocumentJoinIdPair>();
+    return DocumentJoinIdPairArrayView(/*data=*/nullptr, /*len=*/0);
   }
 
   // Get the child array info for the parent.
@@ -161,7 +162,7 @@ QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
       const ArrayInfo* array_info,
       parent_document_id_to_child_array_info_->Get(parent_document_id));
   if (!array_info->IsValid()) {
-    return std::vector<DocumentJoinIdPair>();
+    return DocumentJoinIdPairArrayView(/*data=*/nullptr, /*len=*/0);
   }
 
   // Safe check to avoid out-of-bound access. This should never happen unless
@@ -174,11 +175,11 @@ QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
         std::to_string(child_document_join_id_pair_array_->num_elements())));
   }
 
-  // Get the DocumentJoinIdPair array and return the child DocumentJoinIdPairs.
+  // Get the DocumentJoinIdPair array ptr and return the array view.
   ICING_ASSIGN_OR_RETURN(
       const DocumentJoinIdPair* ptr,
       child_document_join_id_pair_array_->Get(array_info->index));
-  return std::vector<DocumentJoinIdPair>(ptr, ptr + array_info->used_length);
+  return DocumentJoinIdPairArrayView(ptr, array_info->used_length);
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(

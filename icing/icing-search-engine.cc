@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -192,17 +193,17 @@ libtextclassifier3::Status ValidateResultSpec(
          result_grouping.entry_groupings()) {
       const std::string& name_space = entry.namespace_();
       const std::string& schema = entry.schema();
-      auto entry_id_or = document_store->GetResultGroupingEntryId(
-          result_grouping_type, name_space, schema);
-      if (!entry_id_or.ok()) {
+      std::optional<int32_t> entry_id =
+          document_store->GetResultGroupingEntryId(result_grouping_type,
+                                                   name_space, schema);
+      if (!entry_id.has_value()) {
         continue;
       }
-      int32_t entry_id = entry_id_or.ValueOrDie();
-      if (unique_entry_ids.find(entry_id) != unique_entry_ids.end()) {
+      if (unique_entry_ids.find(*entry_id) != unique_entry_ids.end()) {
         return absl_ports::InvalidArgumentError(
             "Entry Ids must be unique across result groups.");
       }
-      unique_entry_ids.insert(entry_id);
+      unique_entry_ids.insert(*entry_id);
     }
   }
   return libtextclassifier3::Status::OK;
@@ -388,11 +389,12 @@ InitializeStatsProto::RecoveryCause TranslateMarkerProtoToRecoveryCause(
 // enforcement.
 libtextclassifier3::StatusOr<TokenizedDocument> PrepareDocumentForIndexing(
     const SchemaStore* schema_store,
-    const LanguageSegmenter* language_segmenter, DocumentProto&& document) {
+    const LanguageSegmenter* language_segmenter, int64_t current_time_ms,
+    DocumentProto&& document) {
   ICING_ASSIGN_OR_RETURN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store, language_segmenter,
-                                std::move(document)));
+                                current_time_ms, std::move(document)));
 
   // TODO(b/384947619): apply dependency enforcement.
 
@@ -509,7 +511,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_embedding_backup_generation(),
                      options_.enable_schema_database(),
                      options_.release_backup_schema_file_if_overlay_present(),
-                     options_.enable_strict_page_byte_size_limit()),
+                     options_.enable_strict_page_byte_size_limit(),
+                     options_.enable_smaller_decompression_buffer_size()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1465,8 +1468,11 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     return result_proto;
   }
 
-  auto tokenized_document_or = PrepareDocumentForIndexing(
-      schema_store_.get(), language_segmenter_.get(), std::move(document));
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
+  auto tokenized_document_or =
+      PrepareDocumentForIndexing(schema_store_.get(), language_segmenter_.get(),
+                                 current_time_ms, std::move(document));
   if (!tokenized_document_or.ok()) {
     TransformStatus(tokenized_document_or.status(), result_status);
     return result_proto;
@@ -1475,8 +1481,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
       std::move(tokenized_document_or).ValueOrDie());
 
   auto put_result_or = document_store_->Put(
-      tokenized_document.document(), tokenized_document.num_string_tokens(),
-      put_document_stats);
+      tokenized_document.document_wrapper(), put_document_stats);
   if (!put_result_or.ok()) {
     TransformStatus(put_result_or.status(), result_status);
     return result_proto;
@@ -1523,7 +1528,6 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   if (!index_status.ok()) {
     // If we encountered a failure or cannot resolve an internal error while
     // indexing this document, then mark it as deleted.
-    int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
     libtextclassifier3::Status delete_status =
         document_store_->Delete(document_id, current_time_ms);
     if (!delete_status.ok()) {
@@ -2346,13 +2350,14 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     return result_proto;
   }
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
   // Read the optimize status to get the time that we last ran.
   std::string optimize_status_filename =
       absl_ports::StrCat(options_.base_dir(), "/", kOptimizeStatusFilename);
   FileBackedProto<OptimizeStatusProto> optimize_status_file(
       *filesystem_, optimize_status_filename);
   auto optimize_status_or = optimize_status_file.Read();
-  int64_t current_time = clock_->GetSystemTimeMilliseconds();
 
   if (!optimize_status_or.ok()) {
     // We have trouble reading the status; or we've never run optimize before.
@@ -2361,14 +2366,18 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     int64_t time_since_last_optimize_ms;
     if (options_.calculate_time_since_last_attempted_optimize()) {
       time_since_last_optimize_ms = GetTimeSinceLastOptimizeMs(
-          current_time, *optimize_status_or.ValueOrDie());
+          current_time_ms, *optimize_status_or.ValueOrDie());
     } else {
       time_since_last_optimize_ms =
-          current_time - optimize_status_or.ValueOrDie()
-                             ->last_successful_optimize_run_time_ms();
+          current_time_ms - optimize_status_or.ValueOrDie()
+                                ->last_successful_optimize_run_time_ms();
     }
     result_proto.set_time_since_last_optimize_ms(time_since_last_optimize_ms);
   }
+
+  // Get stats from ResultStateManager.
+  result_proto.set_num_active_result_states(
+      result_state_manager_->GetNumActiveResultStates(current_time_ms));
 
   // Get stats from DocumentStore
   auto doc_store_optimize_info_or = document_store_->GetOptimizeInfo();
@@ -2949,12 +2958,23 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
           next_page_token, *result_retriever, current_time_ms);
   if (!page_result_info_or.ok()) {
     if (absl_ports::IsNotFound(page_result_info_or.status())) {
-      // NOT_FOUND means an empty result.
+      // - If calling GetNextPage with an invalid page token, return OK with an
+      //   empty result.
+      // - If the token is valid but getting NOT_FOUND error, then it is likely
+      //   that the corresponding ResultState has been removed due to cache
+      //   eviction (caused by cache budget limit exceeded or
+      //   SetSchema/Optimize). In this case, we should return an additional
+      //   (warning) field to the client indicating that the pagination is
+      //   incomplete.
       result_status->set_code(StatusProto::OK);
-      query_stats->set_page_token_type(
-          next_page_token == kInvalidNextPageToken
-              ? QueryStatsProto::PageTokenType::EMPTY
-              : QueryStatsProto::PageTokenType::NOT_FOUND);
+
+      if (next_page_token != kInvalidNextPageToken) {
+        result_proto.set_page_token_not_found(true);
+        query_stats->set_page_token_type(
+            QueryStatsProto::PageTokenType::NOT_FOUND);
+      } else {
+        query_stats->set_page_token_type(QueryStatsProto::PageTokenType::EMPTY);
+      }
     } else {
       // Real error, pass up.
       TransformStatus(page_result_info_or.status(), result_status);
@@ -3299,7 +3319,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     libtextclassifier3::Status status;
     libtextclassifier3::StatusOr<TokenizedDocument> tokenized_document_or =
         PrepareDocumentForIndexing(schema_store_.get(),
-                                   language_segmenter_.get(),
+                                   language_segmenter_.get(), current_time_ms,
                                    std::move(document));
     if (!tokenized_document_or.ok()) {
       status = std::move(tokenized_document_or).status();

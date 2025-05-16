@@ -25,6 +25,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/mutex.h"
+#include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
@@ -107,7 +108,11 @@ class ResultStateV2Test : public ::testing::Test {
     document.set_namespace_("namespace");
     document.set_uri(std::to_string(document_id));
     document.set_schema("Document");
-    document_store_->Put(std::move(document));
+
+    DocumentWrapper document_wrapper;
+    *document_wrapper.mutable_document() = std::move(document);
+
+    document_store_->Put(document_wrapper);
     return ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1);
   }
 
@@ -182,23 +187,29 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
 TEST_F(ResultStateV2Test,
        ShouldConstructNamespaceGroupIdMapAndGroupResultLimitsAccordingToSpecs) {
   // Create 3 docs under namespace1, namespace2, namespace3.
-  DocumentProto document1;
-  document1.set_namespace_("namespace1");
-  document1.set_uri("uri/1");
-  document1.set_schema("Document");
-  ICING_ASSERT_OK(document_store().Put(std::move(document1)));
+  DocumentWrapper document_wrapper1;
+  *document_wrapper1.mutable_document() = DocumentBuilder()
+                                              .SetNamespace("namespace1")
+                                              .SetUri("uri/1")
+                                              .SetSchema("Document")
+                                              .Build();
+  ICING_ASSERT_OK(document_store().Put(document_wrapper1));
 
-  DocumentProto document2;
-  document2.set_namespace_("namespace2");
-  document2.set_uri("uri/2");
-  document2.set_schema("Document");
-  ICING_ASSERT_OK(document_store().Put(std::move(document2)));
+  DocumentWrapper document_wrapper2;
+  *document_wrapper2.mutable_document() = DocumentBuilder()
+                                              .SetNamespace("namespace2")
+                                              .SetUri("uri/2")
+                                              .SetSchema("Document")
+                                              .Build();
+  ICING_ASSERT_OK(document_store().Put(document_wrapper2));
 
-  DocumentProto document3;
-  document3.set_namespace_("namespace3");
-  document3.set_uri("uri/3");
-  document3.set_schema("Document");
-  ICING_ASSERT_OK(document_store().Put(std::move(document3)));
+  DocumentWrapper document_wrapper3;
+  *document_wrapper3.mutable_document() = DocumentBuilder()
+                                              .SetNamespace("namespace3")
+                                              .SetUri("uri/3")
+                                              .SetSchema("Document")
+                                              .Build();
+  ICING_ASSERT_OK(document_store().Put(document_wrapper3));
 
   // Create a ResultSpec that limits "namespace1" to 3 results and limits
   // "namespace2"+"namespace3" to a total of 2 results. Also add
@@ -227,13 +238,13 @@ TEST_F(ResultStateV2Test,
   entry->set_namespace_("nonexistentNamespace1");
 
   // Get entry ids.
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       int32_t entry_id1, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       int32_t entry_id2, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace2", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       int32_t entry_id3, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace3", "Document"));
 

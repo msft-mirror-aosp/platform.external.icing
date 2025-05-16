@@ -31,6 +31,7 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/persistent-storage.h"
 #include "icing/join/document-join-id-pair.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-feature-flags.h"
@@ -43,15 +44,18 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
+using ::testing::IsNull;
 using ::testing::IsTrue;
 using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::Not;
+using ::testing::NotNull;
 using ::testing::Pointee;
 using ::testing::SizeIs;
 
@@ -324,9 +328,9 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
   EXPECT_THAT(index2, Pointee(SizeIs(2)));
-  EXPECT_THAT(index2->Get(/*parent_document_id=*/0),
+  EXPECT_THAT(index2->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
-  EXPECT_THAT(index2->Get(/*parent_document_id=*/1),
+  EXPECT_THAT(index2->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
@@ -360,9 +364,9 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
   EXPECT_THAT(index2, Pointee(SizeIs(2)));
-  EXPECT_THAT(index2->Get(/*parent_document_id=*/0),
+  EXPECT_THAT(index2->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
-  EXPECT_THAT(index2->Get(/*parent_document_id=*/1),
+  EXPECT_THAT(index2->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
@@ -400,9 +404,9 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
         QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
                                            *feature_flags_));
     EXPECT_THAT(index, Pointee(SizeIs(2)));
-    EXPECT_THAT(index->Get(/*parent_document_id=*/0),
+    EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
                 IsOkAndHolds(ElementsAre(child_join_id_pair1)));
-    EXPECT_THAT(index->Get(/*parent_document_id=*/1),
+    EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
                 IsOkAndHolds(ElementsAre(child_join_id_pair2)));
   }
 }
@@ -682,16 +686,18 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Put) {
   EXPECT_THAT(index, Pointee(SizeIs(6)));
 
   // Verify Get API.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
               IsOkAndHolds(ElementsAre(child_join_id_pair4)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/1),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
               IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2,
                                        child_join_id_pair5)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
               IsOkAndHolds(ElementsAre(child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/4), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/5),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/4),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
               IsOkAndHolds(ElementsAre(child_join_id_pair6)));
 }
 
@@ -726,29 +732,31 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(index, Pointee(SizeIs(13)));
 
   // Verify Get API.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/1),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/2),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
       IsOkAndHolds(ElementsAre(child_join_id_pair2, child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/4),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/4),
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/5),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
       IsOkAndHolds(ElementsAre(child_join_id_pair2, child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/6), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/6),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/7),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/7),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/8),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/8),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/9), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/10),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/9),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/10),
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
 }
 
@@ -784,29 +792,31 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(index, Pointee(SizeIs(13)));
 
   // Verify Get API.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/1),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/2),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
       IsOkAndHolds(ElementsAre(child_join_id_pair2, child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/4),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/4),
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/5),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
       IsOkAndHolds(ElementsAre(child_join_id_pair2, child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/6), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/6),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/7),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/7),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair3)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/8),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/8),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/9), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/10),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/9),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/10),
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
 }
 
@@ -834,10 +844,11 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   // Get API should return empty result for document 0 to 9.
   for (DocumentId parent_doc_id = 0; parent_doc_id < kParentDocumentId;
        ++parent_doc_id) {
-    EXPECT_THAT(index->Get(parent_doc_id), IsOkAndHolds(IsEmpty()));
+    EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id),
+                IsOkAndHolds(IsEmpty()));
   }
   // Get API should return the child document for document 10.
-  EXPECT_THAT(index->Get(kParentDocumentId),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(kParentDocumentId),
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
 }
 
@@ -885,8 +896,9 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   }
   EXPECT_THAT(index, Pointee(SizeIs(102)));
 
-  EXPECT_THAT(index->Get(parent1), IsOkAndHolds(child_join_id_pairs));
-  EXPECT_THAT(index->Get(parent2),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent1),
+              IsOkAndHolds(ElementsAreArray(child_join_id_pairs)));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent2),
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
@@ -995,11 +1007,11 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, PutShouldSkipInvalidParentDocumentId) {
   EXPECT_THAT(index, Pointee(SizeIs(3)));
 
   // Verify Get API.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/1),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
 }
 
@@ -1020,24 +1032,105 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(index, Pointee(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, GetEmptyIndex) {
+TEST_F(QualifiedIdJoinIndexImplV3Test, DocumentJoinIdPairArrayView) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  // Add 2 children for parent document 0.
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/20);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/2);
+  EXPECT_THAT(index->Put(child_join_id_pair1,
+                         /*parent_document_ids=*/std::vector<DocumentId>{0}),
+              IsOk());
+  EXPECT_THAT(index->Put(child_join_id_pair2,
+                         /*parent_document_ids=*/std::vector<DocumentId>{0}),
+              IsOk());
+
+  EXPECT_THAT(index, Pointee(SizeIs(2)));
+
+  // Get array view. Test each STL style method.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QualifiedIdJoinIndex::DocumentJoinIdPairArrayView array_view1,
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0));
+  EXPECT_THAT(array_view1, Not(IsEmpty()));
+  EXPECT_THAT(array_view1.data(), NotNull());
+  EXPECT_THAT(array_view1, SizeIs(2));
+  EXPECT_THAT(array_view1.begin(), NotNull());
+  EXPECT_THAT(array_view1.end(), NotNull());
+  EXPECT_THAT(array_view1,
+              ElementsAre(child_join_id_pair1, child_join_id_pair2));
+
+  // Add 1 more child for parent document 0.
+  DocumentJoinIdPair child_join_id_pair3(/*document_id=*/102,
+                                         /*joinable_property_id=*/2);
+  EXPECT_THAT(index->Put(child_join_id_pair3,
+                         /*parent_document_ids=*/std::vector<DocumentId>{0}),
+              IsOk());
+
+  // Get array view again. Test each STL style method.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QualifiedIdJoinIndex::DocumentJoinIdPairArrayView array_view2,
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0));
+  EXPECT_THAT(array_view2, Not(IsEmpty()));
+  EXPECT_THAT(array_view2.data(), NotNull());
+  EXPECT_THAT(array_view2, SizeIs(3));
+  EXPECT_THAT(array_view2.begin(), NotNull());
+  EXPECT_THAT(array_view2.end(), NotNull());
+  EXPECT_THAT(array_view2, ElementsAre(child_join_id_pair1, child_join_id_pair2,
+                                       child_join_id_pair3));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test, EmptyDocumentJoinIdPairArrayView) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
   EXPECT_THAT(index, Pointee(IsEmpty()));
 
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/1), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/4), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/5), IsOkAndHolds(IsEmpty()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QualifiedIdJoinIndex::DocumentJoinIdPairArrayView array_view,
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0));
+  EXPECT_THAT(array_view, IsEmpty());
+  EXPECT_THAT(array_view.data(), IsNull());
+  EXPECT_THAT(array_view.size(), Eq(0));
+  EXPECT_THAT(array_view.begin(), IsNull());
+  EXPECT_THAT(array_view.end(), IsNull());
+
+  // Use colon to iterate the array_view. There should be no crash and no-op.
+  for (const DocumentJoinIdPair& _ : array_view) {
+    ADD_FAILURE() << "Unexpectedly iterated the empty array_view.";
+  }
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test,
+       GetDocumentJoinIdPairArrayView_emptyIndex) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+  EXPECT_THAT(index, Pointee(IsEmpty()));
+
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/4),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
+              IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(
     QualifiedIdJoinIndexImplV3Test,
-    GetShouldReturnEmptyResultWithoutAccessingArrayForNonExistingLargeParent) {
+    GetDocumentJoinIdPairArrayView_shouldReturnEmptyArrayViewForNonExistingLargeParent) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1049,29 +1142,61 @@ TEST_F(
       child_join_id_pair, /*parent_document_ids=*/std::vector<DocumentId>{1}));
   EXPECT_THAT(index, Pointee(SizeIs(1)));
 
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/1),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
 
   // Now, only parent document id 1 is in the index, so the FileBackedVector has
   // been resized to fit parent document id 1.
   // Get API for parent document id greater than 1 should return empty result
   // without accessing the FileBackedVector.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(kMaxDocumentId), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(kMaxDocumentId),
+              IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
-       GetShouldReturnInvalidArgumentErrorForInvalidParentDocumentId) {
+TEST_F(
+    QualifiedIdJoinIndexImplV3Test,
+    GetDocumentJoinIdPairArrayView_shouldReturnEmptyArrayViewForParentWithNoChildren) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
 
-  EXPECT_THAT(index->Get(/*parent_document_id=*/-1),
+  // Add a child for parent document id 2.
+  DocumentJoinIdPair child_join_id_pair(/*document_id=*/100,
+                                        /*joinable_property_id=*/20);
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair, /*parent_document_ids=*/std::vector<DocumentId>{2}));
+  EXPECT_THAT(index, Pointee(SizeIs(1)));
+
+  // Since parent array info FBV is resized to fit parent document id 2, parent
+  // document 0 and 1 should also have array info element with invalid data
+  // index for the 2nd FBV.
+  //
+  // Getting array view for parent document 0 and 1 should return empty result
+  // when seeing invalid data index.
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
+              IsOkAndHolds(IsEmpty()));
+}
+
+TEST_F(
+    QualifiedIdJoinIndexImplV3Test,
+    GetDocumentJoinIdPairArrayView_shouldReturnInvalidArgumentErrorForInvalidParentDocumentId) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(index->Get(kInvalidDocumentId),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(kInvalidDocumentId),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -1099,15 +1224,17 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
   // Sanity check.
   ASSERT_THAT(index, Pointee(SizeIs(2)));
   ASSERT_THAT(
-      index->Get(parent_doc_id1),
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
-  ASSERT_THAT(index->Get(parent_doc_id2), IsOkAndHolds(IsEmpty()));
+  ASSERT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
+              IsOkAndHolds(IsEmpty()));
 
   // Migrate parent document id 1 to 1024.
   EXPECT_THAT(index->MigrateParent(parent_doc_id1, parent_doc_id2), IsOk());
-  EXPECT_THAT(index->Get(parent_doc_id1), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(
-      index->Get(parent_doc_id2),
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
 }
 
@@ -1142,18 +1269,20 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   // Sanity check.
   ASSERT_THAT(index, Pointee(SizeIs(2)));
   ASSERT_THAT(
-      index->Get(parent_doc_id1),
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
-  ASSERT_THAT(index->Get(parent_doc_id2), IsOkAndHolds(IsEmpty()));
+  ASSERT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
+              IsOkAndHolds(IsEmpty()));
 
   // Migrate parent document id 1 to 30000. This will
   // cause parent_document_id_to_child_array_info being extended and remap. The
   // test verifies that addresses after remap are handled correctly without
   // crashing.
   EXPECT_THAT(index->MigrateParent(parent_doc_id1, parent_doc_id2), IsOk());
-  EXPECT_THAT(index->Get(parent_doc_id1), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(
-      index->Get(parent_doc_id2),
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
   int64_t file_size_after = filesystem_.GetFileSize(array_working_path.c_str());
   ASSERT_THAT(file_size_after, Ne(Filesystem::kBadFileSize));
@@ -1274,7 +1403,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
   // - Child docs 101, 104, 105 become 11, 13, 14.
   // - Child docs 103, 107 are deleted.
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/0),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
       IsOkAndHolds(ElementsAre(
           DocumentJoinIdPair(/*document_id=*/11, /*joinable_property_id=*/0),
           DocumentJoinIdPair(/*document_id=*/13, /*joinable_property_id=*/0),
@@ -1284,20 +1413,23 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
   // - Child docs 102, 105 become 12, 14.
   // - Child doc 103 is deleted.
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/1),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
       IsOkAndHolds(ElementsAre(
           DocumentJoinIdPair(/*document_id=*/12, /*joinable_property_id=*/0),
           DocumentJoinIdPair(/*document_id=*/14, /*joinable_property_id=*/0))));
 
   // Verify document 2 (originally document 4)
   // - Child doc 103 is deleted.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
+              IsOkAndHolds(IsEmpty()));
 
   // Verify document 3 and 4:
   // - These 2 doc ids don't exist after optimize.
   // - The relations for the original document 3 and 4 should be deleted.
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/4), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/4),
+              IsOkAndHolds(IsEmpty()));
 
   // Verify Put API should work normally after Optimize().
   DocumentJoinIdPair another_child_join_id_pair(/*document_id=*/16,
@@ -1311,7 +1443,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
   EXPECT_THAT(index, Pointee(SizeIs(8)));
   EXPECT_THAT(index->last_added_document_id(), Eq(16));
   EXPECT_THAT(
-      index->Get(/*parent_document_id=*/0),
+      index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(/*document_id=*/11,
                                                   /*joinable_property_id=*/0),
                                DocumentJoinIdPair(/*document_id=*/13,
@@ -1319,9 +1451,9 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
                                DocumentJoinIdPair(/*document_id=*/14,
                                                   /*joinable_property_id=*/0),
                                another_child_join_id_pair)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
               IsOkAndHolds(ElementsAre(another_child_join_id_pair)));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
               IsOkAndHolds(ElementsAre(another_child_join_id_pair)));
 }
 
@@ -1491,10 +1623,14 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
       IsOk());
   EXPECT_THAT(index, Pointee(IsEmpty()));
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/1), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/3), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/3),
+              IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
@@ -1534,9 +1670,12 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
   EXPECT_THAT(index->Clear(), IsOk());
   EXPECT_THAT(index, Pointee(IsEmpty()));
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/0), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/1), IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/2), IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/1),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/2),
+              IsOkAndHolds(IsEmpty()));
 
   // Join index should be able to work normally after Clear().
   EXPECT_THAT(index->Put(child_join_id_pair4,
@@ -1546,7 +1685,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
 
   EXPECT_THAT(index, Pointee(SizeIs(1)));
   EXPECT_THAT(index->last_added_document_id(), Eq(105));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/5),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
               IsOkAndHolds(ElementsAre(child_join_id_pair4)));
 
   ICING_ASSERT_OK(index->PersistToDisk());
@@ -1558,7 +1697,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
                                                 *feature_flags_));
   EXPECT_THAT(index, Pointee(SizeIs(1)));
   EXPECT_THAT(index->last_added_document_id(), Eq(105));
-  EXPECT_THAT(index->Get(/*parent_document_id=*/5),
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
               IsOkAndHolds(ElementsAre(child_join_id_pair4)));
 }
 

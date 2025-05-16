@@ -38,7 +38,6 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/store/corpus-id.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -51,6 +50,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
@@ -153,8 +153,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -163,8 +164,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -216,8 +218,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -226,8 +229,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -275,8 +279,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -285,8 +290,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
@@ -295,8 +301,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
@@ -305,8 +312,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result4.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -366,8 +374,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -376,8 +385,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
@@ -386,8 +396,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
@@ -396,8 +407,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result4.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -453,8 +465,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -463,8 +476,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -520,8 +534,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -530,8 +545,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -588,8 +604,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -598,8 +615,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
@@ -608,8 +626,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
@@ -618,8 +637,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
@@ -628,8 +648,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
   DocumentId document_id5 = put_result5.new_document_id;
 
   DocumentProto document6 = DocumentBuilder()
@@ -638,8 +659,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(6)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result6,
-                             document_store_->Put(document6));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store_->Put(document_util::CreateDocumentWrapper(document6)));
   DocumentId document_id6 = put_result6.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -706,8 +728,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -716,8 +739,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
@@ -726,8 +750,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
@@ -736,8 +761,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
@@ -746,8 +772,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
   DocumentId document_id5 = put_result5.new_document_id;
 
   DocumentProto document6 = DocumentBuilder()
@@ -756,8 +783,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(6)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result6,
-                             document_store_->Put(document6));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store_->Put(document_util::CreateDocumentWrapper(document6)));
   DocumentId document_id6 = put_result6.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -824,8 +852,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -834,8 +863,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
@@ -844,8 +874,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
@@ -854,8 +885,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
@@ -864,8 +896,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
   DocumentId document_id5 = put_result5.new_document_id;
 
   DocumentProto document6 = DocumentBuilder()
@@ -874,8 +907,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(6)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result6,
-                             document_store_->Put(document6));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store_->Put(document_util::CreateDocumentWrapper(document6)));
   DocumentId document_id6 = put_result6.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -946,8 +980,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -956,8 +991,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1011,8 +1047,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -1021,8 +1058,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1076,8 +1114,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(1)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   DocumentProto document2 = DocumentBuilder()
@@ -1086,8 +1125,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(2)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentProto document3 = DocumentBuilder()
@@ -1096,8 +1136,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(3)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocumentProto document4 = DocumentBuilder()
@@ -1106,8 +1147,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(4)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result4,
-                             document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result4.new_document_id;
 
   DocumentProto document5 = DocumentBuilder()
@@ -1116,8 +1158,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
                                 .SetScore(5)
                                 .SetCreationTimestampMs(1000)
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result5,
-                             document_store_->Put(document5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store_->Put(document_util::CreateDocumentWrapper(document5)));
   DocumentId document_id5 = put_result5.new_document_id;
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -1144,13 +1187,13 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   entry = result_grouping->add_entry_groupings();
   entry->set_namespace_("namespace2");
 
-  // Get corpus ids.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id1, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id2, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace2", "Document"));
+  // Get result grouping entry ids.
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      int32_t entry_id1, document_store_->GetResultGroupingEntryId(
+                             result_grouping_type, "namespace1", "Document"));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      int32_t entry_id2, document_store_->GetResultGroupingEntryId(
+                             result_grouping_type, "namespace2", "Document"));
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
@@ -1163,7 +1206,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     absl_ports::shared_lock l(&result_state.mutex);
 
     ASSERT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     ASSERT_THAT(result_state.group_result_limits, ElementsAre(3, 1));
   }
 
@@ -1175,7 +1218,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // document5, document4, document1 belong to namespace2 (with max_results =
   // 1).
-  // docuemnt3, document2 belong to namespace 1 (with max_results = 3).
+  // document3, document2 belong to namespace 1 (with max_results = 3).
   // Since num_per_page is 2, we expect to get document5 and document3 in the
   // first page.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
@@ -1202,9 +1245,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // round, num_returned should still be 2, since document4 was "filtered out"
     // and should not be counted into num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(2));
-    // corpus_id_group_id_map should be unchanged.
+    // entry_id_group_id_map should be unchanged.
     EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(2, 0));
   }
@@ -1226,9 +1269,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // since document1 was "filtered out" and should not be counted into
     // num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(3));
-    // corpus_id_group_id_map should be unchanged.
+    // entry_id_group_id_map should be unchanged.
     EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(1, 0));
   }
