@@ -3,9 +3,12 @@
 #include <android/binder_status.h>
 #include <vm_payload.h>
 
+#include <cinttypes>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <fstream>
 #include <memory>
 #include <unistd.h>
 
@@ -113,12 +116,20 @@ class IcingConnectionImpl
   ScopedAStatus initialize(
       const std::vector<uint8_t>& icing_search_engine_options_proto,
       std::optional<std::vector<uint8_t>>* initialize_result_proto) {
-    IcingSearchEngineOptions options;
-    DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
-    options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
-                         "/" + std::to_string(user_id_) + "/" +
-                         options.base_dir());
-    icing_ = std::make_unique<IcingSearchEngine>(options);
+    if (icing_ == nullptr) {
+      // Only create a new IcingSearchEngine instance if it is nullptr. This
+      // will avoid unnecessary object destruction and instantiation if this API
+      // is called more than one time.
+      IcingSearchEngineOptions options;
+      DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
+      options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
+                           "/" + std::to_string(user_id_) + "/" +
+                           options.base_dir());
+      icing_ = std::make_unique<IcingSearchEngine>(options);
+    }
+
+    // IcingSearchEngine::Initialize will return success directly if it has
+    // already been initialized.
     InitializeResultProto initialize_result = icing_->Initialize();
     SERIALIZE_AND_RETURN_ASTATUS(initialize_result, initialize_result_proto);
   }
@@ -486,7 +497,36 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
   ScopedAStatus trimMemory() override {
     ICING_LOG(INFO) << "Received trim memory request, trimming";
     vmShrinkRay();
-    exit(0);
+    return ScopedAStatus::ok();
+  }
+
+  ScopedAStatus getAvailableMemory(int64_t* mem_available) override {
+    std::ifstream meminfo_file("/proc/meminfo");
+    if (!meminfo_file) {
+      return ScopedAStatus::fromExceptionCodeWithMessage(
+          EX_ILLEGAL_STATE, "Failed to open /proc/meminfo");
+    }
+    constexpr std::string_view kMemAvailableStr = "MemAvailable:";
+    std::string line;
+    while (std::getline(meminfo_file, line)) {
+      if (line.starts_with(kMemAvailableStr)) {
+        // It is possible that "kB" is in the end of the line, so let's use
+        // sscanf to parse int64_t.
+        int64_t temp_val = 0;
+        if (sscanf(line.c_str() + kMemAvailableStr.size(), "%" PRId64, &temp_val)
+            != 1) {
+          // Failed to parse int64_t. This should not happen, but let's handle
+          // it just in case.
+          return ScopedAStatus::fromExceptionCodeWithMessage(
+              EX_ILLEGAL_STATE, "Failed to parse MemAvailable");
+        }
+
+        *mem_available = temp_val;
+        return ScopedAStatus::ok();
+      }
+    }
+    return ScopedAStatus::fromExceptionCodeWithMessage(
+        EX_ILLEGAL_STATE, "Failed to find MemAvailable");
   }
 
   ScopedAStatus getOrCreateIcingConnection(

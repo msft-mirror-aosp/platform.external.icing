@@ -34,6 +34,11 @@ interface IIsolatedStorageService {
   oneway void trimMemory();
 
   /**
+   * Gets VM MemAvailable from /proc/meminfo in kB.
+   */
+  long getAvailableMemory();
+
+  /**
    * Returns an Icing connection for the given userId. Creates a new Icing connection if one does
    * not already exist for the given userId.
    *

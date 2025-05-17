@@ -181,7 +181,7 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
       HeaderBlock read_header,
       HeaderBlock::Read(filesystem_, storage_sfd_.get(), block_size), false);
   if (read_header.header()->magic != HeaderBlock::Header::kMagic) {
-    ICING_LOG(ERROR) << "Index header block wrong magic";
+    ICING_LOG(ERROR) << "Index header block wrong magic: " << read_header.header()->magic;
     return false;
   }
   if (file_size % read_header.header()->block_size != 0) {
