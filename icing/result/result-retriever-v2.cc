@@ -193,6 +193,13 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
                               num_total_bytes) {
         // Exceeds the byte size threshold, so skip the current document. Also
         // it remains in the ranker and will be included in the next page.
+        ICING_LOG(INFO) << "Skipping document due to byte size threshold. "
+                           "Current num docs: "
+                        << results.size()
+                        << ", total byte size: " << num_total_bytes
+                        << ", next doc byte size: " << result_bytes
+                        << ", threshold: "
+                        << result_state.num_total_bytes_per_page_threshold();
         break;
       }
 
