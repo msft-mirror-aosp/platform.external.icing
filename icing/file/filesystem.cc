@@ -566,7 +566,13 @@ bool Filesystem::Read(int fd, void* buf, size_t buf_size) const {
     if (read_status < 0) {
       ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
       return false;
-    } else if (read_status == 0) {
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: only read " << read_status
+                       << " bytes, but there were " << buf_size - processed_size
+                       << " bytes left to read for total read of " << buf_size << "bytes.";
+    }
+    if (read_status == 0) {
       // EOF. Finish reading.
       return true;
     }
@@ -597,7 +603,13 @@ bool Filesystem::PRead(int fd, void* buf, size_t buf_size, off_t offset) const {
     if (read_status < 0) {
       ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
       return false;
-    } else if (read_status == 0) {
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: only read " << read_status
+                       << " bytes, but there were " << buf_size - processed_size
+                       << " bytes left to read for total read of " << buf_size << "bytes.";
+    }
+    if (read_status == 0) {
       // EOF. Finish reading.
       return true;
     }
