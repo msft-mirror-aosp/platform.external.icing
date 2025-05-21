@@ -1084,14 +1084,16 @@ TEST_F(PortableFileBackedProtoLogTest, DifferentMagic) {
 
   {
     // Reinitialize the same proto_log
-    ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
-                    &filesystem_, file_path_,
-                    PortableFileBackedProtoLog<DocumentProto>::Options(
-                        compress_, max_proto_size_, compression_level_,
-                        compression_threshold_bytes_, compression_mem_level_,
-                        enable_smaller_decompression_buffer_size_)),
-                StatusIs(libtextclassifier3::StatusCode::INTERNAL,
-                         HasSubstr("Invalid header kMagic")));
+    ASSERT_THAT(
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)),
+        StatusIs(
+            libtextclassifier3::StatusCode::INTERNAL,
+            HasSubstr("Invalid header magic for PortableFileBackedProtoLog")));
   }
 }
 

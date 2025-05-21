@@ -457,10 +457,12 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
 
   // Attempt to create the qualified id join index with different magic. This
   // should fail.
-  EXPECT_THAT(QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
-                                                 *feature_flags_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
-                       HasSubstr("Incorrect magic value")));
+  EXPECT_THAT(
+      QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
+                                         *feature_flags_),
+      StatusIs(
+          libtextclassifier3::StatusCode::FAILED_PRECONDITION,
+          HasSubstr("Invalid header magic for QualifiedIdJoinIndexImplV3")));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test,

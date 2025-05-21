@@ -475,9 +475,10 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic != DocumentStore::Header::kMagic) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
+  if (header.magic != Header::kMagic) {
+    ICING_LOG(ERROR) << "Invalid header magic for DocumentStore. Expected: "
+                     << Header::kMagic << ", actual: " << header.magic;
+    return absl_ports::InternalError("Invalid header magic for DocumentStore");
   }
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
