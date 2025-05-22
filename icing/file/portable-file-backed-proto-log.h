@@ -715,9 +715,28 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
   header->SetMaxProtoSize(options.max_proto_size);
   header->SetHeaderChecksum(header->CalculateHeaderChecksum());
 
-  if (!filesystem->Write(file_path.c_str(), header.get(), sizeof(Header))) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to write header for file: ", file_path));
+  {
+    ScopedFd fd(filesystem->OpenForWrite(file_path.c_str()));
+    if (!fd.is_valid()) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to open file for write: ", file_path));
+    }
+
+    if (!filesystem->Write(fd.get(), header.get(), sizeof(Header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to write header for file: ", file_path));
+    }
+
+    // Sync the file to disk to ensure that the header is flushed to disk.
+    // - Otherwise, if the app crashes before the header is flushed, the next
+    //   initialize may fail.
+    // - This is especially important for this class, since it is used to store
+    //   ground truth data. If magic or checksum is wrong, then Icing cannot
+    //   recover it from this state and therefore end up with entire data loss.
+    if (!filesystem->DataSync(fd.get())) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to sync file: ", file_path));
+    }
   }
 
   CreateResult create_result = {
@@ -741,6 +760,10 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
     const Options& options, int64_t file_size) {
   bool header_changed = false;
   if (file_size < kHeaderReservedBytes) {
+    ICING_LOG(ERROR) << "Invalid file size for PortableFileBackedProtoLog "
+                     << file_path
+                     << " for header reserved bytes. File size: " << file_size
+                     << ", header reserved bytes: " << kHeaderReservedBytes;
     return absl_ports::InternalError(
         absl_ports::StrCat("File header too short for: ", file_path));
   }
@@ -756,8 +779,11 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   // is covered by the header_checksum check below, but this is a quick check
   // that can save us from an extra crc computation.
   if (header->GetMagic() != Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for file: ", file_path));
+    ICING_LOG(ERROR) << "Invalid header magic for PortableFileBackedProtoLog "
+                     << file_path << ". Expected: " << Header::kMagic
+                     << ", actual: " << header->GetMagic();
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for PortableFileBackedProtoLog: ", file_path));
   }
 
   if (header->GetHeaderChecksum() != header->CalculateHeaderChecksum()) {
