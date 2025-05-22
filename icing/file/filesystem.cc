@@ -28,9 +28,9 @@
 #include <cerrno>
 #include <cstdint>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
 
 using std::vector;

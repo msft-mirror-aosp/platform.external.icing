@@ -215,7 +215,11 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
           "Incorrect metadata file size");
     }
     if (info().magic != Info::kMagic) {
-      return absl_ports::FailedPreconditionError("Incorrect magic value");
+      ICING_LOG(ERROR) << "Invalid header magic for EmbeddingIndex "
+                       << working_path_ << ". Expected: " << Info::kMagic
+                       << ", actual: " << info().magic;
+      return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+          "Invalid header magic for EmbeddingIndex: ", working_path_));
     }
     ICING_RETURN_IF_ERROR(CreateStorageDataIfNonEmpty());
     ICING_RETURN_IF_ERROR(InitializeExistingStorage());

@@ -17,8 +17,10 @@
 #include "icing/file/filesystem.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -449,6 +451,53 @@ TEST_F(FilesystemTest, ReadWrite) {
   EXPECT_TRUE(
       filesystem.PRead(foo_file.c_str(), &hello[0], strlen("hello"), 0));
   EXPECT_THAT(hello, Eq("hello"));
+}
+
+TEST_F(FilesystemTest, ReadInChunks) {
+  int pipe_fd[2];
+  ASSERT_THAT(pipe(pipe_fd), Eq(0));
+  ScopedFd read_fd(pipe_fd[0]);
+  ScopedFd write_fd(pipe_fd[1]);
+
+  std::string read_data(200, 'a');
+  bool read_success = false;
+  Filesystem filesystem;
+  auto read_callable = [&]() {
+    read_success =
+        filesystem.Read(read_fd.get(), &read_data[0], read_data.size());
+  };
+
+  std::string write_chunks(50, 'b');
+  auto write_callable = [&]() {
+    for (int i = 0; i < 4; ++i) {
+      filesystem.Write(write_fd.get(), &write_chunks[0], write_chunks.size());
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  };
+
+  std::thread read_thread(read_callable);
+  std::thread write_thread(write_callable);
+  read_thread.join();
+  write_thread.join();
+  EXPECT_TRUE(read_success);
+  std::string expected_data(200, 'b');
+  EXPECT_THAT(read_data, Eq(expected_data));
+}
+
+TEST_F(FilesystemTest, ReadFileSmallerThanBufferSize) {
+  Filesystem filesystem;
+  const std::string foo_file = temp_dir_ + "/foo_file";
+  ScopedFd fd(filesystem.OpenForWrite(foo_file.c_str()));;
+  ASSERT_TRUE(fd.is_valid());
+
+  std::string write_buf(100, 'b');
+  ASSERT_TRUE(filesystem.Write(fd.get(), &write_buf[0], write_buf.length()));
+
+  std::string read_buf(200, 'a');
+  EXPECT_TRUE(filesystem.PRead(fd.get(), &read_buf[0], read_buf.length(), 0));
+
+  std::string expected_read_buf = std::string(100, 'b') + std::string(100, 'a');
+  EXPECT_THAT(read_buf, Eq(expected_read_buf));
 }
 
 TEST_F(FilesystemTest, CopyDirectory) {

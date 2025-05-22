@@ -760,6 +760,10 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
     const Options& options, int64_t file_size) {
   bool header_changed = false;
   if (file_size < kHeaderReservedBytes) {
+    ICING_LOG(ERROR) << "Invalid file size for PortableFileBackedProtoLog "
+                     << file_path
+                     << " for header reserved bytes. File size: " << file_size
+                     << ", header reserved bytes: " << kHeaderReservedBytes;
     return absl_ports::InternalError(
         absl_ports::StrCat("File header too short for: ", file_path));
   }
@@ -775,8 +779,11 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   // is covered by the header_checksum check below, but this is a quick check
   // that can save us from an extra crc computation.
   if (header->GetMagic() != Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for file: ", file_path));
+    ICING_LOG(ERROR) << "Invalid header magic for PortableFileBackedProtoLog "
+                     << file_path << ". Expected: " << Header::kMagic
+                     << ", actual: " << header->GetMagic();
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for PortableFileBackedProtoLog: ", file_path));
   }
 
   if (header->GetHeaderChecksum() != header->CalculateHeaderChecksum()) {

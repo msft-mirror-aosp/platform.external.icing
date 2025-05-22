@@ -30,6 +30,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/index.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -98,6 +99,7 @@ libtextclassifier3::StatusOr<IcingSearchEngineVersionProto> ReadV2VersionInfo(
       MakeVersionFilePath(version_file_dir, kVersionFilenameV2);
   ICING_LOG(INFO) << "v2 version file exists: "
                   << filesystem.FileExists(v2_version_filepath.c_str());
+
   FileBackedProto<IcingSearchEngineVersionProto> v2_version_file(
       filesystem, v2_version_filepath);
   ICING_ASSIGN_OR_RETURN(const IcingSearchEngineVersionProto* v2_version_proto,
