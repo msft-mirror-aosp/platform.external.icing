@@ -1112,6 +1112,12 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
       SchemaStore::Create(filesystem_, temp_schema_store_dir.dir(), clock_,
                           feature_flags_, std::move(new_schema)));
 
+  // Call PersistToDisk() to write the new schema file to disk. This is needed
+  // to ensure that all subcomponents of the new schema store (header file,
+  // derived files, etc) are written to disk before we swap the files in the
+  // next step.
+  ICING_RETURN_IF_ERROR(new_schema_store->PersistToDisk());
+
   // Then we swap the new schema file + new derived files with the old files.
   if (!filesystem_->SwapFiles(base_dir_.c_str(),
                               temp_schema_store_dir.dir().c_str())) {
