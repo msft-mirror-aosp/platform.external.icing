@@ -1526,6 +1526,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_deleted_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(1);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Adding new document fails because db1_type is deleted.
@@ -2915,6 +2916,7 @@ TEST_F(
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -3081,6 +3083,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -3212,6 +3215,7 @@ TEST_F(
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -3381,6 +3385,7 @@ TEST_F(
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -3497,6 +3502,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(2);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Both documents should be deleted now.
@@ -3564,7 +3570,6 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   expected_set_schema_result_proto.mutable_status()->set_message(
       "Schema is incompatible.");
   expected_set_schema_result_proto.add_incompatible_schema_types("email");
-
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
 
   // Force set it
@@ -3575,6 +3580,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   set_schema_result.clear_latency_ms();
   expected_set_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result_proto.mutable_status()->clear_message();
+  expected_set_schema_result_proto.set_deleted_document_count(1);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
 
   GetResultProto expected_get_result_proto;
@@ -3650,6 +3656,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {
   set_schema_result.clear_latency_ms();
   expected_result.mutable_status()->set_code(StatusProto::OK);
   expected_result.mutable_status()->clear_message();
+  expected_result.set_deleted_document_count(1);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_result));
 
   // "email" document is still there

@@ -461,7 +461,13 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
 
   // Validate magic.
   if (join_index->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for QualifiedIdJoinIndexImplV3 "
+                     << join_index->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << join_index->info().magic;
+    return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+        "Invalid header magic for QualifiedIdJoinIndexImplV3: ",
+        join_index->working_path_));
   }
 
   return join_index;
