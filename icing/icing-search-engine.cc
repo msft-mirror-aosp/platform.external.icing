@@ -1435,12 +1435,13 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     } else if (!set_schema_result.old_schema_type_ids_changed.empty() ||
                !set_schema_result.schema_types_incompatible_by_id.empty() ||
                !set_schema_result.schema_types_deleted_by_id.empty()) {
-      status = document_store_->OptimizedUpdateSchemaStore(schema_store_.get(),
-                                                           set_schema_result);
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
+      auto update_status_or = document_store_->OptimizedUpdateSchemaStore(
+          schema_store_.get(), set_schema_result);
+      if (!update_status_or.ok()) {
+        TransformStatus(update_status_or.status(), result_status);
         return result_proto;
       }
+      result_proto.set_deleted_document_count(update_status_or.ValueOrDie());
     }
 
     if (lost_previous_schema || index_incompatible) {
@@ -1485,7 +1486,6 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         }
       }
     }
-
     result_status->set_code(StatusProto::OK);
   } else {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);

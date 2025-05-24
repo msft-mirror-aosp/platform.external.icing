@@ -157,6 +157,8 @@ class SchemaStore {
           min_overlay_version_compatibility;
     }
 
+    void SetSwappedFilepath(std::string path) { path_ = std::move(path); }
+
    private:
     explicit Header(SerializedHeader serialized_header, std::string path,
                     ScopedFd header_fd, const Filesystem* filesystem)
