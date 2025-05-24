@@ -1431,6 +1431,54 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
               IsOkAndHolds(EqualsProto(db3_schema)));
 }
 
+TEST_F(SchemaStoreTest, SetEmptySchemaOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get(),
+                          /*initialize_stats=*/nullptr));
+
+  // Set schema for the first time
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("db/email").SetDatabase("db/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db/message")
+                       .SetDatabase("db/"))
+          .Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("db/email");
+  result.schema_types_new_by_name.insert("db/message");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  // Verify schema.
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(schema))));
+
+  // Reset to an empty schema.
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_deleted_by_name.insert("db/email");
+  result.schema_types_deleted_by_name.insert("db/message");
+  result.schema_types_deleted_by_id.insert(0);  // email
+  result.schema_types_deleted_by_id.insert(1);  // message
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  SchemaProto(), /*database=*/"db/",
+                  /*ignore_errors_and_delete_documents=*/true)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  // Check the schema. It should be empty.
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(SchemaProto()))));
+
+  EXPECT_THAT(schema_store->PersistToDisk(), IsOk());
+}
+
 TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,

@@ -28,9 +28,9 @@
 #include <cerrno>
 #include <cstdint>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
 
 using std::vector;
@@ -557,10 +557,26 @@ bool Filesystem::PWrite(const char* filename, off_t offset, const void* data,
 }
 
 bool Filesystem::Read(int fd, void* buf, size_t buf_size) const {
-  ssize_t read_status = read(fd, buf, buf_size);
-  if (read_status < 0) {
-    ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
-    return false;
+  // convenience for pointer arithmetic below.
+  char* buf_ptr = static_cast<char*>(buf);
+  size_t processed_size = 0;
+  while (processed_size < buf_size) {
+    ssize_t read_status =
+        read(fd, buf_ptr + processed_size, buf_size - processed_size);
+    if (read_status < 0) {
+      ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
+      return false;
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: only read " << read_status
+                       << " bytes, but there were " << buf_size - processed_size
+                       << " bytes left to read for total read of " << buf_size << "bytes.";
+    }
+    if (read_status == 0) {
+      // EOF. Finish reading.
+      return true;
+    }
+    processed_size += read_status;
   }
   return true;
 }
@@ -577,10 +593,27 @@ bool Filesystem::Read(const char* filename, void* buf, size_t buf_size) const {
 }
 
 bool Filesystem::PRead(int fd, void* buf, size_t buf_size, off_t offset) const {
-  ssize_t read_status = pread(fd, buf, buf_size, offset);
-  if (read_status < 0) {
-    ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
-    return false;
+  // convenience for pointer arithmetic below.
+  char* buf_ptr = static_cast<char*>(buf);
+  size_t processed_size = 0;
+  while (processed_size < buf_size) {
+    ssize_t read_status =
+        pread(fd, buf_ptr + processed_size, buf_size - processed_size,
+              offset + processed_size);
+    if (read_status < 0) {
+      ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
+      return false;
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: only read " << read_status
+                       << " bytes, but there were " << buf_size - processed_size
+                       << " bytes left to read for total read of " << buf_size << "bytes.";
+    }
+    if (read_status == 0) {
+      // EOF. Finish reading.
+      return true;
+    }
+    processed_size += read_status;
   }
   return true;
 }

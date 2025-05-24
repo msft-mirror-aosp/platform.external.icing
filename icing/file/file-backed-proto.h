@@ -202,8 +202,11 @@ FileBackedProto<ProtoT>::ReadInternal() const {
   }
 
   if (header.magic != Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for: ", file_path_));
+    ICING_LOG(ERROR) << "Invalid header magic for FileBackedProto "
+                     << file_path_ << ". Expected: " << Header::kMagic
+                     << ", actual: " << header.magic;
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for FileBackedProto: ", file_path_));
   }
 
   int proto_size = file_size - sizeof(Header);

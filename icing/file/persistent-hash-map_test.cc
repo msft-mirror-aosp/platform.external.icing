@@ -515,7 +515,7 @@ TEST_P(PersistentHashMapTest,
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(persistent_hash_map_or.status().error_message(),
-                HasSubstr("PersistentHashMap header magic mismatch"));
+                HasSubstr("Invalid header magic for PersistentHashMap"));
   }
 }
 

@@ -525,6 +525,9 @@ IcingSearchEngine::~IcingSearchEngine() {
     if (PersistToDisk(PersistType::FULL).status().code() != StatusProto::OK) {
       ICING_LOG(ERROR)
           << "Error persisting to disk in IcingSearchEngine destructor";
+    } else {
+      ICING_LOG(INFO)
+          << "Done persisting to disk in IcingSearchEngine destructor";
     }
   }
 }
@@ -701,10 +704,18 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   if (!stored_version_proto_or.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::READ_VERSION_FILE);
+    ICING_LOG(ERROR) << "Failed to read version file. Error: "
+                     << stored_version_proto_or.status().error_code()
+                     << ", message: "
+                     << stored_version_proto_or.status().error_message();
     return std::move(stored_version_proto_or).status();
   }
   IcingSearchEngineVersionProto stored_version_proto =
       std::move(stored_version_proto_or).ValueOrDie();
+  ICING_LOG(INFO)
+      << "Successfully read version proto from existing dataset. Version: "
+      << stored_version_proto.version()
+      << ", max_version: " << stored_version_proto.max_version();
 
   version_util::VersionInfo stored_version_info =
       version_util::GetVersionInfoFromProto(stored_version_proto);
@@ -1424,12 +1435,13 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     } else if (!set_schema_result.old_schema_type_ids_changed.empty() ||
                !set_schema_result.schema_types_incompatible_by_id.empty() ||
                !set_schema_result.schema_types_deleted_by_id.empty()) {
-      status = document_store_->OptimizedUpdateSchemaStore(schema_store_.get(),
-                                                           set_schema_result);
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
+      auto update_status_or = document_store_->OptimizedUpdateSchemaStore(
+          schema_store_.get(), set_schema_result);
+      if (!update_status_or.ok()) {
+        TransformStatus(update_status_or.status(), result_status);
         return result_proto;
       }
+      result_proto.set_deleted_document_count(update_status_or.ValueOrDie());
     }
 
     if (lost_previous_schema || index_incompatible) {
@@ -1474,7 +1486,6 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         }
       }
     }
-
     result_status->set_code(StatusProto::OK);
   } else {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
@@ -2161,19 +2172,28 @@ libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
     PersistType::Code persist_type) {
-  ICING_VLOG(1) << "Persisting data to disk";
+  ICING_LOG(INFO) << "Persisting data to disk";
 
   PersistToDiskResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::unique_lock l(&mutex_);
   if (!initialized_) {
+    ICING_LOG(WARNING) << "Attempt to persist data to disk for an "
+                          "uninitialized IcingSearchEngine.";
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
     return result_proto;
   }
 
   auto status = InternalPersistToDisk(persist_type);
+  if (status.ok()) {
+    ICING_LOG(INFO) << "PersistToDisk completed.";
+  } else {
+    ICING_LOG(ERROR) << "PersistToDisk failed. Error code: "
+                     << status.error_code()
+                     << ", message: " << status.error_message();
+  }
   TransformStatus(status, result_status);
   return result_proto;
 }
