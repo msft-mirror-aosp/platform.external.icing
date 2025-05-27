@@ -51,8 +51,9 @@ libtextclassifier3::StatusOr<VersionInfo> ReadV1VersionInfo(
 
   VersionInfo existing_version_info(-1, -1);
   if (file_exists &&
-      !filesystem.PRead(v1_version_filepath.c_str(), &existing_version_info,
-                        sizeof(VersionInfo), /*offset=*/0)) {
+      filesystem.PRead(v1_version_filepath.c_str(), &existing_version_info,
+                       sizeof(VersionInfo),
+                       /*offset=*/0) != sizeof(VersionInfo)) {
     ICING_LOG(ERROR) << "Failed to read v1 version file";
     return absl_ports::InternalError("Failed to read v1 version file");
   }

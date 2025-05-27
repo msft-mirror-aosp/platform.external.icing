@@ -573,7 +573,8 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
   libtextclassifier3::Status status;
   if (file_exists &&
       filesystem_->PRead(marker_file_fd->get(), &network_init_attempts,
-                         sizeof(network_init_attempts), /*offset=*/0)) {
+                         sizeof(network_init_attempts),
+                         /*offset=*/0) == sizeof(network_init_attempts)) {
     host_init_attempts = GNetworkToHostL(network_init_attempts);
     if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
       // We're tried and failed to init too many times. We need to throw
@@ -3078,6 +3079,14 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
 }
 
 SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
+  GetNextPageRequestProto request_proto;
+  request_proto.set_next_page_token(next_page_token);
+
+  return GetNextPage(std::move(request_proto));
+}
+
+SearchResultProto IcingSearchEngine::GetNextPage(
+    GetNextPageRequestProto&& get_next_page_request) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
@@ -3105,10 +3114,13 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   std::unique_ptr<ResultRetrieverV2> result_retriever =
       std::move(result_retriever_or).ValueOrDie();
 
+  uint64_t next_page_token = get_next_page_request.next_page_token();
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->GetNextPage(
-          next_page_token, *result_retriever, current_time_ms);
+          next_page_token,
+          get_next_page_request.max_results_to_retrieve_from_page(),
+          *result_retriever, current_time_ms);
   if (!page_result_info_or.ok()) {
     if (absl_ports::IsNotFound(page_result_info_or.status())) {
       // - If calling GetNextPage with an invalid page token, return OK with an

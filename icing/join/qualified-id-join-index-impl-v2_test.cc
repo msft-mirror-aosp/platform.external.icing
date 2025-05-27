@@ -131,7 +131,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, InitializeNewFiles) {
       filesystem_.PRead(metadata_file_path.c_str(), metadata_buffer.get(),
                         QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                         /*offset=*/0),
-      IsTrue());
+      Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
   // Check info section
   const Info* info = reinterpret_cast<const Info*>(
@@ -372,7 +372,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
     // Manually change magic and update checksum
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -425,7 +425,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
     // Manually corrupt all_crc
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -474,7 +474,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
     // Modify info, but don't update the checksum. This would be similar to
     // corruption of info.
