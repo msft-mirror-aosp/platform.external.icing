@@ -14,6 +14,7 @@
 
 #include "icing/result/result-retriever-v2.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -160,7 +161,8 @@ ResultRetrieverV2::Create(
 }
 
 std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
-    ResultStateV2& result_state, int64_t current_time_ms) const {
+    ResultStateV2& result_state, int32_t max_results,
+    int64_t current_time_ms) const {
   absl_ports::unique_lock l(&result_state.mutex);
 
   // For calculating page
@@ -171,8 +173,9 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
   // Retrieve info
   std::vector<SearchResultProto::ResultProto> results;
   int32_t num_total_bytes = 0;
+  int desired_page_size = std::min(result_state.num_per_page(), max_results);
   while (num_total_bytes < result_state.num_total_bytes_per_page_threshold() &&
-         results.size() < result_state.num_per_page() &&
+         results.size() < desired_page_size &&
          !result_state.scored_document_hits_ranker->empty()) {
     RetrieveResult result = Retrieve(result_state, current_time_ms);
     if (result.result_proto.has_value()) {
@@ -193,6 +196,13 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
                               num_total_bytes) {
         // Exceeds the byte size threshold, so skip the current document. Also
         // it remains in the ranker and will be included in the next page.
+        ICING_LOG(INFO) << "Skipping document due to byte size threshold. "
+                           "Current num docs: "
+                        << results.size()
+                        << ", total byte size: " << num_total_bytes
+                        << ", next doc byte size: " << result_bytes
+                        << ", threshold: "
+                        << result_state.num_total_bytes_per_page_threshold();
         break;
       }
 

@@ -359,8 +359,10 @@ TEST_F(ResultRetrieverV2SnippetTest,
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet(),
@@ -422,8 +424,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -543,8 +547,10 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(1));
@@ -639,8 +645,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -821,8 +829,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -948,8 +958,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), Not(IsEmpty()));
@@ -1017,8 +1029,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   // We can't return any snippets for this page.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), IsEmpty());
@@ -1089,8 +1103,10 @@ TEST_F(ResultRetrieverV2SnippetTest,
   // We can't return any snippets for this page even though num_to_snippet > 0.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), IsEmpty());
@@ -1212,8 +1228,10 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -1458,8 +1476,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   // should be snippeted.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1592,8 +1612,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   // snippeted.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 

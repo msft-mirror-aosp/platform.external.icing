@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -421,35 +422,38 @@ TEST_F(FilesystemTest, ReadWrite) {
   EXPECT_TRUE(filesystem.Write(fd, data.c_str(), strlen(data.c_str())));
 
   std::string hello;
-  hello.resize(strlen("hello"));
-  EXPECT_TRUE(filesystem.Read(foo_file.c_str(), &hello[0], strlen("hello")));
+  size_t hello_len = strlen("hello");
+  hello.resize(hello_len);
+  EXPECT_THAT(filesystem.Read(foo_file.c_str(), &hello[0], hello_len),
+              Eq(hello_len));
   EXPECT_THAT(hello, Eq("hello"));
 
   // Read starts from wherever file offset is at the moment.
   filesystem.SetPosition(fd, 0);
   hello.clear();
-  hello.resize(strlen("hello"));
-  EXPECT_TRUE(filesystem.Read(fd, &hello[0], strlen("hello")));
+  hello.resize(hello_len);
+  EXPECT_THAT(filesystem.Read(fd, &hello[0], hello_len), Eq(hello_len));
   EXPECT_THAT(hello, Eq("hello"));
 
   // Shouldn't need to move file offset anymore since file offset gets updated
   // after the read.
   std::string world;
-  world.resize(strlen(" world"));
-  EXPECT_TRUE(filesystem.Read(fd, &world[0], strlen(" world")));
+  size_t world_len = strlen(" world");
+  world.resize(world_len);
+  EXPECT_THAT(filesystem.Read(fd, &world[0], world_len), Eq(world_len));
   EXPECT_THAT(world, Eq(" world"));
 
   // PRead should not be dependent on the file offset
   world.clear();
-  world.resize(strlen(" world"));
-  EXPECT_TRUE(
-      filesystem.PRead(fd, &world[0], strlen(" world"), strlen("hello")));
+  world.resize(world_len);
+  EXPECT_THAT(filesystem.PRead(fd, &world[0], world_len, hello_len),
+              Eq(world_len));
   EXPECT_THAT(world, Eq(" world"));
 
   hello.clear();
-  hello.resize(strlen("hello"));
-  EXPECT_TRUE(
-      filesystem.PRead(foo_file.c_str(), &hello[0], strlen("hello"), 0));
+  hello.resize(hello_len);
+  EXPECT_THAT(filesystem.PRead(foo_file.c_str(), &hello[0], hello_len, 0),
+              Eq(hello_len));
   EXPECT_THAT(hello, Eq("hello"));
 }
 
@@ -463,8 +467,8 @@ TEST_F(FilesystemTest, ReadInChunks) {
   bool read_success = false;
   Filesystem filesystem;
   auto read_callable = [&]() {
-    read_success =
-        filesystem.Read(read_fd.get(), &read_data[0], read_data.size());
+    read_success = filesystem.Read(read_fd.get(), &read_data[0],
+                                   read_data.size()) == read_data.size();
   };
 
   std::string write_chunks(50, 'b');
@@ -494,7 +498,8 @@ TEST_F(FilesystemTest, ReadFileSmallerThanBufferSize) {
   ASSERT_TRUE(filesystem.Write(fd.get(), &write_buf[0], write_buf.length()));
 
   std::string read_buf(200, 'a');
-  EXPECT_TRUE(filesystem.PRead(fd.get(), &read_buf[0], read_buf.length(), 0));
+  EXPECT_THAT(filesystem.PRead(fd.get(), &read_buf[0], read_buf.length(), 0),
+              Eq(write_buf.length()));
 
   std::string expected_read_buf = std::string(100, 'b') + std::string(100, 'a');
   EXPECT_THAT(read_buf, Eq(expected_read_buf));
