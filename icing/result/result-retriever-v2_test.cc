@@ -357,7 +357,8 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 
   // First page, 2 results
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // num_results_with_snippets is 0 when there is no snippet.
@@ -369,7 +370,8 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 
   // Second page, 2 results
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result3), EqualsProto(result4)));
   // num_results_with_snippets is 0 when there is no snippet.
@@ -381,7 +383,8 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 
   // Third page, 1 result
   auto [page_result3, has_more_results3] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result3.results, ElementsAre(EqualsProto(result5)));
   // num_results_with_snippets is 0 when there is no snippet.
   EXPECT_THAT(page_result3.num_results_with_snippets, Eq(0));
@@ -442,8 +445,10 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       *doc_store);
   PageResult page_result1 =
       result_retriever
-          ->RetrieveNextPage(result_state1,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state1,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   EXPECT_THAT(page_result1.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
@@ -463,8 +468,10 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       *doc_store);
   PageResult page_result2 =
       result_retriever
-          ->RetrieveNextPage(result_state2,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state2,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
@@ -629,7 +636,8 @@ TEST_P(ResultRetrieverV2Test,
   child3->set_score(3);
 
   auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // No more results.
@@ -689,8 +697,10 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
       *doc_store);
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   // We mocked mock_filesystem to return an internal error when retrieving doc2,
   // so doc2 should be skipped and doc1 should still be returned.
@@ -758,8 +768,10 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
   // First page, 2 results
   PageResult page_result1 =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result1.results, SizeIs(2));
   {
@@ -775,8 +787,10 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
   // Second page, 2 results
   PageResult page_result2 =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result2.results, SizeIs(2));
   {
@@ -792,8 +806,10 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
   // Third page, 1 result
   PageResult page_result3 =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result3.results, SizeIs(1));
   {
@@ -893,8 +909,10 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // should be decremented by 1.
   PageResult page_result1 =
       result_retriever
-          ->RetrieveNextPage(*result_state1,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              *result_state1,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result1.results, SizeIs(1));
   EXPECT_THAT(num_total_hits_, Eq(4));
@@ -903,8 +921,10 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // should be decremented by 2.
   PageResult page_result2 =
       result_retriever
-          ->RetrieveNextPage(*result_state2,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              *result_state2,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result2.results, SizeIs(2));
   EXPECT_THAT(num_total_hits_, Eq(2));
@@ -914,8 +934,10 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // by 1.
   PageResult page_result3 =
       result_retriever
-          ->RetrieveNextPage(*result_state2,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              *result_state2,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result3.results, SizeIs(1));
   EXPECT_THAT(num_total_hits_, Eq(1));
@@ -984,14 +1006,16 @@ TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   // num_total_bytes_per_page_threshold and ResultRetriever should terminate
   // early even though # of results is still below num_per_page.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page, result2.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
@@ -1053,14 +1077,16 @@ TEST_P(ResultRetrieverV2Test,
   // First page. Should return single result1 even though its byte size exceeds
   // num_total_bytes_per_page_threshold.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page, result2.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
@@ -1128,7 +1154,8 @@ TEST_P(ResultRetrieverV2Test,
   // the retrieval process and thus include result2 into this page, even though
   // finally total bytes of result1 + result2 exceed the threshold.
   auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // No more results.
@@ -1199,7 +1226,8 @@ TEST_P(ResultRetrieverV2Test,
   // the retrieval process. But when serializing result2, the byte size exceeds
   // the threshold, so result2 should not be included.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // More results.
   EXPECT_TRUE(has_more_results1);
@@ -1208,7 +1236,8 @@ TEST_P(ResultRetrieverV2Test,
   // excluded, it should not be popped from the ranker and thus should be
   // included in the second page.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
@@ -1282,14 +1311,16 @@ TEST_P(ResultRetrieverV2Test,
 
   // First page: result1 should be returned.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page: result2 should be returned.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);

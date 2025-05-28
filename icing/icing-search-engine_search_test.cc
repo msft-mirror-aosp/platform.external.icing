@@ -971,6 +971,151 @@ TEST_F(IcingSearchEngineSearchTest, SearchShouldReturnMultiplePages) {
 }
 
 TEST_F(IcingSearchEngineSearchTest,
+       SearchShouldReturnMultiplePages_withMaxResultsLimit) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates and inserts 5 documents
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  DocumentProto document4 = CreateMessageDocument("namespace", "uri4");
+  DocumentProto document5 = CreateMessageDocument("namespace", "uri5");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(2);
+
+  // Searches and gets the first page, 2 results
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document5;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  uint64_t next_page_token = search_result_proto.next_page_token();
+
+  // Since the token is a random number, we don't need to verify
+  expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Second page, with a max limit of 1 result
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  GetNextPageRequestProto get_next_page_request;
+  get_next_page_request.set_next_page_token(next_page_token);
+  get_next_page_request.set_max_results_to_retrieve_from_page(1);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Third page, 2 results
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+  get_next_page_request = GetNextPageRequestProto();
+  get_next_page_request.set_next_page_token(next_page_token);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  // Because there are no more results, we should not return the next page
+  // token.
+  expected_search_result_proto.clear_next_page_token();
+  EXPECT_THAT(search_result_proto.next_page_token(),
+              Eq(kInvalidNextPageToken));  // No more results.
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchShouldReturnMultiplePages_maxResultsLimitLargerThanPageSize) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates and inserts 5 documents
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  DocumentProto document4 = CreateMessageDocument("namespace", "uri4");
+  DocumentProto document5 = CreateMessageDocument("namespace", "uri5");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(2);
+
+  // Searches and gets the first page -- this should return 2 results
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document5;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  uint64_t next_page_token = search_result_proto.next_page_token();
+
+  // Since the token is a random number, we don't need to verify
+  expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Second page with a max limit of 5. This should still only return 2
+  // results.
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  GetNextPageRequestProto get_next_page_request;
+  get_next_page_request.set_next_page_token(next_page_token);
+  get_next_page_request.set_max_results_to_retrieve_from_page(5);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Third page, only 1 result left.
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+  get_next_page_request = GetNextPageRequestProto();
+  get_next_page_request.set_next_page_token(next_page_token);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  // Because there are no more results, we should not return the next page
+  // token.
+  expected_search_result_proto.clear_next_page_token();
+  EXPECT_THAT(search_result_proto.next_page_token(),
+              Eq(kInvalidNextPageToken));  // No more results.
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
        SearchWithNoScoringShouldReturnMultiplePages) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
