@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -7963,7 +7964,7 @@ TEST_F(IcingSearchEngineSearchTest, HasPropertyQueryNestedDocument) {
 }
 
 class IcingSearchEngineEmbeddingSearchTest
-    : public ::testing::TestWithParam<bool> {
+    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
  protected:
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
@@ -7992,6 +7993,9 @@ class IcingSearchEngineEmbeddingSearchTest
 };
 
 TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
+  bool get_embedding_match_info = std::get<0>(GetParam());
+  bool enable_eigen_embedding_scoring = std::get<1>(GetParam());
+
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -8040,7 +8044,9 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
                              CreateVector("my_model_v2", {0.6, 0.7, -0.8}))
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_eigen_embedding_scoring(enable_eigen_embedding_scoring);
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
@@ -8068,7 +8074,6 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
 
-  bool get_embedding_match_info = GetParam();
   ResultSpecProto result_spec = ResultSpecProto::default_instance();
   result_spec.mutable_snippet_spec()->set_num_to_snippet(3);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
@@ -8386,10 +8391,12 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(IcingSearchEngineEmbeddingSearchTest,
-                         IcingSearchEngineEmbeddingSearchTest,
-                         testing::Values(/*enable_embedding_quantization=*/true,
-                                         false));
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineEmbeddingSearchTest, IcingSearchEngineEmbeddingSearchTest,
+    testing::Values(std::make_tuple(/*get_embedding_match_info=*/false,
+                                    /*enable_eigen_embedding_scoring=*/false),
+                    std::make_tuple(false, true), std::make_tuple(true, false),
+                    std::make_tuple(true, true)));
 
 TEST_F(IcingSearchEngineSearchTest, CannotScoreUnqueriedEmbedding) {
   SchemaProto schema =
@@ -8557,7 +8564,37 @@ TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
               DoubleNear(0 + 0.5, kEps));
 }
 
-TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
+class IcingSearchEngineEmbeddingSearchQuantizationTest
+    : public ::testing::TestWithParam<bool> {
+ protected:
+  void SetUp() override {
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      // If we've specified using the reverse-JNI method for segmentation (i.e.
+      // not ICU), then we won't have the ICU data file included to set up.
+      // Technically, we could choose to use reverse-JNI for segmentation AND
+      // include an ICU data file, but that seems unlikely and our current BUILD
+      // setup doesn't do this.
+      // File generated via icu_data_file rule in //icing/BUILD.
+      std::string icu_data_file_path =
+          GetTestFilePath("icing/icu.dat");
+      ICING_ASSERT_OK(
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
+    }
+    filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
+  }
+
+  void TearDown() override {
+    filesystem_.DeleteDirectoryRecursively(GetTestBaseDir().c_str());
+  }
+
+  const Filesystem* filesystem() const { return &filesystem_; }
+
+ private:
+  Filesystem filesystem_;
+};
+
+TEST_P(IcingSearchEngineEmbeddingSearchQuantizationTest,
+       EmbeddingSearchWithQuantizedProperty) {
   constexpr float eps = 0.0001f;
 
   SchemaProto schema =
@@ -8603,7 +8640,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
           .AddVectorProperty("embeddingQuantized", vector1, vector2)
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_eigen_embedding_scoring(GetParam());
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document_with_original_embedding).status(),
@@ -8674,6 +8713,11 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
   EXPECT_THAT(results.results(1).score(), 1);
   EXPECT_THAT(results.results(1).additional_scores(0), DoubleNear(256.45, eps));
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineEmbeddingSearchQuantizationTest,
+    IcingSearchEngineEmbeddingSearchQuantizationTest,
+    testing::Values(/*enable_eigen_embedding_scoring=*/true, false));
 
 TEST_F(IcingSearchEngineSearchTest,
        AdditionalScoresOnlyAllowedInAdvancedScoring) {
