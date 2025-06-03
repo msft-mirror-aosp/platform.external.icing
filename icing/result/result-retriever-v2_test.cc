@@ -1337,7 +1337,8 @@ INSTANTIATE_TEST_SUITE_P(
                      /*enable_schema_database=*/true,
                      /*release_backup_schema_file_if_overlay_present=*/true,
                      /*enable_strict_page_byte_size_limit=*/false,
-                     /*enable_smaller_decompression_buffer_size=*/true),
+                     /*enable_smaller_decompression_buffer_size=*/true,
+                     /*enable_eigen_embedding_scoring=*/true),
         FeatureFlags(/*allow_circular_schema_definitions=*/true,
                      /*enable_scorable_properties=*/true,
                      /*enable_embedding_quantization=*/true,
@@ -1346,7 +1347,8 @@ INSTANTIATE_TEST_SUITE_P(
                      /*enable_schema_database=*/true,
                      /*release_backup_schema_file_if_overlay_present=*/true,
                      /*enable_strict_page_byte_size_limit=*/true,
-                     /*enable_smaller_decompression_buffer_size=*/true)));
+                     /*enable_smaller_decompression_buffer_size=*/true,
+                     /*enable_eigen_embedding_scoring=*/true)));
 
 }  // namespace
 
