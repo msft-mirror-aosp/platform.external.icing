@@ -47,6 +47,7 @@ static constexpr int64_t kBlobInfoTTLMs = 7 * 24 * 60 * 60 * 1000;  // 1 Week
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
@@ -234,7 +235,7 @@ TEST_P(IcingSearchEngineBlobTest, WriteAndReadBlob) {
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<unsigned char[]> buf =
         std::make_unique<unsigned char[]>(size);
-    EXPECT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+    EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
     EXPECT_EQ(expected_data, actual_data);
@@ -372,7 +373,7 @@ TEST_P(IcingSearchEngineBlobTest, WriteAndReadBlobByDocument) {
 
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    EXPECT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+    EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -478,7 +479,7 @@ TEST_P(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskFull) {
     ScopedFd read_fd(GetScopedFdFromBlobProto(read_blob_proto));
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    EXPECT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+    EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
     EXPECT_EQ(expected_data, actual_data);
@@ -522,7 +523,7 @@ TEST_P(IcingSearchEngineBlobTest, ReadBlobWithPersistToDiskLite) {
     ScopedFd read_fd(GetScopedFdFromBlobProto(read_blob_proto));
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    EXPECT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+    EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
     EXPECT_EQ(expected_data, actual_data);
@@ -585,8 +586,7 @@ TEST_P(IcingSearchEngineBlobTest, BlobOptimize) {
 
   uint64_t size = filesystem()->GetFileSize(*read_fd);
   std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-  filesystem()->Read(read_fd.get(), buf.get(), size);
-  close(read_fd.get());
+  EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
 
   std::string expected_data = std::string(data.begin(), data.end());
   std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -699,7 +699,6 @@ TEST_P(IcingSearchEngineBlobTest, ReferenceCount) {
 
   ScopedFd write_fd(GetScopedFdFromBlobProto(writeBlobProto));
   ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
-  close(write_fd.get());
 
   BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
@@ -731,7 +730,7 @@ TEST_P(IcingSearchEngineBlobTest, ReferenceCount) {
     ScopedFd read_fd(GetScopedFdFromBlobProto(readBlobProto));
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    ASSERT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+    ASSERT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -748,7 +747,7 @@ TEST_P(IcingSearchEngineBlobTest, ReferenceCount) {
 
     uint64_t size = filesystem()->GetFileSize(*read_fd2);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    ASSERT_TRUE(filesystem()->Read(read_fd2.get(), buf.get(), size));
+    ASSERT_THAT(filesystem()->Read(read_fd2.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -781,7 +780,6 @@ TEST_P(IcingSearchEngineBlobTest, ReferenceCountNestedDocument) {
 
   ScopedFd write_fd(GetScopedFdFromBlobProto(writeBlobProto));
   ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
-  close(write_fd.get());
 
   BlobProto commitBlobProto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commitBlobProto.status(), ProtoIsOk());
@@ -842,7 +840,7 @@ TEST_P(IcingSearchEngineBlobTest, ReferenceCountNestedDocument) {
     ScopedFd read_fd(GetScopedFdFromBlobProto(readBlobProto));
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    ASSERT_TRUE(filesystem()->Read(read_fd.get(), buf.get(), size));
+    ASSERT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -859,7 +857,7 @@ TEST_P(IcingSearchEngineBlobTest, ReferenceCountNestedDocument) {
 
     uint64_t size = filesystem()->GetFileSize(*read_fd2);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    ASSERT_TRUE(filesystem()->Read(read_fd2.get(), buf.get(), size));
+    ASSERT_THAT(filesystem()->Read(read_fd2.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -931,8 +929,7 @@ TEST_P(IcingSearchEngineBlobTest, OptimizeMultipleReferenceDocument) {
 
     uint64_t size = filesystem()->GetFileSize(*read_fd);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    filesystem()->Read(read_fd.get(), buf.get(), size);
-    close(read_fd.get());
+    EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -951,8 +948,7 @@ TEST_P(IcingSearchEngineBlobTest, OptimizeMultipleReferenceDocument) {
 
     uint64_t size = filesystem()->GetFileSize(*read_fd2);
     std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-    filesystem()->Read(read_fd2.get(), buf.get(), size);
-    close(read_fd2.get());
+    EXPECT_THAT(filesystem()->Read(read_fd2.get(), buf.get(), size), Eq(size));
 
     std::string expected_data = std::string(data.begin(), data.end());
     std::string actual_data = std::string(buf.get(), buf.get() + size);
@@ -1160,8 +1156,7 @@ TEST_P(IcingSearchEngineBlobTest, OptimizeBlobHandlesNoTTL) {
 
   uint64_t size = filesystem()->GetFileSize(*read_fd);
   std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-  filesystem()->Read(read_fd.get(), buf.get(), size);
-  close(read_fd.get());
+  EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
 
   std::string expected_data = std::string(data.begin(), data.end());
   std::string actual_data = std::string(buf.get(), buf.get() + size);

@@ -15,6 +15,7 @@
 #include "icing/result/result-state-manager.h"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <utility>
@@ -62,8 +63,9 @@ ResultStateManager::CacheAndRetrieveFirstPage(
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
-  auto [page_result, has_more_results] =
-      result_retriever.RetrieveNextPage(*result_state, current_time_ms);
+  auto [page_result, has_more_results] = result_retriever.RetrieveNextPage(
+      *result_state,
+      /*max_results=*/std::numeric_limits<int32_t>::max(), current_time_ms);
   if (!has_more_results) {
     // No more pages, won't store ResultState, returns directly
     return std::make_pair(kInvalidNextPageToken, std::move(page_result));
@@ -113,7 +115,7 @@ uint64_t ResultStateManager::Add(std::shared_ptr<ResultStateV2> result_state,
 }
 
 libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
-ResultStateManager::GetNextPage(uint64_t next_page_token,
+ResultStateManager::GetNextPage(uint64_t next_page_token, int32_t max_results,
                                 const ResultRetrieverV2& result_retriever,
                                 int64_t current_time_ms) {
   std::shared_ptr<ResultStateV2> result_state = nullptr;
@@ -134,8 +136,8 @@ ResultStateManager::GetNextPage(uint64_t next_page_token,
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
-  auto [page_result, has_more_results] =
-      result_retriever.RetrieveNextPage(*result_state, current_time_ms);
+  auto [page_result, has_more_results] = result_retriever.RetrieveNextPage(
+      *result_state, max_results, current_time_ms);
 
   if (!has_more_results) {
     {

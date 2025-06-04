@@ -56,6 +56,9 @@ cc_defaults {
         "-fvisibility=hidden",
 
         "-Bsymbolic",
+
+        // TODO(b/420960001): Enable once libeigen is available to icing and appsearch.
+        "-DICING_DISABLE_EIGEN",
     ],
     apex_available: ["com.android.appsearch"],
 }

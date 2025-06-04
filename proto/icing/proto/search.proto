@@ -646,3 +646,23 @@ message JoinSpecProto {
   }
   optional AggregationScoringStrategy.Code aggregation_scoring_strategy = 5;
 }
+
+// Next tag: 3
+message GetNextPageRequestProto {
+  // REQUIRED: The next page token to use for retrieving the next page of
+  // results.
+  //
+  // This is a token returned from a previous Search or GetNextPage
+  // call. The retrieved SearchResultProto will be empty if this token is
+  // invalid (value of 0, or previously invalidated by Icing)
+  optional int64 next_page_token = 1;
+
+  // The max number of results to return from the page.
+  //
+  // This is only an upper limit on the number of results to fetch from the
+  // page. Fewer results may be returned if there are not enough results
+  // remaining in the page, or if other limits (e.g. page size limit) are
+  // reached.
+  optional int32 max_results_to_retrieve_from_page = 2
+      [default = 2147483647];  // INT_MAX
+}

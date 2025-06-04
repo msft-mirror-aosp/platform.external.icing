@@ -222,7 +222,8 @@ SchemaStore::Header::Read(const Filesystem* filesystem, std::string path) {
   int64_t file_size = filesystem->GetFileSize(sfd.get());
   if (file_size == sizeof(LegacyHeader)) {
     LegacyHeader legacy_header;
-    if (!filesystem->Read(sfd.get(), &legacy_header, sizeof(legacy_header))) {
+    if (filesystem->Read(sfd.get(), &legacy_header, sizeof(legacy_header)) !=
+        sizeof(legacy_header)) {
       return absl_ports::InternalError(
           absl_ports::StrCat("Couldn't read: ", path));
     }
@@ -235,8 +236,9 @@ SchemaStore::Header::Read(const Filesystem* filesystem, std::string path) {
     }
     serialized_header.checksum = legacy_header.checksum;
   } else if (file_size == sizeof(SerializedHeader)) {
-    if (!filesystem->Read(sfd.get(), &serialized_header,
-                          sizeof(serialized_header))) {
+    if (filesystem->Read(sfd.get(), &serialized_header,
+                         sizeof(serialized_header)) !=
+        sizeof(serialized_header)) {
       return absl_ports::InternalError(
           absl_ports::StrCat("Couldn't read: ", path));
     }

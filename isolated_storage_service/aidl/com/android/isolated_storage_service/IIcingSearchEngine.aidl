@@ -70,6 +70,9 @@ interface IIcingSearchEngine {
   @nullable
   /*SearchResultProto*/ byte[] getNextPage(long nextPageToken);
 
+  @nullable
+  /*SearchResultProto*/ byte[] getNextPageWithRequestProto(in byte[] getNextPageRequestProto);
+
   void invalidateNextPageToken(long nextPageToken);
 
   @nullable

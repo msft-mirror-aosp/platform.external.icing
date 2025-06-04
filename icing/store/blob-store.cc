@@ -384,7 +384,7 @@ BlobProto BlobStore::CommitBlob(
     while (prev_total_read_size < file_size) {
       int32_t size_to_read =
           std::min<int32_t>(kReadBufferSize, file_size - prev_total_read_size);
-      if (!filesystem_.Read(sfd.get(), buffer, size_to_read)) {
+      if (filesystem_.Read(sfd.get(), buffer, size_to_read) != size_to_read) {
         return CreateBlobProtoFromError(absl_ports::InternalError(
             absl_ports::StrCat("Failed to read blob file for handle: ",
                                blob_handle.digest())));

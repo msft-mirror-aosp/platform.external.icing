@@ -469,8 +469,8 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   }
 
   DocumentStore::Header header;
-  if (!filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
-                         sizeof(header))) {
+  if (filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
+                        sizeof(header)) != sizeof(header)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }

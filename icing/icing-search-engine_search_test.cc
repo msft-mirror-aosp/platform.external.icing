@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -964,6 +965,151 @@ TEST_F(IcingSearchEngineSearchTest, SearchShouldReturnMultiplePages) {
   // token.
   expected_search_result_proto.clear_next_page_token();
   search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(),
+              Eq(kInvalidNextPageToken));  // No more results.
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchShouldReturnMultiplePages_withMaxResultsLimit) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates and inserts 5 documents
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  DocumentProto document4 = CreateMessageDocument("namespace", "uri4");
+  DocumentProto document5 = CreateMessageDocument("namespace", "uri5");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(2);
+
+  // Searches and gets the first page, 2 results
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document5;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  uint64_t next_page_token = search_result_proto.next_page_token();
+
+  // Since the token is a random number, we don't need to verify
+  expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Second page, with a max limit of 1 result
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  GetNextPageRequestProto get_next_page_request;
+  get_next_page_request.set_next_page_token(next_page_token);
+  get_next_page_request.set_max_results_to_retrieve_from_page(1);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Third page, 2 results
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+  get_next_page_request = GetNextPageRequestProto();
+  get_next_page_request.set_next_page_token(next_page_token);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  // Because there are no more results, we should not return the next page
+  // token.
+  expected_search_result_proto.clear_next_page_token();
+  EXPECT_THAT(search_result_proto.next_page_token(),
+              Eq(kInvalidNextPageToken));  // No more results.
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchShouldReturnMultiplePages_maxResultsLimitLargerThanPageSize) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates and inserts 5 documents
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  DocumentProto document4 = CreateMessageDocument("namespace", "uri4");
+  DocumentProto document5 = CreateMessageDocument("namespace", "uri5");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(2);
+
+  // Searches and gets the first page -- this should return 2 results
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document5;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  uint64_t next_page_token = search_result_proto.next_page_token();
+
+  // Since the token is a random number, we don't need to verify
+  expected_search_result_proto.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Second page with a max limit of 5. This should still only return 2
+  // results.
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  GetNextPageRequestProto get_next_page_request;
+  get_next_page_request.set_next_page_token(next_page_token);
+  get_next_page_request.set_max_results_to_retrieve_from_page(5);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  EXPECT_THAT(search_result_proto.next_page_token(), Ne(kInvalidNextPageToken));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+
+  // Third page, only 1 result left.
+  expected_search_result_proto.clear_results();
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+  get_next_page_request = GetNextPageRequestProto();
+  get_next_page_request.set_next_page_token(next_page_token);
+  search_result_proto = icing.GetNextPage(std::move(get_next_page_request));
+  // Because there are no more results, we should not return the next page
+  // token.
+  expected_search_result_proto.clear_next_page_token();
   EXPECT_THAT(search_result_proto.next_page_token(),
               Eq(kInvalidNextPageToken));  // No more results.
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
@@ -7818,7 +7964,7 @@ TEST_F(IcingSearchEngineSearchTest, HasPropertyQueryNestedDocument) {
 }
 
 class IcingSearchEngineEmbeddingSearchTest
-    : public ::testing::TestWithParam<bool> {
+    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
  protected:
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
@@ -7847,6 +7993,9 @@ class IcingSearchEngineEmbeddingSearchTest
 };
 
 TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
+  bool get_embedding_match_info = std::get<0>(GetParam());
+  bool enable_eigen_embedding_scoring = std::get<1>(GetParam());
+
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -7895,7 +8044,9 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
                              CreateVector("my_model_v2", {0.6, 0.7, -0.8}))
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_eigen_embedding_scoring(enable_eigen_embedding_scoring);
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
@@ -7923,7 +8074,6 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
 
-  bool get_embedding_match_info = GetParam();
   ResultSpecProto result_spec = ResultSpecProto::default_instance();
   result_spec.mutable_snippet_spec()->set_num_to_snippet(3);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
@@ -8241,10 +8391,12 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(IcingSearchEngineEmbeddingSearchTest,
-                         IcingSearchEngineEmbeddingSearchTest,
-                         testing::Values(/*enable_embedding_quantization=*/true,
-                                         false));
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineEmbeddingSearchTest, IcingSearchEngineEmbeddingSearchTest,
+    testing::Values(std::make_tuple(/*get_embedding_match_info=*/false,
+                                    /*enable_eigen_embedding_scoring=*/false),
+                    std::make_tuple(false, true), std::make_tuple(true, false),
+                    std::make_tuple(true, true)));
 
 TEST_F(IcingSearchEngineSearchTest, CannotScoreUnqueriedEmbedding) {
   SchemaProto schema =
@@ -8412,7 +8564,37 @@ TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
               DoubleNear(0 + 0.5, kEps));
 }
 
-TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
+class IcingSearchEngineEmbeddingSearchQuantizationTest
+    : public ::testing::TestWithParam<bool> {
+ protected:
+  void SetUp() override {
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      // If we've specified using the reverse-JNI method for segmentation (i.e.
+      // not ICU), then we won't have the ICU data file included to set up.
+      // Technically, we could choose to use reverse-JNI for segmentation AND
+      // include an ICU data file, but that seems unlikely and our current BUILD
+      // setup doesn't do this.
+      // File generated via icu_data_file rule in //icing/BUILD.
+      std::string icu_data_file_path =
+          GetTestFilePath("icing/icu.dat");
+      ICING_ASSERT_OK(
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
+    }
+    filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
+  }
+
+  void TearDown() override {
+    filesystem_.DeleteDirectoryRecursively(GetTestBaseDir().c_str());
+  }
+
+  const Filesystem* filesystem() const { return &filesystem_; }
+
+ private:
+  Filesystem filesystem_;
+};
+
+TEST_P(IcingSearchEngineEmbeddingSearchQuantizationTest,
+       EmbeddingSearchWithQuantizedProperty) {
   constexpr float eps = 0.0001f;
 
   SchemaProto schema =
@@ -8458,7 +8640,9 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
           .AddVectorProperty("embeddingQuantized", vector1, vector2)
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_eigen_embedding_scoring(GetParam());
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document_with_original_embedding).status(),
@@ -8529,6 +8713,11 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchWithQuantizedProperty) {
   EXPECT_THAT(results.results(1).score(), 1);
   EXPECT_THAT(results.results(1).additional_scores(0), DoubleNear(256.45, eps));
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineEmbeddingSearchQuantizationTest,
+    IcingSearchEngineEmbeddingSearchQuantizationTest,
+    testing::Values(/*enable_eigen_embedding_scoring=*/true, false));
 
 TEST_F(IcingSearchEngineSearchTest,
        AdditionalScoresOnlyAllowedInAdvancedScoring) {

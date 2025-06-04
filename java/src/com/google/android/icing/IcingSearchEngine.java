@@ -25,6 +25,7 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
@@ -179,6 +180,13 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   public @NonNull SearchResultProto getNextPage(long nextPageToken) {
     return IcingSearchEngineUtils.byteArrayToSearchResultProto(
         icingSearchEngineImpl.getNextPage(nextPageToken));
+  }
+
+  @Override
+  public @NonNull SearchResultProto getNextPage(
+      @NonNull GetNextPageRequestProto getNextPageRequest) {
+    return IcingSearchEngineUtils.byteArrayToSearchResultProto(
+        icingSearchEngineImpl.getNextPageWithRequestProto(getNextPageRequest.toByteArray()));
   }
 
   @Override
