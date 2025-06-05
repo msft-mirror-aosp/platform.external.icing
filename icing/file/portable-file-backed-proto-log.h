@@ -769,8 +769,8 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   }
 
   std::unique_ptr<Header> header = std::make_unique<Header>();
-  if (!filesystem->PRead(file_path.c_str(), header.get(), sizeof(Header),
-                         /*offset=*/0)) {
+  if (filesystem->PRead(file_path.c_str(), header.get(), sizeof(Header),
+                        /*offset=*/0) != sizeof(Header)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to read header for file: ", file_path));
   }
@@ -1069,7 +1069,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
                                       static_cast<long long>(file_size_ - 1)));
   }
   auto buf = std::make_unique<char[]>(stored_size);
-  if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+  if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+      stored_size) {
     return absl_ports::InternalError("");
   }
 
@@ -1132,7 +1133,8 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     // The xored string is the same as the original string because 0 xor 0 =
     // 0, 1 xor 0 = 1.
     // Read the compressed proto out.
-    if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+    if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+        stored_size) {
       return absl_ports::InternalError("");
     }
     const std::string_view xored_str(buf.get(), stored_size);
@@ -1253,7 +1255,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
         static_cast<long long>(file_size)));
   }
 
-  if (!filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset)) {
+  if (filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset) !=
+      metadata_size) {
     return absl_ports::InternalError("");
   }
 

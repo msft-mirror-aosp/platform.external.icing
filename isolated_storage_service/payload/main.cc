@@ -43,6 +43,7 @@ using ::icing::lib::DeleteBySchemaTypeResultProto;
 using ::icing::lib::DeleteResultProto;
 using ::icing::lib::DocumentProto;
 using ::icing::lib::GetAllNamespacesResultProto;
+using ::icing::lib::GetNextPageRequestProto;
 using ::icing::lib::GetOptimizeInfoResultProto;
 using ::icing::lib::GetResultProto;
 using ::icing::lib::GetResultSpecProto;
@@ -314,6 +315,18 @@ class IcingConnectionImpl
         icing_->GetNextPage(next_page_token);
     SERIALIZE_AND_RETURN_ASTATUS(get_next_page_result,
                                  get_next_page_result_proto);
+  }
+
+  ScopedAStatus getNextPageWithRequestProto(
+      const std::vector<uint8_t>& get_next_page_request_proto,
+      std::optional<std::vector<uint8_t>>* get_next_page_result_proto) {
+    CHECK_ICING_INIT(icing_);
+
+    GetNextPageRequestProto request_proto;
+    DESERIALIZE_OR_RETURN(get_next_page_request_proto, request_proto);
+
+    SearchResultProto get_next_page_result = icing_->GetNextPage(std::move(request_proto));
+    SERIALIZE_AND_RETURN_ASTATUS(get_next_page_result, get_next_page_result_proto);
   }
 
   ScopedAStatus invalidateNextPageToken(int64_t next_page_token) {
