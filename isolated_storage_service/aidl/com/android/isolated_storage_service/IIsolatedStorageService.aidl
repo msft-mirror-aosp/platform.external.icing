@@ -39,6 +39,11 @@ interface IIsolatedStorageService {
   long getAvailableMemory();
 
   /**
+   * Inform the VM that a user has unlocked the device
+   */
+  void onUserUnlocking();
+
+  /**
    * Returns an Icing connection for the given userId. Creates a new Icing connection if one does
    * not already exist for the given userId.
    *
