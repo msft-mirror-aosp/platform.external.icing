@@ -1,6 +1,8 @@
+#include <android-base/properties.h>
 #include <android/binder_auto_utils.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
+#include <sys/system_properties.h>
 #include <vm_payload.h>
 
 #include <cinttypes>
@@ -28,6 +30,11 @@
 #include "icing/util/logging.h"
 #include "macros.h"
 
+constexpr std::string_view ENCRYPTED_STORE_SETUP_PROP = "microdroid_manager.encrypted_store.setup";
+constexpr std::string_view ENCRYPTED_STORE_STATUS_PROP = "microdroid_manager.encrypted_store.status";
+
+using android::base::WaitForProperty;
+
 namespace {
 
 using ::aidl::com::android::isolated_storage_service::BnIcingSearchEngine;
@@ -43,6 +50,7 @@ using ::icing::lib::DeleteBySchemaTypeResultProto;
 using ::icing::lib::DeleteResultProto;
 using ::icing::lib::DocumentProto;
 using ::icing::lib::GetAllNamespacesResultProto;
+using ::icing::lib::GetNextPageRequestProto;
 using ::icing::lib::GetOptimizeInfoResultProto;
 using ::icing::lib::GetResultProto;
 using ::icing::lib::GetResultSpecProto;
@@ -316,6 +324,18 @@ class IcingConnectionImpl
                                  get_next_page_result_proto);
   }
 
+  ScopedAStatus getNextPageWithRequestProto(
+      const std::vector<uint8_t>& get_next_page_request_proto,
+      std::optional<std::vector<uint8_t>>* get_next_page_result_proto) {
+    CHECK_ICING_INIT(icing_);
+
+    GetNextPageRequestProto request_proto;
+    DESERIALIZE_OR_RETURN(get_next_page_request_proto, request_proto);
+
+    SearchResultProto get_next_page_result = icing_->GetNextPage(std::move(request_proto));
+    SERIALIZE_AND_RETURN_ASTATUS(get_next_page_result, get_next_page_result_proto);
+  }
+
   ScopedAStatus invalidateNextPageToken(int64_t next_page_token) {
     CHECK_ICING_INIT(icing_);
 
@@ -492,6 +512,48 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
       connection->close();
     }
     exit(0);
+  }
+
+  // Initially, when microdroid starts, the CE key associated with
+  // /mnt/encryptedstore is unavailable, and hence the filesystem
+  // cannot be decrypted. The onUserUnlocking call is used to notify
+  // microdroid that the CE directory is mounted, and hence the
+  // CE key can be retrieved by the VM.
+  //
+  // For more details, please see commit
+  // 7cc0c9b6f1102ac4e53ef63ae4731f0d1811826d in
+  // packages/modules/Virtualization
+  //
+  // This code has two steps:
+  //
+  // 1) Signal microdroid that the user has unlocked their device.
+  // 2) Wait until microdroid has completed the encrypted filesystem setup
+  //
+  ScopedAStatus onUserUnlocking() override {
+    ICING_LOG(INFO) << "onUserUnlocking";
+
+    // Signal microdroid that the CE directory is available by setting
+    // the property ENCRYPTED_STORE_SETUP_PROP
+
+    if (__system_property_set(std::string(ENCRYPTED_STORE_SETUP_PROP).c_str(), "true") != 0) {
+      std::string error = "failed to set property " + std::string(ENCRYPTED_STORE_SETUP_PROP);
+      ICING_LOG(ERROR) << error;
+      return ScopedAStatus::fromExceptionCodeWithMessage(EX_SERVICE_SPECIFIC, error.c_str());
+    }
+
+    // microdroid_manager uses getEncryptedStoreKEK API on
+    // IVirtualMachineService to get an IEncryptedStoreKEK object stored
+    // inside app's private directory on the Android host.
+    //
+    // Wait for that operation to complete by waiting on the
+    // ENCRYPTED_STORE_STATUS_PROP property.
+
+    if (!WaitForProperty(std::string(ENCRYPTED_STORE_STATUS_PROP), "ready")) {
+        return ScopedAStatus::fromExceptionCodeWithMessage(
+            EX_SERVICE_SPECIFIC, "encrypted store not available");
+    }
+
+    return ScopedAStatus::ok();
   }
 
   ScopedAStatus trimMemory() override {

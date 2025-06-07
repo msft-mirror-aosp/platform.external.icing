@@ -84,7 +84,8 @@ class ResultStateManager {
       const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
       QueryStatsProto* query_stats = nullptr) ICING_LOCKS_EXCLUDED(mutex_);
 
-  // Retrieves and returns PageResult for the next page.
+  // Retrieves and returns PageResult for the next page, retrieving at most
+  // max_results entries from the page.
   // The returned results won't exist in ResultStateManager anymore. If the
   // query has no more pages after this retrieval, the input token will be
   // invalidated.
@@ -97,8 +98,9 @@ class ResultStateManager {
   //   A token and PageResult wrapped by std::pair on success
   //   NOT_FOUND if failed to find any more results
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>> GetNextPage(
-      uint64_t next_page_token, const ResultRetrieverV2& result_retriever,
-      int64_t current_time_ms) ICING_LOCKS_EXCLUDED(mutex_);
+      uint64_t next_page_token, int32_t max_results,
+      const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns the number of active result states currently in ResultStateManager.
   // Note that this will invalidate expired result states before counting the

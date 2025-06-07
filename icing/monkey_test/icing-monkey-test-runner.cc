@@ -560,6 +560,7 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_embedding_quantization(GetRandomBoolean(&random_));
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
+  icing_options.set_enable_eigen_embedding_scoring(GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
