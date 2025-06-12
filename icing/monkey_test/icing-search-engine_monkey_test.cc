@@ -44,7 +44,9 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
                                     kTotalNumSections,
                                     kTotalNumSections + 1,
                                     kTotalNumSections * 2};
-  config.possible_num_tokens_ = {0, 1, 4, 16, 64, 256};
+  config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
+  config.possible_num_vectors = {0, 1, 4};
+  config.possible_vector_dimensions = {128, 512, 768};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
       {&IcingMonkeyTestRunner::DoSearch, 200},
@@ -74,7 +76,9 @@ TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
   // Due to the large amount of documents, we need to make each document smaller
   // to finish the test.
   config.possible_num_properties = {0, 1, 2};
-  config.possible_num_tokens_ = {0, 1, 4};
+  config.possible_num_tokens = {0, 1, 4};
+  config.possible_num_vectors = {0, 1, 2};
+  config.possible_vector_dimensions = {128};
 
   // No deletion is performed to preserve a large number of documents.
   config.monkey_api_schedules = {

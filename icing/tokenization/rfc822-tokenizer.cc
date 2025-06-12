@@ -40,8 +40,8 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
   // Cursor is the index into the string_view, text_end_ is the length.
   explicit Rfc822TokenIterator(std::string_view text)
       : text_(std::move(text)),
-        iterator_(text, 0, 0, 0),
-        text_end_(text.length()),
+        iterator_(text_),
+        text_end_(text_.length()),
         token_index_(-1) {}
 
   // Advance will move token_index_ past the end of tokens_

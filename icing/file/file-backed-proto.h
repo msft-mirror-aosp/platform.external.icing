@@ -80,7 +80,7 @@ class FileBackedProto {
   // RETURNS:
   //   - the checksum of the proto or 0 if the file is empty/non-existent
   //   - INTERNAL_ERROR if an IO error or a corruption was encountered.
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns a reference to the proto read from the file. It
@@ -140,7 +140,7 @@ FileBackedProto<ProtoT>::FileBackedProto(const Filesystem& filesystem,
     : filesystem_(&filesystem), file_path_(file_path) {}
 
 template <typename ProtoT>
-libtextclassifier3::StatusOr<Crc32> FileBackedProto<ProtoT>::ComputeChecksum()
+libtextclassifier3::StatusOr<Crc32> FileBackedProto<ProtoT>::GetChecksum()
     const {
   absl_ports::unique_lock l(&mutex_);
   if (cached_proto_ == nullptr) {
@@ -196,20 +196,24 @@ FileBackedProto<ProtoT>::ReadInternal() const {
                 << " of size: " << file_size;
 
   Header header;
-  if (!filesystem_->PRead(fd.get(), &header, sizeof(Header), /*offset=*/0)) {
+  if (filesystem_->PRead(fd.get(), &header, sizeof(Header), /*offset=*/0) !=
+      sizeof(Header)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Unable to read header of: ", file_path_));
   }
 
   if (header.magic != Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for: ", file_path_));
+    ICING_LOG(ERROR) << "Invalid header magic for FileBackedProto "
+                     << file_path_ << ". Expected: " << Header::kMagic
+                     << ", actual: " << header.magic;
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for FileBackedProto: ", file_path_));
   }
 
   int proto_size = file_size - sizeof(Header);
   auto buffer = std::make_unique<uint8_t[]>(proto_size);
-  if (!filesystem_->PRead(fd.get(), buffer.get(), proto_size,
-                          /*offset=*/sizeof(Header))) {
+  if (filesystem_->PRead(fd.get(), buffer.get(), proto_size,
+                         /*offset=*/sizeof(Header)) != proto_size) {
     return absl_ports::InternalError(
         absl_ports::StrCat("File read failed: ", file_path_));
   }

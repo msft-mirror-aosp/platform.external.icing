@@ -64,6 +64,11 @@ constexpr uint32_t CalculateLoggingLevel(LogSeverity::Code severity,
 // The last 16 bits represent the current verbosity.
 std::atomic<uint32_t> global_logging_level = DEFAULT_LOGGING_LEVEL;
 
+// TODO(b/401363381): Remove this once we have a better way to log to
+// /dev/hvc2 in isolated storage.
+// Indicate whether we should force logging to /dev/hvc2 for ICING_LOG.
+std::atomic<bool> global_force_debug_logs = false;
+
 }  // namespace
 
 // Whether we should log according to the current logging level.
@@ -102,11 +107,30 @@ bool SetLoggingLevel(LogSeverity::Code severity, int16_t verbosity) {
   return true;
 }
 
+// TODO(b/401363381): Remove this once we have a better way to log to
+// /dev/hvc2 in isolated storage.
+void SetForceDebugLogging(bool force) {
+  // Using the relaxed order for better performance because we only need to
+  // guarantee the atomicity for this specific statement, without the need to
+  // worry about reordering.
+  global_force_debug_logs.store(force, std::memory_order_relaxed);
+}
+
+// TODO(b/401363381): Remove this once we have a better way to log to
+// /dev/hvc2 in isolated storage.
+bool GetForceDebugLogging() {
+  // Using the relaxed order for better performance because we only need to
+  // guarantee the atomicity for this specific statement, without the need to
+  // worry about reordering.
+  return global_force_debug_logs.load(std::memory_order_relaxed);
+}
+
 LogMessage::LogMessage(LogSeverity::Code severity, uint16_t verbosity,
                        const char *file_name, int line_number)
     : severity_(severity),
       verbosity_(verbosity),
       should_log_(ShouldLog(severity_, verbosity_)),
+      force_debug_logs_(GetForceDebugLogging()),
       stream_(should_log_) {
   if (should_log_) {
     stream_ << JumpToBasename(file_name) << ":" << line_number << ": ";
@@ -115,7 +139,8 @@ LogMessage::LogMessage(LogSeverity::Code severity, uint16_t verbosity,
 
 LogMessage::~LogMessage() {
   if (should_log_) {
-    LowLevelLogging(severity_, kIcingLoggingTag, stream_.message);
+    LowLevelLogging(severity_, kIcingLoggingTag, stream_.message,
+                    force_debug_logs_);
   }
   if (severity_ == LogSeverity::FATAL) {
     std::terminate();  // Will print a stacktrace (stdout or logcat).

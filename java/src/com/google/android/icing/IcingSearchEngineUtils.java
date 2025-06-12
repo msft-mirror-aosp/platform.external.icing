@@ -17,6 +17,9 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.google.android.icing.proto.BatchGetResultProto;
+import com.google.android.icing.proto.BatchPutResultProto;
+import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
@@ -48,6 +51,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
  * <p>It is also being used by AppSearch dynamite 0p client APIs to convert byte arrays to the
  * protos.
  */
+// TODO(b/347054358): Add unit tests for this class.
 public final class IcingSearchEngineUtils {
   private static final String TAG = "IcingSearchEngineUtils";
   private static final ExtensionRegistryLite EXTENSION_REGISTRY_LITE =
@@ -156,6 +160,26 @@ public final class IcingSearchEngineUtils {
   }
 
   @NonNull
+  public static BatchPutResultProto byteArrayToBatchPutResultProto(
+      @Nullable byte[] putResultsBytes) {
+    if (putResultsBytes == null) {
+      Log.e(TAG, "Received null PutResultProtos from native.");
+      return BatchPutResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BatchPutResultProto.parseFrom(putResultsBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing PutResultProtos.", e);
+      return BatchPutResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
   public static GetResultProto byteArrayToGetResultProto(@Nullable byte[] getResultBytes) {
     if (getResultBytes == null) {
       Log.e(TAG, "Received null GetResultProto from native.");
@@ -169,6 +193,26 @@ public final class IcingSearchEngineUtils {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing GetResultProto.", e);
       return GetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
+  public static BatchGetResultProto byteArrayToBatchGetResultProto(
+      @Nullable byte[] batchGetResultBytes) {
+    if (batchGetResultBytes == null) {
+      Log.e(TAG, "Received null BatchGetResultProto from native.");
+      return BatchGetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BatchGetResultProto.parseFrom(batchGetResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing BatchGetResultProto.", e);
+      return BatchGetResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
@@ -232,6 +276,31 @@ public final class IcingSearchEngineUtils {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing SearchResultProto.", e);
       return SearchResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  /**
+   * Converts a byte array to a {@link BlobProto}.
+   *
+   * @param blobBytes the byte array to convert
+   * @return the {@link BlobProto}
+   */
+  @NonNull
+  public static BlobProto byteArrayToBlobProto(@Nullable byte[] blobBytes) {
+    if (blobBytes == null) {
+      Log.e(TAG, "Received null BlobProto from native.");
+      return BlobProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BlobProto.newBuilder().mergeFrom(blobBytes, EXTENSION_REGISTRY_LITE).build();
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing BlobProto.", e);
+      return BlobProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }

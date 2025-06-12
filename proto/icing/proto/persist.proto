@@ -30,8 +30,10 @@ message PersistType {
     UNKNOWN = 0;
 
     // Only persist the ground truth. A successful PersistToDisk(LITE) should
-    // ensure that no data is lost the next time Icing initializes. This
-    // should be called after each batch of mutations.
+    // ensure that no data is lost the next time Icing initializes. However, a
+    // recovery will be required unless a subsequent call to
+    // PersistToDisk(RECOVERY_PROOF) or PersistToDisk(FULL) is made before
+    // shutdown. This should be called after each batch of mutations.
     LITE = 1;
 
     // Persists all data in internal Icing components. A successful
@@ -40,6 +42,16 @@ message PersistType {
     // structures the next time Icing initializes. This should be called at
     // some point before the app terminates.
     FULL = 2;
+
+    // Persists the ground truth and updates the checksums of all internal Icing
+    // components. A successful PersistToDisk(RECOVERY_PROOF) should ensure that
+    // no data is lost and make it unlikely that a recovery is needed the next
+    // time Icing initializes. However, it is not guaranteed that a recovery
+    // will not be needed. This is because changes to index components may or
+    // may not be flushed to disk in the background and if some changes aren't
+    // persisted then we will have a checksum mismatch and a recovery. To
+    // guarantee that recovery won't occur PersistToDisk(FULL) must be called.
+    RECOVERY_PROOF = 3;
   }
   optional Code code = 1;
 }
