@@ -30,6 +30,7 @@
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
@@ -41,7 +42,8 @@ namespace icing {
 namespace lib {
 
 class DocHitInfoIteratorEmbedding
-    : public DocHitInfoIteratorHandlingSectionRestrict {
+    : public DocHitInfoIteratorHandlingSectionRestrict,
+      public DocHitInfoIteratorHandlingFilter {
  public:
   // Create a DocHitInfoIterator for iterating through all docs which have an
   // embedding matched with the provided query with a score in the range of
@@ -74,6 +76,10 @@ class DocHitInfoIteratorEmbedding
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
     return absl_ports::InvalidArgumentError(
         "Query suggestions for the semanticSearch function are not supported");
+  }
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
   }
 
   CallStats GetCallStats() const override {
