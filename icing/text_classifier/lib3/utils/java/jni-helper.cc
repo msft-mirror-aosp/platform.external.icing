@@ -14,6 +14,8 @@
 
 #include "icing/text_classifier/lib3/utils/java/jni-helper.h"
 
+#include <cstdint>
+
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 
 namespace libtextclassifier3 {
@@ -121,8 +123,8 @@ StatusOr<bool> JniHelper::CallBooleanMethod(JNIEnv* env, jobject object,
   return result;
 }
 
-StatusOr<int32> JniHelper::CallIntMethod(JNIEnv* env, jobject object,
-                                         jmethodID method_id, ...) {
+StatusOr<int32_t> JniHelper::CallIntMethod(JNIEnv* env, jobject object,
+                                           jmethodID method_id, ...) {
   va_list args;
   va_start(args, method_id);
   jint result = env->CallIntMethodV(object, method_id, args);
@@ -132,8 +134,8 @@ StatusOr<int32> JniHelper::CallIntMethod(JNIEnv* env, jobject object,
   return result;
 }
 
-StatusOr<int64> JniHelper::CallLongMethod(JNIEnv* env, jobject object,
-                                          jmethodID method_id, ...) {
+StatusOr<int64_t> JniHelper::CallLongMethod(JNIEnv* env, jobject object,
+                                            jmethodID method_id, ...) {
   va_list args;
   va_start(args, method_id);
   jlong result = env->CallLongMethodV(object, method_id, args);

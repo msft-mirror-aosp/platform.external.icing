@@ -51,9 +51,16 @@ struct IcingMonkeyTestRunnerConfiguration {
   // property, 2 properties, 3 properties and 4 properties.
   std::vector<int> possible_num_properties;
 
-  // The possible number of tokens that may appear in generated documents, with
-  // a noise factor from 0.5 to 1 applied.
-  std::vector<int> possible_num_tokens_;
+  // The possible number of tokens that may appear in a string property of
+  // generated documents, with a noise factor from 0.5 to 1 applied.
+  std::vector<int> possible_num_tokens;
+
+  // The possible number of embedding vectors that may appear in a repeated
+  // vector property of generated documents.
+  std::vector<int> possible_num_vectors;
+
+  // The possible dimensions for the randomly generated embedding vectors.
+  std::vector<int> possible_vector_dimensions;
 
   // An array of pairs of monkey test APIs with frequencies.
   // If f_sum is the sum of all the frequencies, an operation with frequency f

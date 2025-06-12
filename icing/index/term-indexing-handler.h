@@ -56,7 +56,7 @@ class TermIndexingHandler : public DataIndexingHandler {
   // - Sorts the lite index if necessary.
   // - Merges the lite index into the main index if necessary.
   //
-  /// Returns:
+  // Returns:
   //   - OK on success
   //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
   //     document_id of a previously indexed document in non recovery mode.
@@ -68,7 +68,8 @@ class TermIndexingHandler : public DataIndexingHandler {
   //   - Any main/lite index errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
+      DocumentId old_document_id, bool recovery_mode,
+      PutDocumentStatsProto* put_document_stats) override;
 
  private:
   explicit TermIndexingHandler(const Clock* clock, Index* index,

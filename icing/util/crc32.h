@@ -41,6 +41,10 @@ class Crc32 {
     return crc_ == other.Get();
   }
 
+  inline bool operator!=(const Crc32& other) const {
+    return crc_ != other.Get();
+  }
+
   // Returns the checksum of all the data that has been processed till now.
   uint32_t Get() const;
 

@@ -89,7 +89,8 @@ PropertyConfigProto CreateSenderQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertySenderQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_REQUIRED)
       .Build();
 }
@@ -114,7 +115,8 @@ PropertyConfigProto CreateTagQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyTagQualifiedId)
       .SetDataType(TYPE_STRING)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_REQUIRED)
       .Build();
 }
@@ -123,7 +125,8 @@ PropertyConfigProto CreateGroupQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyGroupQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_REQUIRED)
       .Build();
 }
@@ -132,7 +135,8 @@ PropertyConfigProto CreateSuperTagQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertySuperTagQualifiedId)
       .SetDataType(TYPE_STRING)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_REQUIRED)
       .Build();
 }
