@@ -56,9 +56,6 @@ cc_defaults {
         "-fvisibility=hidden",
 
         "-Bsymbolic",
-
-        // TODO(b/420960001): Enable once libeigen is available to icing and appsearch.
-        "-DICING_DISABLE_EIGEN",
     ],
     apex_available: ["com.android.appsearch"],
 }
@@ -113,7 +110,10 @@ cc_library_static {
         "icing/transform/map/**/*",
         "icing/transform/simple/**/*",
     ],
-    header_libs: ["jni_headers"],
+    header_libs: [
+        "jni_headers",
+        "libeigen",
+    ],
     static_libs: [
         "icing-c-proto",
         "libutf",
@@ -172,6 +172,7 @@ cc_test {
     srcs: [
         ":libicing_test_common",
     ],
+    header_libs: ["libeigen"],
     static_libs: [
         "icing-c-proto",
         "libgmock",
