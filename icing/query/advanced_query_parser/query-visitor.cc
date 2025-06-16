@@ -200,9 +200,9 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
                              search_spec_.term_match_type(),
                              needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
-          std::make_unique<DocHitInfoIteratorFilter>(
-              std::move(term_iterator), &document_store_, &schema_store_,
-              filter_options_, current_time_ms_);
+          DocHitInfoIteratorFilter::ApplyFilter(
+              std::move(term_iterator), filter_predicate_,
+              feature_flags_.enable_passing_filter_to_children());
     }
   }
 
@@ -351,7 +351,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
     QueryVisitor query_visitor(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
         &schema_store_, &normalizer_, &tokenizer_, join_children_fetcher_,
-        search_spec_, filter_options_, needs_term_frequency_info_,
+        search_spec_, filter_predicate_, needs_term_frequency_info_,
         get_embedding_match_info_, &feature_flags_, pending_property_restricts_,
         processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);

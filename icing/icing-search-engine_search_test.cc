@@ -141,6 +141,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_embedding_quantization(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_passing_filter_to_children(true);
   return icing_options;
 }
 
@@ -4054,71 +4055,6 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithPropertyFiltersPolymorphism) {
   results = icing.Search(*search_spec, *scoring_spec, *result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), IsEmpty());
-}
-
-TEST_F(IcingSearchEngineSearchTest, EmptySearchWithPropertyFilter) {
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
-              ProtoIsOk());
-
-  // 1. Add two email documents
-  DocumentProto document_one =
-      DocumentBuilder()
-          .SetKey("namespace", "uri1")
-          .SetCreationTimestampMs(1000)
-          .SetSchema("Email")
-          .AddDocumentProperty(
-              "sender",
-              DocumentBuilder()
-                  .SetKey("namespace", "uri1")
-                  .SetSchema("Person")
-                  .AddStringProperty("name", "Meg Ryan")
-                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
-                  .Build())
-          .AddStringProperty("subject", "Hello World!")
-          .AddStringProperty(
-              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
-          .Build();
-  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
-
-  DocumentProto document_two =
-      DocumentBuilder()
-          .SetKey("namespace", "uri2")
-          .SetCreationTimestampMs(1000)
-          .SetSchema("Email")
-          .AddDocumentProperty(
-              "sender", DocumentBuilder()
-                            .SetKey("namespace", "uri2")
-                            .SetSchema("Person")
-                            .AddStringProperty("name", "Tom Hanks")
-                            .AddStringProperty("emailAddress", "ny152@aol.com")
-                            .Build())
-          .AddStringProperty("subject", "Goodnight Moon!")
-          .AddStringProperty("body",
-                             "Count all the sheep and tell them 'Hello'.")
-          .Build();
-  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
-
-  // 2. Issue a query with a property filter
-  auto search_spec = std::make_unique<SearchSpecProto>();
-  search_spec->set_term_match_type(TermMatchType::PREFIX);
-  search_spec->set_query("");
-
-  TypePropertyMask* email_property_filters =
-      search_spec->add_type_property_filters();
-  email_property_filters->set_schema_type("Email");
-  email_property_filters->add_paths("subject");
-
-  auto result_spec = std::make_unique<ResultSpecProto>();
-
-  // 3. Verify that both documents are returned.
-  auto scoring_spec = std::make_unique<ScoringSpecProto>();
-  *scoring_spec = GetDefaultScoringSpec();
-  SearchResultProto results =
-      icing.Search(*search_spec, *scoring_spec, *result_spec);
-  EXPECT_THAT(results.status(), ProtoIsOk());
-  EXPECT_THAT(results.results(), SizeIs(2));
 }
 
 TEST_F(IcingSearchEngineSearchTest, EmptySearchWithEmptyPropertyFilter) {
@@ -8921,6 +8857,82 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithPropertyFiltersEmbedding) {
   EXPECT_THAT(results.results(), IsEmpty());
 }
 
+TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeB").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  DocumentProto doc_a =
+      DocumentBuilder()
+          .SetKey("icing", "uriA")
+          .SetSchema("TypeA")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty("embedding",
+                             CreateVector("my_model", {0.1, 0.2, 0.3}))
+          .Build();
+  DocumentProto doc_b =
+      DocumentBuilder()
+          .SetKey("icing", "uriB")
+          .SetSchema("TypeB")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty("embedding",
+                             CreateVector("my_model", {0.4, 0.5, 0.6}))
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc_a).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc_b).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+
+  // Filter for TypeA only
+  search_spec.add_schema_type_filters("TypeA");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  // Verify that only doc_a is returned due to the schema type filter.
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(doc_a));
+  // Score should be 0.1 + 0.2 + 0.3 = 0.6
+  EXPECT_THAT(results.results(0).score(), DoubleNear(0.6, kEps));
+
+  // Filter for TypeB only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeB");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  // Verify that only doc_b is returned due to the schema type filter.
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(doc_b));
+  // Score should be 0.4 + 0.5 + 0.6 = 1.5
+  EXPECT_THAT(results.results(0).score(), DoubleNear(1.5, kEps));
+}
+
 TEST_F(IcingSearchEngineSearchTest, SearchWithUriFilters) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -9035,62 +9047,6 @@ TEST_F(IcingSearchEngineSearchTest,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status().message(),
               HasSubstr("does not appear in the namespace filter"));
-}
-
-TEST_F(IcingSearchEngineSearchTest, UriFiltersWorkWithPropertyFilters) {
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
-
-  // Add three documents with different URIs.
-  DocumentProto document_one =
-      DocumentBuilder()
-          .SetKey("namespace", "uri1")
-          .SetSchema("Email")
-          .AddStringProperty("subject", "foo")
-          .AddStringProperty("body", "foo")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
-  DocumentProto document_two =
-      DocumentBuilder()
-          .SetKey("namespace", "uri2")
-          .SetSchema("Email")
-          .AddStringProperty("subject", "foo")
-          .AddStringProperty("body", "foo")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
-  DocumentProto document_three =
-      DocumentBuilder()
-          .SetKey("namespace", "uri3")
-          .SetSchema("Email")
-          .AddStringProperty("subject", "baz")
-          .AddStringProperty("body", "foo")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  ASSERT_THAT(icing.Put(document_three).status(), ProtoIsOk());
-
-  // Create a search spec with uri filters that should only match document1 and
-  // document3, and a property filter that only searches for "subject". As a
-  // result, only document1 should be returned.
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
-  search_spec.set_query("foo");
-  NamespaceDocumentUriGroup* uris = search_spec.add_document_uri_filters();
-  uris->set_namespace_("namespace");
-  uris->add_document_uris("uri1");
-  uris->add_document_uris("uri3");
-  TypePropertyMask* property_filters = search_spec.add_type_property_filters();
-  property_filters->set_schema_type("Email");
-  property_filters->add_paths("subject");
-
-  // Check results
-  SearchResultProto results = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                           ResultSpecProto::default_instance());
-  EXPECT_THAT(results.status(), ProtoIsOk());
-  EXPECT_THAT(results.results(), SizeIs(1));
-  EXPECT_THAT(results.results(0).document(), EqualsProto(document_one));
 }
 
 TEST_F(IcingSearchEngineSearchTest, SearchWithRankingByScorableProperty) {
@@ -10830,6 +10786,494 @@ TEST_F(IcingSearchEngineSearchTest,
   EXPECT_THAT(results.results(1).document().uri(), Eq("email1"));
   // email1's embedding attachment is not matched, so it is not returned.
   EXPECT_THAT(results.results(1).joined_results(), IsEmpty());
+}
+
+// Section restriction should not be applicable to
+// DocHitInfoIteratorAllDocumentId. Otherwise, no document will be returned,
+// since the iterator does not have any section information.
+TEST_F(IcingSearchEngineSearchTest, PropertyRestrictionWorksWithEmptySearch) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query with a property filter
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("");
+
+  TypePropertyMask* email_property_filters =
+      search_spec->add_type_property_filters();
+  email_property_filters->set_schema_type("Email");
+  email_property_filters->add_paths("subject");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  // 3. Verify that both documents are returned.
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+}
+
+// Section restriction should not be applicable to DocHitInfoIteratorByUri.
+// Otherwise, no document will be returned, since the iterator does not have any
+// section information.
+TEST_F(IcingSearchEngineSearchTest, PropertyRestrictionWorksWithUriFilters) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+
+  // Add three documents with different URIs.
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "foo")
+          .AddStringProperty("body", "foo")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "foo")
+          .AddStringProperty("body", "foo")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+  DocumentProto document_three =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "baz")
+          .AddStringProperty("body", "foo")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document_three).status(), ProtoIsOk());
+
+  // Create a search spec with uri filters that should only match document1 and
+  // document3, and a property filter that only searches for "foo" in "subject".
+  // As a result, only document1 should be returned.
+  SearchSpecProto search_spec1;
+  search_spec1.set_term_match_type(TermMatchType::PREFIX);
+  search_spec1.set_query("foo");
+  NamespaceDocumentUriGroup* uris = search_spec1.add_document_uri_filters();
+  uris->set_namespace_("namespace");
+  uris->add_document_uris("uri1");
+  uris->add_document_uris("uri3");
+  TypePropertyMask* property_filters = search_spec1.add_type_property_filters();
+  property_filters->set_schema_type("Email");
+  property_filters->add_paths("subject");
+  SearchResultProto results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_one));
+
+  // Same as above with property filter in the query expression.
+  SearchSpecProto search_spec2;
+  search_spec2.set_term_match_type(TermMatchType::PREFIX);
+  search_spec2.set_query("subject:foo");
+  uris = search_spec2.add_document_uri_filters();
+  uris->set_namespace_("namespace");
+  uris->add_document_uris("uri1");
+  uris->add_document_uris("uri3");
+  results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_one));
+
+  // For empty query, property filter is not applicable, since there is no
+  // terms. For this case, only uri filters are applied.
+  SearchSpecProto search_spec3;
+  search_spec3.set_term_match_type(TermMatchType::PREFIX);
+  search_spec3.set_query("");
+  uris = search_spec3.add_document_uri_filters();
+  uris->set_namespace_("namespace");
+  uris->add_document_uris("uri1");
+  uris->add_document_uris("uri3");
+  property_filters = search_spec3.add_type_property_filters();
+  property_filters->set_schema_type("Email");
+  // This property filter should be ignored.
+  property_filters->add_paths("non_existent_property");
+  results = icing.Search(search_spec3, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_three));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document_one));
+}
+
+// Section restriction should not be applicable to
+// DocHitInfoIteratorMatchScoreExpression. Otherwise, no document will be
+// returned, since the iterator does not have any section information.
+TEST_F(IcingSearchEngineSearchTest,
+       PropertyRestrictionWorksWithMatchScoreExpression) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add three documents with different document scores.
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "foo")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("title", "foo")
+          .SetScore(3)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "foo")
+          .SetScore(4)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  // Get documents with a document score in [3, 4], which matches document 2
+  // and 3.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.add_enabled_features(
+      std::string(kMatchScoreExpressionFunctionFeature));
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  search_spec.set_query("matchScoreExpression(\"this.documentScore()\", 3, 4)");
+  SearchResultProto results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document2));
+
+  // Check that the property restriction does not apply to matchScoreExpression.
+  search_spec.set_query(
+      "body:matchScoreExpression(\"this.documentScore()\", 3, 4)");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document2));
+
+  // Same as above.
+  search_spec.set_query(
+      "non_existent_property:"
+      "matchScoreExpression(\"this.documentScore()\", 3, 4)");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document2));
+
+  // Property restriction works as normal for "foo" in "body", so document 2
+  // will not be returned.
+  search_spec.set_query(
+      "body:(foo AND matchScoreExpression(\"this.documentScore()\", 3, 4))");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+
+  // Property restriction works as normal for "foo" in "non_existent_property",
+  // which should return no results.
+  search_spec.set_query(
+      "non_existent_property:(foo AND "
+      "matchScoreExpression(\"this.documentScore()\", 3, 4))");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+}
+
+// Section restriction should not be applicable to
+// DocHitInfoIteratorPropertyInDocument. Otherwise, no document will be
+// returned, since the iterator does not have any section information.
+TEST_F(IcingSearchEngineSearchTest, PropertyRestrictionWorksWithHasProperty) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Value")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // A document with every property.
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "uri0")
+                                .SetSchema("Value")
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("title", "foo")
+                                .AddStringProperty("body", "foo")
+                                .Build();
+  // A document with missing body.
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "uri1")
+                                .SetSchema("Value")
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("title", "bar")
+                                .Build();
+  // A document with missing title.
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "uri2")
+                                .SetSchema("Value")
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("body", "bar")
+                                .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_build_property_existence_metadata_hits(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // Get all documents that have "body".
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  search_spec.add_enabled_features(std::string(kHasPropertyFunctionFeature));
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  search_spec.set_query("hasProperty(\"body\")");
+  SearchResultProto results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Check that the property restriction does not apply to hasProperty.
+  search_spec.set_query("body:hasProperty(\"body\")");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Same as above.
+  search_spec.set_query("title:hasProperty(\"body\")");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Same as above.
+  search_spec.set_query("non_existent_property:hasProperty(\"body\")");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Property restriction works as normal for "foo" in "body".
+  search_spec.set_query("body:(foo AND hasProperty(\"body\"))");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
+
+  // Property restriction works as normal for "foo" in "non_existent_property",
+  // which should return no results.
+  search_spec.set_query(
+      "non_existent_property:(foo AND hasProperty(\"body\"))");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+}
+
+// Section restriction should not be applicable to
+// DocHitInfoIteratorPropertyInSchema. Otherwise, no document will be returned,
+// since the iterator does not have any section information.
+TEST_F(IcingSearchEngineSearchTest,
+       PropertyRestrictionWorksWithPropertyDefined) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Value")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("title")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Create documents.
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "uri0")
+                                .SetSchema("Value")
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("title", "foo")
+                                .AddStringProperty("body", "foo")
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "uri1")
+                                .SetSchema("Value")
+                                .SetCreationTimestampMs(1)
+                                .AddStringProperty("title", "bar")
+                                .AddStringProperty("body", "bar")
+                                .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_build_property_existence_metadata_hits(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Check that propertyDefined works as normal.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  search_spec.set_query("propertyDefined(\"body\")");
+  SearchResultProto results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Check that the property restriction does not apply to propertyDefined.
+  search_spec.set_query("body:propertyDefined(\"body\")");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Same as above.
+  search_spec.set_query("title:propertyDefined(\"body\")");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Same as above.
+  search_spec.set_query("non_existent_property:propertyDefined(\"body\")");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document1));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document0));
+
+  // Property restriction works as normal for "foo" in "body".
+  search_spec.set_query("body:(foo AND propertyDefined(\"body\"))");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document0));
+
+  // Property restriction works as normal for "foo" in "non_existent_property",
+  // which should return no results.
+  search_spec.set_query(
+      "non_existent_property:(foo AND propertyDefined(\"body\"))");
+  results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
 }
 
 }  // namespace

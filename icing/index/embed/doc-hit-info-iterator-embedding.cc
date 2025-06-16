@@ -98,14 +98,21 @@ DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
       cached_embedding_hits_[cached_embedding_hits_idx_];
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
     doc_hit_info_.set_document_id(embedding_hit.basic_hit().document_id());
-    current_allowed_sections_mask_ =
-        ComputeAllowedSectionsMask(doc_hit_info_.document_id());
+    if (DoesDocumentPassAllFilters(doc_hit_info_.document_id())) {
+      current_allowed_sections_mask_ =
+          ComputeAllowedSectionsMask(doc_hit_info_.document_id());
 
-    schema_type_id_ = document_store_.GetSchemaTypeId(
-        doc_hit_info_.document_id(), current_time_ms_);
-    if (schema_type_id_ == kInvalidSchemaTypeId) {
-      // This means that the document is deleted or expired, so update
-      // current_allowed_sections_mask_ to skip the document.
+      schema_type_id_ = document_store_.GetSchemaTypeId(
+          doc_hit_info_.document_id(), current_time_ms_);
+      if (schema_type_id_ == kInvalidSchemaTypeId) {
+        // This means that the document is deleted or expired, so update
+        // current_allowed_sections_mask_ to skip the document.
+        current_allowed_sections_mask_ = kSectionIdMaskNone;
+      }
+    } else {
+      // This means that the document is filtered out by the document filter
+      // predicate, so update current_allowed_sections_mask_ to skip the
+      // document.
       current_allowed_sections_mask_ = kSectionIdMaskNone;
     }
   } else if (doc_hit_info_.document_id() !=
