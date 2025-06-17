@@ -1461,9 +1461,11 @@ libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
       auto iter = type_config_map_.find(type_config.schema_type());
       if (iter != type_config_map_.end() &&
           database != iter->second.database()) {
-        return absl_ports::AlreadyExistsError(
-            absl_ports::StrCat("schema_type name: '", type_config.schema_type(),
-                               "' is already in use by a different database."));
+        return absl_ports::AlreadyExistsError(absl_ports::StrCat(
+            "schema_type name: '", type_config.schema_type(),
+            "' is already in use by a different database. Request database: '",
+            database, "' vs. existing database: '", iter->second.database(),
+            "'."));
       }
     }
   }
