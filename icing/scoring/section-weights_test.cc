@@ -15,13 +15,19 @@
 #include "icing/scoring/section-weights.h"
 
 #include <cfloat>
+#include <memory>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -37,24 +43,26 @@ class SectionWeightsTest : public testing::Test {
         schema_store_dir_(test_dir_ + "/schema_store") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     // Creates file directories
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaTypeConfigProto sender_schema =
         SchemaTypeConfigBuilder()
             .SetType("sender")
-            .AddProperty(PropertyConfigBuilder()
-                             .SetName("name")
-                             .SetDataTypeString(
-                                 TermMatchType::PREFIX,
-                                 StringIndexingConfig::TokenizerType::PLAIN)
-                             .SetCardinality(
-                                 PropertyConfigProto_Cardinality_Code_OPTIONAL))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("name")
+                    .SetDataTypeString(
+                        TermMatchType::PREFIX,
+                        StringIndexingConfig::TokenizerType::PLAIN)
+                    .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL))
             .Build();
     SchemaTypeConfigProto email_schema =
         SchemaTypeConfigBuilder()
@@ -65,29 +73,28 @@ class SectionWeightsTest : public testing::Test {
                     .SetDataTypeString(
                         TermMatchType::PREFIX,
                         StringIndexingConfig::TokenizerType::PLAIN)
-                    .SetDataType(PropertyConfigProto_DataType_Code_STRING)
-                    .SetCardinality(
-                        PropertyConfigProto_Cardinality_Code_OPTIONAL))
+                    .SetDataType(PropertyConfigProto::DataType::STRING)
+                    .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL))
             .AddProperty(
                 PropertyConfigBuilder()
                     .SetName("body")
                     .SetDataTypeString(
                         TermMatchType::PREFIX,
                         StringIndexingConfig::TokenizerType::PLAIN)
-                    .SetDataType(PropertyConfigProto_DataType_Code_STRING)
-                    .SetCardinality(
-                        PropertyConfigProto_Cardinality_Code_OPTIONAL))
-            .AddProperty(PropertyConfigBuilder()
-                             .SetName("sender")
-                             .SetDataTypeDocument(
-                                 "sender", /*index_nested_properties=*/true)
-                             .SetCardinality(
-                                 PropertyConfigProto_Cardinality_Code_OPTIONAL))
+                    .SetDataType(PropertyConfigProto::DataType::STRING)
+                    .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("sender")
+                    .SetDataTypeDocument("sender",
+                                         /*index_nested_properties=*/true)
+                    .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL))
             .Build();
     SchemaProto schema =
         SchemaBuilder().AddType(sender_schema).AddType(email_schema).Build();
 
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false));
   }
 
   void TearDown() override {
@@ -98,6 +105,7 @@ class SectionWeightsTest : public testing::Test {
   SchemaStore *schema_store() { return schema_store_.get(); }
 
  private:
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const std::string test_dir_;
   const std::string schema_store_dir_;
   Filesystem filesystem_;
@@ -171,20 +179,79 @@ TEST_F(SectionWeightsTest, ShouldFailWithNegativeWeights) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SectionWeightsTest, ShouldFailWithZeroWeight) {
+TEST_F(SectionWeightsTest, ShouldAcceptZeroWeight) {
   ScoringSpecProto spec_proto;
 
   TypePropertyWeights *type_property_weights =
       spec_proto.add_type_property_weights();
-  type_property_weights->set_schema_type("sender");
+  type_property_weights->set_schema_type("email");
 
-  PropertyWeight *property_weight =
+  PropertyWeight *body_property_weight =
       type_property_weights->add_property_weights();
-  property_weight->set_weight(0.0);
-  property_weight->set_path("name");
+  body_property_weight->set_weight(2.0);
+  body_property_weight->set_path("body");
 
-  EXPECT_THAT(SectionWeights::Create(schema_store(), spec_proto).status(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  PropertyWeight *subject_property_weight =
+      type_property_weights->add_property_weights();
+  subject_property_weight->set_weight(0.0);
+  subject_property_weight->set_path("subject");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SectionWeights> section_weights,
+      SectionWeights::Create(schema_store(), spec_proto));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
+                             schema_store()->GetSchemaTypeId("email"));
+
+  // Normalized weight for "body" property.
+  EXPECT_THAT(section_weights->GetNormalizedSectionWeight(email_schema_type_id,
+                                                          /*section_id=*/0),
+              Eq(1.0));
+  // Normalized weight for "subject" property.
+  EXPECT_THAT(section_weights->GetNormalizedSectionWeight(email_schema_type_id,
+                                                          /*section_id=*/2),
+              Eq(0.0));
+}
+
+TEST_F(SectionWeightsTest, ShouldNormalizeToZeroWhenAllWeightsZero) {
+  ScoringSpecProto spec_proto;
+
+  TypePropertyWeights *type_property_weights =
+      spec_proto.add_type_property_weights();
+  type_property_weights->set_schema_type("email");
+
+  PropertyWeight *body_property_weight =
+      type_property_weights->add_property_weights();
+  body_property_weight->set_weight(0.0);
+  body_property_weight->set_path("body");
+
+  PropertyWeight *sender_property_weight =
+      type_property_weights->add_property_weights();
+  sender_property_weight->set_weight(0.0);
+  sender_property_weight->set_path("sender.name");
+
+  PropertyWeight *subject_property_weight =
+      type_property_weights->add_property_weights();
+  subject_property_weight->set_weight(0.0);
+  subject_property_weight->set_path("subject");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SectionWeights> section_weights,
+      SectionWeights::Create(schema_store(), spec_proto));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
+                             schema_store()->GetSchemaTypeId("email"));
+
+  // Normalized weight for "body" property.
+  EXPECT_THAT(section_weights->GetNormalizedSectionWeight(email_schema_type_id,
+                                                          /*section_id=*/0),
+              Eq(0.0));
+  // Normalized weight for "sender.name" property (the nested property).
+  EXPECT_THAT(section_weights->GetNormalizedSectionWeight(email_schema_type_id,
+                                                          /*section_id=*/1),
+              Eq(0.0));
+  // Normalized weight for "subject" property.
+  EXPECT_THAT(section_weights->GetNormalizedSectionWeight(email_schema_type_id,
+                                                          /*section_id=*/2),
+              Eq(0.0));
 }
 
 TEST_F(SectionWeightsTest, ShouldReturnDefaultIfTypePropertyWeightsNotSet) {

@@ -15,13 +15,16 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
 
-#include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -32,7 +35,8 @@ std::unique_ptr<DocHitInfoIterator> CreateAndIterator(
     std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
 // Iterate over a logical AND of two child iterators.
-class DocHitInfoIteratorAnd : public DocHitInfoIterator {
+class DocHitInfoIteratorAnd
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   // Set the shorter iterator to short_it to get performance benefits
   // for when an underlying iterator has a more efficient AdvanceTo.
@@ -40,14 +44,20 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
                                  std::unique_ptr<DocHitInfoIterator> long_it);
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override {
+    return short_->GetCallStats() + long_->GetCallStats();
+  }
 
   std::string ToString() const override;
 
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {&short_, &long_};
+  }
+
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo> *matched_terms_stats,
+      std::vector<TermMatchInfo>* matched_terms_stats,
       SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
     if (doc_hit_info_.document_id() == kInvalidDocumentId) {
       // Current hit isn't valid, return.
@@ -67,21 +77,31 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
 // Iterate over a logical AND of multiple child iterators.
 // NOTE: DocHitInfoIteratorAnd is a faster alternative to AND exactly 2
 // iterators.
-class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
+class DocHitInfoIteratorAndNary
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorAndNary(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override;
 
   std::string ToString() const override;
 
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    std::vector<std::unique_ptr<DocHitInfoIterator>*> children;
+    children.reserve(iterators_.size());
+    for (int i = 0; i < iterators_.size(); ++i) {
+      children.push_back(&iterators_[i]);
+    }
+    return children;
+  }
+
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo> *matched_terms_stats,
+      std::vector<TermMatchInfo>* matched_terms_stats,
       SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
     if (doc_hit_info_.document_id() == kInvalidDocumentId) {
       // Current hit isn't valid, return.

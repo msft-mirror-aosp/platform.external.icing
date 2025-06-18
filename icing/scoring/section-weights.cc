@@ -27,10 +27,14 @@ namespace lib {
 
 namespace {
 
-// Normalizes all weights in the map to be in range (0.0, 1.0], where the max
-// weight is normalized to 1.0.
+// Normalizes all weights in the map to be in range [0.0, 1.0], where the max
+// weight is normalized to 1.0. In the case that all weights are equal to 0.0,
+// the normalized weight for each will be 0.0.
 inline void NormalizeSectionWeights(
     double max_weight, std::unordered_map<SectionId, double>& section_weights) {
+  if (max_weight == 0.0) {
+    return;
+  }
   for (auto& raw_weight : section_weights) {
     raw_weight.second = raw_weight.second / max_weight;
   }
@@ -70,11 +74,11 @@ SectionWeights::Create(const SchemaStore* schema_store,
          type_property_weights.property_weights()) {
       double property_path_weight = property_weight.weight();
 
-      // Return error on negative and zero weights.
-      if (property_path_weight <= 0.0) {
+      // Return error on negative weights.
+      if (property_path_weight < 0.0) {
         return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-            "Property weight for property path \"%s\" is negative or zero. "
-            "Negative and zero weights are invalid.",
+            "Property weight for property path \"%s\" is negative. Negative "
+            "weights are invalid.",
             property_weight.path().c_str()));
       }
       property_paths_weights.insert(
@@ -116,7 +120,7 @@ inline SectionWeights::NormalizedSectionWeights
 SectionWeights::ExtractNormalizedSectionWeights(
     const std::unordered_map<std::string, double>& raw_weights,
     const std::vector<SectionMetadata>& metadata_list) {
-  double max_weight = 0.0;
+  double max_weight = -std::numeric_limits<double>::infinity();
   std::unordered_map<SectionId, double> section_weights;
   for (const SectionMetadata& section_metadata : metadata_list) {
     std::string_view metadata_path = section_metadata.path;
@@ -132,10 +136,11 @@ SectionWeights::ExtractNormalizedSectionWeights(
 
   NormalizeSectionWeights(max_weight, section_weights);
   // Set normalized default weight to 1.0 in case there is no section
-  // metadata and max_weight is 0.0 (we should not see this case).
-  double normalized_default_weight = max_weight == 0.0
-                                         ? kDefaultSectionWeight
-                                         : kDefaultSectionWeight / max_weight;
+  // metadata and max_weight is -INF (we should not see this case).
+  double normalized_default_weight =
+      max_weight == -std::numeric_limits<double>::infinity()
+          ? kDefaultSectionWeight
+          : kDefaultSectionWeight / max_weight;
   SectionWeights::NormalizedSectionWeights normalized_section_weights =
       SectionWeights::NormalizedSectionWeights();
   normalized_section_weights.section_weights = std::move(section_weights);

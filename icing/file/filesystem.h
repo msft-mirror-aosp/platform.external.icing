@@ -183,11 +183,11 @@ class Filesystem {
   // Reads from a file. Returns true if data was successfully read out. If the
   // file is seekable, read starts at the file offset, and the file offset is
   // incremented by number of bytes read.
-  virtual bool Read(int fd, void* buf, size_t buf_size) const;
-  virtual bool Read(const char* filename, void* buf, size_t buf_size) const;
-  virtual bool PRead(int fd, void* buf, size_t buf_size, off_t offset) const;
-  virtual bool PRead(const char* filename, void* buf, size_t buf_size,
-                     off_t offset) const;
+  virtual ssize_t Read(int fd, void* buf, size_t buf_size) const;
+  virtual ssize_t Read(const char* filename, void* buf, size_t buf_size) const;
+  virtual ssize_t PRead(int fd, void* buf, size_t buf_size, off_t offset) const;
+  virtual ssize_t PRead(const char* filename, void* buf, size_t buf_size,
+                        off_t offset) const;
 
   // Syncs the file to disk (fdatasync). Returns true on success.
   virtual bool DataSync(int fd) const;
@@ -233,6 +233,11 @@ class Filesystem {
   // Increments to_increment by size if size is valid, or sets to_increment
   // to kBadFileSize if either size or to_increment is kBadFileSize.
   static void IncrementByOrSetInvalid(int64_t size, int64_t* to_increment);
+
+  // Return -1 if file_size is invalid. Otherwise, return file_size.
+  static int64_t SanitizeFileSize(int64_t file_size) {
+    return (file_size != kBadFileSize) ? file_size : -1;
+  }
 };
 // LINT.ThenChange(//depot/google3/icing/file/mock-filesystem.h)
 

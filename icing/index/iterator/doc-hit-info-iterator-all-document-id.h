@@ -15,11 +15,12 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_ALL_DOCUMENT_ID_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_ALL_DOCUMENT_ID_H_
 
-#include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/absl_ports/str_cat.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/store/document-id.h"
@@ -29,16 +30,27 @@ namespace lib {
 
 // Iterator for all DocumentIds in range [0, document_id_limit_]: 0 inclusive,
 // document_id_limit_ inclusive. Returns DocumentIds in descending order.
-class DocHitInfoIteratorAllDocumentId : public DocHitInfoIterator {
+class DocHitInfoIteratorAllDocumentId
+    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
  public:
   explicit DocHitInfoIteratorAllDocumentId(DocumentId document_id_limit);
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override {
-    return document_id_limit_ - current_document_id_;
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
+  }
+
+  CallStats GetCallStats() const override {
+    return CallStats(
+        /*num_leaf_advance_calls_lite_index_in=*/0,
+        /*num_leaf_advance_calls_main_index_in=*/0,
+        /*num_leaf_advance_calls_integer_index_in=*/0,
+        /*num_leaf_advance_calls_no_index_in=*/document_id_limit_ -
+            current_document_id_,
+        /*num_blocks_inspected_in=*/0);
   }
 
   std::string ToString() const override {

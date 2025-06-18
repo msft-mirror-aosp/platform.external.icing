@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <limits>
 #include <memory>
 
 #include "testing/base/public/benchmark.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 
 // Run on a Linux workstation:
@@ -24,7 +26,7 @@
 //    //icing/transform/map:map-normalizer_benchmark
 //
 //    $ blaze-bin/icing/transform/map/map-normalizer_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -35,17 +37,17 @@
 //    blaze-bin/icing/transform/map/map-normalizer_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/map-normalizer_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/map-normalizer_benchmark --benchmark_filter=all
 namespace icing {
 namespace lib {
 
 namespace {
 
 void BM_NormalizeUppercase(benchmark::State& state) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
+  NormalizerOptions options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
 
   std::string input_string(state.range(0), 'A');
 
@@ -74,10 +76,10 @@ BENCHMARK(BM_NormalizeUppercase)
     ->Arg(4096000);
 
 void BM_NormalizeAccent(benchmark::State& state) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
+  NormalizerOptions options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -109,10 +111,10 @@ BENCHMARK(BM_NormalizeAccent)
     ->Arg(4096000);
 
 void BM_NormalizeHiragana(benchmark::State& state) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
+  NormalizerOptions options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
@@ -144,11 +146,10 @@ BENCHMARK(BM_NormalizeHiragana)
     ->Arg(4096000);
 
 void BM_UppercaseSubTokenLength(benchmark::State& state) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(
-
-          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
+  NormalizerOptions options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
 
   std::string input_string(state.range(0), 'A');
   std::string normalized_input_string(state.range(0), 'a');
@@ -174,10 +175,10 @@ BENCHMARK(BM_UppercaseSubTokenLength)
     ->Arg(4096000);
 
 void BM_AccentSubTokenLength(benchmark::State& state) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
+  NormalizerOptions options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
 
   std::string input_string;
   std::string normalized_input_string;
@@ -208,10 +209,10 @@ BENCHMARK(BM_AccentSubTokenLength)
     ->Arg(4096000);
 
 void BM_HiraganaSubTokenLength(benchmark::State& state) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(
-          /*max_term_byte_size=*/std::numeric_limits<int>::max()));
+  NormalizerOptions options(
+      /*max_term_byte_size=*/std::numeric_limits<int>::max());
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
 
   std::string input_string;
   std::string normalized_input_string;

@@ -51,9 +51,9 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     if (term_end_exclusive_.utf16_index() == 0) {
       int first = break_iterator_->First();
       if (!term_start_.MoveToUtf16(first)) {
-        // First is guaranteed to succeed and return a position within bonds. So
-        // the only possible failure could be an invalid sequence. Mark as DONE
-        // and return.
+        // First is guaranteed to succeed and return a position within bonds.
+        // So the only possible failure could be an invalid sequence. Mark as
+        // DONE and return.
         MarkAsDone();
         return false;
       }
@@ -75,13 +75,7 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
       return false;
     }
 
-    // Check if the current term is valid. We consider any term valid if its
-    // first character is valid. If it's not valid, then we need to advance to
-    // the next term.
-    if (IsValidTerm()) {
-      return true;
-    }
-    return Advance();
+    return true;
   }
 
   // Returns the current term. It can be called only when Advance() returns
@@ -244,7 +238,7 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     // 4. The start and end indices point to a segment, but we need to ensure
     // that this segment is 1) valid and 2) ends before offset. Otherwise, we'll
     // need a segment prior to this one.
-    if (term_end_exclusive_.utf32_index() > offset || !IsValidTerm()) {
+    if (term_end_exclusive_.utf32_index() > offset) {
       return ResetToTermEndingBeforeUtf32(term_start_.utf32_index());
     }
     return term_start_.utf32_index();
@@ -262,44 +256,19 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
  private:
   // Ensures that all members are consistent with the 'Done' state.
-  // In the 'Done' state, both term_start_.utf8_index() and
-  // term_end_exclusive_.utf8_index() will point to the same character, causing
-  // GetTerm() to return an empty string and term_start_.utf16_index() and
-  // term_end_exclusive_.utf16_index() will be marked with the kDone value.
-  // break_iterator_ may be in any state.
+  // In the 'Done' state:
+  // - Both term_start_ and term_end_exclusive_ will be invalid.
+  // - break_iterator_ may be in any state.
   void MarkAsDone() {
-    term_start_ =
-        CharacterIterator(text_, /*utf8_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf16_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf32_index=*/ReverseJniBreakIterator::kDone);
-    term_end_exclusive_ =
-        CharacterIterator(text_, /*utf8_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf16_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf32_index=*/ReverseJniBreakIterator::kDone);
+    // Set the iterators to invalid instances.
+    term_start_ = CharacterIterator();
+    term_end_exclusive_ = CharacterIterator();
   }
   bool IsDone() const {
-    // We could just as easily check the other utf indices or the values in
-    // term_start_ to check for done. There's no particular reason to choose any
-    // one since they should all hold kDone.
-    return term_end_exclusive_.utf16_index() == ReverseJniBreakIterator::kDone;
-  }
-
-  bool IsValidTerm() const {
-    // Rule 1: all ASCII terms will be returned.
-    // We know it's a ASCII term by checking the first char.
-    if (i18n_utils::IsAscii(text_[term_start_.utf8_index()])) {
-      return true;
-    }
-
-    UChar32 uchar32 = i18n_utils::GetUChar32At(text_.data(), text_.length(),
-                                               term_start_.utf8_index());
-    // Rule 2: for non-ASCII terms, only the alphanumeric terms are returned.
-    // We know it's an alphanumeric term by checking the first unicode
-    // character.
-    if (i18n_utils::IsAlphaNumeric(uchar32)) {
-      return true;
-    }
-    return false;
+    // We could just as easily check if term_end_exclusive_ is invalid. Both
+    // term_start_ and term_end_exclusive_ are invalid when the iterator is
+    // done.
+    return !term_end_exclusive_.is_valid();
   }
 
   // All of ReverseJniBreakIterator's functions return UTF-16 boundaries. So
