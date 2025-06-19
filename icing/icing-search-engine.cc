@@ -1752,6 +1752,7 @@ BatchGetResultProto IcingSearchEngine::BatchGet(
   // each id. We should consider locking here for the entire batch request.
   int32_t total_docs_bytes_so_far = 0;
   bool skip_remaining_docs = false;
+  int32_t num_doc_returned = 0;
   for (std::string& id : *get_result_spec.mutable_ids()) {
     if (skip_remaining_docs) {
       // We simply set the status to OUT_OF_SPACE for the remaining docs, even
@@ -1776,11 +1777,24 @@ BatchGetResultProto IcingSearchEngine::BatchGet(
     if (result_proto.status().code() == StatusProto::OK) {
       // We get the doc successfully. Check if we can add it to the result.
       size_t document_bytes = result_proto.document().ByteSizeLong();
-      if (document_bytes <=
+      if (num_doc_returned == 0 || document_bytes <=
           get_result_spec.num_total_document_bytes_to_return() -
               total_docs_bytes_so_far) {
         total_docs_bytes_so_far += document_bytes;
+        ++num_doc_returned;
+        // We skip the remaining docs if this 1st doc is already too big.
+        // But we always return 1st one no matter how big it is.
+        if (document_bytes > get_result_spec.num_total_document_bytes_to_return()) {
+            skip_remaining_docs = true;
+        }
       } else {
+        ICING_LOG(INFO) << "Skipping document due to byte size threshold. "
+                           "Current num docs: "
+                          << num_doc_returned
+                          << ", total byte size: " << total_docs_bytes_so_far
+                          << ", next doc byte size: " << document_bytes
+                          << ", threshold: "
+                          << get_result_spec.num_total_document_bytes_to_return();
         result_proto.clear_document();
         StatusProto* result_status = result_proto.mutable_status();
         result_status->set_code(StatusProto::ABORTED);
