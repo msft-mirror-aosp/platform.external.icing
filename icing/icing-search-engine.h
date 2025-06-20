@@ -324,7 +324,7 @@ class IcingSearchEngine {
   // Finds and returns the documents identified by the given GetResultSpecProto.
   // Returns:
   //   A BatchGetResultProto with a list of GetResultProto.
-  BatchGetResultProto BatchGet(const GetResultSpecProto& get_result_spec);
+  BatchGetResultProto BatchGet(GetResultSpecProto&& get_result_spec);
 
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.
@@ -445,6 +445,11 @@ class IcingSearchEngine {
   //   ABORTED if failed to get results but existing data is not affected
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
+  SearchResultProto GetNextPage(GetNextPageRequestProto&& get_next_page_request)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // TODO: b/417644758 - Remove this method once all old callers are migrated to
+  // the new GetNextPage API. Internally, this should just be used in tests.
   SearchResultProto GetNextPage(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -610,6 +615,13 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR if internal state is no longer consistent
   ResetResultProto Reset() ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Clears all data from Icing. Clients DO need to call Initialize again.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR if failed to delete underlying files
+  ResetResultProto ClearAndDestroy() ICING_LOCKS_EXCLUDED(mutex_);
+
   // Disallow copy and move.
   IcingSearchEngine(const IcingSearchEngine&) = delete;
   IcingSearchEngine& operator=(const IcingSearchEngine&) = delete;
@@ -688,6 +700,10 @@ class IcingSearchEngine {
   // underlying files and initializes a fresh index.
   ResetResultProto ResetInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Resets all members and clears all data from Icing.
+  ResetResultProto ClearAndDestroyInternal()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Checks for the existence of the init marker file. If the failed init count
   // exceeds kMaxUnsuccessfulInitAttempts, all data is deleted and the index is
   // initialized from scratch. The updated count (original failed init count + 1
@@ -758,8 +774,8 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   libtextclassifier3::Status InitializeBlobStore(
-      int32_t orphan_blob_time_to_live_ms, int32_t compression_level)
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+      int32_t orphan_blob_time_to_live_ms, int32_t compression_level,
+      int32_t compression_mem_level) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer
   // index, and qualified id join index instances.

@@ -157,6 +157,8 @@ class SchemaStore {
           min_overlay_version_compatibility;
     }
 
+    void SetSwappedFilepath(std::string path) { path_ = std::move(path); }
+
    private:
     explicit Header(SerializedHeader serialized_header, std::string path,
                     ScopedFd header_fd, const Filesystem* filesystem)
@@ -253,8 +255,6 @@ class SchemaStore {
 
   static constexpr std::string_view kSchemaTypeWildcard = "*";
 
-  static constexpr std::string_view kDefaultEmptySchemaDatabase = "";
-
   // Factory function to create a SchemaStore which does not take ownership
   // of any input components, and all pointers must refer to valid objects that
   // outlive the created SchemaStore instance. The base_dir must already exist.
@@ -329,18 +329,22 @@ class SchemaStore {
   // `SetSchema(SetSchemaRequestProto&& set_schema_request)` instead.
   //
   // TODO: b/337913932 - Remove this method once all callers (currently only
-  // used in tests) are migrated to the new SetSchema method.
+  // used in tests) are migrated to the new SetSchema method that takes a
+  // SetSchemaRequestProto.
   libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
       SchemaProto new_schema, bool ignore_errors_and_delete_documents);
 
   // Update our current schema if it's compatible. Does not accept incompatible
-  // schema or schema with types from multiple databases. Compatibility rules
-  // defined by SchemaUtil::ComputeCompatibilityDelta.
+  // schema or schema subsets with types from multiple databases. Compatibility
+  // rules defined by SchemaUtil::ComputeCompatibilityDelta.
   //
-  // Does not support setting the schema across multiple databases if
-  // `feature_flags_->enable_schema_database()` is true. This means that:
-  // - All types within the new schema must have their `database` field matching
-  //  `set_schema_request.database()`.
+  // This method accepts either a full schema (indicated by an empty database
+  // field) or a schema subset with types from a single database.
+  // - If `set_schema_request.database()` is non-empty, then all types in the
+  //   new schema must have their `database` field matching
+  //   `set_schema_request.database()`.
+  // - If `set_schema_request.database()` is empty, then the new schema will be
+  //   taken as the full schema, and will replace the entire existing schema.
   //
   // If ignore_errors_and_delete_documents is set to true, then incompatible
   // schema are allowed and we'll force set the schema, meaning
@@ -763,6 +767,7 @@ class SchemaStore {
   // Requires:
   //   - `new_schema` and `database` are valid according to
   //     `ValidateSchemaDatabase(new_schema, database)`
+  //   - `database` is not empty.
   //   - Types in `new_schema` and `old_schema` all belong to the provided
   //     database.
   //     - The old schema is guaranteed to contain types from exactly one

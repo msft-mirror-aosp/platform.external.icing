@@ -18,7 +18,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -50,6 +49,37 @@ class QualifiedIdJoinIndex : public PersistentStorage {
 
     virtual const DocumentIdToJoinInfo<NamespaceIdFingerprint>& GetCurrent()
         const = 0;
+  };
+
+  // An STL style array view object of DocumentJoinIdPairs for a given parent
+  // document id. This is only used in V3.
+  class DocumentJoinIdPairArrayView {
+   public:
+    using value_type = DocumentJoinIdPair;
+    using iterator = const DocumentJoinIdPair*;
+    using const_iterator = const DocumentJoinIdPair*;
+
+    explicit DocumentJoinIdPairArrayView(const DocumentJoinIdPair* data,
+                                         int size)
+        : data_(data), size_(size) {}
+
+    const DocumentJoinIdPair* data() const { return data_; }
+
+    int size() const { return size_; }
+
+    bool empty() const { return size_ == 0 || data_ == nullptr; }
+
+    iterator begin() { return data_; }
+    iterator end() { return data_ + size_; }
+
+    const_iterator begin() const { return data_; }
+    const_iterator end() const { return data_ + size_; }
+
+    const DocumentJoinIdPair& operator[](int idx) const { return data_[idx]; }
+
+   private:
+    const DocumentJoinIdPair* data_;
+    int size_;
   };
 
   enum class Version { kV2, kV3 };
@@ -107,14 +137,16 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const = 0;
 
-  // (v3 only) Gets the list of joinable children for the given parent document
-  // id.
+  // (v3 only) Gets an array view of all joinable children for the given parent
+  // document id.
   //
   // Returns:
-  //   - A list of children's DocumentJoinIdPair on success
+  //   - A DocumentJoinIdPairArrayView object on success. If there is no edge
+  //     for a valid node_id, then an array view with data() == nullptr and
+  //     size() == 0 will be returned
   //   - Any FileBackedVector errors
-  virtual libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
-      DocumentId parent_document_id) const = 0;
+  virtual libtextclassifier3::StatusOr<DocumentJoinIdPairArrayView>
+  GetDocumentJoinIdPairArrayView(DocumentId parent_document_id) const = 0;
 
   // Migrates existing join data for a parent document from old_document_id to
   // new_document_id if necessary.

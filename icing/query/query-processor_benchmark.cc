@@ -30,6 +30,7 @@
 #include "icing/index/index.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
@@ -49,6 +50,7 @@
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "unicode/uloc.h"
@@ -119,6 +121,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
@@ -181,10 +186,11 @@ void BM_QueryOneTerm(benchmark::State& state) {
                              &feature_flags));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -320,10 +326,11 @@ void BM_QueryFiveTerms(benchmark::State& state) {
                              &feature_flags));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -477,10 +484,11 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
                              &feature_flags));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -619,10 +627,11 @@ void BM_QueryHiragana(benchmark::State& state) {
                              &feature_flags));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 

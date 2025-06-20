@@ -37,6 +37,7 @@
 #include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -83,6 +84,8 @@ class JoinProcessorTest : public ::testing::Test {
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    fake_clock_.SetSystemTimeMilliseconds(123);
+
     test_dir_ = GetTestTempDir() + "/icing_join_processor_test";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()),
                 IsTrue());
@@ -186,14 +189,18 @@ class JoinProcessorTest : public ::testing::Test {
                 IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
@@ -231,12 +238,15 @@ class JoinProcessorTest : public ::testing::Test {
 
   libtextclassifier3::StatusOr<DocumentId> PutAndIndexDocument(
       const DocumentProto& document) {
-    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
-                           doc_store_->Put(document));
     ICING_ASSIGN_OR_RETURN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                  document));
+        TokenizedDocument::Create(
+            schema_store_.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+            std::move(document)));
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::PutResult put_result,
+        doc_store_->Put(tokenized_document.document_wrapper()));
 
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
@@ -999,7 +1009,8 @@ TYPED_TEST(JoinProcessorTest, GetPropagatedChildDocumentsToDelete) {
                            "support delete propagation")));
   } else {
     // Sanity check.
-    ASSERT_THAT(this->qualified_id_join_index_->Get(person_doc_id),
+    ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                    person_doc_id),
                 IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                     message_doc_id, /*joinable_property_id=*/2))));
 
@@ -1041,7 +1052,8 @@ TYPED_TEST(
                              this->PutAndIndexDocument(message));
 
   // Sanity check.
-  ASSERT_THAT(this->qualified_id_join_index_->Get(person_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  person_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   message_doc_id, /*joinable_property_id=*/0))));
 
@@ -1084,7 +1096,8 @@ TYPED_TEST(
   ICING_ASSERT_OK(this->PutAndIndexDocument(message));
 
   // Sanity check.
-  ASSERT_THAT(this->qualified_id_join_index_->Get(person_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  person_doc_id),
               IsOkAndHolds(IsEmpty()));
 
   JoinProcessor join_processor(
@@ -1131,7 +1144,8 @@ TYPED_TEST(JoinProcessorTest,
 
   // Sanity check.
   ASSERT_THAT(
-      this->qualified_id_join_index_->Get(person_doc_id),
+      this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          person_doc_id),
       IsOkAndHolds(ElementsAre(
           DocumentJoinIdPair(message_doc_id, /*joinable_property_id=*/0),
           DocumentJoinIdPair(message_doc_id, /*joinable_property_id=*/2))));
@@ -1188,7 +1202,8 @@ TYPED_TEST(JoinProcessorTest,
 
   // Sanity check.
   ASSERT_THAT(
-      this->qualified_id_join_index_->Get(person_doc_id),
+      this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          person_doc_id),
       IsOkAndHolds(ElementsAre(
           DocumentJoinIdPair(message1_doc_id, /*joinable_property_id=*/2),
           DocumentJoinIdPair(message2_doc_id, /*joinable_property_id=*/2))));
@@ -1244,10 +1259,12 @@ TYPED_TEST(
                              this->PutAndIndexDocument(message));
 
   // Sanity check.
-  ASSERT_THAT(this->qualified_id_join_index_->Get(person1_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  person1_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   message_doc_id, /*joinable_property_id=*/2))));
-  ASSERT_THAT(this->qualified_id_join_index_->Get(person2_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  person2_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   message_doc_id, /*joinable_property_id=*/1))));
 
@@ -1413,21 +1430,25 @@ TYPED_TEST(JoinProcessorTest,
   // Sanity check for migration: put label1 2nd time.
   ASSERT_THAT(label1_doc_id_new, Ne(label1_doc_id_old));
   // Old label1's doc id should get children = [].
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label1_doc_id_old),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label1_doc_id_old),
               IsOkAndHolds(IsEmpty()));
   // New label1's doc id should get children = [label2_doc_id].
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label1_doc_id_new),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label1_doc_id_new),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   label2_doc_id, /*joinable_property_id=*/0))));
   // label2 should get children = [label3_doc_id].
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label2_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label2_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   label3_doc_id, /*joinable_property_id=*/0))));
   // label3 should get children = [label1_doc_id_new]. label1_doc_id_old will
   // not be returned because when putting label1 for the 1st time, label3 was
   // not present yet, and label1_doc_id_old will not be added to label3's
   // children list.
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label3_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label3_doc_id),
               IsOkAndHolds(
                   ElementsAre(DocumentJoinIdPair(label1_doc_id_new,
                                                  /*joinable_property_id=*/0))));
@@ -1479,7 +1500,8 @@ TYPED_TEST(JoinProcessorTest,
                              this->PutAndIndexDocument(label));
 
   // Sanity check.
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   label_doc_id, /*joinable_property_id=*/0))));
 
@@ -1559,13 +1581,16 @@ TYPED_TEST(
   ASSERT_THAT(this->doc_store_->GetAliveDocumentFilterData(label3_doc_id,
                                                            current_time_ms),
               Ne(std::nullopt));
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label1_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label1_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   label2_doc_id, /*joinable_property_id=*/0))));
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label2_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label2_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   label3_doc_id, /*joinable_property_id=*/0))));
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label3_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label3_doc_id),
               IsOkAndHolds(IsEmpty()));
 
   JoinProcessor join_processor(
@@ -1618,10 +1643,12 @@ TYPED_TEST(
   ASSERT_THAT(this->doc_store_->GetAliveDocumentFilterData(
                   label2_doc_id, this->fake_clock_.GetSystemTimeMilliseconds()),
               Eq(std::nullopt));
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label1_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label1_doc_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   label2_doc_id, /*joinable_property_id=*/0))));
-  ASSERT_THAT(this->qualified_id_join_index_->Get(label2_doc_id),
+  ASSERT_THAT(this->qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  label2_doc_id),
               IsOkAndHolds(IsEmpty()));
 
   JoinProcessor join_processor(

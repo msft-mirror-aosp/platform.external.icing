@@ -174,6 +174,13 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
   }
 
+  @Nullable
+  public byte[] getNextPageWithRequestProto(@NonNull byte[] getNextPageRequestBytes) {
+    throwIfClosed();
+    return nativeGetNextPageWithRequestProto(
+        this, getNextPageRequestBytes, System.currentTimeMillis());
+  }
+
   public void invalidateNextPageToken(long nextPageToken) {
     throwIfClosed();
     nativeInvalidateNextPageToken(this, nextPageToken);
@@ -274,6 +281,12 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeReset(this);
   }
 
+  @Nullable
+  public byte[] clearAndDestroy() {
+    throwIfClosed();
+    return nativeClearAndDestroy(this);
+  }
+
   public static boolean shouldLog(short severity) {
     return shouldLog(severity, (short) 0);
   }
@@ -345,6 +358,11 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGetNextPage(
       IcingSearchEngineImpl instance, long nextPageToken, long javaToNativeStartTimestampMs);
 
+  private static native byte[] nativeGetNextPageWithRequestProto(
+      IcingSearchEngineImpl instance,
+      byte[] getNextPageRequestBytes,
+      long javaToNativeStartTimestampMs);
+
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
 
@@ -381,6 +399,8 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGetStorageInfo(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeReset(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeClearAndDestroy(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeSearchSuggestions(
       IcingSearchEngineImpl instance, byte[] suggestionSpecBytes);
