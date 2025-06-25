@@ -535,7 +535,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
   if (!hdr_.Init(hdr_mmapper_.address(),
                  IcingMMapper::system_page_size() - sizeof(Crcs)) ||
       !hdr_.Verify()) {
-    ICING_LOG(ERROR) << "Trie reading header failed";
+    ICING_LOG(ERROR) << "Trie reading header failed. Path: " << file_basename_;
     goto failed;
   }
 
@@ -958,7 +958,8 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::Init(
   uint32_t magic;
   memcpy(&magic, buf, sizeof(magic));
   if (magic != kMagic) {
-    ICING_LOG(ERROR) << "Trie header magic mismatch";
+    ICING_LOG(ERROR) << "Invalid header magic for IcingDynamicTrie. Expected: "
+                     << kMagic << ", actual: " << magic;
     return false;
   }
   uint32_t len;

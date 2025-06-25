@@ -26,6 +26,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
@@ -36,6 +37,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -62,19 +64,22 @@ class DocHitInfoIteratorByUriTest : public ::testing::Test {
         schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
                                            &fake_clock_, feature_flags_.get()));
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -122,11 +127,16 @@ TEST_F(DocHitInfoIteratorByUriTest, MatchesSomeDocuments) {
                                 .SetKey("namespace", "email/3")
                                 .SetSchema("email")
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result.new_document_id;
 
   // Create a search spec with uri filters that only match document1 and
@@ -159,12 +169,17 @@ TEST_F(DocHitInfoIteratorByUriTest, MatchesAllDocuments) {
                                 .SetKey("namespace", "email/3")
                                 .SetSchema("email")
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result.new_document_id;
 
   // Create a search spec with uri filters that match all documents.
@@ -197,12 +212,17 @@ TEST_F(DocHitInfoIteratorByUriTest, NonexistentUriIsOk) {
                                 .SetKey("namespace", "email/3")
                                 .SetSchema("email")
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result.new_document_id;
 
   // Create a search spec with a nonexistent uri in uri filters.
@@ -236,10 +256,15 @@ TEST_F(DocHitInfoIteratorByUriTest, AllNonexistentUriShouldReturnEmptyResults) {
                                 .SetKey("namespace", "email/3")
                                 .SetSchema("email")
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
 
   // Create a search spec with all nonexistent uris.
   SearchSpecProto search_spec;
@@ -270,11 +295,16 @@ TEST_F(DocHitInfoIteratorByUriTest, MultipleNamespaces) {
                                 .SetKey("namespace2", "email/3")
                                 .SetSchema("email")
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result.new_document_id;
 
   // Create a search spec with uri filters that match document1 and document3 in
@@ -315,14 +345,21 @@ TEST_F(DocHitInfoIteratorByUriTest, DuplicatedUriIsOk) {
                                 .SetKey("namespace", "email/4")
                                 .SetSchema("email")
                                 .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(put_result, document_store_->Put(document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result,
+      document_store_->Put(document_util::CreateDocumentWrapper(document4)));
   DocumentId document_id4 = put_result.new_document_id;
 
   // Create a search spec with duplicated uri filters. The result document ids

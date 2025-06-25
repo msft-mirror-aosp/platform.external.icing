@@ -28,10 +28,12 @@
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/integer-index.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -163,21 +165,24 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -233,11 +238,13 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle document.
@@ -285,11 +292,13 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(nested_document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(nested_document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle nested_document.
@@ -350,11 +359,13 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ASSERT_THAT(integer_index_->last_added_document_id(), Eq(kInvalidDocumentId));
   // Handle document. Index data should remain unchanged since there is no
@@ -393,9 +404,11 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
-  ICING_ASSERT_OK(document_store_->Put(tokenized_document.document()));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK(document_store_->Put(tokenized_document.document_wrapper()));
 
   static constexpr DocumentId kCurrentDocumentId = 3;
   integer_index_->set_last_added_document_id(kCurrentDocumentId);
@@ -454,11 +467,13 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerSectionIndexingHandler> handler,
@@ -532,18 +547,22 @@ TEST_F(IntegerSectionIndexingHandlerTest,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerSectionIndexingHandler> handler,
