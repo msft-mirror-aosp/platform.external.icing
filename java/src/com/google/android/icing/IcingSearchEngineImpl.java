@@ -174,6 +174,13 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
   }
 
+  @Nullable
+  public byte[] getNextPageWithRequestProto(@NonNull byte[] getNextPageRequestBytes) {
+    throwIfClosed();
+    return nativeGetNextPageWithRequestProto(
+        this, getNextPageRequestBytes, System.currentTimeMillis());
+  }
+
   public void invalidateNextPageToken(long nextPageToken) {
     throwIfClosed();
     nativeInvalidateNextPageToken(this, nextPageToken);
@@ -350,6 +357,11 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeGetNextPage(
       IcingSearchEngineImpl instance, long nextPageToken, long javaToNativeStartTimestampMs);
+
+  private static native byte[] nativeGetNextPageWithRequestProto(
+      IcingSearchEngineImpl instance,
+      byte[] getNextPageRequestBytes,
+      long javaToNativeStartTimestampMs);
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);

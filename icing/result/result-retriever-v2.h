@@ -20,7 +20,6 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/thread_annotations.h"
@@ -44,12 +43,18 @@ class GroupResultLimiterV2 {
 
   virtual ~GroupResultLimiterV2() = default;
 
-  // Returns true if the scored_document_hit should be removed.
-  virtual bool ShouldBeRemoved(
+  // Gets the index of the group result limits for the given scored document
+  // hit.
+  //
+  // Returns:
+  //   - A valid index of the group result limits.
+  //   - -1 indicating that there is no limit for the result document.
+  //   - std::nullopt if the result document, its namespace, or its schema type
+  //     is not present. The caller should exclude the document from the page.
+  virtual std::optional<int> GetGroupResultLimitsIndex(
       const ScoredDocumentHit& scored_document_hit,
       const std::unordered_map<int32_t, int>& entry_id_group_id_map,
       const DocumentStore& document_store,
-      std::vector<int>& group_result_limits,
       ResultSpecProto::ResultGroupingType result_group_type,
       int64_t current_time_ms) const;
 };
@@ -75,8 +80,8 @@ class ResultRetrieverV2 {
   // out the next top rank documents from ResultState, retrieves the documents
   // from storage, updates ResultState, and finally wraps the result + other
   // information into PageResult. The expected number of documents to return is
-  // min(num_per_page, the number of all scored document hits) inside
-  // ResultState.
+  // min(max_results, num_per_page, the number of all scored document hits)
+  // inside ResultState.
   //
   // The number of snippets to return is based on the total number of snippets
   // needed and number of snippets that have already been returned previously
@@ -92,6 +97,7 @@ class ResultRetrieverV2 {
   // Returns:
   //   std::pair<PageResult, bool>
   std::pair<PageResult, bool> RetrieveNextPage(ResultStateV2& result_state,
+                                               int32_t max_results,
                                                int64_t current_time_ms) const
       ICING_LOCKS_EXCLUDED(result_state.mutex);
 
@@ -115,10 +121,21 @@ class ResultRetrieverV2 {
     // be skipped.
     std::optional<SearchResultProto::ResultProto> result_proto;
 
+    // The index of the group result limits for the result. The caller should
+    // decrement the corresponding result limit in
+    // result_state.group_result_limits after deciding to include the result
+    // document in the page.
+    // - It is guaranteed to be -1 or in the range of [0,
+    //   result_state.group_result_limits.size() - 1]. If it is -1, then it
+    //   means there is no limit for the result document.
+    // - Only used when the proto is not std::nullopt.
+    int group_result_limits_index;
+
     // Whether the (parent) document of the result has snippets. Only used when
     // the proto is not std::nullopt.
     bool has_parent_snippets;
   };
+
   RetrieveResult Retrieve(ResultStateV2& result_state,
                           int64_t current_time_ms) const
       ICING_EXCLUSIVE_LOCKS_REQUIRED(result_state.mutex);

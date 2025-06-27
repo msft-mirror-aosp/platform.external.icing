@@ -15,6 +15,7 @@
 #ifndef ICING_UTIL_EMBEDDING_UTIL_H_
 #define ICING_UTIL_EMBEDDING_UTIL_H_
 
+#include <array>
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -26,6 +27,15 @@ namespace icing {
 namespace lib {
 
 namespace embedding_util {
+
+// The list of embedding query metric types, with the order matching the
+// enum value.
+static const std::array<SearchSpecProto::EmbeddingQueryMetricType::Code, 3>
+    kEmbeddingQueryMetricTypes = {
+        SearchSpecProto::EmbeddingQueryMetricType::COSINE,       // value = 1
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,  // value = 2
+        SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN     // value = 3
+};
 
 inline libtextclassifier3::StatusOr<
     SearchSpecProto::EmbeddingQueryMetricType::Code>

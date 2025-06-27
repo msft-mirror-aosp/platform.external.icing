@@ -455,7 +455,7 @@ message SetSchemaRequestProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 9
+// Next tag: 10
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -502,6 +502,10 @@ message SetSchemaResultProto {
   // but changed to joinable in the new definition. In this case, this property
   // will be considered join incompatible when setting new schema.
   repeated string join_incompatible_changed_schema_types = 8;
+
+  // Number of documents that were deleted due to the new schema with
+  // ignore_errors_and_delete_documents enabled.
+  optional int32 deleted_document_count = 9;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

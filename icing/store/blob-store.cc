@@ -172,9 +172,10 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
       PortableFileBackedProtoLog<BlobInfoProto>::CreateResult log_create_result,
       PortableFileBackedProtoLog<BlobInfoProto>::Create(
           filesystem, blob_info_proto_file_name,
-          PortableFileBackedProtoLog<BlobInfoProto>::Options(
+          PortableFileBackedProtoLog<BlobInfoProto>::Options( 
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
-              /*compression_threshold_bytes=*/0, compression_mem_level)));
+              /*compression_threshold_bytes=*/0, compression_mem_level,
+              /*enable_smaller_decompression_buffer_size_in=*/false)));
 
   std::unordered_map<std::string, int> blob_handle_to_offset;
   ICING_ASSIGN_OR_RETURN(
@@ -383,7 +384,7 @@ BlobProto BlobStore::CommitBlob(
     while (prev_total_read_size < file_size) {
       int32_t size_to_read =
           std::min<int32_t>(kReadBufferSize, file_size - prev_total_read_size);
-      if (!filesystem_.Read(sfd.get(), buffer, size_to_read)) {
+      if (filesystem_.Read(sfd.get(), buffer, size_to_read) != size_to_read) {
         return CreateBlobProtoFromError(absl_ports::InternalError(
             absl_ports::StrCat("Failed to read blob file for handle: ",
                                blob_handle.digest())));
@@ -504,7 +505,8 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_)));
+              compression_mem_level_,
+              /*enable_smaller_decompression_buffer_size_in=*/false)));
   std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
       std::move(temp_log_create_result.proto_log);
 
@@ -568,7 +570,8 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_)));
+              compression_mem_level_,
+              /*enable_smaller_decompression_buffer_size_in=*/false)));
   blob_info_log_ = std::move(log_create_result.proto_log);
   blob_handle_to_offset_ = std::move(new_blob_handle_to_offset);
   return blob_file_names_to_remove;

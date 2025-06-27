@@ -39,9 +39,9 @@
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/property-existence-indexing-handler.h"
@@ -55,9 +55,11 @@
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/query-features.h"
 #include "icing/query/query-results.h"
+#include "icing/query/query-utils.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
@@ -90,7 +92,6 @@ using ::testing::DoubleNear;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 using ::testing::IsNull;
-using ::testing::Pointee;
 using ::testing::UnorderedElementsAre;
 
 constexpr float kEps = 0.000001;
@@ -167,20 +168,25 @@ SearchSpecProto CreateSearchSpec(std::string query,
       /*embedding_query_vectors=*/{}, EMBEDDING_METRIC_UNKNOWN);
 }
 
-bool ContainsMatchInfoEntry(const EmbeddingMatchInfos* match_info, double score,
+bool ContainsMatchInfoEntry(EmbeddingQueryResults& embedding_query_results,
+                            const EmbeddingMatchInfos* match_info, double score,
                             int position_in_section, SectionId section_id) {
-  if (match_info == nullptr || match_info->section_infos == nullptr ||
-      match_info->scores.empty()) {
-    return false;
-  }
-  if (match_info->scores.size() != match_info->section_infos->size()) {
+  if (match_info == nullptr ||
+      embedding_query_results.global_section_infos->empty()) {
     return false;
   }
 
-  for (int i = 0; i < match_info->scores.size(); ++i) {
-    if (std::fabs(match_info->scores[i] - score) < kEps &&
-        match_info->section_infos->at(i).position == position_in_section &&
-        match_info->section_infos->at(i).section_id == section_id) {
+  DoubleList matched_scores =
+      embedding_query_results.GetMatchedScoresFromEmbeddingMatchInfos(
+          *match_info);
+
+  for (int i = 0; i < matched_scores.size(); ++i) {
+    const EmbeddingMatchInfos::EmbeddingMatchSectionInfo& section_info =
+        embedding_query_results.global_section_infos->at(
+            i + match_info->score_start_index);
+    if (std::fabs(matched_scores.data()[i] - score) < kEps &&
+        section_info.position == position_in_section &&
+        section_info.section_id == section_id) {
       return true;
     }
   }
@@ -283,6 +289,10 @@ class QueryVisitorTest
                                tokenizer_factory::CreateIndexingTokenizer(
                                    StringIndexingConfig::TokenizerType::PLAIN,
                                    language_segmenter_.get()));
+
+    document_filter_predicate_ = GetFilterPredicateBySchemaAndNamespace(
+        SearchSpecProto::default_instance(), *document_store_, *schema_store_,
+        clock_.GetSystemTimeMilliseconds());
   }
 
   libtextclassifier3::StatusOr<std::unique_ptr<Node>> ParseQueryHelper(
@@ -301,7 +311,7 @@ class QueryVisitorTest
         index_.get(), numeric_index_.get(), embedding_index_.get(),
         document_store_.get(), schema_store_.get(), normalizer_.get(),
         tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
-        DocHitInfoIteratorFilter::Options(),
+        document_filter_predicate_.get(),
         /*needs_term_frequency_info=*/true, get_embedding_match_info,
         feature_flags_.get(), clock_.GetSystemTimeMilliseconds());
     root_node->Accept(&query_visitor);
@@ -370,6 +380,7 @@ class QueryVisitorTest
   std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<Tokenizer> tokenizer_;
+  std::unique_ptr<DocumentFilterPredicate> document_filter_predicate_;
   std::unique_ptr<const JniCache> jni_cache_;
 };
 
@@ -775,7 +786,7 @@ TEST_P(QueryVisitorTest, NeverVisitedReturnsInvalid) {
       index_.get(), numeric_index_.get(), embedding_index_.get(),
       document_store_.get(), schema_store_.get(), normalizer_.get(),
       tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
-      DocHitInfoIteratorFilter::Options(),
+      document_filter_predicate_.get(),
       /*needs_term_frequency_info=*/true, /*get_embedding_match_info=*/false,
       feature_flags_.get(), clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
@@ -972,7 +983,7 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
       index_.get(), numeric_index_.get(), embedding_index_.get(),
       document_store_.get(), schema_store_.get(), normalizer_.get(),
       tokenizer_.get(), /*join_children_fetcher=*/nullptr, search_spec,
-      DocHitInfoIteratorFilter::Options(),
+      document_filter_predicate_.get(),
       /*needs_term_frequency_info=*/false, /*get_embedding_match_info=*/false,
       feature_flags_.get(), clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
@@ -4060,22 +4071,19 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(1, kEps))));
+      UnorderedElementsAre(DoubleNear(1, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 0.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0)
-            ->section_infos,
-        IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // The query should match both vector0 and vector1.
@@ -4092,17 +4100,18 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(1, kEps))));
+      UnorderedElementsAre(DoubleNear(1, kEps)));
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1),
-      Pointee(UnorderedElementsAre(DoubleNear(-1, kEps))));
+      UnorderedElementsAre(DoubleNear(-1, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 0.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
 
@@ -4110,23 +4119,13 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
     match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0)
-            ->section_infos,
-        IsNull());
-
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1)
-            ->section_infos,
-        IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // The query should match nothing, since there is no vector with a
@@ -4199,22 +4198,19 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1),
-      Pointee(UnorderedElementsAre(DoubleNear(-1, kEps))));
+      UnorderedElementsAre(DoubleNear(-1, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 1.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1)
-            ->section_infos,
-        IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // The query should match both vector0 and vector1.
@@ -4231,17 +4227,18 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(1, kEps))));
+      UnorderedElementsAre(DoubleNear(1, kEps)));
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1),
-      Pointee(UnorderedElementsAre(DoubleNear(-1, kEps))));
+      UnorderedElementsAre(DoubleNear(-1, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 0.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
 
@@ -4249,23 +4246,14 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
     match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
 
   } else {
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0)
-            ->section_infos,
-        IsNull());
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId1)
-            ->section_infos,
-        IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // The query should match nothing, since there is no vector with a
@@ -4335,22 +4323,19 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(1, kEps))));
+      UnorderedElementsAre(DoubleNear(1, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 0.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/1,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/1,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(
-        query_results.embedding_query_results
-            .GetMatchedInfosForDocument(
-                /*query_vector_index=*/0, EMBEDDING_METRIC_COSINE, kDocumentId0)
-            ->section_infos,
-        IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // Create a query that overrides the metric to DOT_PRODUCT.
@@ -4367,24 +4352,21 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(0.14, kEps))));
+      UnorderedElementsAre(DoubleNear(0.14, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 0.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/0.14,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/0.14,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
     // Check section match info for document 0.
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // Create a query that overrides the metric to EUCLIDEAN.
@@ -4402,22 +4384,19 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_EUCLIDEAN, kDocumentId0),
-      Pointee(UnorderedElementsAre(DoubleNear(0, kEps))));
+      UnorderedElementsAre(DoubleNear(0, kEps)));
   if (GetParam().get_embedding_match_info) {
     // Check section match info for document 0.
     const EmbeddingMatchInfos* match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_EUCLIDEAN, kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/0,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/0,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_EUCLIDEAN,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 }
 
@@ -4539,11 +4518,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionRepeatedProperty) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(-3, 7)));
+      UnorderedElementsAre(-3, 7));
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(6)));
+      UnorderedElementsAre(6));
 
   // Check results for document 0.
   ICING_ASSERT_OK(itr->Advance());
@@ -4553,11 +4532,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionRepeatedProperty) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2, 0, -3, 6, 3)));
+      UnorderedElementsAre(-2, 0, -3, 6, 3));
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2)));
+      UnorderedElementsAre(-2));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
@@ -4576,26 +4555,32 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionRepeatedProperty) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-2,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-2,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-3,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-3,
                                        /*position_in_section=*/2,
                                        /*section_id=*/kSectionId0));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/6,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/6,
                                        /*position_in_section=*/1,
                                        /*section_id=*/kSectionId0));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/0,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/0,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId1));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/3,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/3,
                                        /*position_in_section=*/1,
                                        /*section_id=*/kSectionId1));
     match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-2,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-2,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
 
@@ -4610,44 +4595,25 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionRepeatedProperty) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-3,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-3,
                                        /*position_in_section=*/1,
                                        /*section_id=*/kSectionId0));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/7,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/7,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
     match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/6,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/6,
                                        /*position_in_section=*/1,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId1)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId1)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 }
 
@@ -4738,11 +4704,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2, 0)));
+      UnorderedElementsAre(-2, 0));
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(4)));
+      UnorderedElementsAre(4));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   if (GetParam().get_embedding_match_info) {
@@ -4751,32 +4717,25 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-2,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-2,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/0,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/0,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId1));
     match_infos =
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/4,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/4,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId2));
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // The query can match both document 0 and document 1:
@@ -4809,11 +4768,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(6)));
+      UnorderedElementsAre(6));
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      IsNull());
+      IsEmpty());
   // Check results for document 0.
   ICING_ASSERT_OK(itr->Advance());
   EXPECT_THAT(
@@ -4822,11 +4781,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      IsNull());
+      IsEmpty());
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(4)));
+      UnorderedElementsAre(4));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   if (GetParam().get_embedding_match_info) {
@@ -4840,7 +4799,8 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/4,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/4,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId2));
 
@@ -4849,7 +4809,8 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/6,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/6,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
     match_infos =
@@ -4858,18 +4819,8 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
             kDocumentId1);
     EXPECT_THAT(match_infos, IsNull());
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId1)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 }
 
@@ -4942,7 +4893,7 @@ TEST_P(QueryVisitorTest,
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(6)));
+      UnorderedElementsAre(6));
   // Check results for document 0.
   ICING_ASSERT_OK(itr->Advance());
   EXPECT_THAT(itr->doc_hit_info(),
@@ -4951,7 +4902,7 @@ TEST_P(QueryVisitorTest,
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2, 0)));
+      UnorderedElementsAre(-2, 0));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   if (GetParam().get_embedding_match_info) {
@@ -4960,10 +4911,12 @@ TEST_P(QueryVisitorTest,
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-2,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-2,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/0,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/0,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId1));
     match_infos =
@@ -4977,7 +4930,8 @@ TEST_P(QueryVisitorTest,
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/6,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/6,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
     match_infos =
@@ -4986,18 +4940,8 @@ TEST_P(QueryVisitorTest,
             kDocumentId0);
     EXPECT_THAT(match_infos, IsNull());
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId1)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // The same query appears twice, in which case all the scores in the results
@@ -5021,7 +4965,7 @@ TEST_P(QueryVisitorTest,
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(6, 6)));
+      UnorderedElementsAre(6, 6));
   // Check results for document 0.
   ICING_ASSERT_OK(itr->Advance());
   EXPECT_THAT(itr->doc_hit_info(),
@@ -5030,7 +4974,7 @@ TEST_P(QueryVisitorTest,
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2, 0, -2, 0)));
+      UnorderedElementsAre(-2, 0, -2, 0));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
@@ -5110,7 +5054,7 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(6)));
+      UnorderedElementsAre(6));
   // Check results for document 0.
   ICING_ASSERT_OK(itr->Advance());
   EXPECT_THAT(
@@ -5119,7 +5063,7 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      IsNull());
+      IsEmpty());
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   if (GetParam().get_embedding_match_info) {
@@ -5135,16 +5079,13 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/6,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/6,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId1)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 
   // Perform another hybrid search:
@@ -5171,7 +5112,7 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2)));
+      UnorderedElementsAre(-2));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
@@ -5181,7 +5122,8 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId0);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/-2,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/-2,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
 
@@ -5190,22 +5132,13 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
         query_results.embedding_query_results.GetMatchedInfosForDocument(
             /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
             kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(match_infos, /*score=*/6,
+    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
+                                       match_infos, /*score=*/6,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
   } else {
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId0)
-                    ->section_infos,
-                IsNull());
-    EXPECT_THAT(query_results.embedding_query_results
-                    .GetMatchedInfosForDocument(
-                        /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-                        kDocumentId1)
-                    ->section_infos,
-                IsNull());
+    EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
+                IsEmpty());
   }
 }
 
@@ -5276,7 +5209,7 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
-      Pointee(UnorderedElementsAre(2)));
+      UnorderedElementsAre(2));
   ICING_ASSERT_OK(itr->Advance());
   EXPECT_THAT(
       itr->doc_hit_info(),
@@ -5284,9 +5217,75 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
   EXPECT_THAT(
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
-      Pointee(UnorderedElementsAre(-2)));
+      UnorderedElementsAre(-2));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+}
+
+TEST_P(QueryVisitorTest, SemanticSearchFunctionDeletedDocument) {
+  // Set up schema
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("type").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("prop1")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+
+  // Add two documents
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build())));
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build())));
+
+  // Index embedding vectors for both documents
+  PropertyProto::VectorProto vector0 =
+      CreateVector("my_model", {0.1, 0.2, 0.3});
+  PropertyProto::VectorProto vector1 =
+      CreateVector("my_model", {0.4, 0.5, 0.6});
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Delete kDocumentId0
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0",
+                                          clock_.GetSystemTimeMilliseconds()));
+
+  // Create an embedding query that would match both documents if kDocumentId0
+  // was not deleted.
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model", {1.0, 1.0, 1.0})};
+  std::string query = "semanticSearch(getEmbeddingParameter(0), -1)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  SearchSpecProto search_spec =
+      CreateSearchSpec(query, TERM_MATCH_PREFIX, embedding_query_vectors,
+                       EMBEDDING_METRIC_DOT_PRODUCT);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             ProcessQuery(search_spec, root_node.get()));
+
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
+  EXPECT_THAT(query_results.query_terms, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+
+  // Only kDocumentId1 should be returned
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1));
+
+  // Check that scores for kDocumentId1 are present and kDocumentId0 are not.
+  EXPECT_THAT(
+      query_results.embedding_query_results.GetMatchedScoresForDocument(
+          /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
+      UnorderedElementsAre(DoubleNear(0.4 + 0.5 + 0.6, kEps)));
+  EXPECT_THAT(
+      query_results.embedding_query_results.GetMatchedScoresForDocument(
+          /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
+      IsEmpty());
 }
 
 TEST_P(QueryVisitorTest,

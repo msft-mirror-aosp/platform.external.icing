@@ -80,7 +80,7 @@ libtextclassifier3::Status DocumentValidator::Validate(
   auto type_config_or = schema_store_->GetSchemaTypeConfig(document.schema());
   if (!type_config_or.ok()) {
     ICING_LOG(ERROR) << type_config_or.status().error_message()
-                     << "Error while validating document ("
+                     << " Error while validating document ("
                      << document.namespace_() << ", " << document.uri() << ")";
     return type_config_or.status();
   }
