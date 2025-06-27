@@ -15,12 +15,11 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_ALL_DOCUMENT_ID_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_ALL_DOCUMENT_ID_H_
 
-#include <memory>
+#include <cstdint>
 #include <string>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/store/document-id.h"
@@ -30,8 +29,7 @@ namespace lib {
 
 // Iterator for all DocumentIds in range [0, document_id_limit_]: 0 inclusive,
 // document_id_limit_ inclusive. Returns DocumentIds in descending order.
-class DocHitInfoIteratorAllDocumentId
-    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
+class DocHitInfoIteratorAllDocumentId : public DocHitInfoIterator {
  public:
   explicit DocHitInfoIteratorAllDocumentId(DocumentId document_id_limit);
 
@@ -39,9 +37,7 @@ class DocHitInfoIteratorAllDocumentId
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {};
-  }
+  void MapChildren(const ChildrenMapper& mapper) override {}
 
   CallStats GetCallStats() const override {
     return CallStats(

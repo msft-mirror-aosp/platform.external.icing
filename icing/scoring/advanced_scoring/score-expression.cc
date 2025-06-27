@@ -41,7 +41,6 @@
 #include "icing/proto/internal/scorable_property_set.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/section-weights.h"
@@ -313,106 +312,89 @@ MathFunctionScoreExpression::Create(
 libtextclassifier3::StatusOr<double>
 MathFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
-  DoubleList list_value;
-  std::vector<double> double_values;
+  std::vector<double> values;
   int ind = 0;
   if (args_.at(0)->type() == ScoreExpressionType::kDoubleList) {
-    ICING_ASSIGN_OR_RETURN(list_value,
+    ICING_ASSIGN_OR_RETURN(values,
                            args_.at(0)->EvaluateList(hit_info, query_it));
     ind = 1;
   }
-  double_values.reserve(args_.size() - ind);
   for (; ind < args_.size(); ++ind) {
     ICING_ASSIGN_OR_RETURN(double v,
                            args_.at(ind)->EvaluateDouble(hit_info, query_it));
-    double_values.push_back(v);
-  }
-
-  // Double values in variable-argument functions can be treated as a single
-  // list.
-  if (kVariableArgumentsFunctions.count(function_type_) > 0 &&
-      !double_values.empty()) {
-    if (!list_value.empty()) {
-      return absl_ports::InternalError(
-          "Should never reach here, since static type checking should not "
-          "allow variable-argument functions to have both list arguments and "
-          "double arguments.");
-    }
-    list_value = DoubleList(std::move(double_values));
-    double_values.clear();
+    values.push_back(v);
   }
 
   double res = 0;
   switch (function_type_) {
     case FunctionType::kLog:
-      if (double_values.size() == 1) {
-        res = log(double_values[0]);
+      if (values.size() == 1) {
+        res = log(values[0]);
       } else {
         // argument 0 is log base
         // argument 1 is the value
-        res = log(double_values[1]) / log(double_values[0]);
+        res = log(values[1]) / log(values[0]);
       }
       break;
     case FunctionType::kPow:
-      res = pow(double_values[0], double_values[1]);
+      res = pow(values[0], values[1]);
       break;
-    case FunctionType::kSqrt:
-      res = sqrt(double_values[0]);
-      break;
-    case FunctionType::kAbs:
-      res = abs(double_values[0]);
-      break;
-    case FunctionType::kSin:
-      res = sin(double_values[0]);
-      break;
-    case FunctionType::kCos:
-      res = cos(double_values[0]);
-      break;
-    case FunctionType::kTan:
-      res = tan(double_values[0]);
-      break;
-    // Variable-argument functions
     case FunctionType::kMax:
-      if (list_value.empty()) {
+      if (values.empty()) {
         return absl_ports::InvalidArgumentError(
             "Got an empty parameter set in max function");
       }
-      res = *std::max_element(list_value.begin(), list_value.end());
+      res = *std::max_element(values.begin(), values.end());
       break;
     case FunctionType::kMin:
-      if (list_value.empty()) {
+      if (values.empty()) {
         return absl_ports::InvalidArgumentError(
             "Got an empty parameter set in min function");
       }
-      res = *std::min_element(list_value.begin(), list_value.end());
+      res = *std::min_element(values.begin(), values.end());
       break;
     case FunctionType::kLen:
-      res = list_value.size();
+      res = values.size();
       break;
     case FunctionType::kSum:
-      res = std::reduce(list_value.begin(), list_value.end());
+      res = std::reduce(values.begin(), values.end());
       break;
     case FunctionType::kAvg:
-      if (list_value.empty()) {
+      if (values.empty()) {
         return absl_ports::InvalidArgumentError(
             "Got an empty parameter set in avg function.");
       }
-      res =
-          std::reduce(list_value.begin(), list_value.end()) / list_value.size();
+      res = std::reduce(values.begin(), values.end()) / values.size();
       break;
-    // For the following two functions, double_values[0] is the default value.
+    case FunctionType::kSqrt:
+      res = sqrt(values[0]);
+      break;
+    case FunctionType::kAbs:
+      res = abs(values[0]);
+      break;
+    case FunctionType::kSin:
+      res = sin(values[0]);
+      break;
+    case FunctionType::kCos:
+      res = cos(values[0]);
+      break;
+    case FunctionType::kTan:
+      res = tan(values[0]);
+      break;
+    // For the following two functions, the last value is the default value.
+    // If values.size() == 1, then it means the provided list is empty.
     case FunctionType::kMaxOrDefault:
-      if (list_value.empty()) {
-        res = double_values[0];
+      if (values.size() == 1) {
+        res = values[0];
       } else {
-        res = *std::max_element(list_value.begin(), list_value.end());
+        res = *std::max_element(values.begin(), values.end() - 1);
       }
       break;
     case FunctionType::kMinOrDefault:
-      if (list_value.empty()) {
-        res = double_values[0];
+      if (values.size() == 1) {
+        res = values[0];
       } else {
-        res = *std::min_element(list_value.begin(), list_value.end());
+        res = *std::min_element(values.begin(), values.end() - 1);
       }
       break;
   }
@@ -462,12 +444,12 @@ ListOperationFunctionScoreExpression::Create(
       new ListOperationFunctionScoreExpression(function_type, std::move(args)));
 }
 
-libtextclassifier3::StatusOr<DoubleList>
+libtextclassifier3::StatusOr<std::vector<double>>
 ListOperationFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   switch (function_type_) {
     case FunctionType::kFilterByRange:
-      ICING_ASSIGN_OR_RETURN(DoubleList list_value,
+      ICING_ASSIGN_OR_RETURN(std::vector<double> list_value,
                              args_.at(0)->EvaluateList(hit_info, query_it));
       ICING_ASSIGN_OR_RETURN(double low,
                              args_.at(1)->EvaluateDouble(hit_info, query_it));
@@ -477,13 +459,11 @@ ListOperationFunctionScoreExpression::EvaluateList(
         return absl_ports::InvalidArgumentError(
             "The lower bound cannot be greater than the upper bound.");
       }
-      // TODO(b/408437387): Consider avoiding a copy if nothing is filtered out.
-      std::vector<double> new_list = std::move(list_value).ReleaseVector();
       auto new_end =
-          std::remove_if(new_list.begin(), new_list.end(),
+          std::remove_if(list_value.begin(), list_value.end(),
                          [low, high](double v) { return v < low || v > high; });
-      new_list.erase(new_end, new_list.end());
-      return DoubleList(std::move(new_list));
+      list_value.erase(new_end, list_value.end());
+      return list_value;
       break;
   }
   return absl_ports::InternalError("Should never reach here.");
@@ -649,7 +629,7 @@ ChildrenRankingSignalsFunctionScoreExpression::Create(
           document_store, *join_children_fetcher, current_time_ms));
 }
 
-libtextclassifier3::StatusOr<DoubleList>
+libtextclassifier3::StatusOr<std::vector<double>>
 ChildrenRankingSignalsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(
@@ -660,7 +640,7 @@ ChildrenRankingSignalsFunctionScoreExpression::EvaluateList(
   for (const ScoredDocumentHit& child_hit : children_hits) {
     children_scores.push_back(child_hit.score());
   }
-  return DoubleList(std::move(children_scores));
+  return std::move(children_scores);
 }
 
 libtextclassifier3::StatusOr<
@@ -684,7 +664,7 @@ PropertyWeightsFunctionScoreExpression::Create(
           document_store, section_weights, current_time_ms));
 }
 
-libtextclassifier3::StatusOr<DoubleList>
+libtextclassifier3::StatusOr<std::vector<double>>
 PropertyWeightsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator*) const {
   std::vector<double> weights;
@@ -698,7 +678,7 @@ PropertyWeightsFunctionScoreExpression::EvaluateList(
     weights.push_back(section_weights_.GetNormalizedSectionWeight(
         schema_type_id, section_id));
   }
-  return DoubleList(std::move(weights));
+  return weights;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
@@ -787,16 +767,13 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
         metric_type,
         embedding_util::GetEmbeddingQueryMetricTypeFromName(metric));
   }
-  const EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* match_info_map_ =
-      nullptr;
   if (embedding_index_arg->is_constant()) {
     ICING_ASSIGN_OR_RETURN(
         uint32_t embedding_index,
         embedding_index_arg->EvaluateDouble(DocHitInfo(),
                                             /*query_it=*/nullptr));
-    match_info_map_ =
-        embedding_query_results->GetMatchInfoMap(embedding_index, metric_type);
-    if (match_info_map_ == nullptr) {
+    if (embedding_query_results->GetMatchInfoMap(embedding_index,
+                                                 metric_type) == nullptr) {
       return absl_ports::InvalidArgumentError(absl_ports::StrCat(
           "The embedding query index ", std::to_string(embedding_index),
           " with metric type ",
@@ -806,26 +783,22 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
   }
   return std::unique_ptr<MatchedSemanticScoresFunctionScoreExpression>(
       new MatchedSemanticScoresFunctionScoreExpression(
-          std::move(args), metric_type, *embedding_query_results,
-          match_info_map_));
+          std::move(args), metric_type, *embedding_query_results));
 }
 
-libtextclassifier3::StatusOr<DoubleList>
+libtextclassifier3::StatusOr<std::vector<double>>
 MatchedSemanticScoresFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
                          args_[1]->EvaluateDouble(hit_info, query_it));
   uint32_t query_index = (uint32_t)raw_query_index;
-  if (match_info_map_ != nullptr) {
-    auto info_it = match_info_map_->find(hit_info.document_id());
-    if (info_it == match_info_map_->end()) {
-      return DoubleList();
-    }
-    return embedding_query_results_.GetMatchedScoresFromEmbeddingMatchInfos(
-        info_it->second);
+  const std::vector<double>* scores =
+      embedding_query_results_.GetMatchedScoresForDocument(
+          query_index, metric_type_, hit_info.document_id());
+  if (scores == nullptr) {
+    return std::vector<double>();
   }
-  return embedding_query_results_.GetMatchedScoresForDocument(
-      query_index, metric_type_, hit_info.document_id());
+  return *scores;
 }
 
 GetScorablePropertyFunctionScoreExpression::
@@ -912,13 +885,13 @@ GetScorablePropertyFunctionScoreExpression::Create(
           std::move(schema_type_ids), property_path));
 }
 
-libtextclassifier3::StatusOr<DoubleList>
+libtextclassifier3::StatusOr<std::vector<double>>
 GetScorablePropertyFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   SchemaTypeId doc_schema_type_id = GetSchemaTypeId(
       hit_info.document_id(), document_store_, current_time_ms_);
   if (schema_type_ids_.find(doc_schema_type_id) == schema_type_ids_.end()) {
-    return DoubleList();
+    return std::vector<double>();
   }
 
   // By this point, the document to be evaluated is guaranteed to have a
@@ -947,19 +920,17 @@ GetScorablePropertyFunctionScoreExpression::EvaluateList(
 
   // Converts ScorablePropertyProto to a vector of doubles.
   if (scorable_property_proto->int64_values_size() > 0) {
-    return DoubleList(
-        std::vector<double>(scorable_property_proto->int64_values().begin(),
-                            scorable_property_proto->int64_values().end()));
+    return std::vector<double>(scorable_property_proto->int64_values().begin(),
+                               scorable_property_proto->int64_values().end());
   } else if (scorable_property_proto->double_values_size() > 0) {
-    return DoubleList(
-        std::vector<double>(scorable_property_proto->double_values().begin(),
-                            scorable_property_proto->double_values().end()));
+    return std::vector<double>(scorable_property_proto->double_values().begin(),
+                               scorable_property_proto->double_values().end());
   } else if (scorable_property_proto->boolean_values_size() > 0) {
-    return DoubleList(
-        std::vector<double>(scorable_property_proto->boolean_values().begin(),
-                            scorable_property_proto->boolean_values().end()));
+    return std::vector<double>(
+        scorable_property_proto->boolean_values().begin(),
+        scorable_property_proto->boolean_values().end());
   }
-  return DoubleList();
+  return std::vector<double>();
 }
 
 }  // namespace lib

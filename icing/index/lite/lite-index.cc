@@ -195,10 +195,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
 
     // Check integrity.
     if (!header_->check_magic()) {
-      ICING_LOG(ERROR) << "Invalid header magic for LiteIndex "
-                       << options_.filename_base;
-      status = absl_ports::InternalError(absl_ports::StrCat(
-          "Invalid header magic for LiteIndex: ", options_.filename_base));
+      status = absl_ports::InternalError("Lite index header magic mismatch");
       goto error;
     }
     Crc32 expected_crc(header_->lite_index_crc());

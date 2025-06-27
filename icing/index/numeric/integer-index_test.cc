@@ -1200,9 +1200,8 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndex::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndex::kInfoMetadataFileOffset));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.last_added_document_id, Eq(kInvalidDocumentId));
   EXPECT_THAT(info.num_data_threshold_for_bucket_split,
@@ -1210,9 +1209,8 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndex::kCrcsMetadataFileOffset),
-              Eq(sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndex::kCrcsMetadataFileOffset));
   // There are no storages initially, so storages_crc should be 0.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Eq(0));
   EXPECT_THAT(crcs.component_crcs.info_crc,
@@ -1398,9 +1396,8 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndex::kCrcsMetadataFileOffset),
-              Eq(sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndex::kCrcsMetadataFileOffset));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -1448,9 +1445,8 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndex::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndex::kInfoMetadataFileOffset));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.

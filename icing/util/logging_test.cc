@@ -13,8 +13,6 @@
 // limitations under the License.
 
 #include "icing/util/logging.h"
-#include <cerrno>
-#include <cstring>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -152,18 +150,6 @@ TEST(LoggingTest, LoggingStreamTest) {
   // This one should not be logged, thus empty.
   LoggingStringStream stream2 = (ICING_LOG(DBG) << "Hello"
                                                 << "World!");
-  EXPECT_THAT(stream2.message, IsEmpty());
-}
-
-TEST(LoggingTest, LoggingStreamStrErrorTest) {
-  ASSERT_TRUE(SetLoggingLevel(LogSeverity::INFO));
-  char* error_message = strerror(ENOENT);
-  // This one should be logged.
-  LoggingStringStream stream1 = (ICING_LOG(INFO) << error_message);
-  EXPECT_THAT(stream1.message, EndsWith("No such file or directory"));
-
-  // This one should not be logged, thus empty.
-  LoggingStringStream stream2 = (ICING_LOG(DBG) << error_message);
   EXPECT_THAT(stream2.message, IsEmpty());
 }
 

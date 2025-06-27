@@ -29,7 +29,6 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/persistent-storage.h"
 #include "icing/util/crc32.h"
-#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -505,13 +504,8 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
 
   // Magic should be the same.
   if (persistent_hash_map->info().magic != Info::kMagic) {
-    ICING_LOG(ERROR) << "Invalid header magic for PersistentHashMap "
-                     << persistent_hash_map->working_path_
-                     << ". Expected: " << Info::kMagic
-                     << ", actual: " << persistent_hash_map->info().magic;
     return absl_ports::FailedPreconditionError(
-        absl_ports::StrCat("Invalid header magic for PersistentHashMap: ",
-                           persistent_hash_map->working_path_));
+        "PersistentHashMap header magic mismatch");
   }
 
   // Value type size should be consistent.

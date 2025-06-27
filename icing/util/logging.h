@@ -78,14 +78,6 @@ inline LoggingStringStream& operator<<(LoggingStringStream& stream,
 }
 
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
-                                       char* message) {
-  if (stream.should_log_) {
-    stream.message.append(message);
-  }
-  return stream;
-}
-
-inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        const char* message) {
   if (stream.should_log_) {
     stream.message.append(message);
@@ -95,14 +87,6 @@ inline LoggingStringStream& operator<<(LoggingStringStream& stream,
 
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        const std::string& message) {
-  if (stream.should_log_) {
-    stream.message.append(message);
-  }
-  return stream;
-}
-
-inline LoggingStringStream& operator<<(LoggingStringStream& stream,
-                                       std::string& message) {
   if (stream.should_log_) {
     stream.message.append(message);
   }

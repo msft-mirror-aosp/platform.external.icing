@@ -31,26 +31,18 @@ class IcingMonkeyTestRunner;
 struct IcingMonkeyTestRunnerConfiguration {
   explicit IcingMonkeyTestRunnerConfiguration(uint32_t seed, int num_types,
                                               int num_namespaces, int num_uris,
-                                              int index_merge_size,
-                                              bool initialize_by_existing_data)
+                                              int index_merge_size)
       : seed(seed),
         num_types(num_types),
         num_namespaces(num_namespaces),
         num_uris(num_uris),
-        index_merge_size(index_merge_size),
-        initialize_by_existing_data(initialize_by_existing_data) {}
+        index_merge_size(index_merge_size) {}
 
   uint32_t seed;
   int num_types;
   int num_namespaces;
   int num_uris;
   int index_merge_size;
-
-  // Whether to initialize Icing with existing data. If true, the test will
-  // start from the state of the existing Icing testing data stored in
-  // GetTestTempDir() + "/icing/monkey". Otherwise, the test will start with an
-  // empty Icing.
-  bool initialize_by_existing_data;
 
   // To ensure that the random schema is generated with the best quality, the
   // number of properties for each type will only be randomly picked from this

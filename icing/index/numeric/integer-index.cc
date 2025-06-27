@@ -35,7 +35,6 @@
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
-#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -495,13 +494,7 @@ IntegerIndex::InitializeExistingFiles(
 
   // Validate magic.
   if (integer_index->info().magic != Info::kMagic) {
-    ICING_LOG(ERROR) << "Invalid header magic for IntegerIndex "
-                     << integer_index->working_path_
-                     << ". Expected: " << Info::kMagic
-                     << ", actual: " << integer_index->info().magic;
-    return absl_ports::FailedPreconditionError(
-        absl_ports::StrCat("Invalid header magic for IntegerIndex: ",
-                           integer_index->working_path_));
+    return absl_ports::FailedPreconditionError("Incorrect magic value");
   }
 
   // If num_data_threshold_for_bucket_split mismatches, then return error to let

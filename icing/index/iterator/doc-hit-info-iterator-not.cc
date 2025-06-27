@@ -14,13 +14,11 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-not.h"
 
+#include <cstdint>
 #include <memory>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
@@ -71,9 +69,8 @@ DocHitInfoIteratorNot::TrimRightMostNode() && {
       "Cannot generate suggestion if the last term is NOT operator.");
 }
 
-std::vector<std::unique_ptr<DocHitInfoIterator>*>
-DocHitInfoIteratorNot::GetChildren() {
-  return {&to_be_excluded_};
+void DocHitInfoIteratorNot::MapChildren(const ChildrenMapper& mapper) {
+  to_be_excluded_ = mapper(std::move(to_be_excluded_));
 }
 
 std::string DocHitInfoIteratorNot::ToString() const {

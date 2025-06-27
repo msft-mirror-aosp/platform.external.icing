@@ -16,7 +16,6 @@
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
 
 #include <array>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,7 +32,7 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
+class DocHitInfoIteratorTermLite : public DocHitInfoLeafIterator {
  public:
   explicit DocHitInfoIteratorTermLite(const TermIdCodec* term_id_codec,
                                       LiteIndex* lite_index,
@@ -55,10 +54,6 @@ class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
   libtextclassifier3::Status Advance() override;
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
-
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {};
-  }
 
   CallStats GetCallStats() const override {
     return CallStats(

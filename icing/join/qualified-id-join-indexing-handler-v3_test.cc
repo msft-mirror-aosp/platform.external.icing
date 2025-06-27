@@ -297,8 +297,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinableProperty) {
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
   EXPECT_THAT(
-      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-          parent_put_result.new_document_id),
+      qualified_id_join_index_->Get(parent_put_result.new_document_id),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
           child_put_result.new_document_id, fake_type_joinable_property_id_))));
 }
@@ -385,13 +384,11 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result1.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result1.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(child_put_result.new_document_id,
                                      nested_type_joinable_property_id_))));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result2.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result2.new_document_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   child_put_result.new_document_id,
                   nested_type_nested_joinable_property_id_))));
@@ -564,12 +561,10 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
               Eq(grandchild_put_result.new_document_id));
   ASSERT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
   ASSERT_THAT(
-      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-          parent_put_result.new_document_id),
+      qualified_id_join_index_->Get(parent_put_result.new_document_id),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
           child_put_result.new_document_id, fake_type_joinable_property_id_))));
-  ASSERT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  child_put_result.new_document_id),
+  ASSERT_THAT(qualified_id_join_index_->Get(child_put_result.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(grandchild_put_result.new_document_id,
                                      fake_type_joinable_property_id_))));
@@ -597,20 +592,17 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(3)));
   // Get() with parent document id should return DocumentJoinIdPairs for both
   // old and new child document id.
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(child_put_result.new_document_id,
                                      fake_type_joinable_property_id_),
                   DocumentJoinIdPair(child_put_result2.new_document_id,
                                      fake_type_joinable_property_id_))));
   // Get() with old child document id should return empty list.
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  child_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(child_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
   // Get() with new child document id should return grandchild join id pair.
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  child_put_result2.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(child_put_result2.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(grandchild_put_result.new_document_id,
                                      fake_type_joinable_property_id_))));
@@ -684,8 +676,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(parent_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 }
 
@@ -747,8 +738,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 
   // Handling document with document_id < last_added_document_id should cause a
@@ -767,8 +757,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id + 1));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 }
 
@@ -829,8 +818,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
   EXPECT_THAT(
-      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-          parent_put_result.new_document_id),
+      qualified_id_join_index_->Get(parent_put_result.new_document_id),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
           child_put_result.new_document_id, fake_type_joinable_property_id_))));
 }
@@ -893,8 +881,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 
   // Handle document with document_id < last_added_document_id in recovery mode.
@@ -912,8 +899,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id + 1));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 }
 

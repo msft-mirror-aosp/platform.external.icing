@@ -114,9 +114,8 @@ JoinChildrenFetcherImplV3::GetChildren(DocumentId parent_doc_id) const {
   // Otherwise, fetch the children from the qualified id join index and cache
   // the result.
   ICING_ASSIGN_OR_RETURN(
-      QualifiedIdJoinIndex::DocumentJoinIdPairArrayView
-          child_join_id_pairs_array_view,
-      qualified_id_join_index_.GetDocumentJoinIdPairArrayView(parent_doc_id));
+      std::vector<DocumentJoinIdPair> child_document_join_id_pairs,
+      qualified_id_join_index_.Get(parent_doc_id));
 
   // Filter and construct child_scored_document_hits for the given parent doc
   // id.
@@ -141,10 +140,10 @@ JoinChildrenFetcherImplV3::GetChildren(DocumentId parent_doc_id) const {
   //     set, or the joinable property does not match the one specified in the
   //     join spec.
   std::vector<ScoredDocumentHit> child_scored_document_hits;
-  for (const DocumentJoinIdPair& child_join_id_pair :
-       child_join_id_pairs_array_view) {
+  for (const DocumentJoinIdPair& child_document_join_id_pair :
+       child_document_join_id_pairs) {
     if (auto filter_itr = child_join_id_pair_to_scored_document_hit_map_.find(
-            child_join_id_pair);
+            child_document_join_id_pair);
         filter_itr != child_join_id_pair_to_scored_document_hit_map_.end()) {
       child_scored_document_hits.push_back(filter_itr->second);
     }

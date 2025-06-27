@@ -11,7 +11,6 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
-import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
@@ -129,20 +128,8 @@ public interface IcingSearchEngineInterface extends Closeable {
   SearchResultProto search(
       SearchSpecProto searchSpec, ScoringSpecProto scoringSpec, ResultSpecProto resultSpec);
 
-  /**
-   * Gets the next page.
-   *
-   * <p>Note: This method is deprecated. Please use {@link #getNextPage(GetNextPageRequestProto)}
-   * instead.
-   */
+  /** Gets the next page. */
   SearchResultProto getNextPage(long nextPageToken);
-
-  /**
-   * Gets the next page.
-   *
-   * @param getNextPageRequest the request proto for getting the next page.
-   */
-  SearchResultProto getNextPage(GetNextPageRequestProto getNextPageRequest);
 
   /** Invalidates the next page token. */
   void invalidateNextPageToken(long nextPageToken);

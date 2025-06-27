@@ -200,9 +200,9 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
                              search_spec_.term_match_type(),
                              needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
-          DocHitInfoIteratorFilter::ApplyFilter(
-              std::move(term_iterator), filter_predicate_,
-              feature_flags_.enable_passing_filter_to_children());
+          std::make_unique<DocHitInfoIteratorFilter>(
+              std::move(term_iterator), &document_store_, &schema_store_,
+              filter_options_, current_time_ms_);
     }
   }
 
@@ -351,7 +351,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
     QueryVisitor query_visitor(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
         &schema_store_, &normalizer_, &tokenizer_, join_children_fetcher_,
-        search_spec_, filter_predicate_, needs_term_frequency_info_,
+        search_spec_, filter_options_, needs_term_frequency_info_,
         get_embedding_match_info_, &feature_flags_, pending_property_restricts_,
         processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);
@@ -462,20 +462,14 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   }
 
   // Create and return iterator.
-  ICING_ASSIGN_OR_RETURN(
-      EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
-      embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
-                                                       metric_type));
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map =
+      &embedding_query_results_.result_infos[vector_index][metric_type];
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<DocHitInfoIterator> iterator,
       DocHitInfoIteratorEmbedding::Create(
           &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, info_map, embedding_query_results_.global_scores.get(),
-          get_embedding_match_info_
-              ? embedding_query_results_.global_section_infos.get()
-              : nullptr,
-          &embedding_index_, &document_store_, &schema_store_,
-          current_time_ms_));
+          high, get_embedding_match_info_, info_map, &embedding_index_,
+          &document_store_, &schema_store_, current_time_ms_));
   return PendingValue(std::move(iterator));
 }
 

@@ -196,24 +196,20 @@ FileBackedProto<ProtoT>::ReadInternal() const {
                 << " of size: " << file_size;
 
   Header header;
-  if (filesystem_->PRead(fd.get(), &header, sizeof(Header), /*offset=*/0) !=
-      sizeof(Header)) {
+  if (!filesystem_->PRead(fd.get(), &header, sizeof(Header), /*offset=*/0)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Unable to read header of: ", file_path_));
   }
 
   if (header.magic != Header::kMagic) {
-    ICING_LOG(ERROR) << "Invalid header magic for FileBackedProto "
-                     << file_path_ << ". Expected: " << Header::kMagic
-                     << ", actual: " << header.magic;
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Invalid header magic for FileBackedProto: ", file_path_));
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Invalid header kMagic for: ", file_path_));
   }
 
   int proto_size = file_size - sizeof(Header);
   auto buffer = std::make_unique<uint8_t[]>(proto_size);
-  if (filesystem_->PRead(fd.get(), buffer.get(), proto_size,
-                         /*offset=*/sizeof(Header)) != proto_size) {
+  if (!filesystem_->PRead(fd.get(), buffer.get(), proto_size,
+                          /*offset=*/sizeof(Header))) {
     return absl_ports::InternalError(
         absl_ports::StrCat("File read failed: ", file_path_));
   }

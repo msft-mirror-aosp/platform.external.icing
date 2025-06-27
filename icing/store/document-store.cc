@@ -15,6 +15,7 @@
 #include "icing/store/document-store.h"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -71,7 +72,6 @@
 #include "icing/util/logging.h"
 #include "icing/util/scorable_property_set.h"
 #include "icing/util/status-macros.h"
-#include "icing/util/timestamp-util.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
@@ -148,6 +148,27 @@ std::string MakeUsageStoreDirectoryName(const std::string& base_dir) {
 
 std::string MakeCorpusMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kCorpusIdMapperFilename);
+}
+
+int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
+                                       int64_t ttl_ms) {
+  if (ttl_ms == 0) {
+    // Special case where a TTL of 0 indicates the document should never
+    // expire. int64_t max, interpreted as seconds since epoch, represents
+    // some point in the year 292,277,026,596. So we're probably ok to use
+    // this as "never reaching this point".
+    return std::numeric_limits<int64_t>::max();
+  }
+
+  int64_t expiration_timestamp_ms;
+  if (__builtin_add_overflow(creation_timestamp_ms, ttl_ms,
+                             &expiration_timestamp_ms)) {
+    // Overflow detected. Treat overflow as the same behavior of just int64_t
+    // max
+    return std::numeric_limits<int64_t>::max();
+  }
+
+  return expiration_timestamp_ms;
 }
 
 InitializeStatsProto::RecoveryCause GetRecoveryCause(
@@ -374,8 +395,8 @@ libtextclassifier3::StatusOr<DocumentStore::InitializeResult>
 DocumentStore::Initialize(bool force_recovery_and_revalidate_documents,
                           InitializeStatsProto* initialize_stats) {
   auto create_result_or = DocumentLogCreator::Create(
-      filesystem_, base_dir_, &feature_flags_, compression_level_,
-      compression_threshold_bytes_, compression_mem_level_);
+      filesystem_, base_dir_, compression_level_, compression_threshold_bytes_,
+      compression_mem_level_);
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -469,16 +490,15 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   }
 
   DocumentStore::Header header;
-  if (filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
-                        sizeof(header)) != sizeof(header)) {
+  if (!filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
+                         sizeof(header))) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic != Header::kMagic) {
-    ICING_LOG(ERROR) << "Invalid header magic for DocumentStore. Expected: "
-                     << Header::kMagic << ", actual: " << header.magic;
-    return absl_ports::InternalError("Invalid header magic for DocumentStore");
+  if (header.magic != DocumentStore::Header::kMagic) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
@@ -684,20 +704,15 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
             scorable_property_cache_index,
             document_wrapper.document().internal_fields().length_in_tokens())));
 
-    int64_t raw_expiration_timestamp_ms =
-        timestamp_util::CalculateRawExpirationTimestampMs(
-            document_wrapper.document().creation_timestamp_ms(),
-            document_wrapper.document().ttl_ms());
+    int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
+        document_wrapper.document().creation_timestamp_ms(),
+        document_wrapper.document().ttl_ms());
 
-    // When regenerating derived files, set the expiration timestamp as the raw
-    // expiration timestamp. The dependency should be evaluated by the caller
-    // and updated to the propagated expiration timestamp later.
     ICING_RETURN_IF_ERROR(UpdateFilterCache(
         new_document_id,
-        DocumentFilterData(
-            namespace_id, schema_type_id,
-            /*expiration_timestamp_ms=*/raw_expiration_timestamp_ms,
-            raw_expiration_timestamp_ms)));
+        DocumentFilterData(namespace_id,
+                           new_doc_nsid_uri_fingerprint.fingerprint(),
+                           schema_type_id, expiration_timestamp_ms)));
     iterator_status = iterator.Advance();
   }
 
@@ -1135,9 +1150,8 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
       document_wrapper.document().internal_fields().length_in_tokens();
   int64_t creation_timestamp_ms =
       document_wrapper.document().creation_timestamp_ms();
-  int64_t raw_expiration_timestamp_ms =
-      timestamp_util::CalculateRawExpirationTimestampMs(
-          creation_timestamp_ms, document_wrapper.document().ttl_ms());
+  int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
+      creation_timestamp_ms, document_wrapper.document().ttl_ms());
 
   // Update ground truth first
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
@@ -1204,15 +1218,11 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
                            corpus_id, document_score, creation_timestamp_ms,
                            scorable_property_cache_index, length_in_tokens)));
 
-  // Here we set the expiration timestamp as the raw expiration timestamp,
-  // because we haven't propagated the expiration timestamps yet and it should
-  // be done in the next step by the caller.
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
       new_document_id,
-      DocumentFilterData(
-          namespace_id, schema_type_id,
-          /*expiration_timestamp_ms=*/raw_expiration_timestamp_ms,
-          raw_expiration_timestamp_ms)));
+      DocumentFilterData(namespace_id,
+                         new_doc_nsid_uri_fingerprint.fingerprint(),
+                         schema_type_id, expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
     // The old document exists, copy over the usage scores and delete the old
@@ -1457,77 +1467,6 @@ DocumentStore::GetNonDeletedDocumentFilterData(DocumentId document_id) const {
   return std::move(filter_data_or).ValueOrDie();
 }
 
-bool DocumentStore::IsDocumentAlive(DocumentId document_id,
-                                    int64_t current_time_ms) const {
-  return GetAliveDocumentFilterData(document_id, current_time_ms).has_value();
-}
-
-bool DocumentStore::IsDocumentAlive(std::string_view name_space,
-                                    std::string_view uri,
-                                    int64_t current_time_ms) const {
-  auto document_id_or = GetDocumentId(name_space, uri);
-  if (!document_id_or.ok()) {
-    return false;
-  }
-  return IsDocumentAlive(document_id_or.ValueOrDie(), current_time_ms);
-}
-
-libtextclassifier3::StatusOr<
-    DocumentStore::UpdateDocumentExpirationTimestampResult>
-DocumentStore::UpdateDocumentExpirationTimestamp(
-    DocumentId document_id, int64_t expiration_timestamp_ms) {
-  if (document_id < 0 || document_id >= filter_cache_->num_elements()) {
-    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "Document id '%d' invalid.", document_id));
-  }
-
-  std::optional<DocumentFilterData> filter_data =
-      GetNonDeletedDocumentFilterData(document_id);
-  if (!filter_data.has_value()) {
-    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-        "Document id '%d' is not alive", document_id));
-  }
-
-  // Currently we only support decreasing the expiration timestamp.
-  if (expiration_timestamp_ms < filter_data->expiration_timestamp_ms()) {
-    ICING_RETURN_IF_ERROR(filter_cache_->Set(
-        document_id, DocumentFilterData(
-                         filter_data->namespace_id(),
-                         filter_data->schema_type_id(), expiration_timestamp_ms,
-                         filter_data->raw_expiration_timestamp_ms())));
-    return UpdateDocumentExpirationTimestampResult{
-        .final_expiration_timestamp_ms = expiration_timestamp_ms,
-        .was_updated = true};
-  }
-  return UpdateDocumentExpirationTimestampResult{
-      .final_expiration_timestamp_ms = filter_data->expiration_timestamp_ms(),
-      .was_updated = false};
-}
-
-libtextclassifier3::Status
-DocumentStore::ResetAllAliveExpirationTimestampsToRaw(int64_t current_time_ms) {
-  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
-       ++document_id) {
-    std::optional<DocumentFilterData> filter_data =
-        GetAliveDocumentFilterData(document_id, current_time_ms);
-    if (!filter_data.has_value()) {
-      continue;
-    }
-
-    if (filter_data->expiration_timestamp_ms() !=
-        filter_data->raw_expiration_timestamp_ms()) {
-      ICING_RETURN_IF_ERROR(filter_cache_->Set(
-          document_id,
-          DocumentFilterData(filter_data->namespace_id(),
-                             filter_data->schema_type_id(),
-                             /*expiration_timestamp_ms=*/
-                             filter_data->raw_expiration_timestamp_ms(),
-                             filter_data->raw_expiration_timestamp_ms())));
-    }
-  }
-  return libtextclassifier3::Status::OK;
-}
-
 bool DocumentStore::IsDeleted(DocumentId document_id) const {
   auto file_offset_or = document_id_mapper_->Get(document_id);
   if (!file_offset_or.ok()) {
@@ -1616,66 +1555,54 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
   return corpus_mapper_->Get(corpus_nsid_schema_fp.EncodeToCString());
 }
 
-std::optional<int32_t> DocumentStore::GetResultGroupingEntryId(
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
     ResultSpecProto::ResultGroupingType result_group_type,
-    std::string_view name_space, std::string_view schema) const {
-  auto namespace_id_or = GetNamespaceId(name_space);
-  auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema);
-
-  NamespaceId namespace_id =
-      namespace_id_or.ok() ? namespace_id_or.ValueOrDie() : kInvalidNamespaceId;
-  SchemaTypeId schema_type_id = schema_type_id_or.ok()
-                                    ? schema_type_id_or.ValueOrDie()
-                                    : kInvalidSchemaTypeId;
-  return GetResultGroupingEntryId(result_group_type, namespace_id,
-                                  schema_type_id);
+    const std::string_view name_space, const std::string_view schema) const {
+  auto namespace_id = GetNamespaceId(name_space);
+  auto schema_type_id = schema_store_->GetSchemaTypeId(schema);
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      if (schema_type_id.ok()) {
+        return schema_type_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE:
+      if (namespace_id.ok()) {
+        return namespace_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      if (namespace_id.ok() && schema_type_id.ok()) {
+        // TODO(b/258715421): Temporary workaround to get a
+        //                    ResultGroupingEntryId given the Namespace string
+        //                    and Schema string.
+        return namespace_id.ValueOrDie() << 16 | schema_type_id.ValueOrDie();
+      }
+      break;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
 }
 
-std::optional<int32_t> DocumentStore::GetResultGroupingEntryId(
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
     ResultSpecProto::ResultGroupingType result_group_type,
-    NamespaceId namespace_id, SchemaTypeId schema_type_id) const {
-  static_assert(sizeof(NamespaceId) * 8 <= 16,
-                "Current ResultGroupingEntryId encoding only supports "
-                "namespace id up to 16 bits.");
-  static_assert(sizeof(SchemaTypeId) * 8 <= 16,
-                "Current ResultGroupingEntryId encoding only supports schema "
-                "type id up to 16 bits.");
-
-  // Note: this encoding method only works for a single
-  // ResultSpecProto::ResultGroupingType in a single search request. If multiple
-  // types can be used in the same search request, this encoding method needs to
-  // be updated since there will be encoded id collisions for NAMESPACE and
-  // SCHEMA_TYPE.
-
+    const NamespaceId namespace_id, const SchemaTypeId schema_type_id) const {
   switch (result_group_type) {
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NONE:
-      return std::nullopt;
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_SCHEMA_TYPE: {
-      if (schema_type_id == kInvalidSchemaTypeId) {
-        return std::nullopt;
-      }
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
       return schema_type_id;
-    }
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NAMESPACE: {
-      if (namespace_id == kInvalidNamespaceId) {
-        return std::nullopt;
-      }
+    case ResultSpecProto::NAMESPACE:
       return namespace_id;
-    }
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE: {
-      if (namespace_id == kInvalidNamespaceId ||
-          schema_type_id == kInvalidSchemaTypeId) {
-        return std::nullopt;
-      }
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
       // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
       //                    given the Namespace Id and SchemaType Id.
-      return (static_cast<int32_t>(namespace_id) << 16) | schema_type_id;
-    }
+      return namespace_id << 16 | schema_type_id;
   }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
 }
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
@@ -2072,7 +1999,7 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
+libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
     const SchemaStore* schema_store,
     const SchemaStore::SetSchemaResult& set_schema_result) {
   if (!set_schema_result.success) {
@@ -2085,7 +2012,6 @@ libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
-  int deleted_document_count = 0;
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
@@ -2133,16 +2059,14 @@ libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
     if (delete_document) {
       // Document is no longer valid with the new SchemaStore. Mark as deleted
       auto delete_status = Delete(document_id, current_time_ms);
-      if (delete_status.ok()) {
-        ++deleted_document_count;
-      } else if (!absl_ports::IsNotFound(delete_status)) {
+      if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
       }
     }
   }
 
-  return deleted_document_count;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status DocumentStore::RegenerateScorablePropertyCache(
@@ -2461,9 +2385,10 @@ libtextclassifier3::Status DocumentStore::ClearDerivedData(
 
   // Resets the filter cache entry
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
-      document_id, DocumentFilterData(kInvalidNamespaceId, kInvalidSchemaTypeId,
-                                      /*expiration_timestamp_ms=*/-1,
-                                      /*raw_expiration_timestamp_ms=*/-1)));
+      document_id,
+      DocumentFilterData(kInvalidNamespaceId, /*uri_fingerprint=*/0,
+                         kInvalidSchemaTypeId,
+                         /*expiration_timestamp_ms=*/-1)));
 
   // Clears the usage scores.
   return usage_store_->DeleteUsageScores(document_id);

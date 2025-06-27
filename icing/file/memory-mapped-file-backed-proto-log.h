@@ -31,7 +31,6 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/crc32.h"
-#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -160,9 +159,6 @@ MemoryMappedFileBackedProtoLog<ProtoT>::ValidateAndGetProtoSize(
     ProtoMetadata proto_metadata) {
   uint8_t magic_number = proto_metadata >> 24;
   if (magic_number != kProtoMagic) {
-    ICING_LOG(ERROR)
-        << "Invalid header magic for MemoryMappedFileBackedProtoLog. Expected: "
-        << kProtoMagic << ", actual: " << magic_number;
     return absl_ports::InvalidArgumentError(
         "Proto metadata has invalid magic number");
   }

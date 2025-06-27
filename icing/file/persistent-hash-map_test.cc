@@ -235,9 +235,8 @@ TEST_P(PersistentHashMapTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                PersistentHashMap::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                PersistentHashMap::kInfoMetadataFileOffset));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.value_type_size, Eq(sizeof(int)));
   EXPECT_THAT(info.max_load_factor_percent,
@@ -247,9 +246,8 @@ TEST_P(PersistentHashMapTest, InitializeNewFiles) {
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                PersistentHashMap::kCrcsMetadataFileOffset),
-              Eq(sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                PersistentHashMap::kCrcsMetadataFileOffset));
   // # of elements in bucket_storage should be 1, so it should have non-zero
   // all storages crc value.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Ne(0));
@@ -489,14 +487,12 @@ TEST_P(PersistentHashMapTest,
     ASSERT_TRUE(metadata_sfd.is_valid());
 
     Crcs crcs;
-    ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                  PersistentHashMap::kCrcsMetadataFileOffset),
-                Eq(sizeof(Crcs)));
+    ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                  PersistentHashMap::kCrcsMetadataFileOffset));
 
     Info info;
-    ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                  PersistentHashMap::kInfoMetadataFileOffset),
-                Eq(sizeof(Info)));
+    ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                  PersistentHashMap::kInfoMetadataFileOffset));
 
     // Manually change magic and update checksums.
     info.magic += kCorruptedValueOffset;
@@ -519,7 +515,7 @@ TEST_P(PersistentHashMapTest,
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(persistent_hash_map_or.status().error_message(),
-                HasSubstr("Invalid header magic for PersistentHashMap"));
+                HasSubstr("PersistentHashMap header magic mismatch"));
   }
 }
 
@@ -616,9 +612,8 @@ TEST_P(PersistentHashMapTest, InitializeExistingFilesWithWrongAllCrc) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                PersistentHashMap::kCrcsMetadataFileOffset),
-              Eq(sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                PersistentHashMap::kCrcsMetadataFileOffset));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -661,9 +656,8 @@ TEST_P(PersistentHashMapTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                PersistentHashMap::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                PersistentHashMap::kInfoMetadataFileOffset));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
@@ -869,9 +863,8 @@ TEST_P(PersistentHashMapTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                PersistentHashMap::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                PersistentHashMap::kInfoMetadataFileOffset));
   EXPECT_THAT(info.max_load_factor_percent,
               Eq(options.max_load_factor_percent));
 

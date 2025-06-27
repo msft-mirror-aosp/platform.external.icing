@@ -114,7 +114,7 @@ class SectionRestrictData {
 // embedding hits from unwanted sections to avoid retrieving unnecessary vectors
 // and calculate scores for them.
 class DocHitInfoIteratorHandlingSectionRestrict
-    : virtual public DocHitInfoIterator {
+    : public DocHitInfoLeafIterator {
  protected:
   bool HandleSectionRestriction(SectionRestrictData* other_data) override {
     section_restrict_data_.push_back(other_data);

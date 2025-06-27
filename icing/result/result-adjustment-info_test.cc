@@ -147,67 +147,49 @@ TEST_F(ResultAdjustmentInfoTest,
       CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
                        EMBEDDING_METRIC_DOT_PRODUCT);
 
-  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/2);
+  EmbeddingQueryResults embedding_query_results;
   EmbeddingMatchInfos& info_query0_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/0,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/3);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 3.3);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/1);
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
   EmbeddingMatchInfos& info_query1_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 2);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/3,
-      /*position=*/2);
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
   EmbeddingMatchInfos& info_query1_doc1 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
-          kDocumentId1);
-  info_query1_doc1.AppendScore(*embedding_query_results.global_scores, 6.66);
-  info_query1_doc1.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/0);
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
   EmbeddingMatchInfos& info_query0_doc2 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/0, EMBEDDING_METRIC_COSINE,
-          kDocumentId2);
-  info_query0_doc2.AppendScore(*embedding_query_results.global_scores, 5.25);
-  info_query0_doc2.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/0);
-  info_query0_doc2.AppendScore(*embedding_query_results.global_scores, 1.33);
-  info_query0_doc2.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/4);
+      embedding_query_results
+          .result_infos[/*query_index=*/0][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId2];
+  info_query0_doc2.AppendScore(5.25);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+  info_query0_doc2.AppendScore(1.33);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/4);
   EmbeddingMatchInfos& info_query1_doc3 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
-          kDocumentId3);
-  info_query1_doc3.AppendScore(*embedding_query_results.global_scores, 3.25);
-  info_query1_doc3.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/1);
-  info_query1_doc3.AppendScore(*embedding_query_results.global_scores, 2.33);
-  info_query1_doc3.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/2);
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId3];
+  info_query1_doc3.AppendScore(3.25);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  info_query1_doc3.AppendScore(2.33);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/2);
 
   ResultAdjustmentInfo result_adjustment_info(
       search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -327,67 +309,49 @@ TEST_F(
       CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
                        EMBEDDING_METRIC_DOT_PRODUCT);
 
-  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/2);
+  EmbeddingQueryResults embedding_query_results;
   EmbeddingMatchInfos& info_query0_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/0,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/3);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 3.3);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/1);
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
   EmbeddingMatchInfos& info_query1_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 2);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/3,
-      /*position=*/2);
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
   EmbeddingMatchInfos& info_query1_doc1 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
-          kDocumentId1);
-  info_query1_doc1.AppendScore(*embedding_query_results.global_scores, 6.66);
-  info_query1_doc1.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/0);
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
   EmbeddingMatchInfos& info_query0_doc2 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/0, EMBEDDING_METRIC_COSINE,
-          kDocumentId2);
-  info_query0_doc2.AppendScore(*embedding_query_results.global_scores, 5.25);
-  info_query0_doc2.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/0);
-  info_query0_doc2.AppendScore(*embedding_query_results.global_scores, 1.33);
-  info_query0_doc2.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/4);
+      embedding_query_results
+          .result_infos[/*query_index=*/0][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId2];
+  info_query0_doc2.AppendScore(5.25);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
+  info_query0_doc2.AppendScore(1.33);
+  info_query0_doc2.AppendSectionInfo(/*section_id=*/1, /*position=*/4);
   EmbeddingMatchInfos& info_query1_doc3 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
-          kDocumentId3);
-  info_query1_doc3.AppendScore(*embedding_query_results.global_scores, 3.25);
-  info_query1_doc3.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/1);
-  info_query1_doc3.AppendScore(*embedding_query_results.global_scores, 2.33);
-  info_query1_doc3.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/2);
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId3];
+  info_query1_doc3.AppendScore(3.25);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
+  info_query1_doc3.AppendScore(2.33);
+  info_query1_doc3.AppendSectionInfo(/*section_id=*/1, /*position=*/2);
 
   ResultAdjustmentInfo result_adjustment_info(
       search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -419,8 +383,8 @@ TEST_F(
                                     /*section_id=*/0)),
                             EqualsEmbeddingMatchInfoEntry(
                                 SnippetContext::EmbeddingMatchInfoEntry(
-                                    /*score=*/1.7, EMBEDDING_METRIC_DOT_PRODUCT,
-                                    /*position=*/3, /*query_vector_index=*/0,
+                                    /*score=*/2, EMBEDDING_METRIC_DOT_PRODUCT,
+                                    /*position=*/0, /*query_vector_index=*/1,
                                     /*section_id=*/0)),
                             EqualsEmbeddingMatchInfoEntry(
                                 SnippetContext::EmbeddingMatchInfoEntry(
@@ -458,43 +422,33 @@ TEST_F(
   SearchSpecProto search_spec =
       CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
                        EMBEDDING_METRIC_DOT_PRODUCT);
-  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/2);
+  EmbeddingQueryResults embedding_query_results;
   EmbeddingMatchInfos& info_query0_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/0,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/3);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 3.3);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/1);
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
   EmbeddingMatchInfos& info_query1_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 2);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/3,
-      /*position=*/2);
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
   EmbeddingMatchInfos& info_query1_doc1 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
-          kDocumentId1);
-  info_query1_doc1.AppendScore(*embedding_query_results.global_scores, 6.66);
-  info_query1_doc1.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/0);
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
 
   ResultAdjustmentInfo result_adjustment_info(
       search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -572,43 +526,33 @@ TEST_F(ResultAdjustmentInfoTest, NoSnippetingShouldReturnNull) {
   SearchSpecProto search_spec =
       CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
                        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
-  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/2);
+  EmbeddingQueryResults embedding_query_results;
   EmbeddingMatchInfos& info_query0_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/0,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/3);
-  info_query0_doc0.AppendScore(*embedding_query_results.global_scores, 3.3);
-  info_query0_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/1);
+      embedding_query_results
+          .result_infos[/*query_index=*/0]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query0_doc0.AppendScore(1);
+  info_query0_doc0.AppendScore(1.7);
+  info_query0_doc0.AppendScore(3.3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/3);
+  info_query0_doc0.AppendSectionInfo(/*section_id=*/1, /*position=*/1);
   EmbeddingMatchInfos& info_query1_doc0 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1,
-          search_spec.embedding_query_metric_type(), kDocumentId0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 2);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/0,
-      /*position=*/0);
-  info_query1_doc0.AppendScore(*embedding_query_results.global_scores, 1.7);
-  info_query1_doc0.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/3,
-      /*position=*/2);
+      embedding_query_results
+          .result_infos[/*query_index=*/1]
+                       [search_spec.embedding_query_metric_type()]
+                       [kDocumentId0];
+  info_query1_doc0.AppendScore(2);
+  info_query1_doc0.AppendScore(1.7);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/0, /*position=*/0);
+  info_query1_doc0.AppendSectionInfo(/*section_id=*/3, /*position=*/2);
   EmbeddingMatchInfos& info_query1_doc1 =
-      GetOrCreateEmbeddingMatchInfosForDocument(
-          embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
-          kDocumentId1);
-  info_query1_doc1.AppendScore(*embedding_query_results.global_scores, 6.66);
-  info_query1_doc1.AppendSectionInfo(
-      *embedding_query_results.global_section_infos, /*section_id=*/1,
-      /*position=*/0);
+      embedding_query_results
+          .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE]
+                       [kDocumentId1];
+  info_query1_doc1.AppendScore(6.66);
+  info_query1_doc1.AppendSectionInfo(/*section_id=*/1, /*position=*/0);
 
   ResultAdjustmentInfo result_adjustment_info(
       search_spec, CreateScoringSpec(/*is_descending_order=*/true), result_spec,

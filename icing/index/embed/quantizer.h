@@ -74,9 +74,6 @@ class Quantizer {
     return (quantized / scale_factor_) + float_min_;
   }
 
-  float float_min() const { return float_min_; }
-  float scale_factor() const { return scale_factor_; }
-
  private:
   static constexpr uint8_t kMaxQuantizedValue =
       std::numeric_limits<uint8_t>::max();

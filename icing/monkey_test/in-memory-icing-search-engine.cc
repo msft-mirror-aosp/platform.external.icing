@@ -174,14 +174,6 @@ libtextclassifier3::StatusOr<bool>
 InMemoryIcingSearchEngine::DoesDocumentMatchQuery(
     const MonkeyTokenizedDocument &document,
     const SearchSpecProto &search_spec) const {
-  // Check schema type filter.
-  const auto &schema_type_filters = search_spec.schema_type_filters();
-  if (!schema_type_filters.empty() &&
-      std::find(schema_type_filters.begin(), schema_type_filters.end(),
-                document.document.schema()) == schema_type_filters.end()) {
-    return false;
-  }
-
   std::string_view query = search_spec.query();
   std::vector<std::string_view> strs = absl_ports::StrSplit(query, ":");
   std::string_view section_restrict;
@@ -239,7 +231,7 @@ InMemoryIcingSearchEngine::DoesDocumentMatchQuery(
   return false;
 }
 
-void InMemoryIcingSearchEngine::SetSchema(SchemaProto schema) {
+void InMemoryIcingSearchEngine::SetSchema(SchemaProto &&schema) {
   schema_ = std::make_unique<SchemaProto>(std::move(schema));
   property_config_map_.clear();
   for (const SchemaTypeConfigProto &type_config : schema_->types()) {

@@ -123,7 +123,8 @@ TEST_F(MarkerFileTest, CreateWithExistingFileShouldFail) {
   EXPECT_THAT(filesystem_.FileExists(file_path.c_str()), IsTrue());
   EXPECT_THAT(filesystem_.GetFileSize(file_path.c_str()), Eq(4));
   char buf[4];
-  EXPECT_THAT(filesystem_.Read(file_path.c_str(), buf, /*buf_size=*/4), Eq(4));
+  EXPECT_THAT(filesystem_.Read(file_path.c_str(), buf, /*buf_size=*/4),
+              IsTrue());
   EXPECT_THAT(std::string(buf, 4), Eq("test"));
 }
 

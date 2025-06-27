@@ -22,7 +22,6 @@
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
-#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -56,7 +55,7 @@ class LiteIndex_Header {
 class LiteIndex_HeaderImpl : public LiteIndex_Header {
  public:
   struct HeaderData {
-    static constexpr uint32_t kMagic = 0xC2EAD682;
+    static const uint32_t kMagic = 0xC2EAD682;
 
     uint32_t lite_index_crc;
     uint32_t magic;
@@ -75,10 +74,6 @@ class LiteIndex_HeaderImpl : public LiteIndex_Header {
   explicit LiteIndex_HeaderImpl(HeaderData *hdr) : hdr_(hdr) {}
 
   bool check_magic() const override {
-    if (hdr_->magic != HeaderData::kMagic) {
-      ICING_LOG(ERROR) << "Invalid header magic for LiteIndex. Expected: "
-                       << HeaderData::kMagic << ", actual: " << hdr_->magic;
-    }
     return hdr_->magic == HeaderData::kMagic;
   }
 

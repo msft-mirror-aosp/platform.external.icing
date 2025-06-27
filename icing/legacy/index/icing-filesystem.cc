@@ -129,21 +129,15 @@ bool ListDirectoryInternal(const char *dir_name,
                            const std::unordered_set<std::string> &exclude,
                            bool recursive, const char *prefix,
                            std::vector<std::string> *entries) {
-  auto closer = [](DIR *dir) {
-    if (closedir(dir) != 0) {
-      ICING_LOG(ERROR) << "Error closing dir (" << errno << ") "
-                       << strerror(errno);
-    }
-  };
-  std::unique_ptr<DIR, decltype(closer)> dir(opendir(dir_name), closer);
-  if (dir == nullptr) {
+  DIR *dir = opendir(dir_name);
+  if (!dir) {
     LogOpenError("Unable to open directory ", dir_name, ": ", errno);
     return false;
   }
 
   dirent *p;
   // readdir's implementation seems to be thread safe.
-  while ((p = readdir(dir.get())) != nullptr) {
+  while ((p = readdir(dir)) != nullptr) {
     std::string file_name(p->d_name);
     if (file_name == "." || file_name == ".." ||
         exclude.find(file_name) != exclude.end()) {
@@ -161,6 +155,9 @@ bool ListDirectoryInternal(const char *dir_name,
         return false;
       }
     }
+  }
+  if (closedir(dir) != 0) {
+    ICING_LOG(ERROR) << "Error closing " << dir_name << ": " << strerror(errno);
   }
   return true;
 }

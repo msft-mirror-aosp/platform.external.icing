@@ -445,11 +445,6 @@ class IcingSearchEngine {
   //   ABORTED if failed to get results but existing data is not affected
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
-  SearchResultProto GetNextPage(GetNextPageRequestProto&& get_next_page_request)
-      ICING_LOCKS_EXCLUDED(mutex_);
-
-  // TODO: b/417644758 - Remove this method once all old callers are migrated to
-  // the new GetNextPage API. Internally, this should just be used in tests.
   SearchResultProto GetNextPage(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 

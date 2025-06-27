@@ -33,8 +33,7 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorMatchScoreExpression
-    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
+class DocHitInfoIteratorMatchScoreExpression : public DocHitInfoIterator {
  public:
   explicit DocHitInfoIteratorMatchScoreExpression(
       DocumentId last_added_document_id,
@@ -57,8 +56,8 @@ class DocHitInfoIteratorMatchScoreExpression
         "supported");
   }
 
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {&delegate_};
+  void MapChildren(const ChildrenMapper& mapper) override {
+    delegate_ = mapper(std::move(delegate_));
   }
 
   CallStats GetCallStats() const override { return delegate_->GetCallStats(); }

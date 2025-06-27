@@ -49,30 +49,8 @@ bool AreStringIndexingConfigsEqual(const StringIndexingConfig& old_config,
 
 bool AreDocumentIndexingConfigsEqual(const DocumentIndexingConfig& old_config,
                                      const DocumentIndexingConfig& new_config) {
-  // TODO(b/265304217): This could mark the new schema as incompatible and
-  // generate some unnecessary index rebuilds if the two schemas have an
-  // equivalent set of indexed properties, but changed the way that it is
-  // declared.
-  if (old_config.index_nested_properties() !=
-      new_config.index_nested_properties()) {
-    return false;
-  }
-
-  if (old_config.indexable_nested_properties_list().size() !=
-      new_config.indexable_nested_properties_list().size()) {
-    return false;
-  }
-
-  std::unordered_set<std::string_view> old_indexable_nested_properies_set(
-      old_config.indexable_nested_properties_list().begin(),
-      old_config.indexable_nested_properties_list().end());
-  for (const auto& property : new_config.indexable_nested_properties_list()) {
-    if (old_indexable_nested_properies_set.find(property) ==
-        old_indexable_nested_properies_set.end()) {
-      return false;
-    }
-  }
-  return true;
+  return old_config.index_nested_properties() ==
+         new_config.index_nested_properties();
 }
 
 bool AreIntegerIndexingConfigsEqual(const IntegerIndexingConfig& old_config,
@@ -165,6 +143,53 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
   return IsDataTypeCompatible(old_property, new_property) &&
          IsSchemaTypeCompatible(old_property, new_property) &&
          IsCardinalityCompatible(old_property, new_property);
+}
+
+bool IsTermMatchTypeCompatible(const StringIndexingConfig& old_indexed,
+                               const StringIndexingConfig& new_indexed) {
+  return old_indexed.term_match_type() == new_indexed.term_match_type() &&
+         old_indexed.tokenizer_type() == new_indexed.tokenizer_type();
+}
+
+bool IsIntegerNumericMatchTypeCompatible(
+    const IntegerIndexingConfig& old_indexed,
+    const IntegerIndexingConfig& new_indexed) {
+  return old_indexed.numeric_match_type() == new_indexed.numeric_match_type();
+}
+
+bool IsEmbeddingIndexingCompatible(const EmbeddingIndexingConfig& old_indexed,
+                                   const EmbeddingIndexingConfig& new_indexed) {
+  return old_indexed.embedding_indexing_type() ==
+             new_indexed.embedding_indexing_type() &&
+         old_indexed.quantization_type() == new_indexed.quantization_type();
+}
+
+bool IsDocumentIndexingCompatible(const DocumentIndexingConfig& old_indexed,
+                                  const DocumentIndexingConfig& new_indexed) {
+  // TODO(b/265304217): This could mark the new schema as incompatible and
+  // generate some unnecessary index rebuilds if the two schemas have an
+  // equivalent set of indexed properties, but changed the way that it is
+  // declared.
+  if (old_indexed.index_nested_properties() !=
+      new_indexed.index_nested_properties()) {
+    return false;
+  }
+
+  if (old_indexed.indexable_nested_properties_list().size() !=
+      new_indexed.indexable_nested_properties_list().size()) {
+    return false;
+  }
+
+  std::unordered_set<std::string_view> old_indexable_nested_properies_set(
+      old_indexed.indexable_nested_properties_list().begin(),
+      old_indexed.indexable_nested_properties_list().end());
+  for (const auto& property : new_indexed.indexable_nested_properties_list()) {
+    if (old_indexable_nested_properies_set.find(property) ==
+        old_indexable_nested_properies_set.end()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void AddIncompatibleChangeToDelta(
@@ -1244,16 +1269,16 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       }
 
       // Any change in the indexed property requires a reindexing
-      if (!AreStringIndexingConfigsEqual(
+      if (!IsTermMatchTypeCompatible(
               old_property_config.string_indexing_config(),
               new_property_config->string_indexing_config()) ||
-          !AreIntegerIndexingConfigsEqual(
+          !IsIntegerNumericMatchTypeCompatible(
               old_property_config.integer_indexing_config(),
               new_property_config->integer_indexing_config()) ||
-          !AreDocumentIndexingConfigsEqual(
+          !IsDocumentIndexingCompatible(
               old_property_config.document_indexing_config(),
               new_property_config->document_indexing_config()) ||
-          !AreEmbeddingIndexingConfigsEqual(
+          !IsEmbeddingIndexingCompatible(
               old_property_config.embedding_indexing_config(),
               new_property_config->embedding_indexing_config())) {
         is_index_incompatible = true;

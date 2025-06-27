@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,6 @@
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
@@ -42,8 +42,7 @@ namespace icing {
 namespace lib {
 
 class DocHitInfoIteratorEmbedding
-    : public DocHitInfoIteratorHandlingSectionRestrict,
-      public DocHitInfoIteratorHandlingFilter {
+    : public DocHitInfoIteratorHandlingSectionRestrict {
  public:
   // Create a DocHitInfoIterator for iterating through all docs which have an
   // embedding matched with the provided query with a score in the range of
@@ -62,11 +61,8 @@ class DocHitInfoIteratorEmbedding
       std::unique_ptr<DocHitInfoIteratorEmbedding>>
   Create(const PropertyProto::VectorProto* query,
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
-         double score_low, double score_high,
+         double score_low, double score_high, bool get_embedding_match_info,
          EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
-         std::vector<double>* global_scores,
-         std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
-             global_section_infos,
          const EmbeddingIndex* embedding_index,
          const DocumentStore* document_store, const SchemaStore* schema_store,
          int64_t current_time_ms);
@@ -76,10 +72,6 @@ class DocHitInfoIteratorEmbedding
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
     return absl_ports::InvalidArgumentError(
         "Query suggestions for the semanticSearch function are not supported");
-  }
-
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {};
   }
 
   CallStats GetCallStats() const override {
@@ -103,11 +95,8 @@ class DocHitInfoIteratorEmbedding
       const PropertyProto::VectorProto* query,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
-      double score_high,
+      double score_high, bool get_embedding_match_info,
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
-      std::vector<double>* global_scores,
-      std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
-          global_section_infos,
       const EmbeddingIndex* embedding_index,
       std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor,
       const DocumentStore* document_store, const SchemaStore* schema_store,
@@ -117,9 +106,8 @@ class DocHitInfoIteratorEmbedding
         embedding_scorer_(std::move(embedding_scorer)),
         score_low_(score_low),
         score_high_(score_high),
+        get_embedding_match_info_(get_embedding_match_info),
         info_map_(*info_map),
-        global_scores_(*global_scores),
-        global_section_infos_(global_section_infos),
         embedding_index_(*embedding_index),
         posting_list_accessor_(std::move(posting_list_accessor)),
         cached_embedding_hits_idx_(0),
@@ -165,12 +153,11 @@ class DocHitInfoIteratorEmbedding
   double score_low_;
   double score_high_;
 
+  // Snippet arguments
+  bool get_embedding_match_info_;
+
   // MatchInfo map
   EmbeddingQueryResults::EmbeddingQueryMatchInfoMap& info_map_;  // Does not own
-  std::vector<double>& global_scores_;                           // Does not own
-  // Nullable, and does not own. If null, section info will not be populated.
-  std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
-      global_section_infos_;
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;

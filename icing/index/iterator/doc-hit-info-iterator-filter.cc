@@ -14,8 +14,11 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -23,63 +26,53 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/document-filter-predicate.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
-// Some children iterators (currently only DocHitInfoIteratorEmbedding) can
-// internally handle the filter predicate to accelerate the search. Let's dfs to
-// all children iterators to try to provide the filter predicate.
-//
-// Returns true if all children iterators have accepted the filter predicate, in
-// which case we no longer need to apply the filter at the top level.
-bool PassFilterPredicateToChildrenAndHandle(
-    DocHitInfoIterator* iterator, const DocumentFilterPredicate* predicate) {
-  // If the predicate is accepted, we can stop here.
-  if (iterator->HandleFilter(predicate)) {
-    return true;
-  }
-
-  // Now, we know that the iterator cannot internally handle the filter
-  // predicate.
-  // If it has no children or the iterator cannot pass the filter predicate
-  // through (e.g., NOT iterator), return false to indicate that we should apply
-  // the filter at the top level.
-  if (iterator->GetChildren().empty() ||
-      !iterator->CanPassFilterPredicateThrough()) {
-    return false;
-  }
-
-  // Continue to pass the filter predicate to children iterators.
-  bool all_children_accepted = true;
-  for (std::unique_ptr<DocHitInfoIterator>* child : iterator->GetChildren()) {
-    all_children_accepted &=
-        PassFilterPredicateToChildrenAndHandle(child->get(), predicate);
-  }
-  return all_children_accepted;
-}
-
-/* static */ std::unique_ptr<DocHitInfoIterator>
-DocHitInfoIteratorFilter::ApplyFilter(
-    std::unique_ptr<DocHitInfoIterator> iterator,
-    const DocumentFilterPredicate* predicate,
-    bool enable_passing_filter_to_children) {
-  if (enable_passing_filter_to_children &&
-      PassFilterPredicateToChildrenAndHandle(iterator.get(), predicate)) {
-    return iterator;
-  }
-  return std::unique_ptr<DocHitInfoIteratorFilter>(
-      new DocHitInfoIteratorFilter(std::move(iterator), predicate));
-}
+DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
+    std::unique_ptr<DocHitInfoIterator> delegate,
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const Options& options, int64_t current_time_ms)
+    : delegate_(std::move(delegate)),
+      document_store_(*document_store),
+      schema_store_(*schema_store),
+      options_(options),
+      current_time_ms_(current_time_ms) {}
 
 libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
   while (delegate_->Advance().ok()) {
-    if (!(*predicate_)(delegate_->doc_hit_info().document_id())) {
+    // Try to get the DocumentFilterData
+    auto document_filter_data_optional =
+        document_store_.GetAliveDocumentFilterData(
+            delegate_->doc_hit_info().document_id(), current_time_ms_);
+    if (!document_filter_data_optional) {
+      // Didn't find the DocumentFilterData in the filter cache. This could be
+      // because the Document doesn't exist or the DocumentId isn't valid or the
+      // filter cache is in some invalid state. This is bad, but not the query's
+      // responsibility to fix, so just skip this result for now.
       continue;
     }
+    // We should be guaranteed that this exists now.
+    DocumentFilterData data = document_filter_data_optional.value();
+
+    if (options_.filter_by_namespace_id_enabled &&
+        options_.target_namespace_ids.count(data.namespace_id()) == 0) {
+      // Doesn't match one of the specified namespaces. Keep searching
+      continue;
+    }
+
+    if (options_.filter_by_schema_type_id_enabled &&
+        options_.target_schema_type_ids.count(data.schema_type_id()) == 0) {
+      // Doesn't match one of the specified schema types. Keep searching
+      continue;
+    }
+
     // Satisfied all our specified filters
     doc_hit_info_ = delegate_->doc_hit_info();
     return libtextclassifier3::Status::OK;
@@ -95,9 +88,9 @@ DocHitInfoIteratorFilter::TrimRightMostNode() && {
   ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_delegate,
                          std::move(*delegate_).TrimRightMostNode());
   if (trimmed_delegate.iterator_ != nullptr) {
-    trimmed_delegate.iterator_ =
-        std::unique_ptr<DocHitInfoIteratorFilter>(new DocHitInfoIteratorFilter(
-            std::move(trimmed_delegate.iterator_), predicate_));
+    trimmed_delegate.iterator_ = std::make_unique<DocHitInfoIteratorFilter>(
+        std::move(trimmed_delegate.iterator_), &document_store_, &schema_store_,
+        options_, current_time_ms_);
   }
   return trimmed_delegate;
 }

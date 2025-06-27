@@ -15,12 +15,10 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_NONE_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_NONE_H_
 
-#include <memory>
+#include <cstdint>
 #include <string>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 
@@ -28,8 +26,7 @@ namespace icing {
 namespace lib {
 
 // Iterator that will return no results.
-class DocHitInfoIteratorNone
-    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
+class DocHitInfoIteratorNone : public DocHitInfoIterator {
  public:
   libtextclassifier3::Status Advance() override {
     return absl_ports::ResourceExhaustedError(
@@ -42,9 +39,7 @@ class DocHitInfoIteratorNone
     return node;
   }
 
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {};
-  }
+  void MapChildren(const ChildrenMapper& mapper) override {}
 
   CallStats GetCallStats() const override { return CallStats(); }
 

@@ -309,17 +309,15 @@ TEST_P(IntegerIndexStorageTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.num_data, Eq(0));
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset),
-              Eq(sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset));
   // # of elements in sorted_buckets should be 1, so it should have non-zero
   // all storages crc value.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Ne(0));
@@ -520,9 +518,8 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset),
-              Eq(sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -570,9 +567,8 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset),
-              Eq(sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.

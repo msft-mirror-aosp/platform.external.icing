@@ -183,11 +183,11 @@ class Filesystem {
   // Reads from a file. Returns true if data was successfully read out. If the
   // file is seekable, read starts at the file offset, and the file offset is
   // incremented by number of bytes read.
-  virtual ssize_t Read(int fd, void* buf, size_t buf_size) const;
-  virtual ssize_t Read(const char* filename, void* buf, size_t buf_size) const;
-  virtual ssize_t PRead(int fd, void* buf, size_t buf_size, off_t offset) const;
-  virtual ssize_t PRead(const char* filename, void* buf, size_t buf_size,
-                        off_t offset) const;
+  virtual bool Read(int fd, void* buf, size_t buf_size) const;
+  virtual bool Read(const char* filename, void* buf, size_t buf_size) const;
+  virtual bool PRead(int fd, void* buf, size_t buf_size, off_t offset) const;
+  virtual bool PRead(const char* filename, void* buf, size_t buf_size,
+                     off_t offset) const;
 
   // Syncs the file to disk (fdatasync). Returns true on success.
   virtual bool DataSync(int fd) const;

@@ -154,16 +154,13 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
       const DocumentJoinIdPair& child_document_join_id_pair,
       std::vector<DocumentId>&& parent_document_ids) override;
 
-  // Gets an array view of all joinable children for the given parent document
-  // id.
+  // Gets the list of joinable children for the given parent document id.
   //
   // Returns:
-  //   - A DocumentJoinIdPairArrayView object on success. If there is no edge
-  //     for a valid node_id, then an array view with data() == nullptr and
-  //     size() == 0 will be returned
+  //   - A list of children's DocumentJoinIdPair on success
   //   - Any FileBackedVector errors
-  libtextclassifier3::StatusOr<DocumentJoinIdPairArrayView>
-  GetDocumentJoinIdPairArrayView(DocumentId parent_document_id) const override;
+  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
+      DocumentId parent_document_id) const override;
 
   // Migrates existing join data for a parent document from old_document_id to
   // new_document_id.

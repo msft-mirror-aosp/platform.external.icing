@@ -15,38 +15,62 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_FILTER_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_FILTER_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/document-filter-predicate.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
 
-// A iterator that helps filter out DocHitInfos by a given predicate.
-//
-// To maintain the correct semantics of section restrictions, it implements
-// DocHitInfoIteratorSectionRestrictionApplyToChildren to pass down section
-// restrictions to child iterators.
-class DocHitInfoIteratorFilter
-    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
+// A iterator that helps filter out DocHitInfos associated with non-existing
+// document ids.
+class DocHitInfoIteratorFilter : public DocHitInfoIterator {
  public:
-  static std::unique_ptr<DocHitInfoIterator> ApplyFilter(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      const DocumentFilterPredicate* predicate,
-      bool enable_passing_filter_to_children);
+  struct Options {
+    // List of namespace ids that documents must have.
+    // filter_by_namespace_id_enabled=false means that all namespaces are valid,
+    // and no documents will be filtered out.
+    //
+    // Note that if we want to reference the strings in namespaces later, ensure
+    // that the caller who passed the Options class outlives the
+    // DocHitInfoIteratorFilter.
+    bool filter_by_namespace_id_enabled = false;
+    std::unordered_set<NamespaceId> target_namespace_ids;
+
+    // List of schema type ids that documents must have.
+    // filter_by_schema_type_id_enabled=false means that all schema types are
+    // valid, and no documents will be filtered out.
+    //
+    // Note that if we want to reference the strings in schema types later,
+    // ensure that the caller who passed the Options class outlives the
+    // DocHitInfoIteratorFilter.
+    bool filter_by_schema_type_id_enabled = false;
+    std::unordered_set<SchemaTypeId> target_schema_type_ids;
+  };
+
+  explicit DocHitInfoIteratorFilter(
+      std::unique_ptr<DocHitInfoIterator> delegate,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const Options& options, int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {&delegate_};
+  void MapChildren(const ChildrenMapper& mapper) override {
+    delegate_ = mapper(std::move(delegate_));
   }
 
   CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
@@ -61,13 +85,11 @@ class DocHitInfoIteratorFilter
   }
 
  private:
-  explicit DocHitInfoIteratorFilter(
-      std::unique_ptr<DocHitInfoIterator> delegate,
-      const DocumentFilterPredicate* predicate)
-      : delegate_(std::move(delegate)), predicate_(predicate) {}
-
   std::unique_ptr<DocHitInfoIterator> delegate_;
-  const DocumentFilterPredicate* predicate_;
+  const DocumentStore& document_store_;
+  const SchemaStore& schema_store_;
+  const Options options_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

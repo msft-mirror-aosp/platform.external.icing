@@ -364,17 +364,10 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
           .AddStringProperty("body", "message body one")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
-  DocumentProto document2 =
-      DocumentBuilder()
-          .SetKey("namespace", "uri2")
-          .SetSchema("Message")
-          .AddStringProperty("body", "message body two")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  DocumentProto document3 = DocumentBuilder()
-                                .SetKey("namespace", "uri3")
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "uri2")
                                 .SetSchema("Message")
-                                .AddStringProperty("body", "message body three")
+                                .AddStringProperty("body", "message body two")
                                 .SetCreationTimestampMs(100)
                                 .SetTtlMs(500)
                                 .Build();
@@ -396,12 +389,9 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
-    // Set schema and add 2 documents.
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
     // Only have active documents, nothing is optimizable yet.
     optimize_info = icing.GetOptimizeInfo();
@@ -410,63 +400,34 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
-    // Send a search request to create a result state.
-    SearchSpecProto search_spec;
-    search_spec.set_query("body:message");
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    ResultSpecProto result_spec;
-    result_spec.set_num_per_page(1);
-    SearchResultProto search_result =
-        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
-    ASSERT_THAT(search_result.status(), ProtoIsOk());
-    ASSERT_THAT(search_result.results_size(), Eq(1));
-    ASSERT_THAT(search_result.next_page_token(), Ne(kInvalidNextPageToken));
-
-    optimize_info = icing.GetOptimizeInfo();
-    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
-    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
-    EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
-    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
-    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(1));
-
-    // Deletes document1 and document2.
+    // Deletes document1
     ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
-    ASSERT_THAT(icing.Delete("namespace", "uri2").status(), ProtoIsOk());
 
     optimize_info = icing.GetOptimizeInfo();
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
-    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(1));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Gt(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
     int64_t first_estimated_optimizable_bytes =
         optimize_info.estimated_optimizable_bytes();
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(1));
 
-    // Add third document, but it'll be expired since the time (1000) is
+    // Add a second document, but it'll be expired since the time (1000) is
     // greater than the document's creation timestamp (100) + the document's ttl
     // (500)
-    ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
     optimize_info = icing.GetOptimizeInfo();
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
-    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(3));
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(),
                 Gt(first_estimated_optimizable_bytes));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(1));
 
     // Optimize
     ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
-
-    // Result state manager is reset after optimize.
-    optimize_info = icing.GetOptimizeInfo();
-    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
   }
 
   {
@@ -487,7 +448,6 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(4000));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
   }
 }
 
@@ -536,7 +496,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Call some APIs
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -552,7 +511,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -589,7 +547,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(500));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -622,7 +579,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(1300));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem, but
     // the time since last optimize should be populated.
@@ -655,7 +611,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(2700));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -714,7 +669,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Call some APIs
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -730,7 +684,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -767,7 +720,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(500));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -805,7 +757,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(1300));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
-    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();

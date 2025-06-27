@@ -67,8 +67,7 @@ IndexBlock::CreateFromPreexistingIndexBlockRegion(
   }
 
   BlockHeader header;
-  if (filesystem->PRead(fd, &header, sizeof(BlockHeader), block_file_offset) !=
-      sizeof(BlockHeader)) {
+  if (!filesystem->PRead(fd, &header, sizeof(BlockHeader), block_file_offset)) {
     return absl_ports::InternalError("PRead block header error");
   }
 
@@ -285,8 +284,8 @@ libtextclassifier3::Status IndexBlock::FreePostingListImpl(
 libtextclassifier3::StatusOr<IndexBlock::BlockHeader> IndexBlock::ReadHeader()
     const {
   BlockHeader header;
-  if (filesystem_->PRead(fd_, &header, sizeof(BlockHeader),
-                         block_file_offset_) != sizeof(BlockHeader)) {
+  if (!filesystem_->PRead(fd_, &header, sizeof(BlockHeader),
+                          block_file_offset_)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("PRead block header error: ", strerror(errno)));
   }
@@ -302,9 +301,8 @@ libtextclassifier3::StatusOr<IndexBlock::BlockHeader> IndexBlock::ReadHeader()
 libtextclassifier3::StatusOr<std::unique_ptr<uint8_t[]>>
 IndexBlock::ReadPostingList(PostingListIndex posting_list_index) const {
   auto posting_list_buffer = std::make_unique<uint8_t[]>(posting_list_bytes_);
-  if (filesystem_->PRead(fd_, posting_list_buffer.get(), posting_list_bytes_,
-                         get_posting_list_file_offset(posting_list_index)) !=
-      posting_list_bytes_) {
+  if (!filesystem_->PRead(fd_, posting_list_buffer.get(), posting_list_bytes_,
+                          get_posting_list_file_offset(posting_list_index))) {
     return absl_ports::InternalError(
         absl_ports::StrCat("PRead posting list error: ", strerror(errno)));
   }

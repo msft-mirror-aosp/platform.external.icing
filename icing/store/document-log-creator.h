@@ -20,7 +20,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -60,8 +59,8 @@ class DocumentLogCreator {
   //   INTERNAL on any I/O error.
   static libtextclassifier3::StatusOr<DocumentLogCreator::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      const FeatureFlags* feature_flags, int32_t compression_level,
-      uint32_t compression_threshold_bytes, int32_t compression_mem_level);
+      int32_t compression_level, uint32_t compression_threshold_bytes,
+      int32_t compression_mem_level);
 
   // Returns the filename of the document log, without any directory prefixes.
   // Used mainly for testing purposes.
@@ -79,8 +78,8 @@ class DocumentLogCreator {
   //   INTERNAL on I/O error.
   static libtextclassifier3::Status MigrateFromV0ToV1(
       const Filesystem* filesystem, const std::string& base_dir,
-      const FeatureFlags* feature_flags, int32_t compression_level,
-      uint32_t compression_threshold_bytes, int32_t compression_mem_level);
+      int32_t compression_level, uint32_t compression_threshold_bytes,
+      int32_t compression_mem_level);
 };
 
 }  // namespace lib

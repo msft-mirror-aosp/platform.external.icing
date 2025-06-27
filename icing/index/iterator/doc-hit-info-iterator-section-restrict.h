@@ -41,18 +41,18 @@ namespace lib {
 // That class is meant to be applied to the root of a query tree and filter over
 // all results at the end. This class is more used in the limited scope of a
 // term or a small group of terms.
-class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
+class DocHitInfoIteratorSectionRestrict : public DocHitInfoLeafIterator {
  public:
   // Does not take any ownership, and all pointers must refer to valid objects
   // that outlive the one constructed.
   explicit DocHitInfoIteratorSectionRestrict(
       std::unique_ptr<DocHitInfoIterator> delegate, SectionRestrictData* data);
 
-  // Methods that apply section restrictions to all applicable nodes at the
-  // lowest level inside the provided iterator tree, and return the root of the
-  // tree afterwards. These methods do not take any ownership for the raw
-  // pointer parameters, which must refer to valid objects that outlive the
-  // iterator returned.
+  // Methods that apply section restrictions to all DocHitInfoLeafIterator nodes
+  // inside the provided iterator tree, and return the root of the tree
+  // afterwards. These methods do not take any ownership for the raw pointer
+  // parameters, which must refer to valid objects that outlive the iterator
+  // returned.
   static std::unique_ptr<DocHitInfoIterator> ApplyRestrictions(
       std::unique_ptr<DocHitInfoIterator> iterator,
       const DocumentStore* document_store, const SchemaStore* schema_store,
@@ -72,9 +72,9 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  // Note that the DocHitInfoIteratorSectionRestrict will eventually be applied
-  // at the lowest level of the iterator tree, which can be a term iterator or
-  // another DocHitInfoIteratorSectionRestrict.
+  // Note that the DocHitInfoIteratorSectionRestrict can only be applied at
+  // DocHitInfoLeafIterator, which can be a term iterator or another
+  // DocHitInfoIteratorSectionRestrict.
   //
   // To filter the matching sections, filtering_section_mask should be set to
   // doc_hit_info_.hit_section_ids_mask() held in the outermost
@@ -94,10 +94,6 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
         matched_terms_stats,
         /*filtering_section_mask=*/filtering_section_mask &
             doc_hit_info_.hit_section_ids_mask());
-  }
-
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {&delegate_};
   }
 
  private:

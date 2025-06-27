@@ -215,10 +215,8 @@ TEST_F(ResultStateManagerThreadSafetyTest,
                                   feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         PageResultInfo page_result_info,
-        result_state_manager.GetNextPage(
-            next_page_token,
-            /*max_results=*/std::numeric_limits<int32_t>::max(),
-            *result_retriever, clock_->GetSystemTimeMilliseconds()));
+        result_state_manager.GetNextPage(next_page_token, *result_retriever,
+                                         clock_->GetSystemTimeMilliseconds()));
     page_results[thread_id] =
         std::make_optional<PageResultInfo>(std::move(page_result_info));
   };
@@ -320,10 +318,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
                                   feature_flags_.get()));
 
     libtextclassifier3::StatusOr<PageResultInfo> page_result_info_or =
-        result_state_manager.GetNextPage(
-            next_page_token,
-            /*max_results=*/std::numeric_limits<int32_t>::max(),
-            *result_retriever, clock_->GetSystemTimeMilliseconds());
+        result_state_manager.GetNextPage(next_page_token, *result_retriever,
+                                         clock_->GetSystemTimeMilliseconds());
     if (page_result_info_or.ok()) {
       page_results[thread_id] = std::make_optional<PageResultInfo>(
           std::move(page_result_info_or).ValueOrDie());
@@ -449,12 +445,10 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
     // each thread should retrieve 1, 2, 3, ..., kNumThreads pages.
     int num_subsequent_pages_to_retrieve = thread_id;
     for (int i = 0; i < num_subsequent_pages_to_retrieve; ++i) {
-      ICING_ASSERT_OK_AND_ASSIGN(
-          PageResultInfo page_result_info,
-          result_state_manager.GetNextPage(
-              next_page_token,
-              /*max_results=*/std::numeric_limits<int32_t>::max(),
-              *result_retriever, clock_->GetSystemTimeMilliseconds()));
+      ICING_ASSERT_OK_AND_ASSIGN(PageResultInfo page_result_info,
+                                 result_state_manager.GetNextPage(
+                                     next_page_token, *result_retriever,
+                                     clock_->GetSystemTimeMilliseconds()));
       EXPECT_THAT(page_result_info.second.results, SizeIs(kNumPerPage));
       for (int j = 0; j < kNumPerPage; ++j) {
         EXPECT_THAT(page_result_info.second.results[j].score(),

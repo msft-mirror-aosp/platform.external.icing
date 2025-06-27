@@ -701,12 +701,9 @@ FileBackedVector<T>::InitializeExistingFile(
   // Make sure the header is still valid before we use any of its values. This
   // should technically be included in the header_checksum check below, but this
   // is a quick/fast check that can save us from an extra crc computation.
-  if (header->magic != Header::kMagic) {
-    ICING_LOG(ERROR) << "Invalid header magic for FileBackedVector "
-                     << file_path << ". Expected: " << Header::kMagic
-                     << ", actual: " << header->magic;
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Invalid header magic for FileBackedVector: ", file_path));
+  if (header->kMagic != FileBackedVector<T>::Header::kMagic) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Invalid header kMagic for ", file_path));
   }
 
   // Check header

@@ -31,8 +31,7 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorByUri
-    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
+class DocHitInfoIteratorByUri : public DocHitInfoIterator {
  public:
   // Creates a DocHitInfoIteratorByUri based on the given search_spec.
   //
@@ -52,9 +51,7 @@ class DocHitInfoIteratorByUri
         "DocHitInfoIteratorByUri should not be used in suggestion.");
   }
 
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {};
-  }
+  void MapChildren(const ChildrenMapper& mapper) override {}
 
   CallStats GetCallStats() const override {
     return CallStats(

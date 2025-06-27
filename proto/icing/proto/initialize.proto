@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 42
+// Next tag: 39
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -393,20 +393,6 @@ message IcingSearchEngineOptions {
   // than or equal to this threshold, it will be compressed based on
   // compression_level. 0 means always compress.
   optional uint32 compression_threshold_bytes = 36;
-
-  // Whether to enable using smaller input buffer size for decompression
-  // If set to false, the default buffer size of 64kb will be used.
-  optional bool enable_smaller_decompression_buffer_size = 39;
-
-  // Whether to enable the Eigen library for embedding scoring.
-  // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
-  // not defined), Eigen will be used for embedding scoring.
-  optional bool enable_eigen_embedding_scoring = 40;
-
-  // Whether to enable passing down filter predicates to child iterators during
-  // DocHitInfo retrieval. If set to true, filter predicates may be passed to
-  // children for optimized retrieval.
-  optional bool enable_passing_filter_to_children = 41;
 
   reserved 2, 20;
 }

@@ -14,7 +14,6 @@
 
 #include "icing/monkey_test/monkey-test-generators.h"
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <random>
@@ -143,34 +142,12 @@ MonkeySchemaGenerator::UpdateSchemaResult MonkeySchemaGenerator::UpdateSchema(
   return result;
 }
 
-void MonkeySchemaGenerator::ReloadPreviousStatus(const SchemaProto& schema) {
-  int max_schema_id = 0;
-  for (const SchemaTypeConfigProto& type_config : schema.types()) {
-    max_schema_id =
-        std::max(max_schema_id, std::stoi(type_config.schema_type().substr(
-                                    kSchemaTypeNamePrefix.size())));
-
-    // To reset num_properties_generated_ according to the previous run, we use
-    // the maximum property_id + 1 as an estimate.
-    int max_property_id = 0;
-    for (const PropertyConfigProto& property : type_config.properties()) {
-      max_property_id =
-          std::max(max_property_id, std::stoi(property.property_name().substr(
-                                        kSchemaPropertyNamePrefix.size())));
-    }
-    num_properties_generated_[type_config.schema_type()] = max_property_id + 1;
-  }
-  // To reset num_types_generated_ according to the previous run, we use the
-  // maximum schema_id + 1 as an estimate.
-  num_types_generated_ = max_schema_id + 1;
-}
-
 PropertyConfigProto MonkeySchemaGenerator::GenerateProperty(
     const SchemaTypeConfigProto& type_config,
     PropertyConfigProto::Cardinality::Code cardinality, bool indexable) {
   PropertyConfigProto prop;
   prop.set_property_name(
-      std::string(kSchemaPropertyNamePrefix) +
+      "MonkeyTestProp" +
       std::to_string(num_properties_generated_[type_config.schema_type()]++));
   // TODO: Perhaps in future iterations we will want to generate more types of
   // properties.
@@ -233,7 +210,7 @@ void MonkeySchemaGenerator::UpdateProperty(
 
 SchemaTypeConfigProto MonkeySchemaGenerator::GenerateType() {
   SchemaTypeConfigProto type_config;
-  type_config.set_schema_type(std::string(kSchemaTypeNamePrefix) +
+  type_config.set_schema_type("MonkeyTestType" +
                               std::to_string(num_types_generated_++));
   std::uniform_int_distribution<> possible_num_properties_dist(
       0, config_->possible_num_properties.size() - 1);
@@ -348,7 +325,7 @@ std::string MonkeyDocumentGenerator::GetUri() const {
     std::uniform_int_distribution<> dist(0, config_->num_uris - 1);
     uri = dist(*random_);
   }
-  return absl_ports::StrCat(kDocumentUriPrefix, std::to_string(uri));
+  return absl_ports::StrCat("uri", std::to_string(uri));
 }
 
 int MonkeyDocumentGenerator::GetNumTokens() const {

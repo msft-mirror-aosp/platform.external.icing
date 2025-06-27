@@ -238,13 +238,13 @@ TEST_F(ResultStateV2Test,
   entry->set_namespace_("nonexistentNamespace1");
 
   // Get entry ids.
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       int32_t entry_id1, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       int32_t entry_id2, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace2", "Document"));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       int32_t entry_id3, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace3", "Document"));
 

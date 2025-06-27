@@ -22,7 +22,6 @@
 #include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
-#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/proto/logging.pb.h"
@@ -99,7 +98,6 @@ class QueryProcessor {
       const SearchSpecProto& search_spec,
       ScoringSpecProto::RankingStrategy::Code ranking_strategy,
       bool get_embedding_match_info, int64_t current_time_ms,
-      const DocumentFilterPredicate* filter_predicate,
       QueryStatsProto::SearchStats* search_stats) const;
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a

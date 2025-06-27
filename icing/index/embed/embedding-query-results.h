@@ -15,33 +15,21 @@
 #ifndef ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
 #define ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
 
-#include <cstdint>
 #include <memory>
-#include <optional>
 #include <unordered_map>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/section.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/store/document-id.h"
-#include "icing/util/embedding-util.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
-// Stores the matched embedding infos for a single document.
 struct EmbeddingMatchInfos {
-  // [score_start_index, score_end_index) is the range of score indexes in the
-  // global_scores vector. If embedding section info is enabled, the same range
-  // will be used for section infos in global_section_infos as well.
-  int32_t score_start_index = 0;
-  int32_t score_end_index = 0;
+  // A vector of semantic scores of matched embeddings.
+  std::vector<double> scores;
 
   struct EmbeddingMatchSectionInfo {
     // The position of the matched embedding vector in a section relative to
@@ -68,72 +56,33 @@ struct EmbeddingMatchInfos {
   static_assert(icing_is_packed_pod<EmbeddingMatchSectionInfo>::value,
                 "go/icing-ubsan");
 
+  // A vector of section infos on the matched embeddings. This will be nullptr
+  // if embedding match info is not enabled for this query.
+  //
+  // When non-null, section_infos must have a 1:1 mapping with the scores
+  // vector.
+  std::unique_ptr<std::vector<EmbeddingMatchSectionInfo>> section_infos;
+
   EmbeddingMatchInfos() = default;
+
   EmbeddingMatchInfos(const EmbeddingMatchInfos& other) = delete;
   EmbeddingMatchInfos& operator=(const EmbeddingMatchInfos& other) = delete;
 
-  // Appends a score to the scores vector, which is stored in the global_scores
-  // vector. score_start_index and score_end_index will be updated accordingly.
-  //
-  // Returns:
-  //   - OK, if the score is appended successfully.
-  //   - FailedPreconditionError, if the score is not contiguous with the
-  //     existing scores.
-  libtextclassifier3::Status AppendScore(std::vector<double>& global_scores,
-                                         double score) {
-    if (score_end_index == 0) {
-      score_start_index = score_end_index = global_scores.size();
-    }
-    if (score_end_index != global_scores.size()) {
-      return absl_ports::FailedPreconditionError(
-          "Scores for the same document should be contiguous.");
-    }
-    global_scores.push_back(score);
-    score_end_index += 1;
-    return libtextclassifier3::Status::OK;
-  }
+  // Appends a score to the scores vector.
+  void AppendScore(double score) { scores.push_back(score); }
 
-  // Appends a section info to the section info vector, which is stored in the
-  // global_section_infos vector.
-  //
-  // Returns:
-  //   - OK, if the section info is appended successfully.
-  //   - FailedPreconditionError, if the section info is not appended
-  //     immediately after AppendScore.
-  libtextclassifier3::Status AppendSectionInfo(
-      std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>&
-          global_section_infos,
-      SectionId section_id, int position) {
-    if (score_end_index != global_section_infos.size() + 1) {
-      return absl_ports::FailedPreconditionError(
-          "Section infos must be appended immediately after AppendScore.");
+  // Appends a section info to the section_infos vector, allocating if needed.
+  void AppendSectionInfo(SectionId section_id, int position) {
+    if (!section_infos) {
+      section_infos =
+          std::make_unique<std::vector<EmbeddingMatchSectionInfo>>();
     }
-    global_section_infos.push_back(
-        {.position = position, .section_id = section_id});
-    return libtextclassifier3::Status::OK;
+    section_infos->push_back({.position = position, .section_id = section_id});
   }
 };
 
 // A class to store results generated from embedding queries.
-class EmbeddingQueryResults {
- public:
-  // Creates an empty EmbeddingQueryResults instance.
-  EmbeddingQueryResults() : EmbeddingQueryResults(/*num_query_vectors=*/0) {}
-
-  // Creates an EmbeddingQueryResults instance with the given number of query
-  // vectors.
-  EmbeddingQueryResults(int num_query_vectors)
-      : result_infos_size_(embedding_util::kEmbeddingQueryMetricTypes.size() *
-                           num_query_vectors),
-        result_infos_(
-            std::make_unique<std::optional<EmbeddingQueryMatchInfoMap>[]>(
-                result_infos_size_)) {}
-
-  int GetNumQueryVectors() const {
-    return result_infos_size_ /
-           embedding_util::kEmbeddingQueryMetricTypes.size();
-  }
-
+struct EmbeddingQueryResults {
   // Maps from DocumentId to matched embedding infos for that document.
   // For each document, its embedding match info consists of two vectors:
   // - The scores vector, which will be used in the advanced scoring language
@@ -144,35 +93,11 @@ class EmbeddingQueryResults {
   using EmbeddingQueryMatchInfoMap =
       std::unordered_map<DocumentId, EmbeddingMatchInfos>;
 
-  // A centralized vector of scores for all documents. This is used to store the
-  // scores for the "this.matchedSemanticScores(...)" function.
-  std::unique_ptr<std::vector<double>> global_scores =
-      std::make_unique<std::vector<double>>();
-
-  // A centralized vector of EmbeddingMatchSectionInfo for all documents. This
-  // is used to store the section infos for the embedding query.
-  std::unique_ptr<std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>>
-      global_section_infos = std::make_unique<
-          std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>>();
-
-  // Get or create the MatchedInfo map for the given query_vector_index and
-  // metric_type.
-  //
-  // Returns:
-  //   - The pointer to the EmbeddingQueryMatchInfoMap map, if the map is found
-  //     or created.
-  //   - InvalidArgumentError, if the index is out of bounds.
-  libtextclassifier3::StatusOr<EmbeddingQueryMatchInfoMap*>
-  GetOrCreateMatchInfoMap(
-      int query_vector_index,
-      SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) const {
-    ICING_ASSIGN_OR_RETURN(int index,
-                           GetResultInfoIndex(query_vector_index, metric_type));
-    if (!result_infos_[index].has_value()) {
-      result_infos_[index] = EmbeddingQueryMatchInfoMap();
-    }
-    return &result_infos_[index].value();
-  }
+  // Maps from (query_vector_index, metric_type) to EmbeddingQueryMatchInfoMap.
+  std::unordered_map<
+      int, std::unordered_map<SearchSpecProto::EmbeddingQueryMetricType::Code,
+                              EmbeddingQueryMatchInfoMap>>
+      result_infos;
 
   // Get the MatchedInfo map for the given query_vector_index and metric_type.
   // Returns nullptr if (query_vector_index, metric_type) does not exist in the
@@ -180,12 +105,17 @@ class EmbeddingQueryResults {
   const EmbeddingQueryMatchInfoMap* GetMatchInfoMap(
       int query_vector_index,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) const {
-    libtextclassifier3::StatusOr<int> index =
-        GetResultInfoIndex(query_vector_index, metric_type);
-    if (!index.ok() || !result_infos_[index.ValueOrDie()].has_value()) {
+    // Check if a mapping exists for the query_vector_index
+    auto outer_it = result_infos.find(query_vector_index);
+    if (outer_it == result_infos.end()) {
       return nullptr;
     }
-    return &result_infos_[index.ValueOrDie()].value();
+    // Check if a mapping exists for the metric_type
+    auto inner_it = outer_it->second.find(metric_type);
+    if (inner_it == outer_it->second.end()) {
+      return nullptr;
+    }
+    return &inner_it->second;
   }
 
   // Returns the matched infos for the given query_vector_index, metric_type,
@@ -209,62 +139,19 @@ class EmbeddingQueryResults {
   }
 
   // Returns the matched scores for the given query_vector_index, metric_type,
-  // and doc_id. Returns an empty DoubleList if (query_vector_index,
-  // metric_type, doc_id) does not exist in the result_scores map.
-  //
-  // The returned DoubleList is a non-owning view of the scores vector stored
-  // within the EmbeddingQueryResults instance. The caller must ensure the
-  // lifetime of the EmbeddingQueryResults exceeds the lifetime of the returned
-  // DoubleList.
-  DoubleList GetMatchedScoresForDocument(
+  // and doc_id. Returns nullptr if (query_vector_index, metric_type, doc_id)
+  // does not exist in the result_scores map.
+  const std::vector<double>* GetMatchedScoresForDocument(
       int query_vector_index,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       DocumentId doc_id) const {
     const EmbeddingMatchInfos* match_infos =
         GetMatchedInfosForDocument(query_vector_index, metric_type, doc_id);
     if (match_infos == nullptr) {
-      return DoubleList();
+      return nullptr;
     }
-    return GetMatchedScoresFromEmbeddingMatchInfos(*match_infos);
+    return &match_infos->scores;
   };
-
-  // Returns the matched scores for the given EmbeddingMatchInfos, which stores
-  // the match infos for a single document.
-  //
-  // The returned DoubleList is a non-owning view of the scores vector stored
-  // within the EmbeddingQueryResults instance. The caller must ensure the
-  // lifetime of the EmbeddingQueryResults exceeds the lifetime of the returned
-  // DoubleList.
-  DoubleList GetMatchedScoresFromEmbeddingMatchInfos(
-      const EmbeddingMatchInfos& match_infos) const {
-    return DoubleList(
-        global_scores->data() + match_infos.score_start_index,
-        match_infos.score_end_index - match_infos.score_start_index);
-  }
-
- private:
-  // Maps from (query_vector_index, metric_type) to EmbeddingQueryMatchInfoMap.
-  int result_infos_size_;
-  std::unique_ptr<std::optional<EmbeddingQueryMatchInfoMap>[]> result_infos_;
-
-  // Returns the index of the result info for the given query_vector_index and
-  // metric_type.
-  //
-  // Returns:
-  //   - The index of the result info, if the index is valid.
-  //   - InvalidArgumentError, if the index is out of bounds.
-  libtextclassifier3::StatusOr<int> GetResultInfoIndex(
-      int query_vector_index,
-      SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) const {
-    int index =
-        query_vector_index * embedding_util::kEmbeddingQueryMetricTypes.size() +
-        (metric_type - embedding_util::kEmbeddingQueryMetricTypes[0]);
-    if (result_infos_ == nullptr || index < 0 || index >= result_infos_size_) {
-      return absl_ports::InvalidArgumentError(
-          "result_infos_ index out of bounds.");
-    }
-    return index;
-  }
 };
 
 }  // namespace lib

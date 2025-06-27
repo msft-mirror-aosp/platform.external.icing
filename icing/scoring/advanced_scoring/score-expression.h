@@ -31,11 +31,12 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/schema/schema-store.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/section-weights.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -77,7 +78,7 @@ class ScoreExpression {
         "double. There must be inconsistencies in the static type checking.");
   }
 
-  virtual libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+  virtual libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
     if (type() == ScoreExpressionType::kDoubleList) {
       return absl_ports::UnimplementedError(
@@ -268,7 +269,7 @@ class ListOperationFunctionScoreExpression : public ScoreExpression {
       FunctionType function_type,
       std::vector<std::unique_ptr<ScoreExpression>> args);
 
-  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -380,7 +381,7 @@ class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
          const JoinChildrenFetcher* join_children_fetcher,
          int64_t current_time_ms);
 
-  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -415,7 +416,7 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
          const DocumentStore* document_store,
          const SectionWeights* section_weights, int64_t current_time_ms);
 
-  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info, const DocHitInfoIterator*) const override;
 
   ScoreExpressionType type() const override {
@@ -476,7 +477,7 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
          SearchSpecProto::EmbeddingQueryMetricType::Code default_metric_type,
          const EmbeddingQueryResults* embedding_query_results);
 
-  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -488,20 +489,14 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
   explicit MatchedSemanticScoresFunctionScoreExpression(
       std::vector<std::unique_ptr<ScoreExpression>> args,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
-      const EmbeddingQueryResults& embedding_query_results,
-      const EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* match_info_map)
+      const EmbeddingQueryResults& embedding_query_results)
       : args_(std::move(args)),
         metric_type_(metric_type),
-        embedding_query_results_(embedding_query_results),
-        match_info_map_(match_info_map) {}
+        embedding_query_results_(embedding_query_results) {}
 
   std::vector<std::unique_ptr<ScoreExpression>> args_;
   const SearchSpecProto::EmbeddingQueryMetricType::Code metric_type_;
   const EmbeddingQueryResults& embedding_query_results_;
-  // If the embedding vector's index evaluated from args is a constant, this is
-  // the corresponding EmbeddingQueryMatchInfoMap for the embedding query.
-  // Otherwise, this is nullptr.
-  const EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* match_info_map_;
 };
 
 class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
@@ -527,7 +522,7 @@ class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
     return ScoreExpressionType::kDoubleList;
   }
 
-  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 

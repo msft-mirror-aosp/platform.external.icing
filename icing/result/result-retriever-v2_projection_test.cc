@@ -344,9 +344,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -453,9 +452,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
   // property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -572,9 +570,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
   // property and all of the subproperties of 'sender'.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -695,9 +692,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
   // 'sender.address' properties.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -800,9 +796,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -889,9 +884,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -979,9 +973,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1072,9 +1065,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
   // property and the returned Person results have all of their properties.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1168,9 +1160,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
   // property and the returned Person results only contain the 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1268,9 +1259,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // property and the returned Person results  only contain the 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1377,9 +1367,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // property and the returned Person results only contain the 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1490,9 +1479,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // property and the returned Person results contain no properties.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1636,9 +1624,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
   //    - Email docs only contain the "body" property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
 
@@ -1744,9 +1731,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
   // 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1836,9 +1822,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
   // 'name' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1915,9 +1900,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // since 'emailAddress' is missing.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
   DocumentProto projected_document = DocumentBuilder()
@@ -2000,9 +1984,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
   // 'emailAddress' properties.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -2087,9 +2070,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
   // 'phoneNumber' property.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(
-              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-              fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
 

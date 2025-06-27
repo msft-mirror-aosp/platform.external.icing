@@ -52,7 +52,7 @@ class InMemoryIcingSearchEngine {
 
   const SchemaProto *GetSchema() const { return schema_.get(); }
 
-  void SetSchema(SchemaProto schema);
+  void SetSchema(SchemaProto &&schema);
 
   // Randomly pick a document from the in-memory Icing for monkey testing.
   //

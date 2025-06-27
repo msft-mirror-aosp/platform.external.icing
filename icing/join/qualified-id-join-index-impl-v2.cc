@@ -336,9 +336,9 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
   }
 
   // Reinitialize qualified id join index.
-  if (filesystem_.PRead(GetMetadataFilePath(working_path_).c_str(),
-                        metadata_buffer_.get(), kMetadataFileSize,
-                        /*offset=*/0) != kMetadataFileSize) {
+  if (!filesystem_.PRead(GetMetadataFilePath(working_path_).c_str(),
+                         metadata_buffer_.get(), kMetadataFileSize,
+                         /*offset=*/0)) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
   ICING_ASSIGN_OR_RETURN(
@@ -461,9 +461,9 @@ QualifiedIdJoinIndexImplV2::InitializeExistingFiles(
     bool pre_mapping_fbv) {
   // PRead metadata file.
   auto metadata_buffer = std::make_unique<uint8_t[]>(kMetadataFileSize);
-  if (filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
-                       metadata_buffer.get(), kMetadataFileSize,
-                       /*offset=*/0) != kMetadataFileSize) {
+  if (!filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
+                        metadata_buffer.get(), kMetadataFileSize,
+                        /*offset=*/0)) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
 

@@ -20,18 +20,16 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
-#include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
 template <typename T>
-class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
+class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
  public:
   explicit DocHitInfoIteratorNumeric(
       std::unique_ptr<typename NumericIndex<T>::Iterator> numeric_index_iter)
@@ -53,10 +51,6 @@ class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
     return absl_ports::InvalidArgumentError(
         "Cannot generate suggestion if the last term is numeric operator.");
-  }
-
-  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
-    return {};
   }
 
   CallStats GetCallStats() const override {

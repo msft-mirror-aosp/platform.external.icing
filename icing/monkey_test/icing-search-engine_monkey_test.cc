@@ -33,8 +33,7 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
       /*num_types=*/30,
       /*num_namespaces=*/100,
       /*num_uris=*/1000,
-      /*index_merge_size=*/1024 * 1024,
-      /*initialize_by_existing_data=*/false);
+      /*index_merge_size=*/1024 * 1024);
   config.possible_num_properties = {0,
                                     1,
                                     2,
@@ -72,8 +71,7 @@ TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
       /*num_types=*/30,
       /*num_namespaces=*/200,
       /*num_uris=*/100000,
-      /*index_merge_size=*/1024 * 1024,
-      /*initialize_by_existing_data=*/false);
+      /*index_merge_size=*/1024 * 1024);
 
   // Due to the large amount of documents, we need to make each document smaller
   // to finish the test.

@@ -16,6 +16,7 @@
 #define ICING_STORE_DOCUMENT_FILTER_DATA_H_
 
 #include <cstdint>
+#include <type_traits>
 
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/store/namespace-id.h"
@@ -29,22 +30,24 @@ inline constexpr SchemaTypeId kInvalidSchemaTypeId = -1;
 class DocumentFilterData {
  public:
   explicit DocumentFilterData(NamespaceId namespace_id,
+                              uint64_t uri_fingerprint,
                               SchemaTypeId schema_type_id,
-                              int64_t expiration_timestamp_ms,
-                              int64_t raw_expiration_timestamp_ms)
+                              int64_t expiration_timestamp_ms)
       : expiration_timestamp_ms_(expiration_timestamp_ms),
-        raw_expiration_timestamp_ms_(raw_expiration_timestamp_ms),
+        uri_fingerprint_(uri_fingerprint),
         namespace_id_(namespace_id),
         schema_type_id_(schema_type_id) {}
 
   bool operator==(const DocumentFilterData& other) const {
     return namespace_id_ == other.namespace_id() &&
+           uri_fingerprint_ == other.uri_fingerprint() &&
            schema_type_id_ == other.schema_type_id() &&
-           expiration_timestamp_ms_ == other.expiration_timestamp_ms() &&
-           raw_expiration_timestamp_ms_ == other.raw_expiration_timestamp_ms();
+           expiration_timestamp_ms_ == other.expiration_timestamp_ms();
   }
 
   NamespaceId namespace_id() const { return namespace_id_; }
+
+  uint64_t uri_fingerprint() const { return uri_fingerprint_; }
 
   SchemaTypeId schema_type_id() const { return schema_type_id_; }
   void set_schema_type_id(SchemaTypeId schema_type_id) {
@@ -53,31 +56,9 @@ class DocumentFilterData {
 
   int64_t expiration_timestamp_ms() const { return expiration_timestamp_ms_; }
 
-  int64_t raw_expiration_timestamp_ms() const {
-    return raw_expiration_timestamp_ms_;
-  }
-
  private:
-  // The expiration timestamp of the document in milliseconds. This is the min
-  // value of:
-  // - The document's raw expiration timestamp (see
-  //   raw_expiration_timestamp_ms_).
-  // - The propagated expiration timestamps according to its dependencies
-  //   specified in join properties with delete propagation enabled.
-  //
-  // Icing will use this value to:
-  // - Determine if a document is alive or expired.
-  // - Propagte to its dependents' expiration timestamps. Note that in most
-  //   cases the propagation should use this value instead of the raw expiration
-  //   timestamp.
   int64_t expiration_timestamp_ms_;
-
-  // The raw expiration timestamp of the document in milliseconds, calculated by
-  // the document's creation timestamp and ttl. This value is cached and mostly
-  // should only be used to reset expiration_timestamp_ms_ when Icing needs to
-  // recompute the propagated expiration timestamps of all documents.
-  int64_t raw_expiration_timestamp_ms_;
-
+  uint64_t uri_fingerprint_;
   NamespaceId namespace_id_;
   SchemaTypeId schema_type_id_;
 } __attribute__((packed));
