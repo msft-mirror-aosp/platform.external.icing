@@ -11,8 +11,13 @@
 #include <cstdlib>
 #include <dlfcn.h>
 #include <fstream>
+#include <map>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <unistd.h>
+#include <vector>
 
 #include "aidl/com/android/isolated_storage_service/BnIcingSearchEngine.h"
 #include "aidl/com/android/isolated_storage_service/BnIsolatedStorageService.h"
