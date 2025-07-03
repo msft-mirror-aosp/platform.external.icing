@@ -24,7 +24,7 @@ namespace android::isolated_storage_service {
                 "proto_in must be an lvalue");                          \
   static_assert(std::is_lvalue_reference<decltype((bytes_out))>::value, \
                 "bytes_out must be an lvalue");                         \
-  *bytes_out = std::vector<uint8_t>(proto_in.ByteSizeLong());           \
+  bytes_out->emplace(proto_in.ByteSizeLong());                          \
   if (proto_in.SerializeToArray(bytes_out->value().data(),              \
                                 bytes_out->value().size())) {           \
     return ndk::ScopedAStatus::ok();                                    \
