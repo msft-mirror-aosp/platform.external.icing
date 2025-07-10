@@ -258,8 +258,9 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
 
   DocumentProto input_document = CreateDocumentWithOneProperty(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;
@@ -338,8 +339,9 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   DocumentProto input_document =
       CreateDocumentWithTenProperties(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;
@@ -418,8 +420,9 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   DocumentProto input_document =
       CreateDocumentWithDiacriticLetters(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;
@@ -497,8 +500,9 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
 
   DocumentProto input_document = CreateDocumentWithHiragana(state.range(0));
   TokenizedDocument tokenized_document(std::move(
-      TokenizedDocument::Create(schema_store.get(), language_segmenter.get(),
-                                input_document)
+      TokenizedDocument::Create(
+          schema_store.get(), language_segmenter.get(),
+          /*current_time_ms=*/clock.GetSystemTimeMilliseconds(), input_document)
           .ValueOrDie()));
 
   DocumentId old_document_id = kInvalidDocumentId;

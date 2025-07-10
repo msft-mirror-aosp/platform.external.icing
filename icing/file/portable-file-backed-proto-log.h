@@ -53,6 +53,7 @@
 #ifndef ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 #define ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -60,7 +61,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -73,7 +73,6 @@
 #include "icing/portable/endian.h"
 #include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
-#include "icing/portable/zlib.h"
 #include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
@@ -111,19 +110,42 @@ class PortableFileBackedProtoLog {
     // BEST_COMPRESSION = 9
     const int32_t compression_level;
 
+    // The threshold in bytes for compression if enabled. If the proto is larger
+    // than or equal to this threshold, it will be compressed.
+    const uint32_t compression_threshold_bytes;
+
+    // Level of memory usage for compression if enabled, BEST_MEMORY = 1,
+    // BEST_COMPRESSION and SPEED = 9
+    const int32_t compression_mem_level;
+
+    // Whether to use a smaller decompression buffer size. If false, the
+    // decompression buffer size will be the default size of 64MiB.
+    const bool enable_smaller_decompression_buffer_size;
+
     // Must specify values for options.
     Options() = delete;
-    explicit Options(
-        bool compress_in,
-        const int32_t max_proto_size_in = constants::kMaxProtoSize,
-        const int32_t compression_level_in = kDefaultCompressionLevel)
+    explicit Options(bool compress_in, const int32_t max_proto_size_in,
+                     const int32_t compression_level_in,
+                     const uint32_t compression_threshold_bytes_in,
+                     const int32_t compression_mem_level_in,
+                     const bool enable_smaller_decompression_buffer_size_in)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
-          compression_level(compression_level_in) {}
+          compression_level(compression_level_in),
+          compression_threshold_bytes(compression_threshold_bytes_in),
+          compression_mem_level(compression_mem_level_in),
+          enable_smaller_decompression_buffer_size(
+              enable_smaller_decompression_buffer_size_in) {}
   };
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
   static constexpr int kDefaultCompressionLevel = 3;
+
+  // The default compression threshold is 0, which means always compress.
+  static constexpr uint32_t kDefaultCompressionThresholdBytes = 0;
+
+  // The compression ratio to use for decompression buffer size.
+  static constexpr int kProtoCompressionRatio = 3;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the
@@ -503,7 +525,10 @@ class PortableFileBackedProtoLog {
   PortableFileBackedProtoLog(const Filesystem* filesystem,
                              const std::string& file_path,
                              std::unique_ptr<Header> header, int64_t file_size,
-                             int32_t compression_level);
+                             int32_t compression_level,
+                             uint32_t compression_threshold_bytes,
+                             int32_t compression_mem_level,
+                             bool enable_smaller_decompression_buffer_size);
 
   // Initializes a new proto log.
   //
@@ -589,18 +614,27 @@ class PortableFileBackedProtoLog {
   std::unique_ptr<Header> header_;
   int64_t file_size_;
   const int32_t compression_level_;
+  const uint32_t compression_threshold_bytes_;
+  const int32_t compression_mem_level_;
+  const bool enable_smaller_decompression_buffer_size_;
 };
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
     std::unique_ptr<Header> header, int64_t file_size,
-    int32_t compression_level)
+    int32_t compression_level, uint32_t compression_threshold_bytes,
+    int32_t compression_mem_level,
+    bool enable_smaller_decompression_buffer_size)
     : filesystem_(filesystem),
       file_path_(file_path),
       header_(std::move(header)),
       file_size_(file_size),
-      compression_level_(compression_level) {
+      compression_level_(compression_level),
+      compression_threshold_bytes_(compression_threshold_bytes),
+      compression_mem_level_(compression_mem_level),
+      enable_smaller_decompression_buffer_size_(
+          enable_smaller_decompression_buffer_size) {
   fd_.reset(filesystem_->OpenForAppend(file_path.c_str()));
 }
 
@@ -639,6 +673,13 @@ PortableFileBackedProtoLog<ProtoT>::Create(const Filesystem* filesystem,
         options.compression_level));
   }
 
+  if (options.compression_mem_level < 1 || options.compression_mem_level > 9) {
+    return absl_ports::InvalidArgumentError(
+        IcingStringUtil::StringPrintf("options.compression_mem_level must be "
+                                      "between 1 and 9 inclusive, was %d",
+                                      options.compression_mem_level));
+  }
+
   if (!filesystem->FileExists(file_path.c_str())) {
     return InitializeNewFile(filesystem, file_path, options);
   }
@@ -674,16 +715,38 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
   header->SetMaxProtoSize(options.max_proto_size);
   header->SetHeaderChecksum(header->CalculateHeaderChecksum());
 
-  if (!filesystem->Write(file_path.c_str(), header.get(), sizeof(Header))) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to write header for file: ", file_path));
+  {
+    ScopedFd fd(filesystem->OpenForWrite(file_path.c_str()));
+    if (!fd.is_valid()) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to open file for write: ", file_path));
+    }
+
+    if (!filesystem->Write(fd.get(), header.get(), sizeof(Header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to write header for file: ", file_path));
+    }
+
+    // Sync the file to disk to ensure that the header is flushed to disk.
+    // - Otherwise, if the app crashes before the header is flushed, the next
+    //   initialize may fail.
+    // - This is especially important for this class, since it is used to store
+    //   ground truth data. If magic or checksum is wrong, then Icing cannot
+    //   recover it from this state and therefore end up with entire data loss.
+    if (!filesystem->DataSync(fd.get())) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to sync file: ", file_path));
+    }
   }
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(
               filesystem, file_path, std::move(header),
-              /*file_size=*/kHeaderReservedBytes, options.compression_level)),
+              /*file_size=*/kHeaderReservedBytes, options.compression_level,
+              options.compression_threshold_bytes,
+              options.compression_mem_level,
+              options.enable_smaller_decompression_buffer_size)),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
@@ -697,13 +760,17 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
     const Options& options, int64_t file_size) {
   bool header_changed = false;
   if (file_size < kHeaderReservedBytes) {
+    ICING_LOG(ERROR) << "Invalid file size for PortableFileBackedProtoLog "
+                     << file_path
+                     << " for header reserved bytes. File size: " << file_size
+                     << ", header reserved bytes: " << kHeaderReservedBytes;
     return absl_ports::InternalError(
         absl_ports::StrCat("File header too short for: ", file_path));
   }
 
   std::unique_ptr<Header> header = std::make_unique<Header>();
-  if (!filesystem->PRead(file_path.c_str(), header.get(), sizeof(Header),
-                         /*offset=*/0)) {
+  if (filesystem->PRead(file_path.c_str(), header.get(), sizeof(Header),
+                        /*offset=*/0) != sizeof(Header)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to read header for file: ", file_path));
   }
@@ -712,8 +779,11 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
   // is covered by the header_checksum check below, but this is a quick check
   // that can save us from an extra crc computation.
   if (header->GetMagic() != Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for file: ", file_path));
+    ICING_LOG(ERROR) << "Invalid header magic for PortableFileBackedProtoLog "
+                     << file_path << ". Expected: " << Header::kMagic
+                     << ", actual: " << header->GetMagic();
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for PortableFileBackedProtoLog: ", file_path));
   }
 
   if (header->GetHeaderChecksum() != header->CalculateHeaderChecksum()) {
@@ -816,9 +886,11 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
-          new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header), file_size,
-                                                 options.compression_level)),
+          new PortableFileBackedProtoLog<ProtoT>(
+              filesystem, file_path, std::move(header), file_size,
+              options.compression_level, options.compression_threshold_bytes,
+              options.compression_mem_level,
+              options.enable_smaller_decompression_buffer_size)),
       data_loss, recalculated_checksum};
 
   return create_result;
@@ -922,7 +994,14 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   if (header_->GetCompressFlag()) {
     protobuf_ports::GzipOutputStream::Options options;
     options.format = protobuf_ports::GzipOutputStream::ZLIB;
-    options.compression_level = compression_level_;
+
+    if (proto_size >= compression_threshold_bytes_) {
+      options.compression_level = compression_level_;
+    } else {
+      options.compression_level = 0;
+    }
+    options.buffer_size =
+        std::min(protobuf_ports::kDefaultBufferSize, proto_size);
 
     protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 
@@ -990,7 +1069,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
                                       static_cast<long long>(file_size_ - 1)));
   }
   auto buf = std::make_unique<char[]>(stored_size);
-  if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+  if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+      stored_size) {
     return absl_ports::InternalError("");
   }
 
@@ -1003,7 +1083,13 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   // Deserialize proto
   ProtoT proto;
   if (header_->GetCompressFlag()) {
-    protobuf_ports::GzipInputStream decompress_stream(&proto_stream);
+    // Buffer size of -1 will default to kDefaultBufferSize.
+    int64_t buffer_size = -1;
+    if (enable_smaller_decompression_buffer_size_) {
+      buffer_size = kProtoCompressionRatio * stored_size;
+    }
+    protobuf_ports::GzipInputStream decompress_stream(
+        &proto_stream, protobuf_ports::GzipInputStream::AUTO, buffer_size);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);
@@ -1047,7 +1133,8 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     // The xored string is the same as the original string because 0 xor 0 =
     // 0, 1 xor 0 = 1.
     // Read the compressed proto out.
-    if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+    if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+        stored_size) {
       return absl_ports::InternalError("");
     }
     const std::string_view xored_str(buf.get(), stored_size);
@@ -1168,7 +1255,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
         static_cast<long long>(file_size)));
   }
 
-  if (!filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset)) {
+  if (filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset) !=
+      metadata_size) {
     return absl_ports::InternalError("");
   }
 

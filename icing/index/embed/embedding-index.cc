@@ -215,7 +215,11 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
           "Incorrect metadata file size");
     }
     if (info().magic != Info::kMagic) {
-      return absl_ports::FailedPreconditionError("Incorrect magic value");
+      ICING_LOG(ERROR) << "Invalid header magic for EmbeddingIndex "
+                       << working_path_ << ". Expected: " << Info::kMagic
+                       << ", actual: " << info().magic;
+      return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+          "Invalid header magic for EmbeddingIndex: ", working_path_));
     }
     ICING_RETURN_IF_ERROR(CreateStorageDataIfNonEmpty());
     ICING_RETURN_IF_ERROR(InitializeExistingStorage());
@@ -576,18 +580,30 @@ libtextclassifier3::StatusOr<float> EmbeddingIndex::ScoreEmbeddingHit(
       quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
     ICING_ASSIGN_OR_RETURN(const float* vector,
                            GetEmbeddingVector(hit, dimension));
-    semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query.values().data(),
-                                  /*v2=*/vector);
+    if (feature_flags_->enable_eigen_embedding_scoring()) {
+      semantic_score = scorer.EigenScore(dimension,
+                                         /*v1=*/query.values().data(),
+                                         /*v2=*/vector);
+    } else {
+      semantic_score = scorer.Score(dimension,
+                                    /*v1=*/query.values().data(),
+                                    /*v2=*/vector);
+    }
   } else {
     ICING_ASSIGN_OR_RETURN(const char* data,
                            GetQuantizedEmbeddingVector(hit, dimension));
     Quantizer quantizer(data);
     const uint8_t* quantized_vector =
         reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
-    semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query.values().data(),
-                                  /*v2=*/quantized_vector, quantizer);
+    if (feature_flags_->enable_eigen_embedding_scoring()) {
+      semantic_score = scorer.EigenScore(dimension,
+                                         /*v1=*/query.values().data(),
+                                         /*v2=*/quantized_vector, quantizer);
+    } else {
+      semantic_score = scorer.Score(dimension,
+                                    /*v1=*/query.values().data(),
+                                    /*v2=*/quantized_vector, quantizer);
+    }
   }
   return semantic_score;
 }

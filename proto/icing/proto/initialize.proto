@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 35
+// Next tag: 42
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -192,6 +192,16 @@ message IcingSearchEngineOptions {
   // Valid values: [0, 9]
   // Optional.
   optional int32 compression_level = 7 [default = 3];
+
+  // Memory level for compression.
+  // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
+  // maximum memory for optimal speed and compression ratio.
+  // Icing historically used a memLevel of 8. Therefore, that value will be the
+  // default.
+  //
+  // Valid values: [1, 9]
+  // Optional.
+  optional int32 compression_mem_level = 37 [default = 8];
 
   // OPTIONAL: Whether to allow circular references between schema types for
   // the schema definition.
@@ -290,6 +300,16 @@ message IcingSearchEngineOptions {
   // Optional.
   optional int32 blob_store_compression_level = 23 [default = 3];
 
+  // Memory level for compression in blob store.
+  // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
+  // maximum memory for optimal speed and compression ratio.
+  // Icing historically used a memLevel of 8. Therefore, that value will be the
+  // default.
+  //
+  // Valid values: [1, 9]
+  // Optional.
+  optional int32 blob_store_compression_mem_level = 38 [default = 8];
+
   // Whether to allow repeated fields to have a joinable value type.
   optional bool enable_repeated_field_joins = 24;
 
@@ -360,6 +380,33 @@ message IcingSearchEngineOptions {
   // Whether to release the backup schema file instance in the schema-store if
   // the overlay exists.
   optional bool release_backup_schema_file_if_overlay_present = 34;
+
+  // Whether to enable strict byte size enforcement on a result page.
+  // - If set to true, then ResultRetrieverV2 will not include the next result
+  //   document if it would exceed the page byte size threshold (except for the
+  //   first document).
+  // - Otherwise, the page byte size enforcement works as a soft limit, i.e. it
+  //   will keep adding documents until exceeding the threshold.
+  optional bool enable_strict_page_byte_size_limit = 35;
+
+  // The threshold in bytes for compressing documents. If a document is larger
+  // than or equal to this threshold, it will be compressed based on
+  // compression_level. 0 means always compress.
+  optional uint32 compression_threshold_bytes = 36;
+
+  // Whether to enable using smaller input buffer size for decompression
+  // If set to false, the default buffer size of 64kb will be used.
+  optional bool enable_smaller_decompression_buffer_size = 39;
+
+  // Whether to enable the Eigen library for embedding scoring.
+  // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
+  // not defined), Eigen will be used for embedding scoring.
+  optional bool enable_eigen_embedding_scoring = 40;
+
+  // Whether to enable passing down filter predicates to child iterators during
+  // DocHitInfo retrieval. If set to true, filter predicates may be passed to
+  // children for optimized retrieval.
+  optional bool enable_passing_filter_to_children = 41;
 
   reserved 2, 20;
 }

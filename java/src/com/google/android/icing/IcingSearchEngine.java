@@ -25,6 +25,7 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
@@ -182,6 +183,13 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   }
 
   @Override
+  public @NonNull SearchResultProto getNextPage(
+      @NonNull GetNextPageRequestProto getNextPageRequest) {
+    return IcingSearchEngineUtils.byteArrayToSearchResultProto(
+        icingSearchEngineImpl.getNextPageWithRequestProto(getNextPageRequest.toByteArray()));
+  }
+
+  @Override
   public void invalidateNextPageToken(long nextPageToken) {
     icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);
   }
@@ -280,6 +288,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   @Override
   public @NonNull ResetResultProto reset() {
     return IcingSearchEngineUtils.byteArrayToResetResultProto(icingSearchEngineImpl.reset());
+  }
+
+  @Override
+  public @NonNull ResetResultProto clearAndDestroy() {
+    return IcingSearchEngineUtils.byteArrayToResetResultProto(
+        icingSearchEngineImpl.clearAndDestroy());
   }
 
   public static boolean shouldLog(LogSeverity.Code severity) {

@@ -57,6 +57,7 @@
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
@@ -96,6 +97,7 @@
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
@@ -541,6 +543,99 @@ TEST_F(IcingSearchEngineInitializationTest,
     IcingSearchEngine icing(options, GetTestJniCache());
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
   }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       OutOfRangeCompressionMemLevelReturnsInvalidArgument) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+
+  // Mem level must be between 1 and 9 inclusive.
+  options.set_compression_mem_level(-1);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
+
+  options.set_compression_mem_level(10);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
+
+  options.set_compression_mem_level(0);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       OutOfRangeBlobStoreCompressionMemLevelReturnsInvalidArgument) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+
+  // Mem level must be between 1 and 9 inclusive.
+  options.set_blob_store_compression_mem_level(-1);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
+
+  options.set_blob_store_compression_mem_level(10);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
+
+  options.set_blob_store_compression_mem_level(0);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       ReinitializingWithDifferentCompressionMemLevelOk) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  {
+    // Initialize and put document
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  }
+
+  // Reinitialize with different compression mem level and check that the
+  // document is still searchable.
+  options.set_compression_mem_level(1);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+  EXPECT_THAT(
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance()),
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, FailToCreateDocStore) {
@@ -1294,14 +1389,18 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
     std::string doc_store_dir = GetDocumentDir();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), doc_store_dir, &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), doc_store_dir, &fake_clock, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -1473,23 +1572,29 @@ TEST_F(IcingSearchEngineInitializationTest,
             filesystem(), GetBlobDir(), &fake_clock,
             /*orphan_blob_time_to_live_ms=*/0,
             PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
+            protobuf_ports::kDefaultMemLevel,
             /*manage_blob_files=*/true));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
-    ICING_EXPECT_OK(document_store->Put(message2));
+    ICING_EXPECT_OK(
+        document_store->Put(document_util::CreateDocumentWrapper(message2)));
   }
 
   // Mock filesystem to observe and check the behavior of all indices.
@@ -4378,7 +4483,8 @@ TEST_F(IcingSearchEngineInitializationTest,
         QualifiedIdJoinIndexImplV3::Create(
             filesystem, GetQualifiedIdJoinIndexDir(), *feature_flags_));
     EXPECT_THAT(qualified_id_join_index, Pointee(IsEmpty()));
-    EXPECT_THAT(qualified_id_join_index->Get(/*parent_document_id=*/0),
+    EXPECT_THAT(qualified_id_join_index->GetDocumentJoinIdPairArrayView(
+                    /*parent_document_id=*/0),
                 IsOkAndHolds(IsEmpty()));
   }
 }
@@ -5443,14 +5549,18 @@ TEST_F(IcingSearchEngineInitializationTest,
     std::string doc_store_dir = GetDocumentDir();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), doc_store_dir, fake_clock.get(),
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), doc_store_dir, fake_clock.get(), schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -6092,23 +6202,29 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             filesystem(), GetBlobDir(), &fake_clock,
             /*orphan_blob_time_to_live_ms=*/0,
             PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
+            protobuf_ports::kDefaultMemLevel,
             /*manage_blob_files=*/true));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                               document_store->Put(message));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::PutResult put_result,
+        document_store->Put(document_util::CreateDocumentWrapper(message)));
     DocumentId doc_id = put_result.new_document_id;
 
     // Index doc_id with incorrect data
@@ -6174,8 +6290,10 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store.get(), lang_segmenter_.get(),
-                                  std::move(incorrect_message)));
+        TokenizedDocument::Create(
+            schema_store.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock.GetSystemTimeMilliseconds(),
+            std::move(incorrect_message)));
     ICING_ASSERT_OK(index_processor.IndexDocument(tokenized_document, doc_id,
                                                   put_result.old_document_id));
 
@@ -7005,9 +7123,9 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaTypeConfigProto db1_email_type_with_db =
-      SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+      SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1/").Build();
   SchemaTypeConfigProto db2_email_type_with_db =
-      SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+      SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2/").Build();
 
   SchemaProto previous_version_db1_schema;
   SchemaProto previous_version_db2_schema;
@@ -7075,18 +7193,12 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
     // 1. Set schema.
     if (options.enable_schema_database()) {
-      // Can only set schema for a single database at a time.
+      // Use the SetSchemaRequestProto with empty database field to populate
+      // both databases at once.
       ASSERT_THAT(icing
                       .SetSchema(CreateSetSchemaRequestProto(
-                          previous_version_db1_schema,
-                          previous_version_db1_schema.types(0).database(),
-                          /*ignore_errors_and_delete_documents=*/false))
-                      .status(),
-                  ProtoIsOk());
-      ASSERT_THAT(icing
-                      .SetSchema(CreateSetSchemaRequestProto(
-                          previous_version_db2_schema,
-                          previous_version_db2_schema.types(0).database(),
+                          previous_version_schema,
+                          /*database=*/"",
                           /*ignore_errors_and_delete_documents=*/false))
                       .status(),
                   ProtoIsOk());
@@ -7166,9 +7278,9 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
   // Verify GetSchema
   if (enable_schema_database) {
     SchemaTypeConfigProto db1_email_type_with_db =
-        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1").Build();
+        SchemaTypeConfigBuilder(db1_email_type).SetDatabase("db1/").Build();
     SchemaTypeConfigProto db2_email_type_with_db =
-        SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2").Build();
+        SchemaTypeConfigBuilder(db2_email_type).SetDatabase("db2/").Build();
     SchemaProto full_schema_with_database = SchemaBuilder()
                                                 .AddType(db1_email_type_with_db)
                                                 .AddType(db2_email_type_with_db)
@@ -7190,14 +7302,14 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
     expected_get_schema_result_proto_db1.mutable_status()->set_code(
         StatusProto::OK);
     *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
-    EXPECT_THAT(icing.GetSchema("db1"),
+    EXPECT_THAT(icing.GetSchema("db1/"),
                 EqualsProto(expected_get_schema_result_proto_db1));
 
     GetSchemaResultProto expected_get_schema_result_proto_db2;
     expected_get_schema_result_proto_db2.mutable_status()->set_code(
         StatusProto::OK);
     *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
-    EXPECT_THAT(icing.GetSchema("db2"),
+    EXPECT_THAT(icing.GetSchema("db2/"),
                 EqualsProto(expected_get_schema_result_proto_db2));
   } else {
     GetSchemaResultProto expected_get_schema_result_proto;

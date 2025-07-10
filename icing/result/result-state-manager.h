@@ -16,21 +16,25 @@
 #define ICING_RESULT_RESULT_STATE_MANAGER_H_
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <queue>
 #include <random>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/thread_annotations.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
-#include "icing/util/clock.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -77,10 +81,11 @@ class ResultStateManager {
       std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
       std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
       const ResultSpecProto& result_spec, const DocumentStore& document_store,
-      const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
-      ICING_LOCKS_EXCLUDED(mutex_);
+      const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
+      QueryStatsProto* query_stats = nullptr) ICING_LOCKS_EXCLUDED(mutex_);
 
-  // Retrieves and returns PageResult for the next page.
+  // Retrieves and returns PageResult for the next page, retrieving at most
+  // max_results entries from the page.
   // The returned results won't exist in ResultStateManager anymore. If the
   // query has no more pages after this retrieval, the input token will be
   // invalidated.
@@ -93,8 +98,15 @@ class ResultStateManager {
   //   A token and PageResult wrapped by std::pair on success
   //   NOT_FOUND if failed to find any more results
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>> GetNextPage(
-      uint64_t next_page_token, const ResultRetrieverV2& result_retriever,
-      int64_t current_time_ms) ICING_LOCKS_EXCLUDED(mutex_);
+      uint64_t next_page_token, int32_t max_results,
+      const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Returns the number of active result states currently in ResultStateManager.
+  // Note that this will invalidate expired result states before counting the
+  // number.
+  int GetNumActiveResultStates(int64_t current_time_ms)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Invalidates the result state associated with the given next-page token.
   void InvalidateResultState(uint64_t next_page_token)
@@ -150,7 +162,7 @@ class ResultStateManager {
 
   // Helper method to remove old states to make room for incoming states with
   // size num_hits_to_add.
-  void RemoveStatesIfNeeded(int num_hits_to_add)
+  void RemoveStatesIfNeeded(int num_hits_to_add, QueryStatsProto* query_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to remove a result state from result_state_map_, the token
