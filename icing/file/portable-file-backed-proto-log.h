@@ -73,7 +73,9 @@
 #include "icing/portable/endian.h"
 #include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/util/bit-util.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
@@ -502,7 +504,9 @@ class PortableFileBackedProtoLog {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status PersistToDisk();
+  libtextclassifier3::Status PersistToDisk(
+      PersistToDiskStatsProto* persist_stats = nullptr,
+      const Clock* clock = nullptr);
 
   // Calculates the checksum of the log contents (excluding the header) and
   // updates the header.
@@ -1292,14 +1296,30 @@ PortableFileBackedProtoLog<ProtoT>::WriteProtoMetadata(
 }
 
 template <typename ProtoT>
-libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
+libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk(
+    PersistToDiskStatsProto* persist_stats, const Clock* clock) {
   if (file_size_ == header_->GetRewindOffset()) {
     // No new protos appended, don't need to update the checksum.
     return libtextclassifier3::Status::OK;
   }
 
+  std::unique_ptr<Timer> persist_timer;
+  if (persist_stats != nullptr && clock != nullptr) {
+    persist_timer = clock->GetNewTimer();
+  }
   ICING_RETURN_IF_ERROR(UpdateChecksum());
-  if (!filesystem_->DataSync(fd_.get())) {
+  if (persist_stats != nullptr && clock != nullptr) {
+    persist_stats->set_document_log_checksum_update_latency_ms(
+        persist_timer->GetElapsedMilliseconds());
+    persist_timer = clock->GetNewTimer();
+  }
+
+  bool datasync_succeeded = filesystem_->DataSync(fd_.get());
+  if (persist_stats != nullptr && clock != nullptr) {
+    persist_stats->set_document_log_data_sync_latency_ms(
+        persist_timer->GetElapsedMilliseconds());
+  }
+  if (!datasync_succeeded) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to sync data to disk: ", file_path_));
   }
