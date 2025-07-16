@@ -720,8 +720,13 @@ class IcingSearchEngine {
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
+  //
+  // @param persist_type: The type of persistence guarantee that PersistToDisk
+  // should provide.
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
   libtextclassifier3::Status InternalPersistToDisk(
-      PersistType::Code persist_type) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+      PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public

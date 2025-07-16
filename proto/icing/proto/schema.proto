@@ -455,7 +455,7 @@ message SetSchemaRequestProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 10
+// Next tag: 11
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -506,10 +506,13 @@ message SetSchemaResultProto {
   // Number of documents that were deleted due to the new schema with
   // ignore_errors_and_delete_documents enabled.
   optional int32 deleted_document_count = 9;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 10;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema
-// Next tag: 3
+// Next tag: 4
 message GetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -526,10 +529,13 @@ message GetSchemaResultProto {
   // Copy of the Schema proto. Modifying this does not affect the Schema that
   // IcingSearchEngine holds.
   optional SchemaProto schema = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.GetSchemaType
-// Next tag: 3
+// Next tag: 4
 message GetSchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -547,4 +553,7 @@ message GetSchemaTypeResultProto {
   // Modifying this does not affect the SchemaTypeConfig that IcingSearchEngine
   // holds.
   optional SchemaTypeConfigProto schema_type_config = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }

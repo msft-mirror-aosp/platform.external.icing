@@ -2006,6 +2006,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
               Ge(result.optimize_stats().storage_size_after() - page_size));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
+  result.mutable_optimize_stats()->clear_before_optimize_persist_stats();
+  result.mutable_optimize_stats()->clear_after_optimize_persist_stats();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 
   fake_clock = std::make_unique<FakeClock>();
@@ -2036,6 +2038,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
               Eq(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
+  result.mutable_optimize_stats()->clear_before_optimize_persist_stats();
+  result.mutable_optimize_stats()->clear_after_optimize_persist_stats();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 
   // Delete the last document.
@@ -2062,6 +2066,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
               Ge(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
+  result.mutable_optimize_stats()->clear_before_optimize_persist_stats();
+  result.mutable_optimize_stats()->clear_after_optimize_persist_stats();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 }
 
@@ -2126,18 +2132,76 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   // Delete the first document.
   ASSERT_THAT(icing->Delete(document1.namespace_(), document1.uri()).status(),
               ProtoIsOk());
-  ASSERT_THAT(icing->PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  PersistToDiskResultProto persist_result =
+      icing->PersistToDisk(PersistType::FULL);
+  ASSERT_THAT(persist_result.status(), ProtoIsOk());
 
-  OptimizeStatsProto expected;
-  expected.set_latency_ms(5);
-  expected.set_document_store_optimize_latency_ms(5);
-  expected.set_index_restoration_latency_ms(5);
-  expected.set_num_original_documents(3);
-  expected.set_num_deleted_documents(1);
-  expected.set_num_expired_documents(1);
-  expected.set_num_original_namespaces(1);
-  expected.set_num_deleted_namespaces(0);
-  expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
+  PersistToDiskStatsProto expected_persist_stats;
+  expected_persist_stats.set_persist_type(PersistType::FULL);
+  expected_persist_stats.set_latency_ms(5);
+  expected_persist_stats.set_schema_store_persist_latency_ms(5);
+  expected_persist_stats.set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats.set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats.set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats.set_document_log_checksum_update_latency_ms(5);
+  expected_persist_stats.set_document_log_data_sync_latency_ms(5);
+  expected_persist_stats.set_index_persist_latency_ms(5);
+  expected_persist_stats.set_integer_index_persist_latency_ms(5);
+  expected_persist_stats.set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats.set_embedding_index_persist_latency_ms(5);
+  EXPECT_THAT(persist_result.persist_stats(),
+              EqualsProto(expected_persist_stats));
+
+  OptimizeStatsProto expected_optimize_stats;
+  expected_optimize_stats.set_latency_ms(5);
+  expected_optimize_stats.set_document_store_optimize_latency_ms(5);
+  expected_optimize_stats.set_index_restoration_latency_ms(5);
+  expected_optimize_stats.set_num_original_documents(3);
+  expected_optimize_stats.set_num_deleted_documents(1);
+  expected_optimize_stats.set_num_expired_documents(1);
+  expected_optimize_stats.set_num_original_namespaces(1);
+  expected_optimize_stats.set_num_deleted_namespaces(0);
+  expected_optimize_stats.set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+
+  PersistToDiskStatsProto* expected_persist_stats_before_optimize =
+      expected_optimize_stats.mutable_before_optimize_persist_stats();
+  expected_persist_stats_before_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_before_optimize->set_latency_ms(5);
+  expected_persist_stats_before_optimize->set_schema_store_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_embedding_index_persist_latency_ms(5);
+
+  PersistToDiskStatsProto* expected_persist_stats_after_optimize =
+      expected_optimize_stats.mutable_after_optimize_persist_stats();
+  expected_persist_stats_after_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_after_optimize->set_latency_ms(5);
+  expected_persist_stats_after_optimize->set_schema_store_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_after_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_embedding_index_persist_latency_ms(
+      5);
 
   // Run Optimize
   OptimizeResultProto result = icing->Optimize();
@@ -2151,7 +2215,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
               Ge(result.optimize_stats().storage_size_after() - page_size));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
-  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected_optimize_stats));
 
   fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(5);
@@ -2164,18 +2228,58 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       GetTestJniCache());
   ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
 
-  expected = OptimizeStatsProto();
-  expected.set_latency_ms(5);
-  expected.set_document_store_optimize_latency_ms(5);
-  expected.set_index_restoration_latency_ms(5);
-  expected.set_num_original_documents(1);
-  expected.set_num_deleted_documents(0);
-  expected.set_num_expired_documents(0);
-  expected.set_num_original_namespaces(1);
-  expected.set_num_deleted_namespaces(0);
-  expected.set_time_since_last_optimize_ms(10000);
-  expected.set_time_since_last_successful_optimize_ms(10000);
-  expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
+  expected_optimize_stats = OptimizeStatsProto();
+  expected_optimize_stats.set_latency_ms(5);
+  expected_optimize_stats.set_document_store_optimize_latency_ms(5);
+  expected_optimize_stats.set_index_restoration_latency_ms(5);
+  expected_optimize_stats.set_num_original_documents(1);
+  expected_optimize_stats.set_num_deleted_documents(0);
+  expected_optimize_stats.set_num_expired_documents(0);
+  expected_optimize_stats.set_num_original_namespaces(1);
+  expected_optimize_stats.set_num_deleted_namespaces(0);
+  expected_optimize_stats.set_time_since_last_optimize_ms(10000);
+  expected_optimize_stats.set_time_since_last_successful_optimize_ms(10000);
+  expected_optimize_stats.set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+
+  expected_persist_stats_before_optimize =
+      expected_optimize_stats.mutable_before_optimize_persist_stats();
+  expected_persist_stats_before_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_before_optimize->set_latency_ms(5);
+  expected_persist_stats_before_optimize->set_schema_store_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_embedding_index_persist_latency_ms(5);
+
+  expected_persist_stats_after_optimize =
+      expected_optimize_stats.mutable_after_optimize_persist_stats();
+  expected_persist_stats_after_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_after_optimize->set_latency_ms(5);
+  expected_persist_stats_after_optimize->set_schema_store_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_after_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_embedding_index_persist_latency_ms(
+      5);
 
   // Run Optimize
   result = icing->Optimize();
@@ -2183,24 +2287,65 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
               Eq(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
-  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected_optimize_stats));
 
   // Delete the last document.
   ASSERT_THAT(icing->Delete(document3.namespace_(), document3.uri()).status(),
               ProtoIsOk());
 
-  expected = OptimizeStatsProto();
-  expected.set_latency_ms(5);
-  expected.set_document_store_optimize_latency_ms(5);
-  expected.set_index_restoration_latency_ms(5);
-  expected.set_num_original_documents(1);
-  expected.set_num_deleted_documents(1);
-  expected.set_num_expired_documents(0);
-  expected.set_num_original_namespaces(1);
-  expected.set_num_deleted_namespaces(1);
-  expected.set_time_since_last_optimize_ms(0);
-  expected.set_time_since_last_successful_optimize_ms(0);
-  expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
+  expected_optimize_stats = OptimizeStatsProto();
+  expected_optimize_stats.set_latency_ms(5);
+  expected_optimize_stats.set_document_store_optimize_latency_ms(5);
+  expected_optimize_stats.set_index_restoration_latency_ms(5);
+  expected_optimize_stats.set_num_original_documents(1);
+  expected_optimize_stats.set_num_deleted_documents(1);
+  expected_optimize_stats.set_num_expired_documents(0);
+  expected_optimize_stats.set_num_original_namespaces(1);
+  expected_optimize_stats.set_num_deleted_namespaces(1);
+  expected_optimize_stats.set_time_since_last_optimize_ms(0);
+  expected_optimize_stats.set_time_since_last_successful_optimize_ms(0);
+  expected_optimize_stats.set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+
+  expected_persist_stats_before_optimize =
+      expected_optimize_stats.mutable_before_optimize_persist_stats();
+  expected_persist_stats_before_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_before_optimize->set_latency_ms(5);
+  expected_persist_stats_before_optimize->set_schema_store_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+
+  expected_persist_stats_before_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_embedding_index_persist_latency_ms(5);
+
+  expected_persist_stats_after_optimize =
+      expected_optimize_stats.mutable_after_optimize_persist_stats();
+  expected_persist_stats_after_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_after_optimize->set_latency_ms(5);
+  expected_persist_stats_after_optimize->set_schema_store_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_after_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_embedding_index_persist_latency_ms(
+      5);
 
   // Run Optimize
   result = icing->Optimize();
@@ -2208,7 +2353,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
               Ge(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
-  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected_optimize_stats));
 }
 
 TEST_F(IcingSearchEngineOptimizeTest,
