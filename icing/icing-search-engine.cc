@@ -1753,6 +1753,7 @@ BatchGetResultProto IcingSearchEngine::BatchGet(
   // each id. We should consider locking here for the entire batch request.
   int32_t total_docs_bytes_so_far = 0;
   bool skip_remaining_docs = false;
+  int32_t num_doc_returned = 0;
   for (std::string& id : *get_result_spec.mutable_ids()) {
     if (skip_remaining_docs) {
       // We simply set the status to OUT_OF_SPACE for the remaining docs, even
@@ -1777,11 +1778,27 @@ BatchGetResultProto IcingSearchEngine::BatchGet(
     if (result_proto.status().code() == StatusProto::OK) {
       // We get the doc successfully. Check if we can add it to the result.
       size_t document_bytes = result_proto.document().ByteSizeLong();
-      if (document_bytes <=
-          get_result_spec.num_total_document_bytes_to_return() -
-              total_docs_bytes_so_far) {
+      if (num_doc_returned == 0 ||
+          document_bytes <=
+              get_result_spec.num_total_document_bytes_to_return() -
+                  total_docs_bytes_so_far) {
         total_docs_bytes_so_far += document_bytes;
+        ++num_doc_returned;
+        // We skip the remaining docs if this 1st doc is already too big.
+        // But we always return 1st one no matter how big it is.
+        if (document_bytes >
+            get_result_spec.num_total_document_bytes_to_return()) {
+          skip_remaining_docs = true;
+        }
       } else {
+        ICING_LOG(INFO) << "Skipping document due to byte size threshold. "
+                           "Current num docs: "
+                        << num_doc_returned
+                        << ", total byte size: " << total_docs_bytes_so_far
+                        << ", next doc byte size: " << document_bytes
+                        << ", threshold: "
+                        << get_result_spec.num_total_document_bytes_to_return();
+
         result_proto.clear_document();
         StatusProto* result_status = result_proto.mutable_status();
         result_status->set_code(StatusProto::ABORTED);
@@ -2177,8 +2194,12 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
     PersistType::Code persist_type) {
   ICING_LOG(INFO) << "Persisting data to disk";
 
+  // Measure the latency of the persist process.
+  std::unique_ptr<Timer> persist_timer = clock_->GetNewTimer();
+
   PersistToDiskResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
+  PersistToDiskStatsProto* persist_stats = result_proto.mutable_persist_stats();
 
   absl_ports::unique_lock l(&mutex_);
   if (!initialized_) {
@@ -2189,7 +2210,7 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
     return result_proto;
   }
 
-  auto status = InternalPersistToDisk(persist_type);
+  auto status = InternalPersistToDisk(persist_type, persist_stats);
   if (status.ok()) {
     ICING_LOG(INFO) << "PersistToDisk completed.";
   } else {
@@ -2198,6 +2219,7 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
                      << ", message: " << status.error_message();
   }
   TransformStatus(status, result_status);
+  persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
   return result_proto;
 }
 
@@ -2274,7 +2296,14 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   }
 
   // Flushes data to disk before doing optimization
-  auto status = InternalPersistToDisk(PersistType::FULL);
+  PersistToDiskStatsProto* before_optimize_persist_stats =
+      optimize_stats->mutable_before_optimize_persist_stats();
+
+  std::unique_ptr<Timer> persist_timer = clock_->GetNewTimer();
+  auto status =
+      InternalPersistToDisk(PersistType::FULL, before_optimize_persist_stats);
+  before_optimize_persist_stats->set_latency_ms(
+      persist_timer->GetElapsedMilliseconds());
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
@@ -2479,7 +2508,13 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   }
 
   // Flushes data to disk after doing optimization
-  status = InternalPersistToDisk(PersistType::FULL);
+  PersistToDiskStatsProto* after_optimize_persist_stats =
+      optimize_stats->mutable_after_optimize_persist_stats();
+  persist_timer = clock_->GetNewTimer();
+  status =
+      InternalPersistToDisk(PersistType::FULL, after_optimize_persist_stats);
+  after_optimize_persist_stats->set_latency_ms(
+      persist_timer->GetElapsedMilliseconds());
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
@@ -2657,29 +2692,78 @@ DebugInfoResultProto IcingSearchEngine::GetDebugInfo(
 }
 
 libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
-    PersistType::Code persist_type) {
+    PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+  persist_stats->set_persist_type(persist_type);
+
   if (blob_store_ != nullptr) {
     // For all valid PersistTypes, we persist the ground truth. The ground truth
     // in the blob_store is a proto log file, which is need to be called when
     // persist_type is LITE.
     ICING_RETURN_IF_ERROR(blob_store_->PersistToDisk());
+    persist_stats->set_blob_store_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
   }
-  ICING_RETURN_IF_ERROR(document_store_->PersistToDisk(persist_type));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(
+      document_store_->PersistToDisk(persist_type, persist_stats));
+  persist_stats->set_document_store_total_persist_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+
   if (persist_type == PersistType::RECOVERY_PROOF) {
     // Persist RECOVERY_PROOF will persist the ground truth and then update all
     // checksums. There is no need to call document_store_->UpdateChecksum()
     // because PersistToDisk(RECOVERY_PROOF) will update the checksum anyways.
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(schema_store_->UpdateChecksum());
+    persist_stats->set_schema_store_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     index_->UpdateChecksum();
+    persist_stats->set_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(integer_index_->UpdateChecksums());
+    persist_stats->set_integer_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(qualified_id_join_index_->UpdateChecksums());
+    persist_stats->set_qualified_id_join_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(embedding_index_->UpdateChecksums());
+    persist_stats->set_embedding_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
   } else if (persist_type == PersistType::FULL) {
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
+    persist_stats->set_schema_store_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(index_->PersistToDisk());
+    persist_stats->set_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(integer_index_->PersistToDisk());
+    persist_stats->set_integer_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(qualified_id_join_index_->PersistToDisk());
+    persist_stats->set_qualified_id_join_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+
+    overall_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(embedding_index_->PersistToDisk());
+    persist_stats->set_embedding_index_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
   }
 
   return libtextclassifier3::Status::OK;

@@ -26,7 +26,7 @@ option objc_class_prefix = "ICNG";
 // Defines the blob operation result proto that user try to
 // read/write/commit/remove a blob to Icing.
 //
-// Next tag: 4
+// Next tag: 5
 message BlobProto {
   // Status code can be one of:
   //   OK
@@ -43,6 +43,9 @@ message BlobProto {
   // If Icing does not manage blob files, this is the file name of the blob file
   // from Icing returned by OpenWriteBlob, OpenReadBlob and RemoveBlob.
   optional string file_name = 3;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 4;
 }
 
 // BlobInfo holds information about a blob. It is used to store in the blob

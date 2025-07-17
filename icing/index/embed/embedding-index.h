@@ -253,23 +253,23 @@ class EmbeddingIndex : public PersistentStorage {
         clock_(*clock),
         feature_flags_(feature_flags) {}
 
-  // Creates the storage data if the index is not empty. This will initialize
-  // flash_index_storage_, embedding_posting_list_mapper_, embedding_vectors_.
+  // Creates the storage data. This will initialize flash_index_storage_,
+  // embedding_posting_list_mapper_, embedding_vectors_.
   //
   // Returns:
   //   - OK on success
   //   - Any error from FlashIndexStorage, DynamicTrieKeyMapper, or
   //     FileBackedVector.
-  libtextclassifier3::Status CreateStorageDataIfNonEmpty();
+  libtextclassifier3::Status CreateStorageData();
 
   // Marks the index's header to indicate that the index is non-empty.
   //
   // If the index is already marked as non-empty, this is a no-op. Otherwise,
-  // CreateStorageDataIfNonEmpty will be called to create the storage data.
+  // CreateStorageData will be called to create the storage data.
   //
   // Returns:
   //   - OK on success
-  //   - Any error when calling CreateStorageDataIfNonEmpty.
+  //   - Any error when calling CreateStorageData.
   libtextclassifier3::Status MarkIndexNonEmpty();
 
   libtextclassifier3::Status Initialize();

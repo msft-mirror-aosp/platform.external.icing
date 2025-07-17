@@ -14,14 +14,20 @@
 
 #include "icing/legacy/index/icing-dynamic-trie.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <random>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -30,6 +36,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 
 namespace icing {
@@ -952,7 +959,7 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenRootIsLeaf) {
   ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes the key.
-  EXPECT_TRUE(trie.Delete("foo"));
+  ICING_EXPECT_OK(trie.Delete("foo"));
   EXPECT_FALSE(trie.Find("foo", &value));
   EXPECT_THAT(trie, SizeIs(0));  // Explicitly test size() method.
   EXPECT_THAT(trie, IsEmpty());
@@ -982,7 +989,7 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenLastCharIsLeaf) {
   ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "bar". "r" is a leaf node in the trie.
-  EXPECT_TRUE(trie.Delete("bar"));
+  ICING_EXPECT_OK(trie.Delete("bar"));
   EXPECT_FALSE(trie.Find("bar", &value));
   EXPECT_TRUE(trie.Find("ba", &value));
   EXPECT_THAT(trie, SizeIs(1));
@@ -1013,7 +1020,7 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithTerminationNode) {
   ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "ba" which is a key with termination node in the trie.
-  EXPECT_TRUE(trie.Delete("ba"));
+  ICING_EXPECT_OK(trie.Delete("ba"));
   EXPECT_FALSE(trie.Find("ba", &value));
   EXPECT_TRUE(trie.Find("bar", &value));
   EXPECT_THAT(trie, SizeIs(1));
@@ -1046,7 +1053,7 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleNexts) {
   ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "bc".
-  EXPECT_TRUE(trie.Delete("bc"));
+  ICING_EXPECT_OK(trie.Delete("bc"));
   EXPECT_FALSE(trie.Find("bc", &value));
   EXPECT_TRUE(trie.Find("ba", &value));
   EXPECT_TRUE(trie.Find("bb", &value));
@@ -1087,7 +1094,7 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleTrieBranches) {
   ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Deletes "batter".
-  EXPECT_TRUE(trie.Delete("batter"));
+  ICING_EXPECT_OK(trie.Delete("batter"));
   EXPECT_FALSE(trie.Find("batter", &value));
   EXPECT_TRUE(trie.Find("battle", &value));
   EXPECT_TRUE(trie.Find("bar", &value));
@@ -1115,9 +1122,9 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldResetEmptyStateIfAllKeysAreDeleted) {
   ASSERT_THAT(trie, Not(IsEmpty()));
 
   // Delete "foo", "bar", "baz".
-  EXPECT_TRUE(trie.Delete("foo"));
-  EXPECT_TRUE(trie.Delete("bar"));
-  EXPECT_TRUE(trie.Delete("baz"));
+  ICING_EXPECT_OK(trie.Delete("foo"));
+  ICING_EXPECT_OK(trie.Delete("bar"));
+  ICING_EXPECT_OK(trie.Delete("baz"));
 
   EXPECT_THAT(trie, SizeIs(0));  // Explicitly test size() method.
   EXPECT_THAT(trie, IsEmpty());
@@ -1142,7 +1149,7 @@ TEST_F(IcingDynamicTrieTest, InsertionShouldWorkAfterDeletion) {
   ASSERT_THAT(trie.Insert("foo", &value), IsOk());
 
   // Deletes a key
-  ASSERT_TRUE(trie.Delete("bed"));
+  ICING_ASSERT_OK(trie.Delete("bed"));
   ASSERT_FALSE(trie.Find("bed", &value));
 
   // Inserts after deletion
@@ -1166,7 +1173,7 @@ TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterDeletion) {
   ASSERT_THAT(trie.Insert("foo", &value), IsOk());
 
   // Deletes a key
-  ASSERT_TRUE(trie.Delete("bed"));
+  ICING_ASSERT_OK(trie.Delete("bed"));
 
   // Iterates through all keys
   IcingDynamicTrie::Iterator iterator_all(trie, "");
@@ -1199,9 +1206,9 @@ TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterAllKeysAreDeleted) {
   ASSERT_THAT(trie.Insert("foo", &value), IsOk());
 
   // Deletes all keys
-  ASSERT_TRUE(trie.Delete("bar"));
-  ASSERT_TRUE(trie.Delete("bed"));
-  ASSERT_TRUE(trie.Delete("foo"));
+  ICING_ASSERT_OK(trie.Delete("bar"));
+  ICING_ASSERT_OK(trie.Delete("bed"));
+  ICING_ASSERT_OK(trie.Delete("foo"));
 
   EXPECT_THAT(trie, IsEmpty());
 
@@ -1235,8 +1242,8 @@ TEST_F(IcingDynamicTrieTest, DeletingNonExistingKeyShouldReturnTrue) {
   ASSERT_THAT(trie.Insert("bed", &value), IsOk());
 
   // "ba" and bedroom are not keys in the trie.
-  EXPECT_TRUE(trie.Delete("ba"));
-  EXPECT_TRUE(trie.Delete("bedroom"));
+  ICING_EXPECT_OK(trie.Delete("ba"));
+  ICING_EXPECT_OK(trie.Delete("bedroom"));
 
   // The original keys are not affected.
   EXPECT_TRUE(trie.Find("bar", &value));
@@ -1258,7 +1265,7 @@ TEST_F(IcingDynamicTrieTest, DeletionResortsFullNextArray) {
   ASSERT_THAT(trie.Insert("fjord", &value), IsOk());
 
   // Delete the third child
-  EXPECT_TRUE(trie.Delete("foul"));
+  ICING_EXPECT_OK(trie.Delete("foul"));
 
   std::vector<std::string> remaining;
   for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
@@ -1282,7 +1289,7 @@ TEST_F(IcingDynamicTrieTest, DeletionResortsPartiallyFilledNextArray) {
   ASSERT_THAT(trie.Insert("fudge", &value), IsOk());
 
   // Delete the second child
-  EXPECT_TRUE(trie.Delete("foul"));
+  ICING_EXPECT_OK(trie.Delete("foul"));
 
   std::vector<std::string> remaining;
   for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
@@ -1314,7 +1321,7 @@ TEST_F(IcingDynamicTrieTest, DeletionLoadTest) {
   std::shuffle(terms.begin(), terms.end(), random);
   for (int i = 0; i < 1024; ++i) {
     exp_remaining.erase(terms[i]);
-    ASSERT_TRUE(trie.Delete(terms[i]));
+    ICING_ASSERT_OK(trie.Delete(terms[i]));
   }
 
   // Check that the iterator still works, and the remaining terms are correct.
