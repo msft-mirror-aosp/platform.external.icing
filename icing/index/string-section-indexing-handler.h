@@ -52,6 +52,9 @@ class StringSectionIndexingHandler {
   // all contents in tokenized_document.tokenized_string_sections and merge lite
   // index into main index if necessary.
   //
+  // Parameter old_document_id is unused since there is no need to migrate data
+  // from old_document_id to (new) document_id.
+  //
   /// Returns:
   //   - OK on success
   //   - RESOURCE_EXHAUSTED_ERROR if the index is full and can't add anymore
@@ -60,6 +63,7 @@ class StringSectionIndexingHandler {
   //   - Any main/lite index errors.
   libtextclassifier3::Status Handle(const TokenizedDocument& tokenized_document,
                                     DocumentId document_id,
+                                    DocumentId /*old_document_id*/ _,
                                     PutDocumentStatsProto* put_document_stats);
 
  private:

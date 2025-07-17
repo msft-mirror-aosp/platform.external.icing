@@ -46,6 +46,8 @@ class Function {
   libtextclassifier3::StatusOr<PendingValue> Eval(
       std::vector<PendingValue>&& args) const;
 
+  libtextclassifier3::StatusOr<DataType> get_param_type(int i) const;
+
  private:
   Function(DataType return_type, std::string name, std::vector<Param> params,
            EvalFunction eval)

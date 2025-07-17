@@ -13,14 +13,16 @@
 // limitations under the License.
 
 #include <cstdint>
+#include <memory>
 #include <random>
+#include <string>
 
 #include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/random-string.h"
@@ -55,6 +57,23 @@ namespace lib {
 
 namespace {
 
+std::unique_ptr<PortableFileBackedProtoLog<DocumentProto>> CreateProtoLog(
+    const Filesystem& filesystem, const std::string& file_path,
+    int max_proto_size, bool compress) {
+  return PortableFileBackedProtoLog<DocumentProto>::Create(
+             &filesystem, file_path,
+             PortableFileBackedProtoLog<DocumentProto>::Options(
+                 compress, max_proto_size,
+                 PortableFileBackedProtoLog<
+                     DocumentProto>::kDefaultCompressionLevel,
+                 PortableFileBackedProtoLog<
+                     DocumentProto>::kDefaultCompressionThresholdBytes,
+                 protobuf_ports::kDefaultMemLevel,
+                 /*enable_smaller_decompression_buffer_size=*/true))
+      .ValueOrDie()
+      .proto_log;
+}
+
 void BM_Write(benchmark::State& state) {
   const Filesystem filesystem;
   int string_length = state.range(0);
@@ -66,12 +85,8 @@ void BM_Write(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      CreateProtoLog(filesystem, file_path, max_proto_size, compress);
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -119,12 +134,8 @@ void BM_Read(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      CreateProtoLog(filesystem, file_path, max_proto_size, compress);
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -174,12 +185,8 @@ void BM_Erase(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      CreateProtoLog(filesystem, file_path, max_proto_size, compress);
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -204,7 +211,7 @@ void BM_Erase(benchmark::State& state) {
 }
 BENCHMARK(BM_Erase);
 
-void BM_ComputeChecksum(benchmark::State& state) {
+void BM_UpdateChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -213,12 +220,8 @@ void BM_ComputeChecksum(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      CreateProtoLog(filesystem, file_path, max_proto_size, compress);
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -238,15 +241,15 @@ void BM_ComputeChecksum(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksum)->Range(1024, 1 << 20);
+BENCHMARK(BM_UpdateChecksum)->Range(1024, 1 << 20);
 
-void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
+void BM_UpdateChecksumWithCachedChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -255,12 +258,8 @@ void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      CreateProtoLog(filesystem, file_path, max_proto_size, compress);
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -279,18 +278,18 @@ void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
   ICING_ASSERT_OK(proto_log->WriteProto(document));
   ICING_ASSERT_OK(proto_log->PersistToDisk());
 
-  // This ComputeChecksum call shouldn't need to do any computation since we can
+  // This UpdateChecksum call shouldn't need to do any computation since we can
   // reuse our cached checksum.
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksumWithCachedChecksum);
+BENCHMARK(BM_UpdateChecksumWithCachedChecksum);
 
-void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
+void BM_UpdateChecksumOnlyForTail(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -299,12 +298,8 @@ void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      CreateProtoLog(filesystem, file_path, max_proto_size, compress);
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -327,16 +322,16 @@ void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
   // checksum since we didn't call persist.
   ICING_ASSERT_OK(proto_log->WriteProto(document));
 
-  // ComputeChecksum should be calculating the checksum of the tail and adding
+  // UpdateChecksum should be calculating the checksum of the tail and adding
   // it to the cached checksum we have.
   for (auto _ : state) {
-    testing::DoNotOptimize(proto_log->ComputeChecksum());
+    testing::DoNotOptimize(proto_log->UpdateChecksum());
   }
 
   // Cleanup after ourselves
   filesystem.DeleteFile(file_path.c_str());
 }
-BENCHMARK(BM_ComputeChecksumOnlyForTail);
+BENCHMARK(BM_UpdateChecksumOnlyForTail);
 
 }  // namespace
 }  // namespace lib

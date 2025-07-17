@@ -17,13 +17,16 @@
 #include <sys/mman.h>
 
 #include <algorithm>
-#include <cinttypes>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 
 using std::max;
@@ -65,13 +68,15 @@ bool IcingArrayStorage::Init(int fd, size_t fd_offset, bool map_shared,
     return false;
   }
   if (file_size < fd_offset) {
-    ICING_LOG(ERROR) << "Array storage file size " << file_size << " less than offset " << fd_offset;
+    ICING_LOG(ERROR) << "Array storage file size " << file_size
+                     << " less than offset " << fd_offset;
     return false;
   }
 
   uint32_t capacity_num_elts = (file_size - fd_offset) / elt_size;
   if (capacity_num_elts < num_elts) {
-    ICING_LOG(ERROR) << "Array storage num elts " << num_elts << " > capacity num elts " << capacity_num_elts;
+    ICING_LOG(ERROR) << "Array storage num elts " << num_elts
+                     << " > capacity num elts " << capacity_num_elts;
     return false;
   }
 
@@ -104,7 +109,8 @@ bool IcingArrayStorage::Init(int fd, size_t fd_offset, bool map_shared,
     if (init_crc) {
       *crc_ptr_ = crc;
     } else if (crc != *crc_ptr_) {
-      ICING_LOG(ERROR) << "Array storage bad crc " << crc << " vs " << *crc_ptr_;
+      ICING_LOG(ERROR) << "Array storage bad crc " << crc << " vs "
+                       << *crc_ptr_;
       goto failed;
     }
   }
@@ -199,15 +205,17 @@ bool IcingArrayStorage::GrowIfNecessary(uint32_t num_elts) {
   uint64_t new_file_size = fd_offset_ + uint64_t{num_elts} * elt_size_;
   // Grow to kGrowElts boundary.
   new_file_size = AlignUp(new_file_size, kGrowElts * elt_size_);
-  if (!filesystem_.Grow(fd_, new_file_size)) {
+  if (!filesystem_.GrowUsingPWrite(fd_, new_file_size)) {
     return false;
   }
   capacity_num_ = (new_file_size - fd_offset_) / elt_size_;
   return true;
 }
 
-void IcingArrayStorage::UpdateCrc() {
-  if (!crc_ptr_) return;
+Crc32 IcingArrayStorage::UpdateCrc() {
+  if (!crc_ptr_) {
+    return Crc32();
+  }
 
   // First apply the modified area. Keep a bitmap of already updated
   // regions so we don't double-update.
@@ -272,8 +280,8 @@ void IcingArrayStorage::UpdateCrc() {
   }
   if (!changes_.empty()) {
     ICING_VLOG(2) << "Array update partial crcs " << num_partial_crcs
-        << " truncated " << num_truncated << " overlapped " << num_overlapped
-        << " duplicate " << num_duplicate;
+                  << " truncated " << num_truncated << " overlapped "
+                  << num_overlapped << " duplicate " << num_duplicate;
   }
 
   // Now update with grown area.
@@ -281,7 +289,8 @@ void IcingArrayStorage::UpdateCrc() {
     cur_crc = IcingStringUtil::UpdateCrc32(
         cur_crc, array_cast<char>() + changes_end_ * elt_size_,
         (cur_num_ - changes_end_) * elt_size_);
-    ICING_VLOG(2) << "Array update tail crc offset " << changes_end_ << " -> " << cur_num_;
+    ICING_VLOG(2) << "Array update tail crc offset " << changes_end_ << " -> "
+                  << cur_num_;
   }
 
   // Clear, now that we've applied changes.
@@ -291,6 +300,21 @@ void IcingArrayStorage::UpdateCrc() {
 
   // Commit new crc.
   *crc_ptr_ = cur_crc;
+  return Crc32(cur_crc);
+}
+
+Crc32 IcingArrayStorage::GetCrc() const {
+  if (!crc_ptr_) {
+    return Crc32();
+  }
+  // TODO(b/352778910): Mirror the same logic in UpdateCrc() to reduce the
+  // cost of GetCrc().
+  if (changes_.empty() && changes_end_ == cur_num_) {
+    // No changes, just return the crc.
+    return Crc32(*crc_ptr_);
+  }
+  Crc32 crc(std::string_view(array_cast<char>(), cur_num_ * elt_size_));
+  return crc;
 }
 
 void IcingArrayStorage::Warm() const {
@@ -315,6 +339,7 @@ void IcingArrayStorage::Clear() {
 // flushed to the underlying file, but strangely a sync isn't done.
 // If map_shared_ is true, then we call sync.
 uint32_t IcingArrayStorage::Sync() {
+  UpdateCrc();
   if (!map_shared_) {
     IcingTimer timer;
     uint32_t num_flushed = 0;     // pages flushed
@@ -335,7 +360,8 @@ uint32_t IcingArrayStorage::Sync() {
         if (pwrite(fd_, array() + dirty_start, dirty_end - dirty_start,
                    fd_offset_ + dirty_start) !=
             static_cast<ssize_t>(dirty_end - dirty_start)) {
-          ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", " << dirty_end << ")";
+          ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", "
+                           << dirty_end << ")";
         }
         in_dirty = false;
       } else if (!in_dirty && is_dirty) {
@@ -354,7 +380,8 @@ uint32_t IcingArrayStorage::Sync() {
       if (pwrite(fd_, array() + dirty_start, dirty_end - dirty_start,
                  fd_offset_ + dirty_start) !=
           static_cast<ssize_t>(dirty_end - dirty_start)) {
-        ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", " << dirty_end << ")";
+        ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", "
+                         << dirty_end << ")";
       }
     }
 
@@ -369,7 +396,9 @@ uint32_t IcingArrayStorage::Sync() {
     }
 
     if (num_flushed > 0) {
-      ICING_VLOG(1) << "Flushing " << num_flushed << "/" << dirty_pages_size << " " << num_contiguous << " contiguous pages in " << timer.Elapsed() * 1000 << "ms.";
+      ICING_VLOG(1) << "Flushing " << num_flushed << "/" << dirty_pages_size
+                    << " " << num_contiguous << " contiguous pages in "
+                    << timer.Elapsed() * 1000 << "ms.";
     }
 
     return num_flushed;

@@ -27,7 +27,6 @@
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/util/clock.h"
 
 namespace icing {
@@ -36,6 +35,10 @@ namespace lib {
 // A random schema generator used for monkey testing.
 class MonkeySchemaGenerator {
  public:
+  static constexpr std::string_view kSchemaTypeNamePrefix = "MonkeyTestType";
+  static constexpr std::string_view kSchemaPropertyNamePrefix =
+      "MonkeyTestProp";
+
   struct UpdateSchemaResult {
     SchemaProto schema;
     bool is_invalid_schema;
@@ -53,11 +56,13 @@ class MonkeySchemaGenerator {
 
   UpdateSchemaResult UpdateSchema(const SchemaProto& schema);
 
+  // Reload the previous status of the schema generator.
+  void ReloadPreviousStatus(const SchemaProto& schema);
+
  private:
   PropertyConfigProto GenerateProperty(
       const SchemaTypeConfigProto& type_config,
-      PropertyConfigProto::Cardinality::Code cardinality,
-      TermMatchType::Code term_match_type);
+      PropertyConfigProto::Cardinality::Code cardinality, bool indexable);
 
   void UpdateProperty(const SchemaTypeConfigProto& type_config,
                       PropertyConfigProto& property,
@@ -83,6 +88,8 @@ class MonkeySchemaGenerator {
 // Same for num_namespaces.
 class MonkeyDocumentGenerator {
  public:
+  static constexpr std::string_view kDocumentUriPrefix = "uri";
+
   explicit MonkeyDocumentGenerator(
       MonkeyTestRandomEngine* random, const SchemaProto* schema,
       const IcingMonkeyTestRunnerConfiguration* config)
@@ -102,15 +109,29 @@ class MonkeyDocumentGenerator {
     return kCommonWords[dist(*random_)];
   }
 
+  PropertyProto::VectorProto GetRandomVector() const;
+
   std::string GetNamespace() const;
 
   std::string GetUri() const;
 
   int GetNumTokens() const;
 
-  std::vector<std::string> GetPropertyContent() const;
+  int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
+
+  std::vector<std::string> GetStringPropertyContent() const;
+
+  std::vector<PropertyProto::VectorProto> GetVectorPropertyContent(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
 
   MonkeyTokenizedDocument GenerateDocument();
+
+  // Reload the previous status of the document generator.
+  void ReloadPreviousStatus(uint32_t max_uri) {
+    // To reset num_docs_generated_ according to the previous run, we use the
+    // maximum uri + 1 as an estimate.
+    num_docs_generated_ = max_uri + 1;
+  }
 
  private:
   MonkeyTestRandomEngine* random_;                    // Does not own.

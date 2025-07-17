@@ -21,7 +21,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -29,63 +28,18 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-data-holder.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
-#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
-
-// An iterator that simply takes ownership of SectionRestrictData.
-class SectionRestrictDataHolderIterator : public DocHitInfoIterator {
- public:
-  explicit SectionRestrictDataHolderIterator(
-      std::unique_ptr<DocHitInfoIterator> delegate,
-      std::unique_ptr<SectionRestrictData> data)
-      : delegate_(std::move(delegate)), data_(std::move(data)) {}
-
-  libtextclassifier3::Status Advance() override {
-    auto result = delegate_->Advance();
-    doc_hit_info_ = delegate_->doc_hit_info();
-    return result;
-  }
-
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
-    ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_delegate,
-                           std::move(*delegate_).TrimRightMostNode());
-    if (trimmed_delegate.iterator_ != nullptr) {
-      trimmed_delegate.iterator_ =
-          std::make_unique<SectionRestrictDataHolderIterator>(
-              std::move(trimmed_delegate.iterator_), std::move(data_));
-    }
-    return trimmed_delegate;
-  }
-
-  void MapChildren(const ChildrenMapper& mapper) override {
-    delegate_ = mapper(std::move(delegate_));
-  }
-
-  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
-
-  std::string ToString() const override { return delegate_->ToString(); }
-
-  void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats,
-      SectionIdMask filtering_section_mask) const override {
-    return delegate_->PopulateMatchedTermsStats(matched_terms_stats,
-                                                filtering_section_mask);
-  }
-
- private:
-  std::unique_ptr<DocHitInfoIterator> delegate_;
-  std::unique_ptr<SectionRestrictData> data_;
-};
 
 DocHitInfoIteratorSectionRestrict::DocHitInfoIteratorSectionRestrict(
     std::unique_ptr<DocHitInfoIterator> delegate, SectionRestrictData* data)
@@ -103,8 +57,8 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
       document_store, schema_store, current_time_ms, type_property_filters);
   std::unique_ptr<DocHitInfoIterator> result =
       ApplyRestrictions(std::move(iterator), data.get());
-  return std::make_unique<SectionRestrictDataHolderIterator>(std::move(result),
-                                                             std::move(data));
+  return std::make_unique<DocHitInfoIteratorDataHolder<SectionRestrictData>>(
+      std::move(result), std::move(data));
 }
 
 std::unique_ptr<DocHitInfoIterator>
@@ -113,60 +67,56 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
     const DocumentStore* document_store, const SchemaStore* schema_store,
     const SearchSpecProto& search_spec, int64_t current_time_ms) {
   std::unordered_map<std::string, std::set<std::string>> type_property_filters;
-  // TODO(b/294274922): Add support for polymorphism in type property filters.
-  for (const TypePropertyMask& type_property_mask :
-       search_spec.type_property_filters()) {
-    type_property_filters[type_property_mask.schema_type()] =
-        std::set<std::string>(type_property_mask.paths().begin(),
-                              type_property_mask.paths().end());
+  for (const SchemaStore::ExpandedTypePropertyMask& type_property_mask :
+       schema_store->ExpandTypePropertyMasks(
+           search_spec.type_property_filters())) {
+    type_property_filters[type_property_mask.schema_type] =
+        std::set<std::string>(type_property_mask.paths.begin(),
+                              type_property_mask.paths.end());
   }
   auto data = std::make_unique<SectionRestrictData>(
       document_store, schema_store, current_time_ms, type_property_filters);
   std::unique_ptr<DocHitInfoIterator> result =
       ApplyRestrictions(std::move(iterator), data.get());
-  return std::make_unique<SectionRestrictDataHolderIterator>(std::move(result),
-                                                             std::move(data));
+  return std::make_unique<DocHitInfoIteratorDataHolder<SectionRestrictData>>(
+      std::move(result), std::move(data));
 }
 
 std::unique_ptr<DocHitInfoIterator>
 DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
     std::unique_ptr<DocHitInfoIterator> iterator, SectionRestrictData* data) {
-  ChildrenMapper mapper;
-  mapper = [&data, &mapper](std::unique_ptr<DocHitInfoIterator> iterator)
-      -> std::unique_ptr<DocHitInfoIterator> {
-    if (iterator->is_leaf()) {
-      return std::make_unique<DocHitInfoIteratorSectionRestrict>(
-          std::move(iterator), data);
-    } else {
-      iterator->MapChildren(mapper);
-      return iterator;
-    }
-  };
-  return mapper(std::move(iterator));
+  // If the iterator does not respect section restrictions, just return it.
+  if (iterator->SectionRestrictionNotApplicable()) {
+    return iterator;
+  }
+
+  // If the iterator can internally handle the section restriction, apply it and
+  // return the iterator.
+  if (iterator->HandleSectionRestriction(data)) {
+    return iterator;
+  }
+
+  // If the iterator accepts section restriction, but does not want to pass it
+  // down to its children, return a new iterator with the section restriction
+  // applied at the top.
+  if (!iterator->SectionRestrictionShouldApplyToChildren()) {
+    return std::make_unique<DocHitInfoIteratorSectionRestrict>(
+        std::move(iterator), data);
+  }
+
+  // Otherwise, apply the section restriction to its children.
+  for (std::unique_ptr<DocHitInfoIterator>* child : iterator->GetChildren()) {
+    *child = ApplyRestrictions(std::move(*child), data);
+  }
+  return iterator;
 }
 
 libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
   while (delegate_->Advance().ok()) {
     DocumentId document_id = delegate_->doc_hit_info().document_id();
-
-    auto data_optional = data_->document_store().GetAliveDocumentFilterData(
-        document_id, data_->current_time_ms());
-    if (!data_optional) {
-      // Ran into some error retrieving information on this hit, skip
-      continue;
-    }
-
-    // Guaranteed that the DocumentFilterData exists at this point
-    SchemaTypeId schema_type_id = data_optional.value().schema_type_id();
-    auto schema_type_or = data_->schema_store().GetSchemaType(schema_type_id);
-    if (!schema_type_or.ok()) {
-      // Ran into error retrieving schema type, skip
-      continue;
-    }
-    const std::string* schema_type = std::move(schema_type_or).ValueOrDie();
     SectionIdMask allowed_sections_mask =
-        data_->ComputeAllowedSectionsMask(*schema_type);
+        data_->ComputeAllowedSectionsMask(document_id);
 
     // A hit can be in multiple sections at once, need to check which of the
     // section ids match the sections allowed by type_property_masks_. This can
