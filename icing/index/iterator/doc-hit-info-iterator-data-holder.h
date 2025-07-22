@@ -31,7 +31,8 @@ namespace lib {
 
 // An iterator that simply takes ownership of an object.
 template <typename T>
-class DocHitInfoIteratorDataHolder : public DocHitInfoIterator {
+class DocHitInfoIteratorDataHolder
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorDataHolder(
       std::unique_ptr<DocHitInfoIterator> delegate, std::unique_ptr<T> data)
@@ -54,8 +55,8 @@ class DocHitInfoIteratorDataHolder : public DocHitInfoIterator {
     return trimmed_delegate;
   }
 
-  void MapChildren(const ChildrenMapper& mapper) override {
-    delegate_ = mapper(std::move(delegate_));
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {&delegate_};
   }
 
   CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
