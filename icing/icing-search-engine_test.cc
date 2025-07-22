@@ -14,20 +14,18 @@
 
 #include "icing/icing-search-engine.h"
 
+#include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/jni/jni-cache.h"
-#include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
@@ -48,10 +46,10 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -99,7 +97,7 @@ class IcingSearchEngineTest : public testing::Test {
       std::string icu_data_file_path =
           GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
-          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+          icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
@@ -128,6 +126,16 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .SetKey(std::move(name_space), std::move(uri))
       .SetSchema("Message")
       .AddStringProperty("body", "message body")
+      .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+      .Build();
+}
+
+DocumentProto CreateMessageDocument(std::string name_space, std::string uri,
+                                    std::string document_string) {
+  return DocumentBuilder()
+      .SetKey(std::move(name_space), std::move(uri))
+      .SetSchema("Message")
+      .AddStringProperty("body", document_string)
       .SetCreationTimestampMs(kDefaultCreationTimestampMs)
       .Build();
 }
@@ -225,6 +233,393 @@ TEST_F(IcingSearchEngineTest, GetDocument) {
   expected_get_result_proto.clear_document();
   ASSERT_THAT(icing.Get("wrong", "uri", GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitOver1) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto biggerDocument2 =
+      CreateMessageDocument("namespace", "uri2ForBiggerDocument");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  size_t doc1_size = document1.ByteSizeLong();
+  size_t doc3_size = document3.ByteSizeLong();
+
+  //
+  // Expected result
+  //
+  BatchGetResultProto expected_batch_get_result_proto;
+  expected_batch_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  // doc1 should be OK
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto1.set_uri("uri1");
+  *expected_get_result_proto1.mutable_document() = document1;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto1));
+
+  // result for doc2 should be ABORTED
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(
+      StatusProto::ABORTED);
+  expected_get_result_google::protobuf.set_uri("uri2ForBiggerDocument");
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_google::protobuf));
+
+  // doc3 should be ABORTED
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.set_uri("uri3");
+  expected_get_result_proto3.mutable_status()->set_code(
+      StatusProto::ABORTED);
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto3));
+
+  PutDocumentRequest put_document_request;
+  put_document_request.mutable_documents()->Add(std::move(document1));
+  put_document_request.mutable_documents()->Add(std::move(biggerDocument2));
+  put_document_request.mutable_documents()->Add(std::move(document3));
+
+  ASSERT_THAT(icing.BatchPut(std::move(put_document_request)).status(),
+              ProtoIsOk());
+
+  GetResultSpecProto get_result_spec;
+  get_result_spec.set_namespace_requested("namespace");
+  get_result_spec.add_ids("uri1");
+  get_result_spec.add_ids("uri2ForBiggerDocument");
+  get_result_spec.add_ids("uri3");
+  get_result_spec.set_num_total_document_bytes_to_return(doc1_size + doc3_size);
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec)),
+              EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitOver2) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto biggerDocument2 =
+      CreateMessageDocument("namespace", "uri2ForBiggerDocument");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  size_t doc1_size = document1.ByteSizeLong();
+  size_t doc2_size = biggerDocument2.ByteSizeLong();
+  size_t doc3_size = document3.ByteSizeLong();
+
+  //
+  // Expected result
+  //
+  BatchGetResultProto expected_batch_get_result_proto;
+  expected_batch_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  // doc1 should be OK
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto1.set_uri("uri1");
+  *expected_get_result_proto1.mutable_document() = document1;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto1));
+
+  // doc2 should be OK.
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_google::protobuf.set_uri("uri2ForBiggerDocument");
+  *expected_get_result_google::protobuf.mutable_document() = biggerDocument2;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_google::protobuf));
+
+  // doc3 should be ABORTED
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(
+      StatusProto::ABORTED);
+  expected_get_result_proto3.set_uri("uri3");
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto3));
+
+  PutDocumentRequest put_document_request;
+  put_document_request.mutable_documents()->Add(std::move(document1));
+  put_document_request.mutable_documents()->Add(std::move(biggerDocument2));
+  put_document_request.mutable_documents()->Add(std::move(document3));
+
+  ASSERT_THAT(icing.BatchPut(std::move(put_document_request)).status(),
+              ProtoIsOk());
+
+  GetResultSpecProto get_result_spec;
+  get_result_spec.set_namespace_requested("namespace");
+  get_result_spec.add_ids("uri1");
+  get_result_spec.add_ids("uri2ForBiggerDocument");
+  get_result_spec.add_ids("uri3");
+  get_result_spec.set_num_total_document_bytes_to_return(doc1_size + doc2_size +
+                                                         doc3_size - 1);
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec)),
+              EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       BatchGetDocumentResultSizeLimitOriginalErrorKept) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto biggerDocument3 =
+      CreateMessageDocument("namespace", "uri3ForBiggerDocument");
+  size_t doc1_size = document1.ByteSizeLong();
+
+  //
+  // Expected result
+  //
+  BatchGetResultProto expected_batch_get_result_proto;
+  expected_batch_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  // doc1 should be OK
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto1.set_uri("uri1");
+  *expected_get_result_proto1.mutable_document() = document1;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto1));
+
+  // uriNotExist should not be found.
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.set_uri("uriNotExist");
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
+      "Document (namespace, uriNotExist) not found.");
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_google::protobuf));
+
+  // doc3 should be ABORTED
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(
+      StatusProto::ABORTED);
+  expected_get_result_proto3.set_uri("uri3ForBiggerDocument");
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto3));
+
+  // uriNotExist should be ABORTED as we have reached the limit.
+  // Even though the doc doesn't exist.
+  GetResultProto expected_get_result_proto4;
+  expected_get_result_proto4.mutable_status()->set_code(
+      StatusProto::ABORTED);
+  expected_get_result_proto4.set_uri("uriNotExist");
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto4));
+
+  PutDocumentRequest put_document_request;
+  put_document_request.mutable_documents()->Add(std::move(document1));
+  put_document_request.mutable_documents()->Add(std::move(document2));
+  put_document_request.mutable_documents()->Add(std::move(biggerDocument3));
+
+  ASSERT_THAT(icing.BatchPut(std::move(put_document_request)).status(),
+              ProtoIsOk());
+
+  GetResultSpecProto get_result_spec;
+  get_result_spec.set_namespace_requested("namespace");
+  get_result_spec.add_ids("uri1");
+  get_result_spec.add_ids("uriNotExist");
+  get_result_spec.add_ids("uri3ForBiggerDocument");
+  get_result_spec.add_ids("uriNotExist");
+  get_result_spec.set_num_total_document_bytes_to_return(doc1_size);
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec)),
+              EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, BatchGetDocumentAlwaysReturnOneDoc) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+
+  //
+  // Expected result
+  //
+  BatchGetResultProto expected_batch_get_result_proto;
+  expected_batch_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  // doc1 should be OK
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto1.set_uri("uri1");
+  *expected_get_result_proto1.mutable_document() = document1;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto1));
+
+  // result for doc2 should be ABORTED
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::ABORTED);
+  expected_get_result_google::protobuf.set_uri("uri2");
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_google::protobuf));
+
+  // doc3 should be ABORTED
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.set_uri("uri3");
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::ABORTED);
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto3));
+
+  PutDocumentRequest put_document_request;
+  put_document_request.mutable_documents()->Add(std::move(document1));
+  put_document_request.mutable_documents()->Add(std::move(document2));
+  put_document_request.mutable_documents()->Add(std::move(document3));
+
+  ASSERT_THAT(icing.BatchPut(std::move(put_document_request)).status(),
+              ProtoIsOk());
+
+  GetResultSpecProto get_result_spec;
+  get_result_spec.set_namespace_requested("namespace");
+  get_result_spec.add_ids("uri1");
+  get_result_spec.add_ids("uri2");
+  get_result_spec.add_ids("uri3");
+  // very small limit. We should always return at least one doc.
+  get_result_spec.set_num_total_document_bytes_to_return(1);
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec)),
+              EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitNotOver) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto biggerDocument2 =
+      CreateMessageDocument("namespace", "uri2ForBiggerDocument");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  size_t doc1_size = document1.ByteSizeLong();
+  size_t doc2_size = biggerDocument2.ByteSizeLong();
+  size_t doc3_size = document3.ByteSizeLong();
+
+  //
+  // Expected result
+  //
+  BatchGetResultProto expected_batch_get_result_proto;
+  expected_batch_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  // doc1 should be OK
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto1.set_uri("uri1");
+  *expected_get_result_proto1.mutable_document() = document1;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto1));
+
+  // doc2 should be OK.
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_google::protobuf.set_uri("uri2ForBiggerDocument");
+  *expected_get_result_google::protobuf.mutable_document() = biggerDocument2;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_google::protobuf));
+
+  // doc3 should be OK
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto3.set_uri("uri3");
+  *expected_get_result_proto3.mutable_document() = document3;
+  expected_batch_get_result_proto.mutable_get_result_protos()->Add(
+      std::move(expected_get_result_proto3));
+
+  PutDocumentRequest put_document_request;
+  put_document_request.mutable_documents()->Add(std::move(document1));
+  put_document_request.mutable_documents()->Add(std::move(biggerDocument2));
+  put_document_request.mutable_documents()->Add(std::move(document3));
+
+  ASSERT_THAT(icing.BatchPut(std::move(put_document_request)).status(),
+              ProtoIsOk());
+
+  GetResultSpecProto get_result_spec1;
+  get_result_spec1.set_namespace_requested("namespace");
+  get_result_spec1.add_ids("uri1");
+  get_result_spec1.add_ids("uri2ForBiggerDocument");
+  get_result_spec1.add_ids("uri3");
+  get_result_spec1.set_num_total_document_bytes_to_return(
+      doc1_size + doc2_size + doc3_size);
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec1)),
+              EqualsProto(expected_batch_get_result_proto));
+
+  // Return bytes limit with default value(INT_MAX).
+  GetResultSpecProto get_result_spec2;
+  get_result_spec2.set_namespace_requested("namespace");
+  get_result_spec2.add_ids("uri1");
+  get_result_spec2.add_ids("uri2ForBiggerDocument");
+  get_result_spec2.add_ids("uri3");
+
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec2)),
+              EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitInvalidValue) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  GetResultSpecProto get_result_spec;
+  get_result_spec.set_namespace_requested("namespace");
+
+  BatchGetResultProto expected_batch_get_result_proto;
+  expected_batch_get_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_batch_get_result_proto.mutable_status()->set_message(
+      "num_total_document_bytes_to_return must be greater than 0.");
+
+  get_result_spec.set_num_total_document_bytes_to_return(0);
+  ASSERT_THAT(icing.BatchGet(GetResultSpecProto(get_result_spec)),
+              EqualsProto(expected_batch_get_result_proto));
+
+  get_result_spec.set_num_total_document_bytes_to_return(-1);
+  ASSERT_THAT(icing.BatchGet(std::move(get_result_spec)),
+              EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, GetDocumentWithBadString) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Put and get for a document with a bad string
+  std::string name_space = "namespace";
+  std::string uri = "uri";
+  // Octal representation of hex: \x34F\x8F\xE2\x80\x8C\xC2\xA0 which is
+  // Unicode for CGJ ZWNJ NBSP
+  std::string bad_string = "\315\217\342\200\214\302\240";
+  DocumentProto document = CreateMessageDocument(name_space, uri, bad_string);
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document;
+  ASSERT_THAT(
+      icing.Get(name_space, uri, GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, GetDocumentWithNullTerminator) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Put and get for a document with a null terminator in the string.
+  std::string name_space = "namespace";
+  std::string uri = "uri";
+  std::string string_with_null_terminator = std::string("message\0body", 12);
+  DocumentProto document =
+      CreateMessageDocument(name_space, uri, string_with_null_terminator);
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document;
+  ASSERT_THAT(
+      icing.Get(name_space, uri, GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, GetDocumentProjectionEmpty) {
@@ -1009,6 +1404,46 @@ TEST_F(IcingSearchEngineTest, ExplicitPersistToDiskFullSavesEverything) {
                                   expected_search_result_proto));
 }
 
+TEST_F(IcingSearchEngineTest, PersistToDiskLogging) {
+  DocumentProto document = CreateMessageDocument("namespace", "uri");
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  // Add schema and documents to our first icing1 instance.
+
+  IcingSearchEngineOptions icing_options;
+  icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_enable_blob_store(true);
+  icing_options.set_enable_marker_file_for_optimize(true);
+
+  TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  PersistToDiskResultProto persist_result =
+      icing.PersistToDisk(PersistType::FULL);
+  EXPECT_THAT(persist_result.status(), ProtoIsOk());
+  PersistToDiskStatsProto persist_stats = persist_result.persist_stats();
+  EXPECT_THAT(persist_stats.latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.persist_type(), Eq(PersistType::FULL));
+  EXPECT_THAT(persist_stats.blob_store_persist_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.document_store_total_persist_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.document_store_components_persist_latency_ms(),
+              Eq(10));
+  EXPECT_THAT(persist_stats.document_store_checksum_update_latency_ms(),
+              Eq(10));
+  EXPECT_THAT(persist_stats.document_log_checksum_update_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.document_log_data_sync_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.schema_store_persist_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.index_persist_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.integer_index_persist_latency_ms(), Eq(10));
+  EXPECT_THAT(persist_stats.qualified_id_join_index_persist_latency_ms(),
+              Eq(10));
+  EXPECT_THAT(persist_stats.embedding_index_persist_latency_ms(), Eq(10));
+}
+
 TEST_F(IcingSearchEngineTest, NoPersistToDiskLosesAllDocumentsAndIndex) {
   IcingSearchEngine icing1(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
@@ -1102,6 +1537,73 @@ TEST_F(IcingSearchEngineTest, PersistToDiskLiteSavesGroundTruth) {
       EqualsProto(document));
 
   // Recovered index is still intact.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");  // Content in the Message document.
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  SearchResultProto actual_results =
+      icing2.Search(search_spec, GetDefaultScoringSpec(),
+                    ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, PersistToDiskRecoveryProofAvoidsRecovery) {
+  DocumentProto document = CreateMessageDocument("namespace", "uri");
+
+  IcingSearchEngine icing1(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing1.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing1.Put(document).status(), ProtoIsOk());
+  EXPECT_THAT(
+      icing1.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document));
+  EXPECT_THAT(icing1.PersistToDisk(PersistType::RECOVERY_PROOF).status(),
+              ProtoIsOk());
+
+  // Recreating the index should not trigger a recovery.
+  IcingSearchEngine icing2(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto init_result = icing2.Initialize();
+  EXPECT_THAT(init_result.status(), ProtoIsOk());
+  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      init_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+
+  // Schema is still intact.
+  GetSchemaResultProto expected_get_schema_result_proto;
+  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_schema_result_proto.mutable_schema() = CreateMessageSchema();
+
+  EXPECT_THAT(icing2.GetSchema(),
+              EqualsProto(expected_get_schema_result_proto));
+
+  // The document should be found because we called
+  // PersistToDisk(RECOVERY_PROOF)!
+  EXPECT_THAT(
+      icing2.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document));
+
+  // The index should still be intact.
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::PREFIX);
   search_spec.set_query("message");  // Content in the Message document.
@@ -1374,6 +1876,49 @@ TEST_F(IcingSearchEngineTest, GetDebugInfoWithSchemaNoDocumentsSucceeds) {
   ASSERT_THAT(result.status(), ProtoIsOk());
 }
 
+TEST_F(IcingSearchEngineTest, ClearAndDestroySucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+
+  // Obtain empty size of the base directory.
+  int64_t empty_state_size =
+      filesystem()->GetFileDiskUsage(GetTestBaseDir().c_str());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Simple put and get
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() =
+      CreateMessageDocument("namespace", "uri");
+  ASSERT_THAT(
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+
+  // Sanity check that things have been added
+  EXPECT_THAT(filesystem()->GetDiskUsage(GetTestBaseDir().c_str()),
+              Gt(empty_state_size));
+  EXPECT_EQ(filesystem()->DirectoryExists(GetTestBaseDir().c_str()), true);
+
+  // Clear all data for the icing instance
+  ResetResultProto clear_result = icing.ClearAndDestroy();
+  EXPECT_THAT(clear_result.status(), ProtoIsOk());
+
+  // Check that the directory no longer exists after deletion.
+  EXPECT_EQ(filesystem()->DirectoryExists(GetTestBaseDir().c_str()), false);
+
+  // Try to put and get again, but it should fail since the instance is
+  // uninitialized.
+  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+}
 }  // namespace
 }  // namespace lib
 }  // namespace icing

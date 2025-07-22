@@ -31,18 +31,26 @@ class IcingMonkeyTestRunner;
 struct IcingMonkeyTestRunnerConfiguration {
   explicit IcingMonkeyTestRunnerConfiguration(uint32_t seed, int num_types,
                                               int num_namespaces, int num_uris,
-                                              int index_merge_size)
+                                              int index_merge_size,
+                                              bool initialize_by_existing_data)
       : seed(seed),
         num_types(num_types),
         num_namespaces(num_namespaces),
         num_uris(num_uris),
-        index_merge_size(index_merge_size) {}
+        index_merge_size(index_merge_size),
+        initialize_by_existing_data(initialize_by_existing_data) {}
 
   uint32_t seed;
   int num_types;
   int num_namespaces;
   int num_uris;
   int index_merge_size;
+
+  // Whether to initialize Icing with existing data. If true, the test will
+  // start from the state of the existing Icing testing data stored in
+  // GetTestTempDir() + "/icing/monkey". Otherwise, the test will start with an
+  // empty Icing.
+  bool initialize_by_existing_data;
 
   // To ensure that the random schema is generated with the best quality, the
   // number of properties for each type will only be randomly picked from this
@@ -51,9 +59,16 @@ struct IcingMonkeyTestRunnerConfiguration {
   // property, 2 properties, 3 properties and 4 properties.
   std::vector<int> possible_num_properties;
 
-  // The possible number of tokens that may appear in generated documents, with
-  // a noise factor from 0.5 to 1 applied.
-  std::vector<int> possible_num_tokens_;
+  // The possible number of tokens that may appear in a string property of
+  // generated documents, with a noise factor from 0.5 to 1 applied.
+  std::vector<int> possible_num_tokens;
+
+  // The possible number of embedding vectors that may appear in a repeated
+  // vector property of generated documents.
+  std::vector<int> possible_num_vectors;
+
+  // The possible dimensions for the randomly generated embedding vectors.
+  std::vector<int> possible_vector_dimensions;
 
   // An array of pairs of monkey test APIs with frequencies.
   // If f_sum is the sum of all the frequencies, an operation with frequency f
