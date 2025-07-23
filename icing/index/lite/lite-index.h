@@ -418,7 +418,8 @@ class LiteIndex {
   }
 
   // Non-locking implementation for SortHits().
-  void SortHitsImpl() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::Status SortHitsImpl()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Calculates and adds the score for a fetched hit to total_score_out, while
   // updating last_document_id (which keeps track of the last added docId so

@@ -29,7 +29,8 @@ class FeatureFlags {
                         bool release_backup_schema_file_if_overlay_present,
                         bool enable_strict_page_byte_size_limit,
                         bool enable_smaller_decompression_buffer_size,
-                        bool enable_eigen_embedding_scoring)
+                        bool enable_eigen_embedding_scoring,
+                        bool enable_passing_filter_to_children)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -41,7 +42,8 @@ class FeatureFlags {
         enable_strict_page_byte_size_limit_(enable_strict_page_byte_size_limit),
         enable_smaller_decompression_buffer_size_(
             enable_smaller_decompression_buffer_size),
-        enable_eigen_embedding_scoring_(enable_eigen_embedding_scoring) {}
+        enable_eigen_embedding_scoring_(enable_eigen_embedding_scoring),
+        enable_passing_filter_to_children_(enable_passing_filter_to_children) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -81,6 +83,10 @@ class FeatureFlags {
     return enable_eigen_embedding_scoring_;
   }
 
+  bool enable_passing_filter_to_children() const {
+    return enable_passing_filter_to_children_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -113,6 +119,8 @@ class FeatureFlags {
   // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
   // not defined), Eigen will be used for embedding scoring.
   bool enable_eigen_embedding_scoring_;
+
+  bool enable_passing_filter_to_children_;
 };
 
 }  // namespace lib

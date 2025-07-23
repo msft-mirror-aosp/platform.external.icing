@@ -94,10 +94,24 @@ void StringFuzzTest(const std::string& data) {
                                           ResultSpecProto::default_instance());
   EXPECT_THAT(result.results(0).document().uri(), document.uri());
 }
-// TODO(b/416553583): Add more advanced fuzz tests including emojis and
-// decomposed characters.
+
+// vector of emojis to be used in the fuzz test
+const std::vector<std::string> emojis = {"😀", "😂", "😊", "😘",
+  "😠", "😢", "😱", "🍻"};
+
+// add a random emoji to a string containing a decomposed character
+std::string addEmoji(const std::string& str, const std::string& emoji) {
+  return str + emoji;
+}
+
+// dictionary including Spanish words with accents (lowercase and uppercase)
+std::vector<std::string> data = {"dìas", "Sí", "Más", "Tú", "Él",
+  "Dónde", "Qué", "miércoles", "café",
+  "sábado"};
+
 FUZZ_TEST(TestSuite, StringFuzzTest)
-    .WithDomains(/* data= */ fuzztest::InRegexp("[a-z]+"));
+    .WithDomains(fuzztest::Map(addEmoji, fuzztest::ElementOf(data),
+                               fuzztest::ElementOf(emojis)));
 
 }  // namespace
 }  // namespace lib
