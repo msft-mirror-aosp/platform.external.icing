@@ -2,10 +2,13 @@
 #include <android/binder_auto_utils.h>
 #include <android/binder_ibinder.h>
 #include <android/binder_status.h>
+#include <signal.h>
 #include <sys/system_properties.h>
 #include <vm_payload.h>
 
+#include <chrono>
 #include <cinttypes>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,14 +16,17 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
 #include "aidl/com/android/isolated_storage_service/BnIcingSearchEngine.h"
 #include "aidl/com/android/isolated_storage_service/BnIsolatedStorageService.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/icing-search-engine.h"
 #include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
@@ -87,11 +93,82 @@ using ::icing::lib::UsageReport;
 using BlobHandleProto = ::icing::lib::PropertyProto::BlobHandleProto;
 using ::icing::lib::ERROR;
 using ::icing::lib::INFO;
+using ::icing::lib::WARNING;
 using ::ndk::ScopedAStatus;
 
 namespace {
 void vmShrinkRay() { sync(); }
 }  // namespace
+
+enum class ServiceState {
+  kAlive,
+  kTerminate,
+};
+
+// A wrapper struct for state information of a single IcingConnectionImpl to
+// handle termination.
+struct ConnectionState {
+  std::mutex mutex;
+  std::condition_variable cv;
+
+  ServiceState state ICING_GUARDED_BY(mutex);
+  int active_request_count ICING_GUARDED_BY(mutex);
+
+  class ActiveRequest {
+   public:
+    explicit ActiveRequest(ConnectionState* conn_state)
+        : conn_state_(conn_state) {}
+
+    ~ActiveRequest() {
+      conn_state_->DestroyActiveRequest();
+    }
+
+   private:
+    ConnectionState* conn_state_;  // Does not own!
+  };
+
+  ConnectionState() : state(ServiceState::kAlive), active_request_count(0) {}
+
+  // Returns an ActiveRequest that handles active request count increment and
+  // decrement.
+  //
+  // Note: nullopt will be returned if the service is about to terminate, and the
+  //   request should be rejected.
+  std::optional<ActiveRequest> CreateActiveRequest() {
+    std::unique_lock lk(mutex);
+
+    if (state == ServiceState::kTerminate) {
+      return std::nullopt;
+    }
+
+    ++active_request_count;
+    return std::make_optional<ActiveRequest>(this);
+  }
+
+  void DestroyActiveRequest() {
+    bool need_notify = false;
+    {
+      std::unique_lock lk(mutex);
+
+      --active_request_count;
+      if (state == ServiceState::kTerminate) {
+        ICING_LOG(INFO) << "Finish request at terminate state. "
+                        << active_request_count
+                        << " active request(s) remaining.";
+        // If we're at terminate state and this is the last active request, then
+        // notify the waiting thread and run the cleanup tasks.
+        if (active_request_count == 0) {
+          need_notify = true;
+        }
+      }
+    }
+
+    if (need_notify) {
+      ICING_LOG(INFO) << "Notify the main thread to cleanup before termination.";
+      cv.notify_all();
+    }
+  }
+};
 
 // TODO(b/413761935) move better or equivalent solution into AVF
 // TODO - is there a way to make dlopen automatically fill in weak symbols?
@@ -120,11 +197,71 @@ struct AVmPayloadLazy {
     }
 } gVmPayloadLazy;
 
+#define CREATE_ACTIVE_REQUEST_AND_CHECK(expr)                  \
+  auto active_request = expr;                                  \
+  do {                                                         \
+    if (active_request == std::nullopt) {                      \
+      return ndk::ScopedAStatus::fromExceptionCodeWithMessage( \
+          EX_ILLEGAL_STATE, "Service is about to terminate");  \
+    }                                                          \
+  } while (false)
+
 // This class implements the AIDL interface for the Icing connection.
 class IcingConnectionImpl
     : public aidl::com::android::isolated_storage_service::BnIcingSearchEngine {
  public:
   explicit IcingConnectionImpl(uint32_t user_id) : user_id_(user_id) {}
+
+  void Terminate() {
+    // Set terminate state and wait for active requests to finish.
+    {
+      ICING_LOG(INFO) << "Acquiring the lock";
+      std::unique_lock lk(conn_state_.mutex);
+
+      conn_state_.state = ServiceState::kTerminate;
+      if (conn_state_.active_request_count > 0) {
+        ICING_LOG(INFO) << "Wait for " << conn_state_.active_request_count
+                        << " active requests for user " << user_id_
+                        << " to finish";
+
+        // Conditional variable predicate: end waiting when there is no active
+        // request.
+        const auto pred = [&]() {
+          return conn_state_.active_request_count <= 0;
+        };
+        while (!conn_state_.cv.wait_for(lk, std::chrono::seconds(1), pred)) {
+          ICING_LOG(INFO) << "Waited 1s for active requests to finish,"
+                          << " but there are still "
+                          << conn_state_.active_request_count
+                          << " active requests left.";
+        }
+
+        ICING_LOG(INFO) << "Got notification from the last active request for user "
+                        << user_id_;
+      } else {
+        ICING_LOG(INFO) << "No active requests for user " << user_id_;
+      }
+    }
+
+    // At this point, we've:
+    // - Set state to kTerminate.
+    // - Ensured there is no active request.
+    //
+    // Call PersistToDisk to cleanup. RECOVERY_PROOF mode is sufficient here
+    // since it updates all essential checksums. Data flushing will be handled
+    // by the OS shutdown path.
+    ICING_LOG(INFO) << "Icing PersistToDisk: safe termination for user "
+                    << user_id_;
+    PersistToDiskResultProto persist_to_disk_result =
+        icing_->PersistToDisk(icing::lib::PersistType::RECOVERY_PROOF);
+    if (persist_to_disk_result.status().code() != StatusProto::OK) {
+      ICING_LOG(WARNING) << "Failed to handle Icing PersistToDisk for user "
+                         << user_id_ << ". Code: "
+                         << static_cast<int>(persist_to_disk_result.status().code())
+                         << ", message: "
+                         << persist_to_disk_result.status().message();
+    }
+  }
 
   ScopedAStatus initialize(
       const std::vector<uint8_t>& icing_search_engine_options_proto,
@@ -141,6 +278,8 @@ class IcingConnectionImpl
       icing_ = std::make_unique<IcingSearchEngine>(options);
     }
 
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
     // IcingSearchEngine::Initialize will return success directly if it has
     // already been initialized.
     InitializeResultProto initialize_result = icing_->Initialize();
@@ -149,6 +288,8 @@ class IcingConnectionImpl
 
   ScopedAStatus close() {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
     ICING_LOG(INFO) << "IsolatedStorageService closing Icing connection.";
     icing_->PersistToDisk(icing::lib::PersistType::FULL);
     return ScopedAStatus::ok();
@@ -157,6 +298,8 @@ class IcingConnectionImpl
   ScopedAStatus clearAndDestroy(
       std::optional<std::vector<uint8_t>>* clear_and_destroy_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
     ICING_LOG(INFO)
         << "IsolatedStorageService clear and destroy icing instance.";
     ResetResultProto clear_and_destroy_result = icing_->ClearAndDestroy();
@@ -166,6 +309,8 @@ class IcingConnectionImpl
 
   ScopedAStatus reset(std::optional<std::vector<uint8_t>>* reset_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
     ResetResultProto reset_result = icing_->Reset();
     SERIALIZE_AND_RETURN_ASTATUS(reset_result, reset_result_proto);
   }
@@ -175,6 +320,7 @@ class IcingConnectionImpl
       bool ignore_errors_and_delete_documents,
       std::optional<std::vector<uint8_t>>* set_schema_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     SchemaProto schema;
     DESERIALIZE_OR_RETURN(schema_proto, schema)
@@ -188,6 +334,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& set_schema_request_proto,
       std::optional<std::vector<uint8_t>>* set_schema_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     SetSchemaRequestProto request;
     DESERIALIZE_OR_RETURN(set_schema_request_proto, request)
@@ -199,6 +346,7 @@ class IcingConnectionImpl
   ScopedAStatus getSchema(
       std::optional<std::vector<uint8_t>>* get_schema_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetSchemaResultProto schema = icing_->GetSchema();
     SERIALIZE_AND_RETURN_ASTATUS(schema, get_schema_result_proto);
@@ -208,6 +356,8 @@ class IcingConnectionImpl
       const std::string& database,
       std::optional<std::vector<uint8_t>>* get_schema_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
     GetSchemaResultProto schema = icing_->GetSchema(database);
     SERIALIZE_AND_RETURN_ASTATUS(schema, get_schema_result_proto);
   }
@@ -216,6 +366,7 @@ class IcingConnectionImpl
       const std::string& schema_type,
       std::optional<std::vector<uint8_t>>* get_schema_type_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetSchemaTypeResultProto schema_type_result =
         icing_->GetSchemaType(schema_type);
@@ -226,6 +377,7 @@ class IcingConnectionImpl
   ScopedAStatus put(const std::vector<uint8_t>& document_proto,
                     std::optional<std::vector<uint8_t>>* put_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     DocumentProto document;
     DESERIALIZE_OR_RETURN(document_proto, document);
@@ -238,6 +390,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& put_document_request_proto,
       std::optional<std::vector<uint8_t>>* batch_put_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     PutDocumentRequest request;
     DESERIALIZE_OR_RETURN(put_document_request_proto, request);
@@ -252,6 +405,7 @@ class IcingConnectionImpl
                     const std::vector<uint8_t>& get_result_spec_proto,
                     std::optional<std::vector<uint8_t>>* get_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetResultSpecProto get_result_spec;
     DESERIALIZE_OR_RETURN(get_result_spec_proto, get_result_spec);
@@ -264,6 +418,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& get_result_spec_proto,
       std::optional<std::vector<uint8_t>>* batch_get_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetResultSpecProto get_result_spec;
     DESERIALIZE_OR_RETURN(get_result_spec_proto, get_result_spec);
@@ -277,6 +432,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& usage_report_proto,
       std::optional<std::vector<uint8_t>>* report_usage_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     UsageReport usage_report;
     DESERIALIZE_OR_RETURN(usage_report_proto, usage_report);
@@ -290,6 +446,7 @@ class IcingConnectionImpl
   ScopedAStatus getAllNamespaces(
       std::optional<std::vector<uint8_t>>* get_all_namespaces_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetAllNamespacesResultProto get_all_namespaces_result =
         icing_->GetAllNamespaces();
@@ -303,6 +460,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& result_spec_proto,
       std::optional<std::vector<uint8_t>>* search_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     SearchSpecProto search_spec;
     DESERIALIZE_OR_RETURN(search_spec_proto, search_spec);
@@ -322,6 +480,7 @@ class IcingConnectionImpl
       int64_t next_page_token,
       std::optional<std::vector<uint8_t>>* get_next_page_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     SearchResultProto get_next_page_result =
         icing_->GetNextPage(next_page_token);
@@ -333,6 +492,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& get_next_page_request_proto,
       std::optional<std::vector<uint8_t>>* get_next_page_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetNextPageRequestProto request_proto;
     DESERIALIZE_OR_RETURN(get_next_page_request_proto, request_proto);
@@ -343,6 +503,7 @@ class IcingConnectionImpl
 
   ScopedAStatus invalidateNextPageToken(int64_t next_page_token) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     icing_->InvalidateNextPageToken(next_page_token);
     return ScopedAStatus::ok();
@@ -351,6 +512,7 @@ class IcingConnectionImpl
   ScopedAStatus openWriteBlob(const std::vector<uint8_t>& blob_handle_proto,
                               std::optional<std::vector<uint8_t>>* blob_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     BlobHandleProto blob_handle;
     DESERIALIZE_OR_RETURN(blob_handle_proto, blob_handle);
@@ -362,6 +524,7 @@ class IcingConnectionImpl
   ScopedAStatus removeBlob(const std::vector<uint8_t>& blob_handle_proto,
                            std::optional<std::vector<uint8_t>>* blob_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     BlobHandleProto blob_handle;
     DESERIALIZE_OR_RETURN(blob_handle_proto, blob_handle);
@@ -373,6 +536,7 @@ class IcingConnectionImpl
   ScopedAStatus openReadBlob(const std::vector<uint8_t>& blob_handle_proto,
                              std::optional<std::vector<uint8_t>>* blob_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     BlobHandleProto blob_handle;
     DESERIALIZE_OR_RETURN(blob_handle_proto, blob_handle);
@@ -384,6 +548,7 @@ class IcingConnectionImpl
   ScopedAStatus commitBlob(const std::vector<uint8_t>& blob_handle_proto,
                            std::optional<std::vector<uint8_t>>* blob_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     BlobHandleProto blob_handle;
     DESERIALIZE_OR_RETURN(blob_handle_proto, blob_handle);
@@ -396,6 +561,7 @@ class IcingConnectionImpl
       const std::string& name_space, const std::string& uri,
       std::optional<std::vector<uint8_t>>* delete_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     DeleteResultProto delete_result = icing_->Delete(name_space, uri);
     SERIALIZE_AND_RETURN_ASTATUS(delete_result, delete_result_proto);
@@ -405,6 +571,7 @@ class IcingConnectionImpl
       const std::vector<uint8_t>& suggestion_spec_proto,
       std::optional<std::vector<uint8_t>>* suggestion_response_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     SuggestionSpecProto suggestion_spec;
     DESERIALIZE_OR_RETURN(suggestion_spec_proto, suggestion_spec);
@@ -419,6 +586,7 @@ class IcingConnectionImpl
       const std::string& name_space,
       std::optional<std::vector<uint8_t>>* delete_by_namespace_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     DeleteByNamespaceResultProto delete_by_namespace_result =
         icing_->DeleteByNamespace(name_space);
@@ -430,6 +598,7 @@ class IcingConnectionImpl
       const std::string& schema_type,
       std::optional<std::vector<uint8_t>>* delete_by_schema_type_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     DeleteBySchemaTypeResultProto delete_by_schema_type_result =
         icing_->DeleteBySchemaType(schema_type);
@@ -442,6 +611,7 @@ class IcingConnectionImpl
       bool return_deleted_document_info,
       std::optional<std::vector<uint8_t>>* delete_by_query_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     SearchSpecProto search_spec;
     DESERIALIZE_OR_RETURN(search_spec_proto, search_spec);
@@ -456,6 +626,7 @@ class IcingConnectionImpl
       int32_t persist_type_code,
       std::optional<std::vector<uint8_t>>* persist_to_disk_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     PersistToDiskResultProto persist_to_disk_result =
         icing_->PersistToDisk(PersistType::Code(persist_type_code));
@@ -466,6 +637,7 @@ class IcingConnectionImpl
   ScopedAStatus optimize(
       std::optional<std::vector<uint8_t>>* optimize_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     OptimizeResultProto optimize_result = icing_->Optimize();
     SERIALIZE_AND_RETURN_ASTATUS(optimize_result, optimize_result_proto);
@@ -474,6 +646,7 @@ class IcingConnectionImpl
   ScopedAStatus getOptimizeInfo(
       std::optional<std::vector<uint8_t>>* get_optimize_info_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     GetOptimizeInfoResultProto get_optimize_info_result =
         icing_->GetOptimizeInfo();
@@ -484,6 +657,7 @@ class IcingConnectionImpl
   ScopedAStatus getStorageInfo(
       std::optional<std::vector<uint8_t>>* get_storage_info_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     StorageInfoResultProto get_storage_info_result = icing_->GetStorageInfo();
     SERIALIZE_AND_RETURN_ASTATUS(get_storage_info_result,
@@ -494,6 +668,7 @@ class IcingConnectionImpl
       int32_t verbosity,
       std::optional<std::vector<uint8_t>>* get_debug_info_result_proto) {
     CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
 
     DebugInfoResultProto get_debug_info_result =
         icing_->GetDebugInfo(DebugInfoVerbosity::Code(verbosity));
@@ -504,11 +679,36 @@ class IcingConnectionImpl
  protected:
   std::unique_ptr<icing::lib::IcingSearchEngine> icing_ = nullptr;
   uint32_t user_id_;
+
+  ConnectionState conn_state_;
 };
 
 class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
  public:
   IsolatedStorageServiceImpl() = default;
+
+  // Handle terminate.
+  void Terminate() {
+    std::map<int32_t, std::shared_ptr<IcingConnectionImpl>> connections;
+    // Step 1: set the service state to terminate to reject any new connections.
+    //   Also move out all existing connections so we can release the lock and
+    //   handle termination outside of the critical section.
+    {
+      std::unique_lock lk(mutex_);
+
+      state_ = ServiceState::kTerminate;
+      connections.swap(icing_connections_);
+    }
+
+    // Step 2: terminate each connection.
+    for (const auto& [unused, connection] : connections) {
+      connection->Terminate();
+    }
+
+    // Step 3: goodbye.
+    ICING_LOG(INFO) << "Done cleanup connections. Terminate payload service.";
+    exit(0);
+  }
 
  private:
   ScopedAStatus quit() override {
@@ -601,6 +801,13 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
       std::shared_ptr<
           aidl::com::android::isolated_storage_service::IIcingSearchEngine>*
           icing_server) override {
+    std::unique_lock lk(mutex_);
+
+    if (state_ == ServiceState::kTerminate) {
+      return ScopedAStatus::fromExceptionCodeWithMessage(
+          EX_ILLEGAL_STATE, "Service is about to terminate");
+    }
+
     auto connection = icing_connections_.find(user_id);
     if (connection != icing_connections_.end()) {
       *icing_server = connection->second;
@@ -613,6 +820,8 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
   }
 
   ScopedAStatus removeIcingConnection(int user_id) override {
+    std::unique_lock lk(mutex_);
+
     ICING_LOG(INFO) << "Removing Icing connection for user " << user_id;
     auto connection = icing_connections_.find(user_id);
     if (connection != icing_connections_.end()) {
@@ -621,7 +830,10 @@ class IsolatedStorageServiceImpl : public BnIsolatedStorageService {
     return ScopedAStatus::ok();
   }
 
-  std::map<int32_t, std::shared_ptr<IcingConnectionImpl>> icing_connections_;
+  std::mutex mutex_;
+  ServiceState state_ ICING_GUARDED_BY(mutex_);
+  std::map<int32_t, std::shared_ptr<IcingConnectionImpl>>
+      icing_connections_ ICING_GUARDED_BY(mutex_);
 };
 }  // namespace
 
@@ -634,10 +846,32 @@ extern "C" int AVmPayload_main() {
   icing::lib::SetForceDebugLogging(true);
   ICING_LOG(INFO) << "IsolatedStorageService VM Payload starting";
   auto service = ndk::SharedRefBase::make<IsolatedStorageServiceImpl>();
+
+  // Create a new thread to wait for SIGTERM/SIGINT and shutdown gracefully.
+  // The signals must be blocked in the main thread (and all other threads) so
+  // that they are not delivered using the default handlers.
+  sigset_t sig_set;
+  sigemptyset(&sig_set);
+  sigaddset(&sig_set, SIGINT);
+  sigaddset(&sig_set, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &sig_set, nullptr);
+
+  std::thread([service, sig_set] {
+    int sig;
+    int ret = sigwait(&sig_set, &sig);
+    if (ret == 0) {
+      ICING_LOG(INFO) << "Caught signal " << sig << ", shutting down.";
+      service->Terminate();
+    } else {
+      ICING_LOG(ERROR) << "sigwait failed: " << strerror(ret);
+    }
+  }).detach();
+
   auto callback = []([[maybe_unused]] void* param) {
     ICING_LOG(INFO) << "IsolatedStorageService VM Payload ready";
     gVmPayloadLazy.AVmPayload_notifyPayloadReady();
   };
+  // Run the rpc server.
   gVmPayloadLazy.AVmPayload_runVsockRpcServer(service->asBinder().get(), service->PORT,
                                callback, /*param=*/nullptr);
 }
