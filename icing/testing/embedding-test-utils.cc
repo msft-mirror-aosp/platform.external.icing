@@ -24,9 +24,11 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/proto/document.pb.h"
+#include "icing/store/document-id.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -81,6 +83,17 @@ GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     result.push_back(quantizer.Dequantize(quantized_vector[i]));
   }
   return result;
+}
+
+EmbeddingMatchInfos& GetOrCreateEmbeddingMatchInfosForDocument(
+    EmbeddingQueryResults& embedding_query_results, int query_vector_index,
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
+    DocumentId doc_id) {
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map =
+      embedding_query_results
+          .GetOrCreateMatchInfoMap(query_vector_index, metric_type)
+          .ValueOrDie();
+  return (*info_map)[doc_id];
 }
 
 }  // namespace lib

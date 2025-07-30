@@ -195,7 +195,10 @@ libtextclassifier3::Status LiteIndex::Initialize() {
 
     // Check integrity.
     if (!header_->check_magic()) {
-      status = absl_ports::InternalError("Lite index header magic mismatch");
+      ICING_LOG(ERROR) << "Invalid header magic for LiteIndex "
+                       << options_.filename_base;
+      status = absl_ports::InternalError(absl_ports::StrCat(
+          "Invalid header magic for LiteIndex: ", options_.filename_base));
       goto error;
     }
     Crc32 expected_crc(header_->lite_index_crc());
@@ -687,10 +690,16 @@ libtextclassifier3::Status LiteIndex::Optimize(
       tvi_to_delete.insert(curr_tvi);
     }
     DocumentId old_document_id = term_id_hit_pair.hit().document_id();
-    DocumentId new_document_id =
-        old_document_id >= 0 && old_document_id < document_id_old_to_new.size()
-            ? document_id_old_to_new[old_document_id]
-            : kInvalidDocumentId;
+    if (old_document_id < 0 ||
+        old_document_id >= document_id_old_to_new.size()) {
+      // If it happens, then the hit buffer is corrupted. Return error and let
+      // the caller rebuild everything.
+      return absl_ports::InternalError(
+          "Lite index hit document id is out of range. The index may have been "
+          "corrupted.");
+    }
+
+    DocumentId new_document_id = document_id_old_to_new[old_document_id];
     if (new_document_id == kInvalidDocumentId) {
       continue;
     }

@@ -145,15 +145,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Put(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>>
-QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
+libtextclassifier3::StatusOr<QualifiedIdJoinIndex::DocumentJoinIdPairArrayView>
+QualifiedIdJoinIndexImplV3::GetDocumentJoinIdPairArrayView(
+    DocumentId parent_document_id) const {
   if (parent_document_id < 0 || parent_document_id == kInvalidDocumentId) {
     return absl_ports::InvalidArgumentError("Invalid parent document id");
   }
 
   if (parent_document_id >=
       parent_document_id_to_child_array_info_->num_elements()) {
-    return std::vector<DocumentJoinIdPair>();
+    return DocumentJoinIdPairArrayView(/*data=*/nullptr, /*len=*/0);
   }
 
   // Get the child array info for the parent.
@@ -161,7 +162,7 @@ QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
       const ArrayInfo* array_info,
       parent_document_id_to_child_array_info_->Get(parent_document_id));
   if (!array_info->IsValid()) {
-    return std::vector<DocumentJoinIdPair>();
+    return DocumentJoinIdPairArrayView(/*data=*/nullptr, /*len=*/0);
   }
 
   // Safe check to avoid out-of-bound access. This should never happen unless
@@ -174,11 +175,11 @@ QualifiedIdJoinIndexImplV3::Get(DocumentId parent_document_id) const {
         std::to_string(child_document_join_id_pair_array_->num_elements())));
   }
 
-  // Get the DocumentJoinIdPair array and return the child DocumentJoinIdPairs.
+  // Get the DocumentJoinIdPair array ptr and return the array view.
   ICING_ASSIGN_OR_RETURN(
       const DocumentJoinIdPair* ptr,
       child_document_join_id_pair_array_->Get(array_info->index));
-  return std::vector<DocumentJoinIdPair>(ptr, ptr + array_info->used_length);
+  return DocumentJoinIdPairArrayView(ptr, array_info->used_length);
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
@@ -460,7 +461,13 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
 
   // Validate magic.
   if (join_index->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for QualifiedIdJoinIndexImplV3 "
+                     << join_index->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << join_index->info().magic;
+    return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+        "Invalid header magic for QualifiedIdJoinIndexImplV3: ",
+        join_index->working_path_));
   }
 
   return join_index;
@@ -691,8 +698,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::TransferIndex(
        old_parent_doc_id <
        parent_document_id_to_child_array_info_->num_elements();
        ++old_parent_doc_id) {
-    if (old_parent_doc_id >= document_id_old_to_new.size() ||
-        document_id_old_to_new[old_parent_doc_id] == kInvalidDocumentId) {
+    if (old_parent_doc_id < 0 ||
+        old_parent_doc_id >= document_id_old_to_new.size()) {
+      // If it happens, then the data is corrupted. Return error and let the
+      // caller rebuild everything.
+      return absl_ports::InternalError(
+          "Qualified id join index data parent document id is out of range. "
+          "The index may have been corrupted.");
+    }
+
+    if (document_id_old_to_new[old_parent_doc_id] == kInvalidDocumentId) {
       // Skip if the old parent document id is invalid after optimization.
       continue;
     }
@@ -712,11 +727,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::TransferIndex(
     new_child_doc_join_id_pairs.reserve(array_info->length);
     for (int i = 0; i < array_info->used_length; ++i) {
       DocumentId old_child_doc_id = ptr[i].document_id();
-      DocumentId new_child_doc_id =
-          old_child_doc_id >= 0 &&
-                  old_child_doc_id < document_id_old_to_new.size()
-              ? document_id_old_to_new[old_child_doc_id]
-              : kInvalidDocumentId;
+      if (old_child_doc_id < 0 ||
+          old_child_doc_id >= document_id_old_to_new.size()) {
+        // If it happens, then the data is corrupted. Return error and let the
+        // caller rebuild everything.
+        return absl_ports::InternalError(
+            "Qualified id join index data child document id is out of range. "
+            "The index may have been corrupted.");
+      }
+
+      DocumentId new_child_doc_id = document_id_old_to_new[old_child_doc_id];
       if (new_child_doc_id == kInvalidDocumentId) {
         continue;
       }

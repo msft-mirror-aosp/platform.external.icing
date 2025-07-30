@@ -24,6 +24,7 @@
 #include "gtest/gtest.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/testing/common-matchers.h"
 
 namespace icing {
@@ -62,9 +63,9 @@ class ListScoreExpression : public ScoreExpression {
     return res;
   }
 
-  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
       const DocHitInfo &, const DocHitInfoIterator *) const override {
-    return values;
+    return DoubleList(values.data(), values.size());
   }
 
   ScoreExpressionType type() const override {

@@ -17,11 +17,22 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/logging.proto";
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
+
+// Holds a list of DocumentProto.
+// Next tag: 3
+message PutDocumentRequest {
+  repeated DocumentProto documents = 1;
+
+  // The persist type used to call PersistToDisk at the end of the Put request.
+  // If not specified, PersistToDisk will not be called.
+  optional PersistType.Code persist_type = 2;
+}
 
 // Defines a unit of data understood by the IcingSearchEngine.
 // Next tag: 10
@@ -118,8 +129,24 @@ message PropertyProto {
   repeated BlobHandleProto blob_handle_values = 9;
 }
 
-// Result of a call to IcingSearchEngine.Put
+// Holds a list of PutResultProto.
 // Next tag: 4
+message BatchPutResultProto {
+  // The overall status of doing the batch put. It is independent of the status
+  // of the individual PutResultProtos. E.g. we may still return OK here even if
+  // all the PutResultProto have errors. Or return INTERNAL_ERROR if there is
+  // some issue parsing this proto, even if all documents are indexed
+  // successfully.
+  optional StatusProto status = 3;
+  repeated PutResultProto put_result_protos = 1;
+
+  // The result of calling PersistToDisk at the end of the BatchPut request if
+  // PutDocumentRequest.persist_type is set.
+  optional PersistToDiskResultProto persist_to_disk_result_proto = 2;
+}
+
+// Result of a call to IcingSearchEngine.Put
+// Next tag: 5
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -134,6 +161,9 @@ message PutResultProto {
   // go/icing-library-apis.
   optional StatusProto status = 1;
 
+  // The uri of the document that was put.
+  optional string uri = 4;
+
   // Stats of the function call. Inside PutDocumentStatsProto, the function
   // call latency 'latency_ms' will always be populated. The other fields will
   // be accurate only when the status above is OK. See logging.proto for
@@ -145,7 +175,7 @@ message PutResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Get
-// Next tag: 3
+// Next tag: 4
 message GetResultProto {
   // Status code can be one of:
   //   OK
@@ -159,9 +189,23 @@ message GetResultProto {
   // go/icing-library-apis.
   optional StatusProto status = 1;
 
+  // The uri of the document that was retrieved, or failed to be retrieved.
+  // It won't be set now for a single Get call, as the caller knows the uri if
+  // the Get fails.
+  // TODO(b/404275015) We should always set this field in Get once we refactor
+  // the tests.
+  optional string uri = 3;
+
   // Copy of the Document proto with the specified name_space, uri. Modifying
   // this does not affect the Document in IcingSearchEngine.
   optional DocumentProto document = 2;
+}
+
+// Result of a call to IcingSearchEngine.BatchGet
+// Next tag: 3
+message BatchGetResultProto {
+  optional StatusProto status = 1;
+  repeated GetResultProto get_result_protos = 2;
 }
 
 // Result of a call to IcingSearchEngine.GetAllNamespaces
