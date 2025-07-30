@@ -1417,8 +1417,10 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   //   stores schema type id (+ joinable property path) as a key to group join
   //   data.
   bool join_incompatible =
-      !set_schema_result.schema_types_join_incompatible_by_name.empty() ||
-      !set_schema_result.old_schema_type_ids_changed.empty();
+      !set_schema_result.schema_types_join_incompatible_by_name.empty();
+  if (!options_.enable_qualified_id_join_index_v3()) {
+      join_incompatible |= !set_schema_result.old_schema_type_ids_changed.empty();
+  }
   for (const std::string& join_incompatible_type :
        set_schema_result.schema_types_join_incompatible_by_name) {
     result_proto.add_join_incompatible_changed_schema_types(
