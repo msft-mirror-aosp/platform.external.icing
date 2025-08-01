@@ -9910,7 +9910,15 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetScorableType(SCORABLE_TYPE_ENABLED)
                           .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+  // Ignore latency numbers as they're covered elsewhere
+  set_schema_result.clear_set_schema_stats();
+  SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result
+      .mutable_scorable_property_incompatible_changed_schema_types()
+      ->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   actual_search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
@@ -9985,7 +9993,15 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetScorableType(SCORABLE_TYPE_DISABLED)
                           .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema);
+  // Ignore latency numbers as they're covered elsewhere
+  set_schema_result.clear_set_schema_stats();
+  SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result
+      .mutable_scorable_property_incompatible_changed_schema_types()
+      ->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchResultProto search_result_proto = icing.Search(
       search_spec, scoring_spec, ResultSpecProto::default_instance());
@@ -10077,7 +10093,15 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetScorableType(SCORABLE_TYPE_ENABLED)
                           .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+  // Ignore latency numbers as they're covered elsewhere
+  set_schema_result.clear_set_schema_stats();
+  SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result
+      .mutable_scorable_property_incompatible_changed_schema_types()
+      ->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchSpecProto search_spec;
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
@@ -10174,7 +10198,11 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetScorableType(SCORABLE_TYPE_ENABLED)
                           .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+  EXPECT_THAT(set_schema_result.status(), ProtoIsOk());
+  EXPECT_THAT(
+      set_schema_result.scorable_property_incompatible_changed_schema_types(),
+      IsEmpty());
 
   SearchSpecProto search_spec;
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
@@ -10304,7 +10332,18 @@ TEST_F(IcingSearchEngineSearchTest,
                                    "Person", /*index_nested_properties=*/true)
                                .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
-  EXPECT_THAT(icing.SetSchema(schema_proto).status(), ProtoIsOk());
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_proto);
+  // Ignore latency numbers as they're covered elsewhere
+  set_schema_result.clear_set_schema_stats();
+  SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result
+      .mutable_scorable_property_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result
+      .mutable_scorable_property_incompatible_changed_schema_types()
+      ->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchSpecProto search_spec;
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
