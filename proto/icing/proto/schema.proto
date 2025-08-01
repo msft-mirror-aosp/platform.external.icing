@@ -455,7 +455,7 @@ message SetSchemaRequestProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 11
+// Next tag: 17
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -493,7 +493,9 @@ message SetSchemaResultProto {
   repeated string index_incompatible_changed_schema_types = 6;
 
   // Overall time used for the function call.
-  optional int32 latency_ms = 7;
+  //
+  // DEPRECATED: Use SetSchemaStatsProto.overall_latency_ms instead.
+  optional int32 latency_ms = 7 [deprecated = true];
 
   // Schema types that were changed in a way that was backwards compatible, but
   // invalidated the joinable cache.
@@ -509,6 +511,58 @@ message SetSchemaResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 10;
+
+  // Schema types that were changed in a way that was backwards compatible, but
+  // invalidated the scorable cache.
+  repeated string scorable_property_incompatible_changed_schema_types = 11;
+
+  // Stats and latencies for the SetSchema call.
+  optional SetSchemaStatsProto set_schema_stats = 12;
+
+  // Whether the term index (lite and main indices) was restored as a result of
+  // the set schema call.
+  optional bool has_term_index_restored = 13;
+
+  // Whether the integer index was restored as a result of the set schema call.
+  optional bool has_integer_index_restored = 14;
+
+  // Whether the embedding index was restored as a result of the set schema
+  // call.
+  optional bool has_embedding_index_restored = 15;
+
+  // Whether the qualified id join index was restored as a result of the set
+  // schema call.
+  optional bool has_qualified_id_join_index_restored = 16;
+}
+
+// Stats and latencies for IcingSearchEngine::SetSchema.
+// Next tag: 7
+message SetSchemaStatsProto {
+  // Overall time used for the function call. This is the sum of the latencies
+  // recorded in the other fields (schema_store_set_schema_latency,
+  // document_store_update_schema_latency,
+  // document_store_optimized_update_schema_latency,
+  // index_restoration_latency,
+  // scorable_property_cache_regeneration_latency)
+  optional int32 overall_latency_ms = 1;
+
+  // Latency for setting the schema in the schema store.
+  optional int32 schema_store_set_schema_latency_ms = 2;
+
+  // Latency for updating the document store's derived data using
+  // DocumentStore::UpdateSchemaStore.
+  optional int32 document_store_update_schema_latency_ms = 3;
+
+  // Latency for updating the document store's derived data using
+  // DocumentStore::OptimizedUpdateSchemaStore.
+  optional int32 document_store_optimized_update_schema_latency_ms = 4;
+
+  // Latency for rebuilding the index following an index-incompatible schema
+  // change.
+  optional int32 index_restoration_latency_ms = 5;
+
+  // Latency for regenerating the scorable property cache.
+  optional int32 scorable_property_cache_regeneration_latency_ms = 6;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema
