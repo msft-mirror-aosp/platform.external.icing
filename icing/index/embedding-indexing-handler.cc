@@ -33,17 +33,19 @@ namespace lib {
 
 libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndexingHandler>>
 EmbeddingIndexingHandler::Create(const Clock* clock,
-                                 EmbeddingIndex* embedding_index) {
+                                 EmbeddingIndex* embedding_index,
+                                 bool enable_embedding_index) {
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(embedding_index);
 
-  return std::unique_ptr<EmbeddingIndexingHandler>(
-      new EmbeddingIndexingHandler(clock, embedding_index));
+  return std::unique_ptr<EmbeddingIndexingHandler>(new EmbeddingIndexingHandler(
+      clock, embedding_index, enable_embedding_index));
 }
 
 libtextclassifier3::Status EmbeddingIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
+    DocumentId /*old_document_id*/ _, bool recovery_mode,
+    PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (!IsDocumentIdValid(document_id)) {
@@ -64,18 +66,21 @@ libtextclassifier3::Status EmbeddingIndexingHandler::Handle(
   }
   embedding_index_.set_last_added_document_id(document_id);
 
-  for (const Section<PropertyProto::VectorProto>& vector_section :
-       tokenized_document.vector_sections()) {
-    BasicHit hit(/*section_id=*/vector_section.metadata.id, document_id);
-    for (const PropertyProto::VectorProto& vector : vector_section.content) {
-      ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbedding(hit, vector));
+  if (enable_embedding_index_) {
+    for (const Section<PropertyProto::VectorProto>& vector_section :
+         tokenized_document.vector_sections()) {
+      BasicHit hit(/*section_id=*/vector_section.metadata.id, document_id);
+      for (const PropertyProto::VectorProto& vector : vector_section.content) {
+        ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbedding(
+            hit, vector, vector_section.metadata.quantization_type));
+      }
     }
-  }
-  ICING_RETURN_IF_ERROR(embedding_index_.CommitBufferToIndex());
+    ICING_RETURN_IF_ERROR(embedding_index_.CommitBufferToIndex());
 
-  if (put_document_stats != nullptr) {
-    put_document_stats->set_embedding_index_latency_ms(
-        index_timer->GetElapsedMilliseconds());
+    if (put_document_stats != nullptr) {
+      put_document_stats->set_embedding_index_latency_ms(
+          index_timer->GetElapsedMilliseconds());
+    }
   }
 
   return libtextclassifier3::Status::OK;

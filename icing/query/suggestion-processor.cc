@@ -26,6 +26,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -56,8 +57,8 @@ SuggestionProcessor::Create(Index* index,
                             const LanguageSegmenter* language_segmenter,
                             const Normalizer* normalizer,
                             const DocumentStore* document_store,
-                            const SchemaStore* schema_store,
-                            const Clock* clock) {
+                            const SchemaStore* schema_store, const Clock* clock,
+                            const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(numeric_index);
   ICING_RETURN_ERROR_IF_NULL(embedding_index);
@@ -66,10 +67,11 @@ SuggestionProcessor::Create(Index* index,
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   return std::unique_ptr<SuggestionProcessor>(new SuggestionProcessor(
       index, numeric_index, embedding_index, language_segmenter, normalizer,
-      document_store, schema_store, clock));
+      document_store, schema_store, clock, feature_flags));
 }
 
 libtextclassifier3::StatusOr<
@@ -251,19 +253,34 @@ SuggestionProcessor::QuerySuggestions(
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(&index_, &numeric_index_, &embedding_index_,
-                             &language_segmenter_, &normalizer_,
-                             &document_store_, &schema_store_, &clock_));
+      QueryProcessor::Create(
+          &index_, &numeric_index_, &embedding_index_, &language_segmenter_,
+          &normalizer_, &document_store_, &schema_store_,
+          /*join_children_fetcher=*/nullptr, &clock_, &feature_flags_));
 
   SearchSpecProto search_spec;
   search_spec.set_query(suggestion_spec.prefix());
   search_spec.set_term_match_type(
       suggestion_spec.scoring_spec().scoring_match_type());
+  for (const PropertyProto::VectorProto& vector :
+       suggestion_spec.embedding_query_vectors()) {
+    *search_spec.add_embedding_query_vectors() = vector;
+  }
+  search_spec.set_embedding_query_metric_type(
+      suggestion_spec.embedding_query_metric_type());
+  for (const std::string& query_parameter_string :
+       suggestion_spec.query_parameter_strings()) {
+    search_spec.add_query_parameter_strings(query_parameter_string);
+  }
+  for (const std::string& enabled_feature :
+       suggestion_spec.enabled_features()) {
+    search_spec.add_enabled_features(enabled_feature);
+  }
   ICING_ASSIGN_OR_RETURN(
       QueryResults query_results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE,
-                                   current_time_ms));
+      query_processor->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          /*get_embedding_match_info=*/false, current_time_ms));
 
   ICING_ASSIGN_OR_RETURN(
       DocHitInfoIterator::TrimmedNode trimmed_node,
@@ -329,7 +346,7 @@ SuggestionProcessor::SuggestionProcessor(
     const EmbeddingIndex* embedding_index,
     const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    const Clock* clock)
+    const Clock* clock, const FeatureFlags* feature_flags)
     : index_(*index),
       numeric_index_(*numeric_index),
       embedding_index_(*embedding_index),
@@ -337,7 +354,8 @@ SuggestionProcessor::SuggestionProcessor(
       normalizer_(*normalizer),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      clock_(*clock) {}
+      clock_(*clock),
+      feature_flags_(*feature_flags) {}
 
 }  // namespace lib
 }  // namespace icing

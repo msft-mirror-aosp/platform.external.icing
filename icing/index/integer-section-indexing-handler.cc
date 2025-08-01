@@ -47,7 +47,8 @@ IntegerSectionIndexingHandler::Create(const Clock* clock,
 
 libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
+    DocumentId /*old_document_id*/ _, bool recovery_mode,
+    PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (!IsDocumentIdValid(document_id)) {

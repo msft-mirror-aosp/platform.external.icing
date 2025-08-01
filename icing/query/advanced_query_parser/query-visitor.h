@@ -20,7 +20,6 @@
 #include <set>
 #include <stack>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -28,12 +27,14 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/function.h"
 #include "icing/query/advanced_query_parser/pending-value.h"
@@ -44,7 +45,6 @@
 #include "icing/store/document-store.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
-#include <google/protobuf/repeated_field.h>
 
 namespace icing {
 namespace lib {
@@ -58,22 +58,18 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       const EmbeddingIndex* embedding_index,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       const Normalizer* normalizer, const Tokenizer* tokenizer,
-      std::string_view raw_query_text,
-      const google::protobuf::RepeatedPtrField<PropertyProto::VectorProto>*
-          embedding_query_vectors,
-      DocHitInfoIteratorFilter::Options filter_options,
-      TermMatchType::Code match_type,
-      SearchSpecProto::EmbeddingQueryMetricType::Code
-          embedding_query_metric_type,
-      bool needs_term_frequency_info, int64_t current_time_ms)
+      const JoinChildrenFetcher* join_children_fetcher,
+      const SearchSpecProto& search_spec,
+      const DocumentFilterPredicate* filter_predicate,
+      bool needs_term_frequency_info, bool get_embedding_match_info,
+      const FeatureFlags* feature_flags, int64_t current_time_ms)
       : QueryVisitor(index, numeric_index, embedding_index, document_store,
-                     schema_store, normalizer, tokenizer, raw_query_text,
-                     embedding_query_vectors, filter_options, match_type,
-                     embedding_query_metric_type, needs_term_frequency_info,
+                     schema_store, normalizer, tokenizer, join_children_fetcher,
+                     search_spec, filter_predicate, needs_term_frequency_info,
+                     get_embedding_match_info, feature_flags,
                      PendingPropertyRestricts(),
                      /*processing_not=*/false, current_time_ms) {}
 
-  void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
   void VisitText(const TextNode* node) override;
   void VisitMember(const MemberNode* node) override;
@@ -121,29 +117,27 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       const EmbeddingIndex* embedding_index,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       const Normalizer* normalizer, const Tokenizer* tokenizer,
-      std::string_view raw_query_text,
-      const google::protobuf::RepeatedPtrField<PropertyProto::VectorProto>*
-          embedding_query_vectors,
-      DocHitInfoIteratorFilter::Options filter_options,
-      TermMatchType::Code match_type,
-      SearchSpecProto::EmbeddingQueryMetricType::Code
-          embedding_query_metric_type,
-      bool needs_term_frequency_info,
+      const JoinChildrenFetcher* join_children_fetcher,
+      const SearchSpecProto& search_spec,
+      const DocumentFilterPredicate* filter_predicate,
+      bool needs_term_frequency_info, bool get_embedding_match_info,
+      const FeatureFlags* feature_flags,
       PendingPropertyRestricts pending_property_restricts, bool processing_not,
       int64_t current_time_ms)
-      : index_(*index),
+      : embedding_query_results_(search_spec.embedding_query_vectors_size()),
+        index_(*index),
         numeric_index_(*numeric_index),
         embedding_index_(*embedding_index),
         document_store_(*document_store),
         schema_store_(*schema_store),
         normalizer_(*normalizer),
         tokenizer_(*tokenizer),
-        raw_query_text_(raw_query_text),
-        embedding_query_vectors_(embedding_query_vectors),
-        filter_options_(std::move(filter_options)),
-        match_type_(match_type),
-        embedding_query_metric_type_(embedding_query_metric_type),
+        join_children_fetcher_(join_children_fetcher),
+        search_spec_(search_spec),
+        filter_predicate_(filter_predicate),
         needs_term_frequency_info_(needs_term_frequency_info),
+        get_embedding_match_info_(get_embedding_match_info),
+        feature_flags_(*feature_flags),
         pending_property_restricts_(std::move(pending_property_restricts)),
         processing_not_(processing_not),
         expecting_numeric_arg_(false),
@@ -299,7 +293,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
 
   // Implementation of the semanticSearch(vector, low, high, metric) custom
   // function. This function is used for supporting vector search with a
-  // syntax like `semanticSearch(getSearchSpecEmbedding(0), 0.5, 1, "COSINE")`.
+  // syntax like `semanticSearch(getEmbeddingParameter(0), 0.5, 1, "COSINE")`.
   //
   // low, high, metric are optional parameters:
   //   - low is default to negative infinity
@@ -309,16 +303,37 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   // Returns:
   //   - a Pending Value of type DocHitIterator that returns all documents with
   //     an embedding vector that has a score within [low, high].
+  //   - OUT_OF_RANGE if index provided to getEmbeddingParameter is out of
+  //     bounds of SearchSpec.embedding_query_vectors()
   //   - any errors returned by Lexer::ExtractTokens
   libtextclassifier3::StatusOr<PendingValue> SemanticSearchFunction(
       std::vector<PendingValue>&& args);
 
-  // Implementation of the tokenize(string) custom function.
+  // Implementation of the getSearchStringParameter(index) custom function.
+  // Retrieves the parameterized string stored at
+  // SearchSpec.query_parameter_strings(index).
+  //
   // Returns:
   //   - a Pending Value holding a DocHitIterator that returns hits for all
   //     documents containing the normalized tokens present in the string.
+  //   - OUT_OF_RANGE if index is out of bounds of
+  //     SearchSpec.query_parameter_strings()
   //   - any errors returned by ProduceTextTokenIterators
-  libtextclassifier3::StatusOr<PendingValue> TokenizeFunction(
+  libtextclassifier3::StatusOr<PendingValue> GetSearchStringParameterFunction(
+      std::vector<PendingValue>&& args);
+
+  // Implementation of the matchScoreExpression(scoring_expression, low, high)
+  // custom function.
+  //
+  // high is an optional parameter, which defaults to positive infinity.
+  //
+  // Returns:
+  //   - a Pending Value of type DocHitIterator that returns all documents with
+  //     a score within [low, high] based on the provided scoring expression.
+  //     Documents that cause an evaluation error during scoring are ignored.
+  //   - INVALID_ARGUMENT if low is greater than high.
+  //   - any errors returned by score_expression_util::GetScoreExpression.
+  libtextclassifier3::StatusOr<PendingValue> MatchScoreExpressionFunction(
       std::vector<PendingValue>&& args);
 
   // Handles a NaryOperatorNode where the operator is HAS (':') and pushes an
@@ -337,7 +352,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   // Returns the correct match type to apply based on both the match type and
   // whether the prefix operator is currently present.
   TermMatchType::Code GetTermMatchType(bool is_prefix) const {
-    return (is_prefix) ? TermMatchType::PREFIX : match_type_;
+    return (is_prefix) ? TermMatchType::PREFIX : search_spec_.term_match_type();
   }
 
   std::stack<PendingValue> pending_values_;
@@ -363,16 +378,26 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   const Normalizer& normalizer_;                // Does not own!
   const Tokenizer& tokenizer_;                  // Does not own!
 
-  std::string_view raw_query_text_;
-  const google::protobuf::RepeatedPtrField<PropertyProto::VectorProto>*
-      embedding_query_vectors_;  // Nullable, does not own!
-  DocHitInfoIteratorFilter::Options filter_options_;
-  TermMatchType::Code match_type_;
-  SearchSpecProto::EmbeddingQueryMetricType::Code embedding_query_metric_type_;
+  // Nullable. A non-null join_children_fetcher_ indicates that this is the
+  // parent query for a join query, in which case child scores are available.
+  const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
+
+  const SearchSpecProto& search_spec_;  // Does not own.
+
+  const DocumentFilterPredicate* filter_predicate_;  // Does not own.
+
   // Whether or not term_frequency information is needed. This affects:
   //  - how DocHitInfoIteratorTerms are constructed
   //  - whether the QueryTermIteratorsMap is populated in the QueryResults.
   bool needs_term_frequency_info_;
+
+  // Whether or not to get embedding match info. This affects whether
+  // SectionInfos are populated in the EmbeddingQueryResults.
+  bool get_embedding_match_info_;
+
+  const FeatureFlags& feature_flags_;  // Does not own.
+  // TODO(b/377215223): Pass enabled scoring features from top level.
+  std::unordered_set<ScoringFeatureType> scoring_feature_types_enabled_;
 
   // The stack of property restricts currently being processed by the visitor.
   PendingPropertyRestricts pending_property_restricts_;

@@ -80,7 +80,7 @@ class IntegerIndexStorage : public PersistentStorage {
     int32_t magic;
     int32_t num_data;
 
-    Crc32 ComputeChecksum() const {
+    Crc32 GetChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
@@ -388,35 +388,21 @@ class IntegerIndexStorage : public PersistentStorage {
       int64_t key_lower, int64_t key_upper,
       std::vector<IntegerIndexData>&& data, IntegerIndexStorage* storage);
 
-  // Flushes contents of all storages to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
+  libtextclassifier3::Status PersistStoragesToDisk() override;
 
-  // Flushes contents of metadata file.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
+  libtextclassifier3::Status PersistMetadataToDisk() override;
 
-  // Computes and returns Info checksum.
-  //
-  // Returns:
-  //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
+  libtextclassifier3::Status WriteMetadata() override {
+    // IntegerIndexStorage::Header is mmapped. Therefore, writes occur when the
+    // metadata is modified. So just return OK.
+    return libtextclassifier3::Status::OK;
+  }
 
-  // Computes and returns all storages checksum. Checksums of sorted_buckets_,
-  // unsorted_buckets_ will be combined together by XOR.
-  // TODO(b/259744228): implement and include flash_index_storage checksum
-  //
-  // Returns:
-  //   - Crc of all storages on success
-  //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override;
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override;
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
 
   // Helper function to add keys in range [it_start, it_end) into the given
   // bucket. It handles the bucket and its corresponding posting list(s) to make
@@ -477,10 +463,11 @@ class IntegerIndexStorage : public PersistentStorage {
   }
 
   void SetInfoDirty() { is_info_dirty_ = true; }
-  // When storage is dirty, we have to set info dirty as well. So just expose
-  // SetDirty to set both.
+
+  // When the storage is dirty, then the checksum in the info is invalid and
+  // must be recalculated. Therefore, also mark the info as dirty.
   void SetDirty() {
-    is_info_dirty_ = true;
+    SetInfoDirty();
     is_storage_dirty_ = true;
   }
 

@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
@@ -38,6 +39,7 @@
 #include "icing/testing/always-false-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -81,6 +83,154 @@ TEST_F(LiteIndexTest, TermIdHitPairInvalidValue) {
               Eq(Hit::kDefaultTermFrequency));
 }
 
+TEST_F(LiteIndexTest, OutOfDateChecksumFailsInit) {
+  // 1. Create LiteIndex and add some content.
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add some hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm("foo", TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+  Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
+
+  // 2. Create a new LiteIndex. Create should fail because the checksum is out
+  // of date.
+  EXPECT_THAT(LiteIndex::Create(options, &icing_filesystem_),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+}
+
+TEST_F(LiteIndexTest, UpdatedChecksumPassesInit) {
+  // 1. Create LiteIndex and add some content.
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add some hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm("foo", TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+  Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
+
+  // 2. Updating the checksum should be sufficient to successfully initialize
+  // the next time.
+  Crc32 checksum = lite_index->GetChecksum();
+  EXPECT_THAT(lite_index->UpdateChecksum(), Eq(checksum));
+  EXPECT_THAT(lite_index->GetChecksum(), Eq(checksum));
+
+  // 3. Create a new LiteIndex. Create should succeed because the checksum has
+  // been updated.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index2,
+                             LiteIndex::Create(options, &icing_filesystem_));
+
+  // 4. Verify that the hits in the LiteIndex were kept.
+  std::vector<DocHitInfo> hits1;
+  lite_index2->FetchHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &hits1);
+  EXPECT_THAT(hits1, SizeIs(1));
+  EXPECT_THAT(hits1.back().document_id(), Eq(1));
+  // Check that the hits are coming from section 0 and section 1.
+  EXPECT_THAT(hits1.back().hit_section_ids_mask(), Eq(0b11));
+}
+
+TEST_F(LiteIndexTest, PersistedIndexPassesInit) {
+  // 1. Create LiteIndex and add some content.
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add some hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm("foo", TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+  Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
+
+  // 2. PersistToDisk should be sufficient to successfully initialize the next
+  // time.
+  ICING_ASSERT_OK(lite_index->PersistToDisk());
+
+  // 3. Create a new LiteIndex. Create should succeed because we've called
+  // PersistToDisk.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index2,
+                             LiteIndex::Create(options, &icing_filesystem_));
+
+  // 4. Verify that the hits in the LiteIndex were kept.
+  std::vector<DocHitInfo> hits1;
+  lite_index2->FetchHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &hits1);
+  EXPECT_THAT(hits1, SizeIs(1));
+  EXPECT_THAT(hits1.back().document_id(), Eq(1));
+  // Check that the hits are coming from section 0 and section 1.
+  EXPECT_THAT(hits1.back().hit_section_ids_mask(), Eq(0b11));
+}
+
 TEST_F(LiteIndexTest,
        LiteIndexFetchHits_sortAtQuerying_unsortedHitsBelowSortThreshold) {
   // Set up LiteIndex and TermIdCodec
@@ -106,9 +256,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
 
@@ -118,9 +270,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t bar_term_id,
                              term_id_codec_->EncodeTvi(bar_tvi, TviType::LITE));
   Hit bar_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit bar_hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit1));
 
@@ -188,9 +342,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
 
@@ -200,9 +356,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t bar_term_id,
                              term_id_codec_->EncodeTvi(bar_tvi, TviType::LITE));
   Hit bar_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit bar_hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit1));
 
@@ -268,36 +426,50 @@ TEST_F(
   // Create 4 hits for docs 0-2, and 2 hits for doc 3 -- 14 in total
   // Doc 0
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit2(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 1
   Hit doc1_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit1(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit3(/*section_id=*/2, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 2
   Hit doc2_hit0(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit1(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit2(/*section_id=*/1, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit3(/*section_id=*/2, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 3
   Hit doc3_hit0(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit1(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
 
   // Create terms
   // Foo
@@ -426,49 +598,69 @@ TEST_F(
   // Create 4 hits for docs 0-2, and 2 hits for doc 3 -- 14 in total
   // Doc 0
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit2(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 1
   Hit doc1_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit1(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit3(/*section_id=*/2, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 2
   Hit doc2_hit0(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit1(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit2(/*section_id=*/1, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit3(/*section_id=*/2, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 3
   Hit doc3_hit0(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit1(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit2(/*section_id=*/1, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit3(/*section_id=*/2, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 4
   Hit doc4_hit0(/*section_id=*/0, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc4_hit1(/*section_id=*/0, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc4_hit2(/*section_id=*/1, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc4_hit3(/*section_id=*/2, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
 
   // Create terms
   // Foo
@@ -623,9 +815,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc0_section_id_mask = 0b11;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map0 = {{0, 3}, {1, 5}};
@@ -633,9 +827,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc0_hit1));
 
   Hit doc1_hit1(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/7,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/2, /*document_id=*/1, /*term_frequency=*/11,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc1_section_id_mask = 0b110;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map1 = {{1, 7}, {2, 11}};
@@ -692,9 +888,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc0_section_id_mask = 0b11;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map0 = {{0, 3}, {1, 5}};
@@ -702,9 +900,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc0_hit1));
 
   Hit doc1_hit1(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/7,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/2, /*document_id=*/1, /*term_frequency=*/11,
-                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc1_section_id_mask = 0b110;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map1 = {{1, 7}, {2, 11}};
@@ -761,9 +961,11 @@ TEST_F(LiteIndexTest, LiteIndexHitBufferSize) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   Hit hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   Hit hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, hit0));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, hit1));
 

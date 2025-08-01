@@ -14,12 +14,16 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 
-#include <string>
+#include <memory>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/section.h"
@@ -34,6 +38,8 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+using ::testing::Pointee;
+using ::testing::Pointer;
 
 TEST(CreateAndIteratorTest, And) {
   // Basic test that we can create a working And iterator. Further testing of
@@ -628,6 +634,32 @@ TEST(DocHitInfoIteratorAndNaryTest, PopulateMatchedTermsStats) {
           EqualsTermMatchInfo("ciao", expected_section_ids_tf_map1_ciao)));
 
   EXPECT_FALSE(and_iter.Advance().ok());
+}
+
+TEST(DocHitInfoIteratorAndNaryTest, GetChildren) {
+  std::vector<DocHitInfo> first_vector = {DocHitInfo(2), DocHitInfo(1),
+                                          DocHitInfo(0)};
+  std::vector<DocHitInfo> second_vector = {DocHitInfo(2), DocHitInfo(1)};
+  std::vector<DocHitInfo> third_vector = {DocHitInfo(2)};
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(first_vector));
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(second_vector));
+  iterators.push_back(
+      std::make_unique<DocHitInfoIteratorDummy>(third_vector, "term", 10));
+
+  std::vector<DocHitInfoIterator*> iterator_ptrs;
+  for (const auto& iter : iterators) {
+    iterator_ptrs.push_back(iter.get());
+  }
+
+  std::unique_ptr<DocHitInfoIterator> iter =
+      std::make_unique<DocHitInfoIteratorAndNary>(std::move(iterators));
+
+  EXPECT_THAT(iter->GetChildren(),
+              ElementsAre(Pointee(Pointer(iterator_ptrs[0])),
+                          Pointee(Pointer(iterator_ptrs[1])),
+                          Pointee(Pointer(iterator_ptrs[2]))));
 }
 
 }  // namespace

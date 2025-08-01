@@ -23,6 +23,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -184,10 +185,12 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
         default_semantic_metric_type,
     const DocumentStore* document_store, const SchemaStore* schema_store,
     int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
-    const EmbeddingQueryResults* embedding_query_results) {
+    const EmbeddingQueryResults* embedding_query_results,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(embedding_query_results);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   if (scoring_spec.rank_by() !=
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION) {
@@ -243,7 +246,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
       return AdvancedScorer::Create(
           scoring_spec, default_score, default_semantic_metric_type,
           document_store, schema_store, current_time_ms, join_children_fetcher,
-          embedding_query_results);
+          embedding_query_results, feature_flags);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
       // Use join aggregate score to rank. Since the aggregation score is
       // calculated by child documents after joining (in JoinProcessor), we can

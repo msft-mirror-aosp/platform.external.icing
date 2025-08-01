@@ -78,13 +78,14 @@ Hit::Hit(Value value, Flags flags, TermFrequency term_frequency)
 
 Hit::Hit(SectionId section_id, DocumentId document_id,
          Hit::TermFrequency term_frequency, bool is_in_prefix_section,
-         bool is_prefix_hit)
+         bool is_prefix_hit, bool is_stemmed_hit)
     : term_frequency_(term_frequency) {
   // We compute flags first as the value's has_flags bit depends on the flags_
   // field.
   Flags temp_flags = 0;
   bit_util::BitfieldSet(term_frequency != kDefaultTermFrequency,
                         kHasTermFrequency, /*len=*/1, &temp_flags);
+  bit_util::BitfieldSet(is_stemmed_hit, kIsStemmedHit, /*len=*/1, &temp_flags);
   flags_ = temp_flags;
 
   // Values are stored so that when sorted, they appear in document_id
@@ -135,6 +136,10 @@ bool Hit::has_term_frequency() const {
   return bit_util::BitfieldGet(flags(), kHasTermFrequency, 1);
 }
 
+bool Hit::is_stemmed_hit() const {
+  return bit_util::BitfieldGet(flags(), kIsStemmedHit, 1);
+}
+
 bool Hit::CheckFlagsAreConsistent() const {
   bool has_flags = flags_ != kNoEnabledFlags;
   bool has_flags_enabled_in_value =
@@ -150,13 +155,8 @@ bool Hit::CheckFlagsAreConsistent() const {
 
 Hit Hit::TranslateHit(Hit old_hit, DocumentId new_document_id) {
   return Hit(old_hit.section_id(), new_document_id, old_hit.term_frequency(),
-             old_hit.is_in_prefix_section(), old_hit.is_prefix_hit());
-}
-
-bool Hit::EqualsDocumentIdAndSectionId::operator()(const Hit& hit1,
-                                                   const Hit& hit2) const {
-  return (hit1.value() >> kNumFlagsInValueField) ==
-         (hit2.value() >> kNumFlagsInValueField);
+             old_hit.is_in_prefix_section(), old_hit.is_prefix_hit(),
+             old_hit.is_stemmed_hit());
 }
 
 }  // namespace lib

@@ -100,6 +100,15 @@ struct SectionMetadata {
   //   Contents will be indexed for linear search.
   EmbeddingIndexingConfig::EmbeddingIndexingType::Code embedding_indexing_type;
 
+  // How vectors in a vector section should be quantized.
+  //
+  // QuantizationType::NONE:
+  //   Contents will not be quantized.
+  //
+  // QuantizationType::QUANTIZE_8_BIT:
+  //   Contents will be quantized to 8 bits.
+  EmbeddingIndexingConfig::QuantizationType::Code quantization_type;
+
   explicit SectionMetadata(
       SectionId id_in, PropertyConfigProto::DataType::Code data_type_in,
       StringIndexingConfig::TokenizerType::Code tokenizer,
@@ -107,6 +116,7 @@ struct SectionMetadata {
       IntegerIndexingConfig::NumericMatchType::Code numeric_match_type_in,
       EmbeddingIndexingConfig::EmbeddingIndexingType::Code
           embedding_indexing_type_in,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type_in,
       std::string&& path_in)
       : path(std::move(path_in)),
         id(id_in),
@@ -114,7 +124,8 @@ struct SectionMetadata {
         tokenizer(tokenizer),
         term_match_type(term_match_type_in),
         numeric_match_type(numeric_match_type_in),
-        embedding_indexing_type(embedding_indexing_type_in) {}
+        embedding_indexing_type(embedding_indexing_type_in),
+        quantization_type(quantization_type_in) {}
 
   SectionMetadata(const SectionMetadata& other) = default;
   SectionMetadata& operator=(const SectionMetadata& other) = default;
@@ -126,7 +137,9 @@ struct SectionMetadata {
     return path == rhs.path && id == rhs.id && data_type == rhs.data_type &&
            tokenizer == rhs.tokenizer &&
            term_match_type == rhs.term_match_type &&
-           numeric_match_type == rhs.numeric_match_type;
+           numeric_match_type == rhs.numeric_match_type &&
+           embedding_indexing_type == rhs.embedding_indexing_type &&
+           quantization_type == rhs.quantization_type;
   }
 };
 

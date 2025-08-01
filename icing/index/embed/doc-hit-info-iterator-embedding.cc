@@ -14,8 +14,8 @@
 
 #include "icing/index/embed/doc-hit-info-iterator-embedding.h"
 
+#include <cstdint>
 #include <memory>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,10 +29,12 @@
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -41,14 +43,20 @@ namespace lib {
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIteratorEmbedding>>
 DocHitInfoIteratorEmbedding::Create(
     const PropertyProto::VectorProto* query,
-    std::unique_ptr<SectionRestrictData> section_restrict_data,
     SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
     double score_low, double score_high,
-    EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map,
-    const EmbeddingIndex* embedding_index) {
+    EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
+    std::vector<double>* global_scores,
+    std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
+        global_section_infos,
+    const EmbeddingIndex* embedding_index, const DocumentStore* document_store,
+    const SchemaStore* schema_store, int64_t current_time_ms) {
   ICING_RETURN_ERROR_IF_NULL(query);
   ICING_RETURN_ERROR_IF_NULL(embedding_index);
-  ICING_RETURN_ERROR_IF_NULL(score_map);
+  ICING_RETURN_ERROR_IF_NULL(info_map);
+  ICING_RETURN_ERROR_IF_NULL(global_scores);
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   libtextclassifier3::StatusOr<std::unique_ptr<PostingListEmbeddingHitAccessor>>
       pl_accessor_or = embedding_index->GetAccessorForVector(*query);
@@ -68,10 +76,11 @@ DocHitInfoIteratorEmbedding::Create(
                          EmbeddingScorer::Create(metric_type));
 
   return std::unique_ptr<DocHitInfoIteratorEmbedding>(
-      new DocHitInfoIteratorEmbedding(query, std::move(section_restrict_data),
-                                      metric_type, std::move(embedding_scorer),
-                                      score_low, score_high, score_map,
-                                      embedding_index, std::move(pl_accessor)));
+      new DocHitInfoIteratorEmbedding(
+          query, metric_type, std::move(embedding_scorer), score_low,
+          score_high, info_map, global_scores, global_section_infos,
+          embedding_index, std::move(pl_accessor), document_store, schema_store,
+          current_time_ms));
 }
 
 libtextclassifier3::StatusOr<const EmbeddingHit*>
@@ -89,10 +98,22 @@ DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
       cached_embedding_hits_[cached_embedding_hits_idx_];
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
     doc_hit_info_.set_document_id(embedding_hit.basic_hit().document_id());
-    if (section_restrict_data_ != nullptr) {
+    if (DoesDocumentPassAllFilters(doc_hit_info_.document_id())) {
       current_allowed_sections_mask_ =
-          section_restrict_data_->ComputeAllowedSectionsMask(
-              doc_hit_info_.document_id());
+          ComputeAllowedSectionsMask(doc_hit_info_.document_id());
+
+      schema_type_id_ = document_store_.GetSchemaTypeId(
+          doc_hit_info_.document_id(), current_time_ms_);
+      if (schema_type_id_ == kInvalidSchemaTypeId) {
+        // This means that the document is deleted or expired, so update
+        // current_allowed_sections_mask_ to skip the document.
+        current_allowed_sections_mask_ = kSectionIdMaskNone;
+      }
+    } else {
+      // This means that the document is filtered out by the document filter
+      // predicate, so update current_allowed_sections_mask_ to skip the
+      // document.
+      current_allowed_sections_mask_ = kSectionIdMaskNone;
     }
   } else if (doc_hit_info_.document_id() !=
              embedding_hit.basic_hit().document_id()) {
@@ -110,8 +131,14 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
   }
 
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId, kSectionIdMaskNone);
-  std::vector<double>* matched_scores = nullptr;
+  schema_type_id_ = kInvalidSchemaTypeId;
+  EmbeddingMatchInfos* matched_infos = nullptr;
   current_allowed_sections_mask_ = kSectionIdMaskAll;
+  SectionId current_section_id = kInvalidSectionId;
+  EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+      EmbeddingIndexingConfig::QuantizationType::NONE;
+  int current_section_match_count = 0;
+
   while (true) {
     ICING_ASSIGN_OR_RETURN(const EmbeddingHit* embedding_hit,
                            AdvanceToNextEmbeddingHit());
@@ -126,25 +153,43 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
       continue;
     }
 
+    // We've reached a new section. Reset the match count and retrieve the
+    // quantization type for the new section.
+    if (current_section_id != embedding_hit->basic_hit().section_id()) {
+      current_section_match_count = 0;
+      current_section_id = embedding_hit->basic_hit().section_id();
+      // The schema type id is guaranteed to be valid here. Otherwise,
+      // current_allowed_sections_mask_ should be assigned to kSectionIdMaskNone
+      // by AdvanceToNextEmbeddingHit, and the embedding hit should have been
+      // skipped above.
+      ICING_ASSIGN_OR_RETURN(quantization_type,
+                             schema_store_.GetQuantizationType(
+                                 schema_type_id_, current_section_id));
+    }
+
     // Calculate the semantic score.
-    int dimension = query_.values_size();
     ICING_ASSIGN_OR_RETURN(
-        const float* vector,
-        embedding_index_.GetEmbeddingVector(*embedding_hit, dimension));
-    double semantic_score =
-        embedding_scorer_->Score(dimension,
-                                 /*v1=*/query_.values().data(),
-                                 /*v2=*/vector);
+        float semantic_score,
+        embedding_index_.ScoreEmbeddingHit(*embedding_scorer_, query_,
+                                           *embedding_hit, quantization_type));
 
     // If the semantic score is within the desired score range, update
-    // doc_hit_info_ and score_map_.
+    // doc_hit_info_ and info_map_.
     if (score_low_ <= semantic_score && semantic_score <= score_high_) {
       doc_hit_info_.UpdateSection(embedding_hit->basic_hit().section_id());
-      if (matched_scores == nullptr) {
-        matched_scores = &(score_map_[doc_hit_info_.document_id()]);
+      if (matched_infos == nullptr) {
+        matched_infos = &(info_map_[doc_hit_info_.document_id()]);
       }
-      matched_scores->push_back(semantic_score);
+      ICING_RETURN_IF_ERROR(
+          matched_infos->AppendScore(global_scores_, semantic_score));
+      if (global_section_infos_ != nullptr) {
+        // Add the section info for this embedding match.
+        ICING_RETURN_IF_ERROR(matched_infos->AppendSectionInfo(
+            *global_section_infos_, current_section_id,
+            current_section_match_count));
+      }
     }
+    ++current_section_match_count;
   }
 
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {

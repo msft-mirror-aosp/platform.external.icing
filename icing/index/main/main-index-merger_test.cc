@@ -93,10 +93,12 @@ TEST_F(MainIndexMergerTest, TranslateTermNotAdded) {
       term_id_codec_->EncodeTvi(fool_tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
   // 2. Build up a fake LexiconMergeOutputs
@@ -132,10 +134,12 @@ TEST_F(MainIndexMergerTest, PrefixExpansion) {
       term_id_codec_->EncodeTvi(fool_tvi, TviType::LITE));
 
   Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
-               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
   Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
   // 2. Build up a fake LexiconMergeOutputs
@@ -146,7 +150,8 @@ TEST_F(MainIndexMergerTest, PrefixExpansion) {
       term_id_codec_->EncodeTvi(foo_main_tvi, TviType::MAIN));
   Hit doc1_prefix_hit(/*section_id=*/0, /*document_id=*/1,
                       Hit::kDefaultTermFrequency,
-                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                      /*is_stemmed_hit=*/false);
 
   uint32_t foot_main_tvi = 5;
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -195,11 +200,12 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentTermFrequencies) {
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
 
   Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
-                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+                    /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, foot_doc0_hit));
   Hit foo_doc0_hit(/*section_id=*/0, /*document_id=*/0,
                    Hit::kDefaultTermFrequency, /*is_in_prefix_section=*/true,
-                   /*is_prefix_hit=*/false);
+                   /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, foo_doc0_hit));
 
   // 2. Build up a fake LexiconMergeOutputs
@@ -212,7 +218,8 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentTermFrequencies) {
   // hit for 'foot'. The final prefix hit has term frequency equal to 58.
   Hit doc0_prefix_hit(/*section_id=*/0, /*document_id=*/0,
                       /*term_frequency=*/58,
-                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                      /*is_stemmed_hit=*/false);
 
   uint32_t foot_main_tvi = 5;
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -259,16 +266,18 @@ TEST_F(MainIndexMergerTest, DedupeWithExactSameTermFrequencies) {
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
 
   Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
-                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+                    /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, foot_doc0_hit));
   Hit foo_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
-                   /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+                   /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, foo_doc0_hit));
   // The prefix hit should take the sum as term_frequency - 114.
   Hit prefix_foo_doc0_hit(/*section_id=*/0, /*document_id=*/0,
                           /*term_frequency=*/114,
                           /*is_in_prefix_section=*/true,
-                          /*is_prefix_hit=*/true);
+                          /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
 
   // 2. Build up a fake LexiconMergeOutputs
   // This is some made up number that doesn't matter for this test.
@@ -324,11 +333,13 @@ TEST_F(MainIndexMergerTest, DedupePrefixExpansion) {
 
   Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0,
                     /*term_frequency=*/Hit::kMaxTermFrequency,
-                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+                    /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, foot_doc0_hit));
   Hit fool_doc0_hit(/*section_id=*/0, /*document_id=*/0,
                     Hit::kDefaultTermFrequency,
-                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+                    /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+                    /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, fool_doc0_hit));
 
   // 2. Build up a fake LexiconMergeOutputs
@@ -341,7 +352,8 @@ TEST_F(MainIndexMergerTest, DedupePrefixExpansion) {
   // kMaxTermFrequency.
   Hit doc0_prefix_hit(/*section_id=*/0, /*document_id=*/0,
                       /*term_frequency=*/Hit::kMaxTermFrequency,
-                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                      /*is_stemmed_hit=*/false);
 
   uint32_t foot_main_tvi = 5;
   ICING_ASSERT_OK_AND_ASSIGN(

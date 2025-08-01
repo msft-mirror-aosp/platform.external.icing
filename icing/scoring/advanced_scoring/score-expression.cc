@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -36,7 +37,11 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/section-weights.h"
@@ -46,6 +51,7 @@
 #include "icing/store/document-store.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
+#include "icing/util/scorable_property_set.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -59,6 +65,23 @@ libtextclassifier3::Status CheckChildrenNotNull(
     ICING_RETURN_ERROR_IF_NULL(child);
   }
   return libtextclassifier3::Status::OK;
+}
+
+SchemaTypeId GetSchemaTypeId(DocumentId document_id,
+                             const DocumentStore& document_store,
+                             int64_t current_time_ms) {
+  auto filter_data_optional =
+      document_store.GetAliveDocumentFilterData(document_id, current_time_ms);
+  if (!filter_data_optional) {
+    // This should never happen. The only failure case for
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
+    ICING_LOG(WARNING) << "No document filter data for document ["
+                       << document_id << "]";
+    return kInvalidSchemaTypeId;
+  }
+  return filter_data_optional.value().schema_type_id();
 }
 
 }  // namespace
@@ -94,8 +117,10 @@ OperatorScoreExpression::Create(
   if (children_all_constant_double) {
     // Because all of the children are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
@@ -277,8 +302,10 @@ MathFunctionScoreExpression::Create(
   if (args_all_constant_double) {
     // Because all of the arguments are constants, this expression does not
     // depend on the DocHitInto or query_it that are passed into it.
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr));
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value);
   }
   return expression;
 }
@@ -286,89 +313,106 @@ MathFunctionScoreExpression::Create(
 libtextclassifier3::StatusOr<double>
 MathFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
-  std::vector<double> values;
+  DoubleList list_value;
+  std::vector<double> double_values;
   int ind = 0;
   if (args_.at(0)->type() == ScoreExpressionType::kDoubleList) {
-    ICING_ASSIGN_OR_RETURN(values,
+    ICING_ASSIGN_OR_RETURN(list_value,
                            args_.at(0)->EvaluateList(hit_info, query_it));
     ind = 1;
   }
+  double_values.reserve(args_.size() - ind);
   for (; ind < args_.size(); ++ind) {
     ICING_ASSIGN_OR_RETURN(double v,
                            args_.at(ind)->EvaluateDouble(hit_info, query_it));
-    values.push_back(v);
+    double_values.push_back(v);
+  }
+
+  // Double values in variable-argument functions can be treated as a single
+  // list.
+  if (kVariableArgumentsFunctions.count(function_type_) > 0 &&
+      !double_values.empty()) {
+    if (!list_value.empty()) {
+      return absl_ports::InternalError(
+          "Should never reach here, since static type checking should not "
+          "allow variable-argument functions to have both list arguments and "
+          "double arguments.");
+    }
+    list_value = DoubleList(std::move(double_values));
+    double_values.clear();
   }
 
   double res = 0;
   switch (function_type_) {
     case FunctionType::kLog:
-      if (values.size() == 1) {
-        res = log(values[0]);
+      if (double_values.size() == 1) {
+        res = log(double_values[0]);
       } else {
         // argument 0 is log base
         // argument 1 is the value
-        res = log(values[1]) / log(values[0]);
+        res = log(double_values[1]) / log(double_values[0]);
       }
       break;
     case FunctionType::kPow:
-      res = pow(values[0], values[1]);
+      res = pow(double_values[0], double_values[1]);
       break;
+    case FunctionType::kSqrt:
+      res = sqrt(double_values[0]);
+      break;
+    case FunctionType::kAbs:
+      res = abs(double_values[0]);
+      break;
+    case FunctionType::kSin:
+      res = sin(double_values[0]);
+      break;
+    case FunctionType::kCos:
+      res = cos(double_values[0]);
+      break;
+    case FunctionType::kTan:
+      res = tan(double_values[0]);
+      break;
+    // Variable-argument functions
     case FunctionType::kMax:
-      if (values.empty()) {
+      if (list_value.empty()) {
         return absl_ports::InvalidArgumentError(
             "Got an empty parameter set in max function");
       }
-      res = *std::max_element(values.begin(), values.end());
+      res = *std::max_element(list_value.begin(), list_value.end());
       break;
     case FunctionType::kMin:
-      if (values.empty()) {
+      if (list_value.empty()) {
         return absl_ports::InvalidArgumentError(
             "Got an empty parameter set in min function");
       }
-      res = *std::min_element(values.begin(), values.end());
+      res = *std::min_element(list_value.begin(), list_value.end());
       break;
     case FunctionType::kLen:
-      res = values.size();
+      res = list_value.size();
       break;
     case FunctionType::kSum:
-      res = std::reduce(values.begin(), values.end());
+      res = std::reduce(list_value.begin(), list_value.end());
       break;
     case FunctionType::kAvg:
-      if (values.empty()) {
+      if (list_value.empty()) {
         return absl_ports::InvalidArgumentError(
             "Got an empty parameter set in avg function.");
       }
-      res = std::reduce(values.begin(), values.end()) / values.size();
+      res =
+          std::reduce(list_value.begin(), list_value.end()) / list_value.size();
       break;
-    case FunctionType::kSqrt:
-      res = sqrt(values[0]);
-      break;
-    case FunctionType::kAbs:
-      res = abs(values[0]);
-      break;
-    case FunctionType::kSin:
-      res = sin(values[0]);
-      break;
-    case FunctionType::kCos:
-      res = cos(values[0]);
-      break;
-    case FunctionType::kTan:
-      res = tan(values[0]);
-      break;
-    // For the following two functions, the last value is the default value.
-    // If values.size() == 1, then it means the provided list is empty.
+    // For the following two functions, double_values[0] is the default value.
     case FunctionType::kMaxOrDefault:
-      if (values.size() == 1) {
-        res = values[0];
+      if (list_value.empty()) {
+        res = double_values[0];
       } else {
-        res = *std::max_element(values.begin(), values.end() - 1);
+        res = *std::max_element(list_value.begin(), list_value.end());
       }
       break;
     case FunctionType::kMinOrDefault:
-      if (values.size() == 1) {
-        res = values[0];
+      if (list_value.empty()) {
+        res = double_values[0];
       } else {
-        res = *std::min_element(values.begin(), values.end() - 1);
+        res = *std::min_element(list_value.begin(), list_value.end());
       }
       break;
   }
@@ -418,12 +462,12 @@ ListOperationFunctionScoreExpression::Create(
       new ListOperationFunctionScoreExpression(function_type, std::move(args)));
 }
 
-libtextclassifier3::StatusOr<std::vector<double>>
+libtextclassifier3::StatusOr<DoubleList>
 ListOperationFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   switch (function_type_) {
     case FunctionType::kFilterByRange:
-      ICING_ASSIGN_OR_RETURN(std::vector<double> list_value,
+      ICING_ASSIGN_OR_RETURN(DoubleList list_value,
                              args_.at(0)->EvaluateList(hit_info, query_it));
       ICING_ASSIGN_OR_RETURN(double low,
                              args_.at(1)->EvaluateDouble(hit_info, query_it));
@@ -433,11 +477,13 @@ ListOperationFunctionScoreExpression::EvaluateList(
         return absl_ports::InvalidArgumentError(
             "The lower bound cannot be greater than the upper bound.");
       }
+      // TODO(b/408437387): Consider avoiding a copy if nothing is filtered out.
+      std::vector<double> new_list = std::move(list_value).ReleaseVector();
       auto new_end =
-          std::remove_if(list_value.begin(), list_value.end(),
+          std::remove_if(new_list.begin(), new_list.end(),
                          [low, high](double v) { return v < low || v > high; });
-      list_value.erase(new_end, list_value.end());
-      return list_value;
+      new_list.erase(new_end, new_list.end());
+      return DoubleList(std::move(new_list));
       break;
   }
   return absl_ports::InternalError("Should never reach here.");
@@ -581,7 +627,8 @@ libtextclassifier3::StatusOr<
     std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
 ChildrenRankingSignalsFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args,
-    const JoinChildrenFetcher* join_children_fetcher) {
+    const DocumentStore& document_store,
+    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms) {
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         "childrenRankingSignals must have 1 argument.");
@@ -595,15 +642,14 @@ ChildrenRankingSignalsFunctionScoreExpression::Create(
   if (join_children_fetcher == nullptr) {
     return absl_ports::InvalidArgumentError(
         "childrenRankingSignals must only be used with join, but "
-        "JoinChildrenFetcher "
-        "is not provided.");
+        "JoinChildrenFetcher is not provided.");
   }
   return std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>(
       new ChildrenRankingSignalsFunctionScoreExpression(
-          *join_children_fetcher));
+          document_store, *join_children_fetcher, current_time_ms));
 }
 
-libtextclassifier3::StatusOr<std::vector<double>>
+libtextclassifier3::StatusOr<DoubleList>
 ChildrenRankingSignalsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(
@@ -614,7 +660,7 @@ ChildrenRankingSignalsFunctionScoreExpression::EvaluateList(
   for (const ScoredDocumentHit& child_hit : children_hits) {
     children_scores.push_back(child_hit.score());
   }
-  return std::move(children_scores);
+  return DoubleList(std::move(children_scores));
 }
 
 libtextclassifier3::StatusOr<
@@ -638,12 +684,13 @@ PropertyWeightsFunctionScoreExpression::Create(
           document_store, section_weights, current_time_ms));
 }
 
-libtextclassifier3::StatusOr<std::vector<double>>
+libtextclassifier3::StatusOr<DoubleList>
 PropertyWeightsFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator*) const {
   std::vector<double> weights;
   SectionIdMask sections = hit_info.hit_section_ids_mask();
-  SchemaTypeId schema_type_id = GetSchemaTypeId(hit_info.document_id());
+  SchemaTypeId schema_type_id = GetSchemaTypeId(
+      hit_info.document_id(), document_store_, current_time_ms_);
 
   while (sections != 0) {
     SectionId section_id = __builtin_ctzll(sections);
@@ -651,28 +698,14 @@ PropertyWeightsFunctionScoreExpression::EvaluateList(
     weights.push_back(section_weights_.GetNormalizedSectionWeight(
         schema_type_id, section_id));
   }
-  return weights;
-}
-
-SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
-    DocumentId document_id) const {
-  auto filter_data_optional =
-      document_store_.GetAliveDocumentFilterData(document_id, current_time_ms_);
-  if (!filter_data_optional) {
-    // This should never happen. The only failure case for
-    // GetAliveDocumentFilterData is if the document_id is outside of the range
-    // of allocated document_ids, which shouldn't be possible since we're
-    // getting this document_id from the posting lists.
-    ICING_LOG(WARNING) << "No document filter data for document ["
-                       << document_id << "]";
-    return kInvalidSchemaTypeId;
-  }
-  return filter_data_optional.value().schema_type_id();
+  return DoubleList(std::move(weights));
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
-GetSearchSpecEmbeddingFunctionScoreExpression::Create(
+GetEmbeddingParameterFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " must have 1 argument."));
@@ -683,22 +716,30 @@ GetSearchSpecEmbeddingFunctionScoreExpression::Create(
   }
   bool is_constant = args[0]->is_constant();
   std::unique_ptr<ScoreExpression> expression =
-      std::unique_ptr<GetSearchSpecEmbeddingFunctionScoreExpression>(
-          new GetSearchSpecEmbeddingFunctionScoreExpression(
-              std::move(args[0])));
+      std::unique_ptr<GetEmbeddingParameterFunctionScoreExpression>(
+          new GetEmbeddingParameterFunctionScoreExpression(std::move(args[0])));
   if (is_constant) {
-    return ConstantScoreExpression::Create(
-        expression->EvaluateDouble(DocHitInfo(), /*query_it=*/nullptr),
-        expression->type());
+    ICING_ASSIGN_OR_RETURN(double constant_value,
+                           expression->EvaluateDouble(DocHitInfo(),
+                                                      /*query_it=*/nullptr));
+    return ConstantScoreExpression::Create(constant_value, expression->type());
   }
   return expression;
 }
 
 libtextclassifier3::StatusOr<double>
-GetSearchSpecEmbeddingFunctionScoreExpression::EvaluateDouble(
+GetEmbeddingParameterFunctionScoreExpression::EvaluateDouble(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
                          arg_->EvaluateDouble(hit_info, query_it));
+  if (raw_query_index < 0) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query must be a non-negative integer.");
+  }
+  if (raw_query_index > std::numeric_limits<uint32_t>::max()) {
+    return absl_ports::InvalidArgumentError(
+        "The index of an embedding query exceeds the maximum value of uint32.");
+  }
   uint32_t query_index = (uint32_t)raw_query_index;
   if (query_index != raw_query_index) {
     return absl_ports::InvalidArgumentError(
@@ -724,7 +765,8 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat(kFunctionName, " got invalid number of arguments."));
   }
-  if (args[1]->type() != ScoreExpressionType::kVectorIndex) {
+  ScoreExpression* embedding_index_arg = args[1].get();
+  if (embedding_index_arg->type() != ScoreExpressionType::kVectorIndex) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         kFunctionName, " got invalid argument type for embedding vector."));
   }
@@ -745,24 +787,179 @@ MatchedSemanticScoresFunctionScoreExpression::Create(
         metric_type,
         embedding_util::GetEmbeddingQueryMetricTypeFromName(metric));
   }
+  const EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* match_info_map_ =
+      nullptr;
+  if (embedding_index_arg->is_constant()) {
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t embedding_index,
+        embedding_index_arg->EvaluateDouble(DocHitInfo(),
+                                            /*query_it=*/nullptr));
+    match_info_map_ =
+        embedding_query_results->GetMatchInfoMap(embedding_index, metric_type);
+    if (match_info_map_ == nullptr) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The embedding query index ", std::to_string(embedding_index),
+          " with metric type ",
+          SearchSpecProto::EmbeddingQueryMetricType::Code_Name(metric_type),
+          " has not been queried."));
+    }
+  }
   return std::unique_ptr<MatchedSemanticScoresFunctionScoreExpression>(
       new MatchedSemanticScoresFunctionScoreExpression(
-          std::move(args), metric_type, *embedding_query_results));
+          std::move(args), metric_type, *embedding_query_results,
+          match_info_map_));
 }
 
-libtextclassifier3::StatusOr<std::vector<double>>
+libtextclassifier3::StatusOr<DoubleList>
 MatchedSemanticScoresFunctionScoreExpression::EvaluateList(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(double raw_query_index,
                          args_[1]->EvaluateDouble(hit_info, query_it));
   uint32_t query_index = (uint32_t)raw_query_index;
-  const std::vector<double>* scores =
-      embedding_query_results_.GetMatchedScoresForDocument(
-          query_index, metric_type_, hit_info.document_id());
-  if (scores == nullptr) {
-    return std::vector<double>();
+  if (match_info_map_ != nullptr) {
+    auto info_it = match_info_map_->find(hit_info.document_id());
+    if (info_it == match_info_map_->end()) {
+      return DoubleList();
+    }
+    return embedding_query_results_.GetMatchedScoresFromEmbeddingMatchInfos(
+        info_it->second);
   }
-  return *scores;
+  return embedding_query_results_.GetMatchedScoresForDocument(
+      query_index, metric_type_, hit_info.document_id());
+}
+
+GetScorablePropertyFunctionScoreExpression::
+    GetScorablePropertyFunctionScoreExpression(
+        const DocumentStore* document_store, const SchemaStore* schema_store,
+        int64_t current_time_ms,
+        std::unordered_set<SchemaTypeId>&& schema_type_ids,
+        std::string_view property_path)
+    : document_store_(*document_store),
+      schema_store_(*schema_store),
+      current_time_ms_(current_time_ms),
+      schema_type_ids_(std::move(schema_type_ids)),
+      property_path_(property_path) {}
+
+libtextclassifier3::StatusOr<std::unordered_set<SchemaTypeId>>
+GetScorablePropertyFunctionScoreExpression::GetAndValidateSchemaTypeIds(
+    std::string_view alias_schema_type, std::string_view property_path,
+    const SchemaTypeAliasMap& schema_type_alias_map,
+    const SchemaStore& schema_store) {
+  std::unordered_set<SchemaTypeId> schema_type_ids;
+
+  auto alias_map_iter = schema_type_alias_map.find(alias_schema_type.data());
+  if (alias_map_iter == schema_type_alias_map.end()) {
+    return schema_type_ids;
+  }
+
+  for (std::string_view schema_type : alias_map_iter->second) {
+    // First, verify that the schema type has a valid schema type id in the
+    // schema store.
+    libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
+        schema_store.GetSchemaTypeId(schema_type);
+    if (!schema_type_id_or.ok()) {
+      // Swallow the error of invalid schema type in the getScorableProperty
+      // function.
+      // Icing will return an empty list of double values in this case.
+      continue;
+    }
+    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+    // Then, calls GetScorablePropertyIndex() here to validate if the property
+    // path is scorable under the schema type.
+    // No error will be thrown if the property path is not scorable under the
+    // schema type. Instead, Icing will return an empty list of double values
+    // in this case.
+    libtextclassifier3::StatusOr<std::optional<int>>
+        scorable_property_index_or = schema_store.GetScorablePropertyIndex(
+            schema_type_id, property_path);
+    if (!scorable_property_index_or.ok() ||
+        !scorable_property_index_or.ValueOrDie().has_value()) {
+      continue;
+    }
+    schema_type_ids.insert(schema_type_id);
+  }
+  return schema_type_ids;
+}
+
+libtextclassifier3::StatusOr<
+    std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
+GetScorablePropertyFunctionScoreExpression::Create(
+    std::vector<std::unique_ptr<ScoreExpression>> args,
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const SchemaTypeAliasMap& schema_type_alias_map, int64_t current_time_ms) {
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
+  if (args.size() != 2 || args[0]->type() != ScoreExpressionType::kString ||
+      args[1]->type() != ScoreExpressionType::kString) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        kFunctionName, " must take exactly two string params"));
+  }
+
+  // Validate schema type.
+  ICING_ASSIGN_OR_RETURN(std::string_view alias_schema_type,
+                         args[0]->EvaluateString());
+  ICING_ASSIGN_OR_RETURN(std::string_view property_path,
+                         args[1]->EvaluateString());
+  ICING_ASSIGN_OR_RETURN(
+      std::unordered_set<SchemaTypeId> schema_type_ids,
+      GetAndValidateSchemaTypeIds(alias_schema_type, property_path,
+                                  schema_type_alias_map, *schema_store));
+
+  return std::unique_ptr<GetScorablePropertyFunctionScoreExpression>(
+      new GetScorablePropertyFunctionScoreExpression(
+          document_store, schema_store, current_time_ms,
+          std::move(schema_type_ids), property_path));
+}
+
+libtextclassifier3::StatusOr<DoubleList>
+GetScorablePropertyFunctionScoreExpression::EvaluateList(
+    const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
+  SchemaTypeId doc_schema_type_id = GetSchemaTypeId(
+      hit_info.document_id(), document_store_, current_time_ms_);
+  if (schema_type_ids_.find(doc_schema_type_id) == schema_type_ids_.end()) {
+    return DoubleList();
+  }
+
+  // By this point, the document to be evaluated is guaranteed to have a
+  // ScorablePropertySetProto, and the property path is guaranteed to be a
+  // scorable property under the schema type.
+  std::unique_ptr<ScorablePropertySet> scorable_property_set =
+      document_store_.GetScorablePropertySet(hit_info.document_id(),
+                                             current_time_ms_);
+  // It should never happen.
+  if (scorable_property_set == nullptr) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Failed to retrieve ScorablePropertySet for document %d",
+        hit_info.document_id()));
+  }
+
+  const ScorablePropertyProto* scorable_property_proto =
+      scorable_property_set->GetScorablePropertyProto(property_path_);
+  // It should never happen as icing generates a default value for each scorable
+  // property when the document is created.
+  if (scorable_property_proto == nullptr) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Failed to retrieve ScorablePropertyProto for document %d, and "
+        "property path %s",
+        hit_info.document_id(), property_path_.c_str()));
+  }
+
+  // Converts ScorablePropertyProto to a vector of doubles.
+  if (scorable_property_proto->int64_values_size() > 0) {
+    return DoubleList(
+        std::vector<double>(scorable_property_proto->int64_values().begin(),
+                            scorable_property_proto->int64_values().end()));
+  } else if (scorable_property_proto->double_values_size() > 0) {
+    return DoubleList(
+        std::vector<double>(scorable_property_proto->double_values().begin(),
+                            scorable_property_proto->double_values().end()));
+  } else if (scorable_property_proto->boolean_values_size() > 0) {
+    return DoubleList(
+        std::vector<double>(scorable_property_proto->boolean_values().begin(),
+                            scorable_property_proto->boolean_values().end()));
+  }
+  return DoubleList();
 }
 
 }  // namespace lib

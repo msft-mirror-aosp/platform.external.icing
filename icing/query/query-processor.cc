@@ -23,12 +23,19 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
+#include "icing/index/iterator/doc-hit-info-iterator-and.h"
+#include "icing/index/iterator/doc-hit-info-iterator-by-uri.h"
+#include "icing/index/iterator/doc-hit-info-iterator-data-holder.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
@@ -56,7 +63,9 @@ QueryProcessor::Create(Index* index, const NumericIndex<int64_t>* numeric_index,
                        const LanguageSegmenter* language_segmenter,
                        const Normalizer* normalizer,
                        const DocumentStore* document_store,
-                       const SchemaStore* schema_store, const Clock* clock) {
+                       const SchemaStore* schema_store,
+                       const JoinChildrenFetcher* join_children_fetcher,
+                       const Clock* clock, const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(numeric_index);
   ICING_RETURN_ERROR_IF_NULL(embedding_index);
@@ -65,20 +74,21 @@ QueryProcessor::Create(Index* index, const NumericIndex<int64_t>* numeric_index,
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   return std::unique_ptr<QueryProcessor>(new QueryProcessor(
       index, numeric_index, embedding_index, language_segmenter, normalizer,
-      document_store, schema_store, clock));
+      document_store, schema_store, join_children_fetcher, clock,
+      feature_flags));
 }
 
-QueryProcessor::QueryProcessor(Index* index,
-                               const NumericIndex<int64_t>* numeric_index,
-                               const EmbeddingIndex* embedding_index,
-                               const LanguageSegmenter* language_segmenter,
-                               const Normalizer* normalizer,
-                               const DocumentStore* document_store,
-                               const SchemaStore* schema_store,
-                               const Clock* clock)
+QueryProcessor::QueryProcessor(
+    Index* index, const NumericIndex<int64_t>* numeric_index,
+    const EmbeddingIndex* embedding_index,
+    const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const JoinChildrenFetcher* join_children_fetcher, const Clock* clock,
+    const FeatureFlags* feature_flags)
     : index_(*index),
       numeric_index_(*numeric_index),
       embedding_index_(*embedding_index),
@@ -86,15 +96,24 @@ QueryProcessor::QueryProcessor(Index* index,
       normalizer_(*normalizer),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      clock_(*clock) {}
+      join_children_fetcher_(join_children_fetcher),
+      clock_(*clock),
+      feature_flags_(*feature_flags) {}
 
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    int64_t current_time_ms, QueryStatsProto::SearchStats* search_stats) {
-  ICING_ASSIGN_OR_RETURN(QueryResults results,
-                         ParseAdvancedQuery(search_spec, ranking_strategy,
-                                            current_time_ms, search_stats));
+    bool get_embedding_match_info, int64_t current_time_ms,
+    QueryStatsProto::SearchStats* search_stats) {
+  std::unique_ptr<DocumentFilterPredicate> filter_predicate =
+      GetFilterPredicateBySchemaAndNamespace(search_spec, document_store_,
+                                             schema_store_, current_time_ms);
+
+  ICING_ASSIGN_OR_RETURN(
+      QueryResults results,
+      ParseAdvancedQuery(search_spec, ranking_strategy,
+                         get_embedding_match_info, current_time_ms,
+                         filter_predicate.get(), search_stats));
 
   // Check that all new features used in the search have been enabled in the
   // SearchSpec.
@@ -110,10 +129,28 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     }
   }
 
-  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
-  results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
-      std::move(results.root_iterator), &document_store_, &schema_store_,
-      options, current_time_ms);
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  if (search_spec.document_uri_filters_size() > 0) {
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<DocHitInfoIteratorByUri> uri_iterator,
+        DocHitInfoIteratorByUri::Create(&document_store_, search_spec));
+    iterators.push_back(std::move(uri_iterator));
+  }
+  if (results.root_iterator != nullptr) {
+    iterators.push_back(std::move(results.root_iterator));
+  }
+  if (iterators.empty()) {
+    iterators.push_back(std::make_unique<DocHitInfoIteratorAllDocumentId>(
+        document_store_.last_added_document_id()));
+  }
+  results.root_iterator = CreateAndIterator(std::move(iterators));
+
+  results.root_iterator = DocHitInfoIteratorFilter::ApplyFilter(
+      std::move(results.root_iterator), filter_predicate.get(),
+      feature_flags_.enable_passing_filter_to_children());
+  results.root_iterator =
+      std::make_unique<DocHitInfoIteratorDataHolder<DocumentFilterPredicate>>(
+          std::move(results.root_iterator), std::move(filter_predicate));
   if (!search_spec.type_property_filters().empty()) {
     results.root_iterator =
         DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
@@ -126,11 +163,13 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    int64_t current_time_ms, QueryStatsProto::SearchStats* search_stats) const {
+    bool get_embedding_match_info, int64_t current_time_ms,
+    const DocumentFilterPredicate* filter_predicate,
+    QueryStatsProto::SearchStats* search_stats) const {
   std::unique_ptr<Timer> lexer_timer = clock_.GetNewTimer();
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
-                         lexer.ExtractTokens());
+                         std::move(lexer).ExtractTokens());
   if (search_stats != nullptr) {
     search_stats->set_query_processor_lexer_extract_token_latency_ms(
         lexer_timer->GetElapsedMilliseconds());
@@ -146,26 +185,22 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
   }
 
   if (tree_root == nullptr) {
-    QueryResults results;
-    results.root_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
-        document_store_.last_added_document_id());
-    return results;
+    return QueryResults{/*root_iterator=*/nullptr};
   }
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
           StringIndexingConfig::TokenizerType::PLAIN, &language_segmenter_));
-  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
   bool needs_term_frequency_info =
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
 
   std::unique_ptr<Timer> query_visitor_timer = clock_.GetNewTimer();
   QueryVisitor query_visitor(
       &index_, &numeric_index_, &embedding_index_, &document_store_,
-      &schema_store_, &normalizer_, plain_tokenizer.get(), search_spec.query(),
-      &search_spec.embedding_query_vectors(), std::move(options),
-      search_spec.term_match_type(), search_spec.embedding_query_metric_type(),
-      needs_term_frequency_info, current_time_ms);
+      &schema_store_, &normalizer_, plain_tokenizer.get(),
+      join_children_fetcher_, search_spec, filter_predicate,
+      needs_term_frequency_info, get_embedding_match_info, &feature_flags_,
+      current_time_ms);
   tree_root->Accept(&query_visitor);
   ICING_ASSIGN_OR_RETURN(QueryResults results,
                          std::move(query_visitor).ConsumeResults());

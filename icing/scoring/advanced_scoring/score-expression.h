@@ -30,10 +30,11 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/section-weights.h"
 #include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -48,6 +49,10 @@ enum class ScoreExpressionType {
   kVectorIndex,
   kString,
 };
+
+// A map from alias schema type to a set of Icing schema types.
+using SchemaTypeAliasMap =
+    std::unordered_map<std::string, std::unordered_set<std::string>>;
 
 class ScoreExpression {
  public:
@@ -72,7 +77,7 @@ class ScoreExpression {
         "double. There must be inconsistencies in the static type checking.");
   }
 
-  virtual libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+  virtual libtextclassifier3::StatusOr<DoubleList> EvaluateList(
       const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
     if (type() == ScoreExpressionType::kDoubleList) {
       return absl_ports::UnimplementedError(
@@ -123,8 +128,7 @@ class ThisExpression : public ScoreExpression {
 class ConstantScoreExpression : public ScoreExpression {
  public:
   static std::unique_ptr<ConstantScoreExpression> Create(
-      libtextclassifier3::StatusOr<double> c,
-      ScoreExpressionType type = ScoreExpressionType::kDouble) {
+      double c, ScoreExpressionType type = ScoreExpressionType::kDouble) {
     return std::unique_ptr<ConstantScoreExpression>(
         new ConstantScoreExpression(c, type));
   }
@@ -139,11 +143,10 @@ class ConstantScoreExpression : public ScoreExpression {
   bool is_constant() const override { return true; }
 
  private:
-  explicit ConstantScoreExpression(libtextclassifier3::StatusOr<double> c,
-                                   ScoreExpressionType type)
+  explicit ConstantScoreExpression(double c, ScoreExpressionType type)
       : c_(c), type_(type) {}
 
-  libtextclassifier3::StatusOr<double> c_;
+  double c_;
   ScoreExpressionType type_;
 };
 
@@ -265,7 +268,7 @@ class ListOperationFunctionScoreExpression : public ScoreExpression {
       FunctionType function_type,
       std::vector<std::unique_ptr<ScoreExpression>> args);
 
-  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -373,9 +376,11 @@ class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
   static libtextclassifier3::StatusOr<
       std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
-         const JoinChildrenFetcher* join_children_fetcher);
+         const DocumentStore& document_store,
+         const JoinChildrenFetcher* join_children_fetcher,
+         int64_t current_time_ms);
 
-  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -385,9 +390,15 @@ class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
 
  private:
   explicit ChildrenRankingSignalsFunctionScoreExpression(
-      const JoinChildrenFetcher& join_children_fetcher)
-      : join_children_fetcher_(join_children_fetcher) {}
-  const JoinChildrenFetcher& join_children_fetcher_;
+      const DocumentStore& document_store,
+      const JoinChildrenFetcher& join_children_fetcher, int64_t current_time_ms)
+      : document_store_(document_store),
+        join_children_fetcher_(join_children_fetcher),
+        current_time_ms_(current_time_ms) {}
+
+  const DocumentStore& document_store_;               // Does not own.
+  const JoinChildrenFetcher& join_children_fetcher_;  // Does not own.
+  int64_t current_time_ms_;
 };
 
 class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
@@ -404,14 +415,12 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
          const DocumentStore* document_store,
          const SectionWeights* section_weights, int64_t current_time_ms);
 
-  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
       const DocHitInfo& hit_info, const DocHitInfoIterator*) const override;
 
   ScoreExpressionType type() const override {
     return ScoreExpressionType::kDoubleList;
   }
-
-  SchemaTypeId GetSchemaTypeId(DocumentId document_id) const;
 
  private:
   explicit PropertyWeightsFunctionScoreExpression(
@@ -425,12 +434,12 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
   int64_t current_time_ms_;
 };
 
-class GetSearchSpecEmbeddingFunctionScoreExpression : public ScoreExpression {
+class GetEmbeddingParameterFunctionScoreExpression : public ScoreExpression {
  public:
-  static constexpr std::string_view kFunctionName = "getSearchSpecEmbedding";
+  static constexpr std::string_view kFunctionName = "getEmbeddingParameter";
 
   // RETURNS:
-  //   - A GetSearchSpecEmbeddingFunctionScoreExpression instance on success if
+  //   - A GetEmbeddingParameterFunctionScoreExpression instance on success if
   //     not simplifiable.
   //   - A ConstantScoreExpression instance on success if simplifiable.
   //   - FAILED_PRECONDITION on any null pointer in children.
@@ -447,7 +456,7 @@ class GetSearchSpecEmbeddingFunctionScoreExpression : public ScoreExpression {
   }
 
  private:
-  explicit GetSearchSpecEmbeddingFunctionScoreExpression(
+  explicit GetEmbeddingParameterFunctionScoreExpression(
       std::unique_ptr<ScoreExpression> arg)
       : arg_(std::move(arg)) {}
   std::unique_ptr<ScoreExpression> arg_;
@@ -467,7 +476,7 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
          SearchSpecProto::EmbeddingQueryMetricType::Code default_metric_type,
          const EmbeddingQueryResults* embedding_query_results);
 
-  libtextclassifier3::StatusOr<std::vector<double>> EvaluateList(
+  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
       const DocHitInfo& hit_info,
       const DocHitInfoIterator* query_it) const override;
 
@@ -479,14 +488,87 @@ class MatchedSemanticScoresFunctionScoreExpression : public ScoreExpression {
   explicit MatchedSemanticScoresFunctionScoreExpression(
       std::vector<std::unique_ptr<ScoreExpression>> args,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
-      const EmbeddingQueryResults& embedding_query_results)
+      const EmbeddingQueryResults& embedding_query_results,
+      const EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* match_info_map)
       : args_(std::move(args)),
         metric_type_(metric_type),
-        embedding_query_results_(embedding_query_results) {}
+        embedding_query_results_(embedding_query_results),
+        match_info_map_(match_info_map) {}
 
   std::vector<std::unique_ptr<ScoreExpression>> args_;
   const SearchSpecProto::EmbeddingQueryMetricType::Code metric_type_;
   const EmbeddingQueryResults& embedding_query_results_;
+  // If the embedding vector's index evaluated from args is a constant, this is
+  // the corresponding EmbeddingQueryMatchInfoMap for the embedding query.
+  // Otherwise, this is nullptr.
+  const EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* match_info_map_;
+};
+
+class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
+ public:
+  static constexpr std::string_view kFunctionName = "getScorableProperty";
+
+  // Returns:
+  //   - FAILED_PRECONDITION on any null pointer in children.
+  //   - INVALID_ARGUMENT on
+  //     - |args| type errors.
+  //     - alias_schema_type in the scoring expression does not match to any
+  //       schema type in the |schema_type_alias_map|.
+  //     - any matched schema type not having the specified property_path as a
+  //       scorable property.
+  static libtextclassifier3::StatusOr<
+      std::unique_ptr<GetScorablePropertyFunctionScoreExpression>>
+  Create(std::vector<std::unique_ptr<ScoreExpression>> args,
+         const DocumentStore* document_store, const SchemaStore* schema_store,
+         const SchemaTypeAliasMap& schema_type_alias_map,
+         int64_t current_time_ms);
+
+  ScoreExpressionType type() const override {
+    return ScoreExpressionType::kDoubleList;
+  }
+
+  libtextclassifier3::StatusOr<DoubleList> EvaluateList(
+      const DocHitInfo& hit_info,
+      const DocHitInfoIterator* query_it) const override;
+
+ private:
+  explicit GetScorablePropertyFunctionScoreExpression(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      int64_t current_time_ms,
+      std::unordered_set<SchemaTypeId>&& schema_type_ids,
+      std::string_view property_path);
+
+  // Returns a set of schema type ids that are matched to the
+  // |alias_schema_type| in the scoring expression, based on the
+  // |schema_type_alias_map|.
+  //
+  // For each of the schema type in the returned set, this function also
+  // validates that:
+  //   - The schema type is valid in the schema store.
+  //   - The |property_path| is defined as scorable under the schema type.
+  static libtextclassifier3::StatusOr<std::unordered_set<SchemaTypeId>>
+  GetAndValidateSchemaTypeIds(std::string_view alias_schema_type,
+                              std::string_view property_path,
+                              const SchemaTypeAliasMap& schema_type_alias_map,
+                              const SchemaStore& schema_store);
+
+  const DocumentStore& document_store_;
+  const SchemaStore& schema_store_;
+  int64_t current_time_ms_;
+
+  // A set of schema type ids that have been validated.
+  //
+  // When Parsing the getScorableProperty(schema_type_alias, property_path)
+  // function, Icing first looks up the schema_type_alias_map with the
+  // schema_type_alias, and for each matched schema type, Icing validates that:
+  //   - The schema type is valid in the schema store.
+  //   - The |property_path_| is defined as scorable under the schema type.
+  //
+  // At the query evaluation time, Icing will check each doc's schema type id
+  // against this set. If it is not in the set, then an empty list will be
+  // returned.
+  std::unordered_set<SchemaTypeId> schema_type_ids_;
+  std::string property_path_;
 };
 
 }  // namespace lib

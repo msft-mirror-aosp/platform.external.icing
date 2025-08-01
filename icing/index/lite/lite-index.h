@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -95,8 +96,8 @@ class LiteIndex {
   libtextclassifier3::Status PersistToDisk() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns term_id if term found, NOT_FOUND otherwise.
-  libtextclassifier3::StatusOr<uint32_t> GetTermId(
-      const std::string& term) const ICING_LOCKS_EXCLUDED(mutex_);
+  libtextclassifier3::StatusOr<uint32_t> GetTermId(std::string_view term) const
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns an iterator for all terms for which 'prefix' is a prefix.
   class PrefixIterator {
@@ -107,7 +108,7 @@ class LiteIndex {
 
     void Advance() { delegate_.Advance(); }
 
-    const char* GetKey() const { return delegate_.GetKey(); }
+    std::string_view GetKey() const { return delegate_.GetKey(); }
 
     uint32_t GetValueIndex() const { return delegate_.GetValueIndex(); }
 
@@ -120,7 +121,7 @@ class LiteIndex {
   PrefixIterator FindTermPrefixes(const std::string& prefix) const
       ICING_LOCKS_EXCLUDED(mutex_) {
     absl_ports::shared_lock l(&mutex_);
-    return PrefixIterator(IcingDynamicTrie::Iterator(lexicon_, prefix.c_str()));
+    return PrefixIterator(IcingDynamicTrie::Iterator(lexicon_, prefix));
   }
 
   // Inserts a term with its properties.
@@ -129,7 +130,7 @@ class LiteIndex {
   //   A value index on success
   //   RESOURCE_EXHAUSTED if lexicon is full or no disk space is available
   libtextclassifier3::StatusOr<uint32_t> InsertTerm(
-      const std::string& term, TermMatchType::Code term_match_type,
+      std::string_view term, TermMatchType::Code term_match_type,
       NamespaceId namespace_id) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Updates term properties by setting hasPrefixHits and namespace id of the
@@ -288,7 +289,7 @@ class LiteIndex {
   // Returns debug information for the index in out.
   // verbosity = BASIC, simplest debug information - size of lexicon, hit buffer
   // verbosity = DETAILED, more detailed debug information from the lexicon.
-  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity)
+  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity) const
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns the byte size of all the elements held in the index. This excludes
@@ -340,6 +341,14 @@ class LiteIndex {
       const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Updates the checksums of all index components, updates the combined
+  // checksum and returns it.
+  Crc32 UpdateChecksum() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Calculates the checksum of the index components and returns the combined
+  // checksum.
+  Crc32 GetChecksum() const ICING_LOCKS_EXCLUDED(mutex_);
+
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
 
@@ -371,11 +380,13 @@ class LiteIndex {
     return header_->cur_size();
   }
 
-  // Calculate the checksum of all sub-components of the LiteIndex
-  Crc32 ComputeChecksum() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  // Calculate the checksum of all sub-components of the LiteIndex and set it in
+  // the header.
+  Crc32 UpdateChecksumInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Sets the computed checksum in the header
-  void UpdateChecksum() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  // Calculates the checksum of all sub-components of the LiteIndex. Does NOT
+  // update the header.
+  Crc32 GetChecksumInternal() const ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Non-locking implementation for UpdateTermProperties.
   libtextclassifier3::Status UpdateTermPropertiesImpl(uint32_t tvi,
@@ -407,7 +418,8 @@ class LiteIndex {
   }
 
   // Non-locking implementation for SortHits().
-  void SortHitsImpl() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::Status SortHitsImpl()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Calculates and adds the score for a fetched hit to total_score_out, while
   // updating last_document_id (which keeps track of the last added docId so

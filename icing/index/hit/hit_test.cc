@@ -21,6 +21,7 @@
 #include "gtest/gtest.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {
@@ -98,86 +99,121 @@ TEST(BasicHitTest, Comparison) {
 
 TEST(HitTest, HasTermFrequencyFlag) {
   Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h1.has_term_frequency(), IsFalse());
   EXPECT_THAT(h1.term_frequency(), Eq(Hit::kDefaultTermFrequency));
 
   Hit h2(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h2.has_term_frequency(), IsTrue());
   EXPECT_THAT(h2.term_frequency(), Eq(kSomeTermFrequency));
 }
 
+TEST(HitTest, IsStemmedHitFlag) {
+  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
+  EXPECT_THAT(h1.is_stemmed_hit(), IsFalse());
+
+  Hit h2(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/true);
+  EXPECT_THAT(h2.is_stemmed_hit(), IsTrue());
+}
+
 TEST(HitTest, IsPrefixHitFlag) {
   Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h1.is_prefix_hit(), IsFalse());
 
   Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h2.is_prefix_hit(), IsFalse());
 
   Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h3.is_prefix_hit(), IsTrue());
 
   Hit h4(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h4.is_prefix_hit(), IsFalse());
 }
 
 TEST(HitTest, IsInPrefixSectionFlag) {
   Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h1.is_in_prefix_section(), IsFalse());
 
   Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h2.is_in_prefix_section(), IsFalse());
 
   Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h3.is_in_prefix_section(), IsTrue());
 }
 
 TEST(HitTest, HasFlags) {
   Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h1.has_flags(), IsFalse());
 
   Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h2.has_flags(), IsFalse());
 
   Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
-         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h3.has_flags(), IsFalse());
 
-  Hit h4(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+  Hit h4(kSomeSectionid, kSomeDocumentId, Hit::kDefaultTermFrequency,
+         /*is_in_prefix_section=*/true, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/true);
   EXPECT_THAT(h4.has_flags(), IsTrue());
 
   Hit h5(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_prefix_hit=*/true, /*is_in_prefix_section=*/true);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h5.has_flags(), IsTrue());
 
   Hit h6(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_prefix_hit=*/false, /*is_in_prefix_section=*/true);
+         /*is_prefix_hit=*/true, /*is_in_prefix_section=*/true,
+         /*is_stemmed_hit=*/false);
   EXPECT_THAT(h6.has_flags(), IsTrue());
 
   Hit h7(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_prefix_hit=*/true, /*is_in_prefix_section=*/false);
+         /*is_prefix_hit=*/false, /*is_in_prefix_section=*/true,
+         /*is_stemmed_hit=*/true);
   EXPECT_THAT(h7.has_flags(), IsTrue());
+
+  Hit h8(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
+         /*is_prefix_hit=*/true, /*is_in_prefix_section=*/false,
+         /*is_stemmed_hit=*/true);
+  EXPECT_THAT(h8.has_flags(), IsTrue());
 }
 
 TEST(HitTest, Accessors) {
   Hit h1(kSomeSectionid, kSomeDocumentId, kSomeTermFrequency,
-         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true,
+         /*is_stemmed_hit=*/true);
   EXPECT_THAT(h1.document_id(), Eq(kSomeDocumentId));
   EXPECT_THAT(h1.section_id(), Eq(kSomeSectionid));
   EXPECT_THAT(h1.term_frequency(), Eq(kSomeTermFrequency));
   EXPECT_THAT(h1.is_in_prefix_section(), IsFalse());
   EXPECT_THAT(h1.is_prefix_hit(), IsTrue());
+  EXPECT_THAT(h1.is_stemmed_hit(), IsTrue());
 }
 
 TEST(HitTest, Valid) {
@@ -194,22 +230,24 @@ TEST(HitTest, Valid) {
 
   Hit maximum_document_id_hit(
       kSomeSectionid, kMaxDocumentId, kSomeTermFrequency,
-      /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+      /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+      /*is_stemmed_hit=*/false);
   EXPECT_THAT(maximum_document_id_hit.is_valid(), IsTrue());
 
   Hit maximum_section_id_hit(kMaxSectionId, kSomeDocumentId, kSomeTermFrequency,
                              /*is_in_prefix_section=*/false,
-                             /*is_prefix_hit=*/false);
+                             /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   EXPECT_THAT(maximum_section_id_hit.is_valid(), IsTrue());
 
   Hit minimum_document_id_hit(kSomeSectionid, 0, kSomeTermFrequency,
                               /*is_in_prefix_section=*/false,
-                              /*is_prefix_hit=*/false);
+                              /*is_prefix_hit=*/false,
+                              /*is_stemmed_hit=*/false);
   EXPECT_THAT(minimum_document_id_hit.is_valid(), IsTrue());
 
   Hit minimum_section_id_hit(0, kSomeDocumentId, kSomeTermFrequency,
                              /*is_in_prefix_section=*/false,
-                             /*is_prefix_hit=*/false);
+                             /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   EXPECT_THAT(minimum_section_id_hit.is_valid(), IsTrue());
 
   // We use Hit with value Hit::kMaxDocumentIdSortValue for std::lower_bound
@@ -217,9 +255,11 @@ TEST(HitTest, Valid) {
   // contains kMinSectionId, kMaxDocumentId and 3 flags = false) is >=
   // Hit::kMaxDocumentIdSortValue.
   Hit smallest_hit(kMinSectionId, kMaxDocumentId, Hit::kDefaultTermFrequency,
-                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
   ASSERT_THAT(smallest_hit.is_valid(), IsTrue());
   ASSERT_THAT(smallest_hit.has_term_frequency(), IsFalse());
+  ASSERT_THAT(smallest_hit.is_stemmed_hit(), IsFalse());
   ASSERT_THAT(smallest_hit.is_prefix_hit(), IsFalse());
   ASSERT_THAT(smallest_hit.is_in_prefix_section(), IsFalse());
   EXPECT_THAT(smallest_hit.value(), Ge(Hit::kMaxDocumentIdSortValue));
@@ -227,31 +267,37 @@ TEST(HitTest, Valid) {
 
 TEST(HitTest, Comparison) {
   Hit hit(/*section_id=*/1, /*document_id=*/243, Hit::kDefaultTermFrequency,
-          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+          /*is_stemmed_hit=*/false);
   // DocumentIds are sorted in ascending order. So a hit with a lower
   // document_id should be considered greater than one with a higher
   // document_id.
   Hit higher_document_id_hit(
       /*section_id=*/1, /*document_id=*/2409, Hit::kDefaultTermFrequency,
-      /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
+      /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+      /*is_stemmed_hit=*/false);
   Hit higher_section_id_hit(/*section_id=*/15, /*document_id=*/243,
                             Hit::kDefaultTermFrequency,
                             /*is_in_prefix_section=*/false,
-                            /*is_prefix_hit=*/false);
+                            /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   // Whether or not a term frequency was set is considered, but the term
   // frequency itself is not.
   Hit term_frequency_hit(/*section_id=*/1, 243, /*term_frequency=*/12,
                          /*is_in_prefix_section=*/false,
-                         /*is_prefix_hit=*/false);
+                         /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   Hit prefix_hit(/*section_id=*/1, 243, Hit::kDefaultTermFrequency,
                  /*is_in_prefix_section=*/false,
-                 /*is_prefix_hit=*/true);
+                 /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
   Hit hit_in_prefix_section(/*section_id=*/1, 243, Hit::kDefaultTermFrequency,
                             /*is_in_prefix_section=*/true,
-                            /*is_prefix_hit=*/false);
+                            /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
   Hit hit_with_all_flags_enabled(/*section_id=*/1, 243, 56,
                                  /*is_in_prefix_section=*/true,
-                                 /*is_prefix_hit=*/true);
+                                 /*is_prefix_hit=*/true,
+                                 /*is_stemmed_hit=*/true);
+  Hit stemmed_hit(/*section_id=*/1, 243, Hit::kDefaultTermFrequency,
+                  /*is_in_prefix_section=*/false,
+                  /*is_prefix_hit=*/false, /*is_stemmed_hit=*/true);
 
   std::vector<Hit> hits{hit,
                         higher_document_id_hit,
@@ -259,16 +305,20 @@ TEST(HitTest, Comparison) {
                         term_frequency_hit,
                         prefix_hit,
                         hit_in_prefix_section,
-                        hit_with_all_flags_enabled};
+                        hit_with_all_flags_enabled,
+                        stemmed_hit};
   std::sort(hits.begin(), hits.end());
-  EXPECT_THAT(hits,
-              ElementsAre(higher_document_id_hit, hit, term_frequency_hit,
-                          hit_in_prefix_section, prefix_hit,
-                          hit_with_all_flags_enabled, higher_section_id_hit));
+  EXPECT_THAT(
+      hits, ElementsAre(EqualsHit(higher_document_id_hit), EqualsHit(hit),
+                        EqualsHit(term_frequency_hit), EqualsHit(stemmed_hit),
+                        EqualsHit(hit_in_prefix_section), EqualsHit(prefix_hit),
+                        EqualsHit(hit_with_all_flags_enabled),
+                        EqualsHit(higher_section_id_hit)));
 
   Hit higher_term_frequency_hit(/*section_id=*/1, 243, /*term_frequency=*/108,
                                 /*is_in_prefix_section=*/false,
-                                /*is_prefix_hit=*/false);
+                                /*is_prefix_hit=*/false,
+                                /*is_stemmed_hit=*/false);
   // The term frequency value is not considered when comparing hits.
   EXPECT_THAT(term_frequency_hit, Not(Lt(higher_term_frequency_hit)));
   EXPECT_THAT(higher_term_frequency_hit, Not(Lt(term_frequency_hit)));

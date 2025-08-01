@@ -28,11 +28,15 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
+
+class SectionRestrictData;
+class DocumentFilterPredicate;
 
 // Data structure that maps a single matched query term to its section mask
 // and the list of term frequencies.
@@ -209,16 +213,81 @@ class DocHitInfoIterator {
   //   INVALID_ARGUMENT if the right-most node is not suppose to be trimmed.
   virtual libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && = 0;
 
-  // Map all direct children of this iterator according to the passed mapper.
-  virtual void MapChildren(const ChildrenMapper& mapper) = 0;
+  // Returns raw pointers to the direct children of this iterator. Empty if this
+  // iterator has no children.
+  //
+  // This allows modifying the iterator tree structure, for example, by
+  // modifying the child iterators directly or even replacing them with new
+  // ones. The lifetime of the returned raw pointers is tied to this iterator
+  // object.
+  virtual std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() = 0;
 
-  virtual bool is_leaf() { return false; }
+  // Returns true if section restrictions are not applicable to this iterator.
+  //
+  // Several iterators do **not** need to respect section restrictions, since it
+  // does not have any section information. For example:
+  // - DocHitInfoIteratorAllDocumentId
+  // - DocHitInfoIteratorByUri
+  // - DocHitInfoIteratorMatchScoreExpression
+  // - DocHitInfoIteratorPropertyInSchema
+  // - DocHitInfoIteratorPropertyInDocument
+  //
+  // Unless DocHitInfoIteratorSectionRestrictionNotApplicable is extended, let's
+  // assume the iterator should respect section restrictions.
+  virtual bool SectionRestrictionNotApplicable() const { return false; }
 
-  // Whether the iterator has already been applied all the required section
-  // restrictions.
-  // If true, calling DocHitInfoIteratorSectionRestrict::ApplyRestrictions on
-  // this iterator will have no effect.
-  virtual bool full_section_restriction_applied() const { return false; }
+  // If not SectionRestrictionNotApplicable(), whether section restrictions
+  // should be passed down to the children iterators.
+  //
+  // Several iterators need to pass down section restrictions to their
+  // children to maintain the correct semantics of section restrictions. Check
+  // go/icing-section-restrict-fix for more details. For example:
+  // - DocHitInfoIteratorAnd
+  // - DocHitInfoIteratorOr
+  // - DocHitInfoIteratorFilter
+  //
+  // However, several iterators do respect section restrictions, but do not need
+  // to or cannot pass down section restrictions to their children. For example:
+  // - DocHitInfoIteratorSectionRestrict, since it's a section restriction
+  //   iterator itself. A new section restriction should be chained, instead of
+  //   passing down.
+  // - DocHitInfoIteratorTermLite, since it does not have any children. Section
+  //   restriction should be applied at the top of this iterator directly.
+  // - DocHitInfoIteratorEmbedding, since it does not have any children, and
+  //   in addition, it can internally handle the section restriction logic.
+  //
+  // Unless DocHitInfoIteratorSectionRestrictionApplyToChildren is extended,
+  // let's assume this is false, which means section restrictions should be
+  // applied at the top of this iterator directly or handled internally.
+  virtual bool SectionRestrictionShouldApplyToChildren() const { return false; }
+
+  // Try to internally handle the provided section restriction in the iterator.
+  //
+  // Returns:
+  //   - false if the iterator does not support handling section restriction.
+  //   - true if the iterator supports handling section restriction, and the
+  //     section restriction has been applied. For example,
+  //     DocHitInfoIteratorEmbedding can internally handle the section
+  //     restriction logic.
+  virtual bool HandleSectionRestriction(SectionRestrictData* other_data) {
+    return false;
+  }
+
+  // Whether a filter predicate can be passed through this iterator.
+  //
+  // Currently all iterators except for DocHitInfoIteratorNot are able to pass
+  // filter predicates through, while maintaining the same semantics.
+  virtual bool CanPassFilterPredicateThrough() const { return true; }
+
+  // Try to internally handle the provided filter in the iterator.
+  //
+  // Returns:
+  //   - false if the iterator does not support handling filter.
+  //   - true if the iterator supports handling filter, and the filter has been
+  //     applied.
+  virtual bool HandleFilter(const DocumentFilterPredicate* predicate) {
+    return false;
+  }
 
   virtual ~DocHitInfoIterator() = default;
 
@@ -272,14 +341,16 @@ class DocHitInfoIterator {
   }
 };
 
-// A leaf node is a term node or a chain of section restriction node applied on
-// a term node.
-class DocHitInfoLeafIterator : public DocHitInfoIterator {
+class DocHitInfoIteratorSectionRestrictionNotApplicable
+    : public DocHitInfoIterator {
  public:
-  bool is_leaf() override { return true; }
+  bool SectionRestrictionNotApplicable() const override { return true; }
+};
 
-  // Calling MapChildren on leaf node does not make sense, and will do nothing.
-  void MapChildren(const ChildrenMapper& mapper) override {}
+class DocHitInfoIteratorSectionRestrictionApplyToChildren
+    : public DocHitInfoIterator {
+ public:
+  bool SectionRestrictionShouldApplyToChildren() const override { return true; }
 };
 
 }  // namespace lib
