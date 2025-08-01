@@ -592,7 +592,8 @@ libtextclassifier3::Status MainIndex::AddHits(
     PostingListAccessor::FinalizeResult result =
         std::move(*hit_accum).Finalize();
     if (result.id.is_valid()) {
-      main_lexicon_->SetValueAtIndex(other_tvi_main_tvi_pair.first, &result.id);
+      ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(
+          other_tvi_main_tvi_pair.first, &result.id));
     }
   }
   flash_index_storage_->set_last_indexed_docid(last_added_document_id);
@@ -648,7 +649,7 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   PostingListAccessor::FinalizeResult result =
       std::move(*pl_accessor).Finalize();
   if (result.id.is_valid()) {
-    main_lexicon_->SetValueAtIndex(tvi, &result.id);
+    ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(tvi, &result.id));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -669,6 +670,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor->GetNextHitsBatch());
   }
 
+  Hit::EqualsValueAndFlags hit_equals_value_and_flags_comparator;
   Hit last_added_hit(Hit::kInvalidValue);
   // The hits in backfill_hits are in the reverse order of how they were added.
   // Iterate in reverse to add them to this new posting list in the correct
@@ -685,7 +687,7 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
                            hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
                            /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
-    if (backfill_hit == last_added_hit) {
+    if (hit_equals_value_and_flags_comparator(backfill_hit, last_added_hit)) {
       // Skip duplicate values due to overriding of the is_prefix flag.
       continue;
     }
@@ -770,14 +772,17 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
                          old_pl_accessor.GetNextHitsBatch());
   while (!tmp.empty()) {
     for (const Hit& hit : tmp) {
-      // A safety check to add robustness to the codebase, so to make sure that
-      // we never access invalid memory, in case that hit from the posting list
-      // is corrupted.
-      if (hit.document_id() < 0 ||
-          hit.document_id() >= document_id_old_to_new.size()) {
-        continue;
+      DocumentId old_document_id = hit.document_id();
+      if (old_document_id < 0 ||
+          old_document_id >= document_id_old_to_new.size()) {
+        // If it happens, then the posting list is corrupted. Return error and
+        // let the caller rebuild everything.
+        return absl_ports::InternalError(
+            "Main index hit document id is out of range. The index may have "
+            "been corrupted.");
       }
-      DocumentId new_document_id = document_id_old_to_new[hit.document_id()];
+
+      DocumentId new_document_id = document_id_old_to_new[old_document_id];
       // Transfer the document id of the hit, if the document is not deleted
       // or outdated.
       if (new_document_id != kInvalidDocumentId) {

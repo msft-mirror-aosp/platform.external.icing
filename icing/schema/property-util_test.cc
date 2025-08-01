@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -32,8 +33,11 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::DoubleNear;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
+
+constexpr double kEps = 0.0000001;  // 1e-7
 
 static constexpr std::string_view kTypeTest = "Test";
 static constexpr std::string_view kPropertySingleString = "singleString";
@@ -87,6 +91,25 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeInteger) {
               IsOkAndHolds(ElementsAre(123, -456, 0)));
 }
 
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeDouble) {
+  PropertyProto property;
+  property.mutable_double_values()->Add(3.5);
+  property.mutable_double_values()->Add(-2.0);
+
+  EXPECT_THAT(
+      property_util::ExtractPropertyValues<double>(property),
+      IsOkAndHolds(ElementsAre(DoubleNear(3.5, kEps), DoubleNear(-2.0, kEps))));
+}
+
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeBoolean) {
+  PropertyProto property;
+  property.mutable_boolean_values()->Add(true);
+  property.mutable_boolean_values()->Add(false);
+
+  EXPECT_THAT(property_util::ExtractPropertyValues<bool>(property),
+              IsOkAndHolds(ElementsAre(true, false)));
+}
+
 TEST(PropertyUtilTest, ExtractPropertyValuesTypeVector) {
   PropertyProto::VectorProto vector1;
   vector1.set_model_signature("my_model1");
@@ -107,6 +130,29 @@ TEST(PropertyUtilTest, ExtractPropertyValuesTypeVector) {
       property_util::ExtractPropertyValues<PropertyProto::VectorProto>(
           property),
       IsOkAndHolds(ElementsAre(EqualsProto(vector1), EqualsProto(vector2))));
+}
+
+TEST(PropertyUtilTest, ExtractPropertyValuesTypeBlobHandle) {
+  PropertyProto::BlobHandleProto blob_handle1;
+  blob_handle1.set_namespace_("namespace1");
+  std::vector<unsigned char> bytes1(32);
+  std::string digestString1 = std::string(bytes1.begin(), bytes1.end());
+  blob_handle1.set_digest(digestString1);
+  PropertyProto::BlobHandleProto blob_handle2;
+  blob_handle2.set_namespace_("namespace2");
+  std::vector<unsigned char> bytes2(32);
+  std::string digestString2 = std::string(bytes2.begin(), bytes2.end());
+  blob_handle2.set_digest(digestString2);
+
+  PropertyProto property;
+  *property.mutable_blob_handle_values()->Add() = blob_handle1;
+  *property.mutable_blob_handle_values()->Add() = blob_handle2;
+
+  EXPECT_THAT(
+      property_util::ExtractPropertyValues<PropertyProto::BlobHandleProto>(
+          property),
+      IsOkAndHolds(
+          ElementsAre(EqualsProto(blob_handle1), EqualsProto(blob_handle2))));
 }
 
 TEST(PropertyUtilTest, ExtractPropertyValuesMismatchedType) {

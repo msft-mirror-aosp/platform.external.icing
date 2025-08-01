@@ -159,11 +159,5 @@ Hit Hit::TranslateHit(Hit old_hit, DocumentId new_document_id) {
              old_hit.is_stemmed_hit());
 }
 
-bool Hit::EqualsDocumentIdAndSectionId::operator()(const Hit& hit1,
-                                                   const Hit& hit2) const {
-  return (hit1.value() >> kNumFlagsInValueField) ==
-         (hit2.value() >> kNumFlagsInValueField);
-}
-
 }  // namespace lib
 }  // namespace icing

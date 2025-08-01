@@ -40,9 +40,9 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
-using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Lt;
+using ::testing::Pointwise;
 using ::testing::SizeIs;
 
 class PostingListHitAccessorTest : public ::testing::Test {
@@ -96,8 +96,10 @@ TEST_F(PostingListHitAccessorTest, HitsAddAndRetrieveProperly) {
   // Retrieve some hits.
   ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
                              flash_index_storage_->GetPostingList(result.id));
-  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
-              IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+  EXPECT_THAT(
+      serializer_->GetHits(&pl_holder.posting_list),
+      IsOkAndHolds(Pointwise(EqualsHit(),
+                             std::vector<Hit>(hits1.rbegin(), hits1.rend()))));
   EXPECT_THAT(pl_holder.next_block_index, Eq(kInvalidBlockIndex));
 }
 
@@ -138,7 +140,7 @@ TEST_F(PostingListHitAccessorTest, PreexistingPLKeepOnSameBlock) {
   ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
                              flash_index_storage_->GetPostingList(result2.id));
   EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
-              IsOkAndHolds(ElementsAre(hit2, hit1)));
+              IsOkAndHolds(ElementsAre(EqualsHit(hit2), EqualsHit(hit1))));
 }
 
 TEST_F(PostingListHitAccessorTest, PreexistingPLReallocateToLargerPL) {
@@ -147,8 +149,8 @@ TEST_F(PostingListHitAccessorTest, PreexistingPLReallocateToLargerPL) {
       PostingListHitAccessor::Create(flash_index_storage_.get(),
                                      serializer_.get()));
   // Use a small posting list of 30 bytes. The first 17 hits will be compressed
-  // to one byte each and will be able to fit in the 18 byte padded region. The
-  // last hit will fit in one of the special hits. The posting list will be
+  // to one byte each and will be able to fit in the 18-byte compressed region.
+  // The last hit will fit in one of the special hits. The posting list will be
   // ALMOST_FULL and can fit at most 2 more hits.
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/18, /*desired_byte_length=*/1);
@@ -208,8 +210,10 @@ TEST_F(PostingListHitAccessorTest, PreexistingPLReallocateToLargerPL) {
   hits1.push_back(single_hit);
   ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
                              flash_index_storage_->GetPostingList(result3.id));
-  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
-              IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+  EXPECT_THAT(
+      serializer_->GetHits(&pl_holder.posting_list),
+      IsOkAndHolds(Pointwise(EqualsHit(),
+                             std::vector<Hit>(hits1.rbegin(), hits1.rend()))));
 }
 
 TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
@@ -244,7 +248,8 @@ TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
   ASSERT_THAT(second_block_hits, SizeIs(Lt(hits1.size())));
   auto first_block_hits_start = hits1.rbegin() + second_block_hits.size();
   EXPECT_THAT(second_block_hits,
-              ElementsAreArray(hits1.rbegin(), first_block_hits_start));
+              Pointwise(EqualsHit(), std::vector<Hit>(hits1.rbegin(),
+                                                      first_block_hits_start)));
 
   // Now retrieve all of the hits that were on the first block.
   uint32_t first_block_id = pl_holder.next_block_index;
@@ -254,9 +259,10 @@ TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
                               /*posting_list_index_bits=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(pl_holder,
                              flash_index_storage_->GetPostingList(pl_id));
-  EXPECT_THAT(
-      serializer_->GetHits(&pl_holder.posting_list),
-      IsOkAndHolds(ElementsAreArray(first_block_hits_start, hits1.rend())));
+  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
+              IsOkAndHolds(Pointwise(
+                  EqualsHit(),
+                  std::vector<Hit>(first_block_hits_start, hits1.rend()))));
 }
 
 TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
@@ -311,7 +317,8 @@ TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
   ASSERT_THAT(second_block_hits, SizeIs(Lt(hits1.size())));
   auto first_block_hits_start = hits1.rbegin() + second_block_hits.size();
   EXPECT_THAT(second_block_hits,
-              ElementsAreArray(hits1.rbegin(), first_block_hits_start));
+              Pointwise(EqualsHit(), std::vector<Hit>(hits1.rbegin(),
+                                                      first_block_hits_start)));
 
   // Now retrieve all of the hits that were on the first block.
   uint32_t first_block_id = pl_holder.next_block_index;
@@ -321,9 +328,10 @@ TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
                               /*posting_list_index_bits=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(pl_holder,
                              flash_index_storage_->GetPostingList(pl_id));
-  EXPECT_THAT(
-      serializer_->GetHits(&pl_holder.posting_list),
-      IsOkAndHolds(ElementsAreArray(first_block_hits_start, hits1.rend())));
+  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
+              IsOkAndHolds(Pointwise(
+                  EqualsHit(),
+                  std::vector<Hit>(first_block_hits_start, hits1.rend()))));
 }
 
 TEST_F(PostingListHitAccessorTest, InvalidHitReturnsInvalidArgument) {

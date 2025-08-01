@@ -1,5 +1,7 @@
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchGetResultProto;
+import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
@@ -9,6 +11,7 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
@@ -19,6 +22,7 @@ import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PropertyProto;
+import com.google.android.icing.proto.PutDocumentRequest;
 import com.google.android.icing.proto.PutResultProto;
 import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
@@ -27,6 +31,7 @@ import com.google.android.icing.proto.SchemaProto;
 import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
+import com.google.android.icing.proto.SetSchemaRequestProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.SuggestionResponse;
@@ -43,19 +48,42 @@ public interface IcingSearchEngineInterface extends Closeable {
    */
   InitializeResultProto initialize();
 
-  /** Sets the schema for the icing instance. */
+  /**
+   * Sets the schema for the icing instance.
+   *
+   * <p>Note: This method is deprecated. Please use {@link
+   * #setSchemaWithRequestProto(SetSchemaRequestProto)} instead.
+   */
   SetSchemaResultProto setSchema(SchemaProto schema);
 
   /**
    * Sets the schema for the icing instance.
+   *
+   * <p>Note: This method is deprecated. Please use {@link
+   * #setSchemaWithRequestProto(SetSchemaRequestProto)} instead.
    *
    * @param ignoreErrorsAndDeleteDocuments force to set the schema and delete documents in case of
    *     incompatible schema change.
    */
   SetSchemaResultProto setSchema(SchemaProto schema, boolean ignoreErrorsAndDeleteDocuments);
 
+  /**
+   * Sets the schema for the icing instance.
+   *
+   * @param setSchemaRequest the request proto for setting the schema.
+   */
+  SetSchemaResultProto setSchemaWithRequestProto(SetSchemaRequestProto setSchemaRequest);
+
   /** Gets the schema for the icing instance. */
   GetSchemaResultProto getSchema();
+
+  /**
+   * Gets the schema for the specified database for the icing instance.
+   *
+   * @param database an icing schema database name. The retrieved SchemaProto will only contain
+   *     types that belong to the requested database.
+   */
+  GetSchemaResultProto getSchemaForDatabase(String database);
 
   /**
    * Gets the schema for the icing instance.
@@ -67,6 +95,9 @@ public interface IcingSearchEngineInterface extends Closeable {
   /** Puts the document. */
   PutResultProto put(DocumentProto document);
 
+  /** Puts a number of documents. */
+  BatchPutResultProto batchPut(PutDocumentRequest documents);
+
   /**
    * Gets the document.
    *
@@ -75,6 +106,13 @@ public interface IcingSearchEngineInterface extends Closeable {
    * @param getResultSpec the spec for getting the document.
    */
   GetResultProto get(String namespace, String uri, GetResultSpecProto getResultSpec);
+
+  /**
+   * Gets a list of documents.
+   *
+   * @param getResultSpec the spec for getting the documents.
+   */
+  BatchGetResultProto batchGet(GetResultSpecProto getResultSpec);
 
   /** Reports usage. */
   ReportUsageResultProto reportUsage(UsageReport usageReport);
@@ -91,14 +129,29 @@ public interface IcingSearchEngineInterface extends Closeable {
   SearchResultProto search(
       SearchSpecProto searchSpec, ScoringSpecProto scoringSpec, ResultSpecProto resultSpec);
 
-  /** Gets the next page. */
+  /**
+   * Gets the next page.
+   *
+   * <p>Note: This method is deprecated. Please use {@link #getNextPage(GetNextPageRequestProto)}
+   * instead.
+   */
   SearchResultProto getNextPage(long nextPageToken);
+
+  /**
+   * Gets the next page.
+   *
+   * @param getNextPageRequest the request proto for getting the next page.
+   */
+  SearchResultProto getNextPage(GetNextPageRequestProto getNextPageRequest);
 
   /** Invalidates the next page token. */
   void invalidateNextPageToken(long nextPageToken);
 
   /** Gets a file descriptor to write blob data. */
   BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);
+
+  /** Removes a pending blob. */
+  BlobProto removeBlob(PropertyProto.BlobHandleProto blobHandle);
 
   /** Gets a file descriptor to read blob data. */
   BlobProto openReadBlob(PropertyProto.BlobHandleProto blobHandle);
@@ -152,6 +205,9 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Clears all data from the current icing instance, and reinitializes it. */
   ResetResultProto reset();
+
+  /** Clears all data from the current icing instance. */
+  ResetResultProto clearAndDestroy();
 
   /** Closes the current icing instance. */
   @Override

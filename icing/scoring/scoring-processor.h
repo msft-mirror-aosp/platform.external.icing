@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
@@ -52,7 +53,8 @@ class ScoringProcessor {
           default_semantic_metric_type,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher,
-      const EmbeddingQueryResults* embedding_query_results);
+      const EmbeddingQueryResults* embedding_query_results,
+      const FeatureFlags* feature_flags);
 
   // Assigns scores to DocHitInfos from the given DocHitInfoIterator and returns
   // a vector of ScoredDocumentHits. The size of results is no more than

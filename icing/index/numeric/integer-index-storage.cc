@@ -46,6 +46,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -716,10 +717,17 @@ libtextclassifier3::Status IntegerIndexStorage::TransferIndex(
                              old_pl_accessor->GetNextDataBatch());
       while (!batch_old_data.empty()) {
         for (const IntegerIndexData& old_data : batch_old_data) {
-          DocumentId new_document_id =
-              old_data.basic_hit().document_id() < document_id_old_to_new.size()
-                  ? document_id_old_to_new[old_data.basic_hit().document_id()]
-                  : kInvalidDocumentId;
+          DocumentId old_document_id = old_data.basic_hit().document_id();
+          if (old_document_id < 0 ||
+              old_document_id >= document_id_old_to_new.size()) {
+            // If it happens, then the posting list is corrupted. Return error
+            // and let the caller rebuild everything.
+            return absl_ports::InternalError(
+                "Integer index hit document id is out of range. The index may "
+                "have been corrupted.");
+          }
+
+          DocumentId new_document_id = document_id_old_to_new[old_document_id];
           // Transfer the document id of the hit if the document is not deleted
           // or outdated.
           if (new_document_id != kInvalidDocumentId) {
@@ -921,7 +929,13 @@ IntegerIndexStorage::InitializeExistingFiles(
   // Validate other values of info and options.
   // Magic should be consistent with the codebase.
   if (integer_index_storage->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for IntegerIndexStorage "
+                     << integer_index_storage->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << integer_index_storage->info().magic;
+    return absl_ports::FailedPreconditionError(
+        absl_ports::StrCat("Invalid header magic for IntegerIndexStorage: ",
+                           integer_index_storage->working_path_));
   }
 
   return integer_index_storage;

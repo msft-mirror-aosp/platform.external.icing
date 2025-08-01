@@ -18,14 +18,18 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
-#include "icing/store/key-mapper.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/util/clock.h"
 
 namespace icing {
@@ -46,25 +50,10 @@ namespace lib {
 // The BlobStore is not thread-safe.
 class BlobStore {
  public:
-  // BlobInfo holds information about a blob. This struct will be stored as the
-  // value in the dynamic trie key mapper, so it must be packed to avoid
-  // padding (which potentially causes use-of-uninitialized-value errors).
-  struct BlobInfo {
-    // The creation time of the blob. This is used to determine when to delete
-    // the orphaned blobs.
-    // We are using creation_time_ms to be file name of the blob, so this field
-    // is unique for each blob.
-    int64_t creation_time_ms;
-    bool is_committed;
-
-    // The param needed for dynamic trie, we shouldn't call this constructor
-    // directly.
-    BlobInfo() : BlobInfo(/*creation_time_ms=*/-1, /*is_committed=*/false) {}
-
-    BlobInfo(int64_t creation_time_ms, bool is_committed)
-        : creation_time_ms(creation_time_ms), is_committed(is_committed) {}
-  } __attribute__((packed));
-  static_assert(sizeof(BlobInfo) == 9, "Invalid BlobInfo size");
+  // Builds a string representation of a blob handle.
+  // The string is used as the key in the key mapper.
+  static std::string BuildBlobHandleStr(
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   // Factory function to create a BlobStore instance. The base directory is
   // used to persist blobs. If a blob store was previously created with
@@ -74,70 +63,166 @@ class BlobStore {
   //
   // Returns:
   //   A BlobStore on success
-  //   FAILED_PRECONDITION on any null pointer input
+  //   FAILED_PRECONDITION_ERROR on any null pointer input
   //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::StatusOr<BlobStore> Create(
-      const Filesystem* filesystem, std::string base_dir, const Clock* clock);
+      const Filesystem* filesystem, std::string base_dir, const Clock* clock,
+      int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
+      int32_t compression_mem_level, bool manage_blob_files);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
   // CommitBlob is called, the blob is sealed and rewrite is not allowed.
   //
+  // If Icing does not manage blob files, this method only creates necessary
+  // metadata for the blob but does not open or manage the file descriptor. The
+  // caller is responsible for opening, writing to, and closing the file using
+  // the returned file name.
+  //
+  // Otherwise, a file descriptor is returned, and it is the user's
+  // responsibility to close the file descriptor after writing is done and
+  // should not operate on the file descriptor after commit or remove it.
+  //
   // Returns:
-  //   File descriptor (writable) on success
-  //   INVALID_ARGUMENT on invalid blob handle
-  //   FAILED_PRECONDITION if the blob has already been committed
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<int> OpenWrite(
-      const PropertyProto::BlobHandleProto& blob_handle);
+  //   OK with results on success
+  //   InvalidArgumentError on invalid blob handle
+  //   FailedPreconditionError if the blob is already opened for write
+  //   AlreadyExistsError if the blob is already committed
+  //   InternalError on IO error
+  BlobProto OpenWrite(const PropertyProto::BlobHandleProto& blob_handle);
+
+  // Removes a blob file and blob handle from the blob store.
+  //
+  // This will remove the blob on any state. No matter it's committed or not or
+  // it has reference document links or not.
+  //
+  // If Icing does not manage blob files, this method only removes the metadata
+  // entry from the blob store, but does not delete the actual blob file. The
+  // caller is responsible for deleting the blob file.
+  //
+  // Returns:
+  //   OK with results on success
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError if the blob is not found
+  //   InternalError on IO error
+  BlobProto RemoveBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Gets a file for read only purpose for the given blob handle.
-  // Will only succeed for blobs that were committed by calling CommitBlob.
+  // The blob must be committed by calling CommitBlob otherwise it is not
+  // accessible.
+  //
+  // If Icing does not manage blob files, this method only returns the file name
+  // associated with the blob but does not open or manage the file descriptor.
+  // The caller is responsible for opening, reading from, and closing the file
+  // using the returned file name.
+  //
+  // Otherwise, a file descriptor is returned, and it is the user's
+  // responsibility to close the file descriptor after reading.
   //
   // Returns:
-  //   File descriptor (read only) on success
-  //   INVALID_ARGUMENT on invalid blob handle
-  //   NOT_FOUND on blob is not found or is not committed
-  libtextclassifier3::StatusOr<int> OpenRead(
-      const PropertyProto::BlobHandleProto& blob_handle);
+  //   OK with results on success
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError if the blob is not found or is not committed
+  BlobProto OpenRead(const PropertyProto::BlobHandleProto& blob_handle) const;
 
-  // Commits the given blob, if the blob is finished wrote via OpenWrite.
-  // Before the blob is committed, it is not visible to any reader via OpenRead.
-  // After the blob is committed, it is not allowed to rewrite or update the
-  // content.
+  // Commits the given blob when writing of the blob via OpenWrite is complete.
+  // Before the blob is committed, it is not visible to any reader
+  // via OpenRead. After the blob is committed, it is not allowed to rewrite or
+  // update the content.
+  //
+  // If Icing does not manage blob files, this method marks the blob as
+  // committed in the metadata store. The caller is responsible for verifying
+  // the digest of the blob file.
   //
   // Returns:
-  //   OK on the blob is successfully committed.
-  //   ALREADY_EXISTS on the blob is already committed, this is no op.
-  //   INVALID_ARGUMENT on invalid blob handle or digest is mismatch with
-  //                        file content.
-  //   NOT_FOUND on blob is not found.
-  libtextclassifier3::Status CommitBlob(
-      const PropertyProto::BlobHandleProto& blob_handle);
+  //   OK on success
+  //   AlreadyExistsError if the blob is already committed
+  //   InvalidArgumentError on invalid blob handle or if the digest is mismatch
+  //     with file content
+  //   NotFoundError if the blob is not found
+  BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
 
+  // Gets the potentially optimizable blob handles.
+  //
+  // A blob will be consider as a potentially optimizable blob if it created
+  // before the orphan_blob_time_to_live_ms. And the blob should be removed if
+  // it has no reference document links to it.
+  std::unordered_set<std::string> GetPotentiallyOptimizableBlobHandles() const;
+
+  // Optimize the blob store and remove dead blob files.
+  //
+  // A blob will be consider as a dead blob and removed if it meets BOTH of
+  // following conditions
+  //  1: has no reference document links to it
+  //  2: It's mature.
+  //
+  // Returns:
+  //   The list of expired blob file names to be removed on success. If Icing
+  //   manages blob files, this list will be empty.
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<std::vector<std::string>> Optimize(
+      const std::unordered_set<std::string>& dead_blob_handles);
+
+  // Calculates the StorageInfo for the Blob Store.
+  //
+  // Returns:
+  //   Vector of NamespaceBlobStorageInfoProto contains size of each namespace.
+  //   INTERNAL_ERROR on I/O error
+  libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>
+  GetStorageInfo() const;
+
  private:
-  explicit BlobStore(const Filesystem* filesystem, std::string base_dir,
-                     const Clock* clock,
-                     std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper,
-                     std::unordered_set<std::string> known_file_names)
+  explicit BlobStore(
+      const Filesystem* filesystem, std::string base_dir, const Clock* clock,
+      int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
+      int32_t compression_mem_level, bool manage_blob_files,
+      std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> blob_info_log,
+      std::unordered_map<std::string, int32_t> blob_handle_to_offset,
+      std::unordered_set<std::string> known_file_names)
       : filesystem_(*filesystem),
         base_dir_(std::move(base_dir)),
         clock_(*clock),
-        blob_info_mapper_(std::move(blob_info_mapper)),
+        orphan_blob_time_to_live_ms_(orphan_blob_time_to_live_ms),
+        compression_level_(compression_level),
+        compression_mem_level_(compression_mem_level),
+        manage_blob_files_(manage_blob_files),
+        blob_info_log_(std::move(blob_info_log)),
+        blob_handle_to_offset_(std::move(blob_handle_to_offset)),
         known_file_names_(std::move(known_file_names)) {}
 
-  libtextclassifier3::StatusOr<BlobStore::BlobInfo> GetOrCreateBlobInfo(
-      const std::string& blob_handle_str);
+  libtextclassifier3::StatusOr<BlobInfoProto> GetBlobInfo(
+      const PropertyProto::BlobHandleProto& blob_handle) const;
+
+  libtextclassifier3::StatusOr<BlobInfoProto> GetOrCreateBlobInfo(
+      const std::string& blob_handle_str,
+      const PropertyProto::BlobHandleProto& blob_handle);
+
+  libtextclassifier3::Status CommitBlobMetadata(
+      const PropertyProto::BlobHandleProto& blob_handle);
 
   const Filesystem& filesystem_;
   std::string base_dir_;
   const Clock& clock_;
+  int64_t orphan_blob_time_to_live_ms_;
+  int32_t compression_level_;
+  int32_t compression_mem_level_;
+  bool manage_blob_files_;
 
-  std::unique_ptr<KeyMapper<BlobInfo>> blob_info_mapper_;
+  // The ground truth blob info log file, which is used to read/write/erase
+  // BlobInfoProto.
+  std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> blob_info_log_;
+
+  // The map for BlobHandle string to the offset of BlobInfoProto in the
+  // BlobInfoProto log file.
+  // The keys are the Encoded CString from BlobHandleProto.
+  std::unordered_map<std::string, int32_t> blob_handle_to_offset_;
+
+  // The set of used file names to store blobs in the blob store.
   std::unordered_set<std::string> known_file_names_;
+
   bool has_mutated_ = false;
 };
 

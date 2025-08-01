@@ -27,12 +27,17 @@
 #ifndef GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_
 #define GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_
 
+#include <cstdint>
+
 #include "icing/portable/zlib.h"
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
 namespace protobuf_ports {
+
+static constexpr int64_t kDefaultBufferSize = 64 * 1024;  // 64kb
+static constexpr int kDefaultMemLevel = 8;
 
 // A ZeroCopyInputStream that reads compressed data through zlib
 class GzipInputStream : public google::protobuf::io::ZeroCopyInputStream {
@@ -107,6 +112,16 @@ class GzipOutputStream : public google::protobuf::io::ZeroCopyOutputStream {
     // Z_HUFFMAN_ONLY, or Z_RLE.  See the documentation for deflateInit2 in
     // zlib.h for definitions of these constants.
     int compression_strategy;
+
+    // Used for deflateInit2.
+    // A number between 1 and 9, specifying how much memory should be allocated
+    // for the internal compression state.
+    // memLevel=1 uses minimum memory but is slow and reduces compression ratio;
+    // memLevel=9 uses maximum memory for optimal speed.
+    // The default value is 8.
+    //
+    // See the documentation for deflateInit2 in zlib.h for more details.
+    int mem_level;
 
     Options();  // Initializes with default values.
   };

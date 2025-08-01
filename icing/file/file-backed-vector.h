@@ -435,9 +435,9 @@ class FileBackedVector {
 
     int32_t size() const { return len_; }
 
-    // Set the mutable array slice (starting at idx) by the given element array.
-    // It handles SetDirty properly for the file-backed-vector when modifying
-    // elements.
+    // Sets the mutable array slice (starting at idx) by the given element
+    // array. It handles SetDirty properly for the file-backed-vector when
+    // modifying elements.
     //
     // REQUIRES: arr is valid && arr_len >= 0 && idx >= 0 && idx + arr_len <=
     //           size(), otherwise the behavior is undefined.
@@ -445,6 +445,19 @@ class FileBackedVector {
       for (int32_t i = 0; i < arr_len; ++i) {
         SetDirty(idx + i);
         data_[idx + i] = arr[i];
+      }
+    }
+
+    // Fills the mutable array slice, starting at idx with the given length, by
+    // the given value. It handles SetDirty properly for the file-backed-vector
+    // when modifying elements.
+    //
+    // REQUIRES: len >= 0 && idx >= 0 && idx + len <= size(), otherwise the
+    //           behavior is undefined.
+    void Fill(int32_t idx, int32_t len, const T& value) {
+      for (int32_t i = 0; i < len; ++i) {
+        SetDirty(idx + i);
+        data_[idx + i] = value;
       }
     }
 
@@ -688,9 +701,12 @@ FileBackedVector<T>::InitializeExistingFile(
   // Make sure the header is still valid before we use any of its values. This
   // should technically be included in the header_checksum check below, but this
   // is a quick/fast check that can save us from an extra crc computation.
-  if (header->kMagic != FileBackedVector<T>::Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for ", file_path));
+  if (header->magic != Header::kMagic) {
+    ICING_LOG(ERROR) << "Invalid header magic for FileBackedVector "
+                     << file_path << ". Expected: " << Header::kMagic
+                     << ", actual: " << header->magic;
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for FileBackedVector: ", file_path));
   }
 
   // Check header
