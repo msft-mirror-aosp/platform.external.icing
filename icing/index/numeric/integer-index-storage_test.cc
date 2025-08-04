@@ -309,15 +309,17 @@ TEST_P(IntegerIndexStorageTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.num_data, Eq(0));
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
   // # of elements in sorted_buckets should be 1, so it should have non-zero
   // all storages crc value.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Ne(0));
@@ -518,8 +520,9 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -567,8 +570,9 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
@@ -1874,8 +1878,8 @@ TEST_P(IntegerIndexStorageTest, TransferIndexOutOfRangeDocumentId) {
                                    /*new_keys=*/{-2000}));
   ASSERT_THAT(storage->num_data(), Eq(2));
 
-  // Create document_id_old_to_new with size = 2. TransferIndex should handle
-  // out of range DocumentId properly.
+  // Create document_id_old_to_new with size = 2. TransferIndex should return
+  // internal error for out of range document id.
   std::vector<DocumentId> document_id_old_to_new = {kInvalidDocumentId, 0};
 
   // Transfer to new storage.
@@ -1887,17 +1891,9 @@ TEST_P(IntegerIndexStorageTest, TransferIndexOutOfRangeDocumentId) {
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
   EXPECT_THAT(storage->TransferIndex(document_id_old_to_new, new_storage.get()),
-              IsOk());
-
-  // Verify after transferring.
-  std::vector<SectionId> expected_sections = {kDefaultSectionId};
-  EXPECT_THAT(new_storage->num_data(), Eq(1));
-  EXPECT_THAT(Query(new_storage.get(), /*key_lower=*/120, /*key_upper=*/120),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocHitInfo(/*document_id=*/0, expected_sections))));
-  EXPECT_THAT(
-      Query(new_storage.get(), /*key_lower=*/-2000, /*key_upper=*/-2000),
-      IsOkAndHolds(IsEmpty()));
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+                       HasSubstr("Integer index hit document id is out of "
+                                 "range. The index may have been corrupted.")));
 }
 
 TEST_P(IntegerIndexStorageTest, TransferEmptyIndex) {

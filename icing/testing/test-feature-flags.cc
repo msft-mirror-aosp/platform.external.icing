@@ -25,7 +25,12 @@ FeatureFlags GetTestFeatureFlags() {
                       /*enable_embedding_quantization=*/true,
                       /*enable_repeated_field_joins=*/true,
                       /*enable_embedding_backup_generation=*/true,
-                      /*enable_schema_database=*/true);
+                      /*enable_schema_database=*/true,
+                      /*release_backup_schema_file_if_overlay_present=*/true,
+                      /*enable_strict_page_byte_size_limit=*/true,
+                      /*enable_smaller_decompression_buffer_size=*/true,
+                      /*enable_eigen_embedding_scoring=*/true,
+                      /*enable_passing_filter_to_children=*/true);
 }
 
 }  // namespace lib
