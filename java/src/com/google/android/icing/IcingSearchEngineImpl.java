@@ -89,6 +89,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] setSchemaWithRequestProto(@NonNull byte[] setSchemaRequestBytes) {
+    throwIfClosed();
+    return nativeSetSchemaWithRequestProto(this, setSchemaRequestBytes);
+  }
+
+  @Nullable
   public byte[] getSchema() {
     throwIfClosed();
     return nativeGetSchema(this);
@@ -113,10 +119,22 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] batchPut(@NonNull byte[] documentsBytes) {
+    throwIfClosed();
+    return nativeBatchPut(this, documentsBytes);
+  }
+
+  @Nullable
   public byte[] get(
       @NonNull String namespace, @NonNull String uri, @NonNull byte[] getResultSpecBytes) {
     throwIfClosed();
     return nativeGet(this, namespace, uri, getResultSpecBytes);
+  }
+
+  @Nullable
+  public byte[] batchGet(@NonNull byte[] getResultSpecBytes) {
+    throwIfClosed();
+    return nativeBatchGet(this, getResultSpecBytes);
   }
 
   @Nullable
@@ -154,6 +172,13 @@ public class IcingSearchEngineImpl implements Closeable {
   public byte[] getNextPage(long nextPageToken) {
     throwIfClosed();
     return nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
+  }
+
+  @Nullable
+  public byte[] getNextPageWithRequestProto(@NonNull byte[] getNextPageRequestBytes) {
+    throwIfClosed();
+    return nativeGetNextPageWithRequestProto(
+        this, getNextPageRequestBytes, System.currentTimeMillis());
   }
 
   public void invalidateNextPageToken(long nextPageToken) {
@@ -256,6 +281,12 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeReset(this);
   }
 
+  @Nullable
+  public byte[] clearAndDestroy() {
+    throwIfClosed();
+    return nativeClearAndDestroy(this);
+  }
+
   public static boolean shouldLog(short severity) {
     return shouldLog(severity, (short) 0);
   }
@@ -290,6 +321,9 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeSetSchema(
       IcingSearchEngineImpl instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
 
+  private static native byte[] nativeSetSchemaWithRequestProto(
+      IcingSearchEngineImpl instance, byte[] setSchemaRequestBytes);
+
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeGetSchemaForDatabase(
@@ -300,8 +334,14 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativePut(IcingSearchEngineImpl instance, byte[] documentBytes);
 
+  private static native byte[] nativeBatchPut(
+      IcingSearchEngineImpl instance, byte[] documentsBytes);
+
   private static native byte[] nativeGet(
       IcingSearchEngineImpl instance, String namespace, String uri, byte[] getResultSpecBytes);
+
+  private static native byte[] nativeBatchGet(
+      IcingSearchEngineImpl instance, byte[] getResultSpecBytes);
 
   private static native byte[] nativeReportUsage(
       IcingSearchEngineImpl instance, byte[] usageReportBytes);
@@ -317,6 +357,11 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeGetNextPage(
       IcingSearchEngineImpl instance, long nextPageToken, long javaToNativeStartTimestampMs);
+
+  private static native byte[] nativeGetNextPageWithRequestProto(
+      IcingSearchEngineImpl instance,
+      byte[] getNextPageRequestBytes,
+      long javaToNativeStartTimestampMs);
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
@@ -354,6 +399,8 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGetStorageInfo(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeReset(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeClearAndDestroy(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeSearchSuggestions(
       IcingSearchEngineImpl instance, byte[] suggestionSpecBytes);

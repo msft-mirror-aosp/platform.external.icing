@@ -14,6 +14,7 @@
 
 #include "icing/util/tokenized-document.h"
 
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -21,6 +22,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -28,6 +30,7 @@
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/document-validator.h"
 #include "icing/util/status-macros.h"
 
@@ -68,21 +71,28 @@ libtextclassifier3::StatusOr<std::vector<TokenizedSection>> Tokenize(
 /* static */ libtextclassifier3::StatusOr<TokenizedDocument>
 TokenizedDocument::Create(const SchemaStore* schema_store,
                           const LanguageSegmenter* language_segmenter,
-                          DocumentProto document) {
+                          int64_t current_time_ms, DocumentProto document) {
+  // Set the creation timestamp if it is not set.
+  if (document.creation_timestamp_ms() == 0) {
+    document.set_creation_timestamp_ms(current_time_ms);
+  }
+
   // Since there are many std::string_view objects pointing to the document
-  // proto, we should make sure DocumentProto has a fixed address. The simplest
-  // way is to use a unique_ptr.
-  auto document_ptr = std::make_unique<DocumentProto>(std::move(document));
+  // proto, we should make sure DocumentProto in DocumentWrapper has a fixed
+  // address. The simplest way is to use a unique_ptr.
+  auto document_wrapper_ptr = std::make_unique<DocumentWrapper>(
+      document_util::CreateDocumentWrapper(std::move(document)));
 
   DocumentValidator validator(schema_store);
-  ICING_RETURN_IF_ERROR(validator.Validate(*document_ptr));
-
-  ICING_ASSIGN_OR_RETURN(SectionGroup section_group,
-                         schema_store->ExtractSections(*document_ptr));
+  ICING_RETURN_IF_ERROR(validator.Validate(document_wrapper_ptr->document()));
 
   ICING_ASSIGN_OR_RETURN(
-      JoinablePropertyGroup joinable_property_group,
-      schema_store->ExtractJoinableProperties(*document_ptr));
+      SectionGroup section_group,
+      schema_store->ExtractSections(document_wrapper_ptr->document()));
+
+  ICING_ASSIGN_OR_RETURN(JoinablePropertyGroup joinable_property_group,
+                         schema_store->ExtractJoinableProperties(
+                             document_wrapper_ptr->document()));
 
   // Tokenize string sections
   ICING_ASSIGN_OR_RETURN(
@@ -90,11 +100,19 @@ TokenizedDocument::Create(const SchemaStore* schema_store,
       Tokenize(schema_store, language_segmenter,
                section_group.string_sections));
 
-  return TokenizedDocument(std::move(document_ptr),
-                           std::move(tokenized_string_sections),
-                           std::move(section_group.integer_sections),
-                           std::move(section_group.vector_sections),
-                           std::move(joinable_property_group));
+  TokenizedDocument tokenized_document(
+      std::move(document_wrapper_ptr), std::move(tokenized_string_sections),
+      std::move(section_group.integer_sections),
+      std::move(section_group.vector_sections),
+      std::move(joinable_property_group));
+
+  // Set the num_string_tokens into the document proto.
+  int32_t num_string_tokens = tokenized_document.num_string_tokens();
+  tokenized_document.document_wrapper_->mutable_document()
+      ->mutable_internal_fields()
+      ->set_length_in_tokens(num_string_tokens);
+
+  return tokenized_document;
 }
 
 }  // namespace lib

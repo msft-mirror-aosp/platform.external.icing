@@ -16,8 +16,11 @@ package com.google.android.icing;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
+import static org.junit.Assert.assertThrows;
 
 import com.google.android.icing.IcingSearchEngine;
+import com.google.android.icing.proto.BatchGetResultProto;
+import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
@@ -27,6 +30,7 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
@@ -40,6 +44,7 @@ import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PropertyConfigProto;
 import com.google.android.icing.proto.PropertyProto;
+import com.google.android.icing.proto.PutDocumentRequest;
 import com.google.android.icing.proto.PutResultProto;
 import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
@@ -49,6 +54,7 @@ import com.google.android.icing.proto.SchemaTypeConfigProto;
 import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
+import com.google.android.icing.proto.SetSchemaRequestProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.SnippetMatchProto;
 import com.google.android.icing.proto.SnippetProto;
@@ -226,11 +232,23 @@ public final class IcingSearchEngineTest {
     SchemaProto db2Schema =
         SchemaProto.newBuilder().addTypes(createEmailTypeConfigWithDatabase(db2)).build();
 
+    SetSchemaRequestProto requestProto1 =
+        SetSchemaRequestProto.newBuilder()
+            .setSchema(db1Schema)
+            .setDatabase(db1)
+            .setIgnoreErrorsAndDeleteDocuments(false)
+            .build();
     SetSchemaResultProto setSchemaResultProto =
-        icingSearchEngine.setSchema(db1Schema, /* ignoreErrorsAndDeleteDocuments= */ false);
+        icingSearchEngine.setSchemaWithRequestProto(requestProto1);
     assertStatusOk(setSchemaResultProto.getStatus());
-    setSchemaResultProto =
-        icingSearchEngine.setSchema(db2Schema, /* ignoreErrorsAndDeleteDocuments= */ false);
+
+    SetSchemaRequestProto requestProto2 =
+        SetSchemaRequestProto.newBuilder()
+            .setSchema(db2Schema)
+            .setDatabase(db2)
+            .setIgnoreErrorsAndDeleteDocuments(false)
+            .build();
+    setSchemaResultProto = icingSearchEngine.setSchemaWithRequestProto(requestProto2);
     assertStatusOk(setSchemaResultProto.getStatus());
 
     // Get schema for individual databases.
@@ -274,6 +292,264 @@ public final class IcingSearchEngineTest {
         icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertStatusOk(getResultProto.getStatus());
     assertThat(getResultProto.getDocument()).isEqualTo(emailDocument);
+  }
+
+  @Test
+  public void testBatchPutAndGetDocuments() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 = createEmailDocument("namespace", "uri1");
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri2");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+
+    assertStatusOk(batchPutResultProto.getStatus());
+    assertThat(batchPutResultProto.getPutResultProtos(0).getUri()).isEqualTo("uri1");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(0).getStatus());
+    assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
+
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
+
+    GetResultSpecProto getResultSpecProto =
+        GetResultSpecProto.newBuilder()
+            .setNamespaceRequested("namespace")
+            .addIds("uri1")
+            .addIds("uri2")
+            .build();
+    BatchGetResultProto batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+
+    assertStatusOk(batchGetResultProto.getStatus());
+    // Check doc1
+    DocumentProto document = batchGetResultProto.getGetResultProtos(0).getDocument();
+    assertStatusOk(batchGetResultProto.getGetResultProtos(0).getStatus());
+    assertThat(document).isEqualTo(emailDocument1);
+    // Check doc2
+    document = batchGetResultProto.getGetResultProtos(1).getDocument();
+    assertStatusOk(batchGetResultProto.getGetResultProtos(1).getStatus());
+    assertThat(document).isEqualTo(emailDocument2);
+  }
+
+  @Test
+  public void testBatchGetWithEmptyResult() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 = createEmailDocument("namespace", "uri1");
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri2");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+    assertStatusOk(batchPutResultProto.getStatus());
+
+    // no ids.
+    GetResultSpecProto getResultSpecProto =
+        GetResultSpecProto.newBuilder().setNamespaceRequested("namespace").build();
+    BatchGetResultProto batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+
+    // Check no doc returned if no ids are specified.
+    assertStatusOk(batchGetResultProto.getStatus());
+    assertThat(batchGetResultProto.getGetResultProtosList()).isEmpty();
+
+    // empty namespace.
+    getResultSpecProto = GetResultSpecProto.newBuilder().addIds("uri1").build();
+    batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+    assertStatusOk(batchGetResultProto.getStatus());
+    assertThat(batchGetResultProto.getGetResultProtosList()).hasSize(1);
+    assertThat(batchGetResultProto.getGetResultProtos(0).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+
+    // different namespace.
+    getResultSpecProto =
+        GetResultSpecProto.newBuilder()
+            .setNamespaceRequested("otherNameSpace")
+            .addIds("uri1")
+            .addIds("uri2")
+            .build();
+    batchGetResultProto = icingSearchEngine.batchGet(getResultSpecProto);
+
+    // Check not found returned if namespace is different.
+    assertStatusOk(batchGetResultProto.getStatus());
+    assertThat(batchGetResultProto.getGetResultProtosList()).hasSize(2);
+    assertThat(batchGetResultProto.getGetResultProtos(0).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+    assertThat(batchGetResultProto.getGetResultProtos(1).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
+  @Test
+  public void testBatchPutWithDuplicatedDocuments() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    // Two docs with same uri.
+    DocumentProto emailDocument1 = createEmailDocument("namespace", "uri");
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+
+    // We should still get two putResults back. That's intended behavior.
+    assertThat(batchPutResultProto.getPutResultProtosList()).hasSize(2);
+    assertThat(batchPutResultProto.getPutResultProtos(0).getUri()).isEqualTo("uri");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(0).getStatus());
+    assertThat(batchPutResultProto.getPutResultProtos(0).getWasReplacement()).isFalse();
+    assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
+    assertThat(batchPutResultProto.getPutResultProtos(1).getWasReplacement()).isTrue();
+
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
+  }
+
+  @Test
+  public void testBatchPutWithEmptyRequest() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    PutDocumentRequest putDocumentRequest = PutDocumentRequest.getDefaultInstance();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+
+    BatchPutResultProto expected =
+        BatchPutResultProto.newBuilder()
+            .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.OK))
+            .build();
+    assertThat(batchPutResultProto).isEqualTo(expected);
+
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
+  }
+
+  @Test
+  public void testBatchPutAndGetDocumentsWithError() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+    // Document 1 has no namespace.
+    DocumentProto emailDocument1 = DocumentProto.newBuilder().setUri("uri1").build();
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri2");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+
+    PutResultProto putResult1 = batchPutResultProto.getPutResultProtos(0);
+    // result0 error as namespace is missing.
+    assertThat(putResult1.getUri()).isEqualTo("uri1");
+    assertWithMessage(putResult1.getStatus().getMessage())
+        .that(putResult1.getStatus().getCode())
+        .isEqualTo(StatusProto.Code.INVALID_ARGUMENT);
+    // result1 is ok.
+    assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
+
+    // PersistToDiskResultProto should not be set if persist_type is not set in the
+    // PutDocumentRequest.
+    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+        .isEqualTo(StatusProto.Code.UNKNOWN);
+
+    // Check document 1
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
+    assertWithMessage(getResultProto.getStatus().getMessage())
+        .that(getResultProto.getStatus().getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+    // check document 2
+    getResultProto =
+        icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
+    assertStatusOk(getResultProto.getStatus());
+    assertThat(getResultProto.getDocument()).isEqualTo(emailDocument2);
+  }
+
+  @Test
+  public void testBatchPutWithPersistToDisk() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 = createEmailDocument("namespace", "uri1");
+    DocumentProto emailDocument2 = createEmailDocument("namespace", "uri2");
+    PutDocumentRequest putDocumentRequest =
+        PutDocumentRequest.newBuilder()
+            .addDocuments(emailDocument1)
+            .addDocuments(emailDocument2)
+            .setPersistType(PersistType.Code.FULL)
+            .build();
+    BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+
+    assertThat(batchPutResultProto.getPutResultProtos(0).getUri()).isEqualTo("uri1");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(0).getStatus());
+    assertThat(batchPutResultProto.getPutResultProtos(1).getUri()).isEqualTo("uri2");
+    assertStatusOk(batchPutResultProto.getPutResultProtos(1).getStatus());
+
+    // PersistToDisk should be called if persist_type is set in the PutDocumentRequest.
+    assertStatusOk(batchPutResultProto.getPersistToDiskResultProto().getStatus());
   }
 
   @Test
@@ -382,6 +658,83 @@ public final class IcingSearchEngineTest {
     icingSearchEngine.invalidateNextPageToken(searchResultProto.getNextPageToken());
 
     searchResultProto = icingSearchEngine.getNextPage(searchResultProto.getNextPageToken());
+    assertStatusOk(searchResultProto.getStatus());
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
+  }
+
+  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
+  // into g3.
+  @Ignore
+  @Test
+  public void getNextPageWithRequestProto() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    Map<String, DocumentProto> documents = new HashMap<>();
+    for (int i = 0; i < 10; i++) {
+      DocumentProto emailDocument =
+          createEmailDocument("namespace", "uri:" + i).toBuilder()
+              .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
+              .build();
+      documents.put("uri:" + i, emailDocument);
+      assertWithMessage(icingSearchEngine.put(emailDocument).getStatus().getMessage())
+          .that(icingSearchEngine.put(emailDocument).getStatus().getCode())
+          .isEqualTo(StatusProto.Code.OK);
+    }
+
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            .setQuery("foo")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+    ResultSpecProto resultSpecProto = ResultSpecProto.newBuilder().setNumPerPage(2).build();
+
+    SearchResultProto searchResultProto =
+        icingSearchEngine.search(
+            searchSpec, ScoringSpecProto.getDefaultInstance(), resultSpecProto);
+    assertStatusOk(searchResultProto.getStatus());
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(2);
+    DocumentProto resultDocument1 = searchResultProto.getResults(0).getDocument();
+    DocumentProto resultDocument2 = searchResultProto.getResults(1).getDocument();
+    assertThat(resultDocument1).isEqualTo(documents.remove(resultDocument1.getUri()));
+    assertThat(resultDocument2).isEqualTo(documents.remove(resultDocument2.getUri()));
+
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
+        .isGreaterThan(0);
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
+    assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
+
+    GetNextPageRequestProto getNextPageRequestProto =
+        GetNextPageRequestProto.newBuilder()
+            .setNextPageToken(searchResultProto.getNextPageToken())
+            .setMaxResultsToRetrieveFromPage(1)
+            .build();
+    // fetch rest pages
+    for (int i = 1; i < 5; i++) {
+      searchResultProto = icingSearchEngine.getNextPage(getNextPageRequestProto);
+      DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
+      assertWithMessage(searchResultProto.getStatus().getMessage())
+          .that(searchResultProto.getStatus().getCode())
+          .isEqualTo(StatusProto.Code.OK);
+      assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+      assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
+    }
+
+    // invalidate rest result
+    icingSearchEngine.invalidateNextPageToken(searchResultProto.getNextPageToken());
+
+    searchResultProto = icingSearchEngine.getNextPage(getNextPageRequestProto);
     assertStatusOk(searchResultProto.getStatus());
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
@@ -761,6 +1114,45 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
+  public void testClearAndDestroy() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    // Simple put and get
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
+    PutResultProto putResultProto = icingSearchEngine.put(emailDocument);
+    assertStatusOk(putResultProto.getStatus());
+
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
+    assertStatusOk(getResultProto.getStatus());
+    assertThat(getResultProto.getDocument()).isEqualTo(emailDocument);
+
+    // Clear and destroy
+    ResetResultProto clearAndDestroyResult = icingSearchEngine.clearAndDestroy();
+    assertStatusOk(clearAndDestroyResult.getStatus());
+
+    // Try to put and get again, but it should fail since the instance is
+    // uninitialized after clearAndDestroy().
+    assertThat(icingSearchEngine.put(emailDocument).getStatus().getCode())
+        .isEqualTo(StatusProto.Code.FAILED_PRECONDITION);
+    assertThat(
+            icingSearchEngine
+                .get("namespace", "uri", GetResultSpecProto.getDefaultInstance())
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.FAILED_PRECONDITION);
+  }
+
+  @Test
   public void testReportUsage() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
@@ -997,5 +1389,48 @@ public final class IcingSearchEngineTest {
 
   private static void assertStatusOk(StatusProto status) {
     assertWithMessage(status.getMessage()).that(status.getCode()).isEqualTo(StatusProto.Code.OK);
+  }
+
+  @Test
+  @Ignore
+  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
+  // into g3.
+  public void throwIfClosed() throws Exception {
+    icingSearchEngine.close();
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.initialize());
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.setSchema(SchemaProto.getDefaultInstance()));
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.getSchema());
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.getSchemaType("type"));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.put(DocumentProto.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.batchPut(PutDocumentRequest.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.batchGet(GetResultSpecProto.getDefaultInstance()));
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.optimize());
+    assertThrows(
+        IllegalStateException.class, () -> icingSearchEngine.persistToDisk(PersistType.Code.LITE));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.reportUsage(UsageReport.getDefaultInstance()));
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.getStorageInfo());
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            icingSearchEngine.search(
+                SearchSpecProto.getDefaultInstance(),
+                ScoringSpecProto.getDefaultInstance(),
+                ResultSpecProto.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.getNextPage(GetNextPageRequestProto.getDefaultInstance()));
   }
 }

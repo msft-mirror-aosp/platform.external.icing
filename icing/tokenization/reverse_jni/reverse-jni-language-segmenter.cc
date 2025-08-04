@@ -256,26 +256,19 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
  private:
   // Ensures that all members are consistent with the 'Done' state.
-  // In the 'Done' state, both term_start_.utf8_index() and
-  // term_end_exclusive_.utf8_index() will point to the same character, causing
-  // GetTerm() to return an empty string and term_start_.utf16_index() and
-  // term_end_exclusive_.utf16_index() will be marked with the kDone value.
-  // break_iterator_ may be in any state.
+  // In the 'Done' state:
+  // - Both term_start_ and term_end_exclusive_ will be invalid.
+  // - break_iterator_ may be in any state.
   void MarkAsDone() {
-    term_start_ =
-        CharacterIterator(text_, /*utf8_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf16_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf32_index=*/ReverseJniBreakIterator::kDone);
-    term_end_exclusive_ =
-        CharacterIterator(text_, /*utf8_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf16_index=*/ReverseJniBreakIterator::kDone,
-                          /*utf32_index=*/ReverseJniBreakIterator::kDone);
+    // Set the iterators to invalid instances.
+    term_start_ = CharacterIterator();
+    term_end_exclusive_ = CharacterIterator();
   }
   bool IsDone() const {
-    // We could just as easily check the other utf indices or the values in
-    // term_start_ to check for done. There's no particular reason to choose any
-    // one since they should all hold kDone.
-    return term_end_exclusive_.utf16_index() == ReverseJniBreakIterator::kDone;
+    // We could just as easily check if term_end_exclusive_ is invalid. Both
+    // term_start_ and term_end_exclusive_ are invalid when the iterator is
+    // done.
+    return !term_end_exclusive_.is_valid();
   }
 
   // All of ReverseJniBreakIterator's functions return UTF-16 boundaries. So

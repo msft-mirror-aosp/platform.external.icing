@@ -57,7 +57,7 @@ message PersistType {
 }
 
 // Result of a call to IcingSearchEngine.Persist
-// Next tag: 2
+// Next tag: 4
 message PersistToDiskResultProto {
   // Status code can be one of:
   //   OK
@@ -66,4 +66,67 @@ message PersistToDiskResultProto {
   //
   // See status.proto for more details.
   optional StatusProto status = 1;
+
+  // Stats about the PersistToDisk call.
+  optional PersistToDiskStatsProto persist_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
+}
+
+// Stats of the top-level function IcingSearchEngine::PersistToDisk.
+// Next tag: 14
+message PersistToDiskStatsProto {
+  // The type of persistence guarantee that PersistToDisk should provide.
+  optional PersistType.Code persist_type = 1;
+
+  // Overall time used for the function call.
+  optional int32 latency_ms = 2;
+
+  // Time used to persist the blob store.
+  optional int32 blob_store_persist_latency_ms = 3;
+
+  // Time used to persist the document store.
+  optional int32 document_store_total_persist_latency_ms = 4;
+
+  // Time used to persist the document store components.
+  optional int32 document_store_components_persist_latency_ms = 5;
+
+  // Time used to update the document store checksum.
+  optional int32 document_store_checksum_update_latency_ms = 6;
+
+  // Time used to update the document log checksum.
+  optional int32 document_log_checksum_update_latency_ms = 7;
+
+  // Time used to sync the document log data to disk.
+  optional int32 document_log_data_sync_latency_ms = 8;
+
+  // Time used to persist the schema store. If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the schema store. If the
+  // persist type is FULL, this will update the checksums internally and
+  // fdatasync/msync.
+  optional int32 schema_store_persist_latency_ms = 9;
+
+  // Time used to persist the index. If the persist type is RECOVERY_PROOF, this
+  // will update the checksums of the index.  If the persist type is FULL, this
+  // will update the checksums internally and fdatasync/msync.
+  optional int32 index_persist_latency_ms = 10;
+
+  // Time used to persist the integer index. If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the integer index. If the
+  // persist type is FULL, this will update the checksums internally and
+  // fdatasync/msync.
+  optional int32 integer_index_persist_latency_ms = 11;
+
+  // Time used to persist the qualified id join index.  If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the qualified id join
+  // index. If the persist type is FULL, this will update the checksums
+  // internally and fdatasync/msync.
+  optional int32 qualified_id_join_index_persist_latency_ms = 12;
+
+  // Time used to persist the embedding index. If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the embedding index. If
+  // the persist type is FULL, this will update the checksums internally and
+  // fdatasync/msync.
+  optional int32 embedding_index_persist_latency_ms = 13;
 }
