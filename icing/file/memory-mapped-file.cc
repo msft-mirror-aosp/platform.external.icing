@@ -191,7 +191,7 @@ libtextclassifier3::Status MemoryMappedFile::PersistToDisk() {
       // size.
       msync(mmap_result_,
             std::min(file_size_ - adjusted_offset(), adjusted_mmap_size()),
-            MS_SYNC) != 0) {
+            MS_ASYNC) != 0) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Unable to sync file using msync(): ", file_path_));
   }

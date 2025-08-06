@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -46,6 +47,7 @@ using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::HasSubstr;
+using ::testing::Ne;
 using ::testing::Not;
 using ::testing::NotNull;
 
@@ -1039,11 +1041,11 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptHeader) {
     EXPECT_FALSE(create_result.has_data_loss());
   }
 
-  int corrupt_checksum = 24;
+  int corrupt_legacy_header_checksum = 24;
 
   // Write the corrupted header
   Header header = ReadHeader(filesystem_, file_path_);
-  header.SetHeaderChecksum(corrupt_checksum);
+  header.SetLegacyHeaderChecksum(corrupt_legacy_header_checksum);
   WriteHeader(filesystem_, file_path_, header);
 
   {
@@ -1055,7 +1057,7 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptHeader) {
                         compression_threshold_bytes_, compression_mem_level_,
                         enable_smaller_decompression_buffer_size_)),
                 StatusIs(libtextclassifier3::StatusCode::INTERNAL,
-                         HasSubstr("Invalid header checksum")));
+                         HasSubstr("Invalid legacy header checksum")));
   }
 }
 
@@ -1204,7 +1206,7 @@ TEST_F(PortableFileBackedProtoLogTest,
 
     // Set dirty bit to true to reflect that something changed in the log.
     header.SetDirtyFlag(true);
-    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+    header.SetLegacyHeaderChecksum(header.CalculateLegacyHeaderChecksum());
 
     WriteHeader(filesystem_, file_path_, header);
   }
@@ -1267,7 +1269,7 @@ TEST_F(PortableFileBackedProtoLogTest, DirtyBitFalseAlarmKeepsData) {
     // Simulate the dirty flag set as true, but no data has been changed yet.
     // Maybe we crashed between writing the dirty flag and erasing a proto.
     header.SetDirtyFlag(true);
-    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+    header.SetLegacyHeaderChecksum(header.CalculateLegacyHeaderChecksum());
 
     WriteHeader(filesystem_, file_path_, header);
   }
@@ -1740,7 +1742,147 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldReturnNotFound) {
               IsOkAndHolds(EqualsProto(document2)));
 }
 
-TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
+TEST_F(PortableFileBackedProtoLogTest, GetChecksumShouldNotUpdateHeader) {
+  // This test verifies that GetChecksum() returns the correct checksum after
+  // each change, but the header checksum is not updated if UpdateChecksum() or
+  // PersistToDisk() is not called.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_,
+              enable_smaller_decompression_buffer_size_)));
+  auto proto_log = std::move(create_result.proto_log);
+  ASSERT_FALSE(create_result.has_data_loss());
+
+  // Sanity check: empty checksum.
+  ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(0u))));
+
+  // Put document1 and persist to disk.
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  ICING_ASSERT_OK(proto_log->WriteProto(document1));
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1883553267u))));
+  ICING_ASSERT_OK(proto_log->PersistToDisk());
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1883553267u))));
+
+  // Put document2 without calling UpdateChecksum() or PersistToDisk().
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  ICING_ASSERT_OK(proto_log->WriteProto(document2));
+
+  // Read the header.
+  Header header_before_get_checksum = ReadHeader(filesystem_, file_path_);
+  EXPECT_THAT(header_before_get_checksum.GetLegacyHeaderChecksum(),
+              Eq(1460433589u));
+  EXPECT_THAT(header_before_get_checksum.GetLogChecksum(), Eq(1883553267u));
+
+  // Since there is a new document (document2) in the unsynced tail, the file is
+  // dirty. GetChecksum():
+  // - Should return the checksum reflecting the new written proto (document2).
+  // - Should not update anything in the header.
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1632103647u))));
+
+  // Manually check the header: although GetChecksum() reflects the latest
+  // changes, the header file should remain unchanged.
+  Header header_after_get_checksum = ReadHeader(filesystem_, file_path_);
+  EXPECT_THAT(header_after_get_checksum.GetLegacyHeaderChecksum(),
+              Eq(1460433589u));
+  EXPECT_THAT(header_after_get_checksum.GetLogChecksum(), Eq(1883553267u));
+  EXPECT_THAT(header_after_get_checksum.GetRewindOffset(),
+              Eq(header_before_get_checksum.GetRewindOffset()));
+
+  // Call UpdateChecksum(). Should update the header.
+  // - Header checksum should be updated.
+  // - Log checksum should be updated.
+  // - Rewind offset should be updated.
+  ICING_ASSERT_OK(proto_log->UpdateChecksum());
+  Header header_after_update_checksum = ReadHeader(filesystem_, file_path_);
+  EXPECT_THAT(header_after_update_checksum.GetLegacyHeaderChecksum(),
+              Eq(455544443u));
+  EXPECT_THAT(header_after_update_checksum.GetLogChecksum(), Eq(1632103647u));
+  EXPECT_THAT(header_after_update_checksum.GetRewindOffset(),
+              Ne(header_after_get_checksum.GetRewindOffset()));
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       GetChecksumShouldBeCorrectWithWriteProto) {
+  // This test verifies that GetChecksum() returns the correct checksum after
+  // each change, even if UpdateChecksum() or PersistToDisk() is not called.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_,
+              enable_smaller_decompression_buffer_size_)));
+  auto proto_log = std::move(create_result.proto_log);
+  ASSERT_FALSE(create_result.has_data_loss());
+
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  ICING_ASSERT_OK(proto_log->WriteProto(document1));
+  // Although we didn't call UpdateChecksum() or PersistToDisk(), GetChecksum()
+  // should return the value reflecting the new written proto (document1).
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1883553267u))));
+
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  ICING_ASSERT_OK(proto_log->WriteProto(document2));
+
+  const Crc32 kChecksumWithDocument2(1632103647u);
+
+  // Although we didn't call UpdateChecksum() or PersistToDisk(), GetChecksum()
+  // should return the value reflecting the new written proto (document1,
+  // document2).
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(kChecksumWithDocument2));
+
+  // Call PersistToDisk.
+  ICING_ASSERT_OK(proto_log->PersistToDisk());
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(kChecksumWithDocument2));
+
+  // Read the header.
+  Header header_before_write_proto = ReadHeader(filesystem_, file_path_);
+
+  // Put document3 without calling UpdateChecksum() or PersistToDisk().
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace", "uri3").Build();
+  ICING_ASSERT_OK(proto_log->WriteProto(document3));
+  // Although we didn't call UpdateChecksum() or PersistToDisk(), GetChecksum()
+  // should return the value reflecting the new written proto (document3).
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+
+  // Manually check the header: although GetChecksum() reflects the latest
+  // changes, the header file should remain unchanged.
+  Header header_after_write_proto = ReadHeader(filesystem_, file_path_);
+  EXPECT_THAT(header_after_write_proto.GetLegacyHeaderChecksum(),
+              Eq(header_before_write_proto.GetLegacyHeaderChecksum()));
+  EXPECT_THAT(header_after_write_proto.GetRewindOffset(),
+              Eq(header_before_write_proto.GetRewindOffset()));
+  EXPECT_THAT(header_after_write_proto.GetLogChecksum(),
+              Eq(header_before_write_proto.GetLogChecksum()));
+
+  // Create another instance of the same proto log.
+  // - document3 will be discarded since it is after the rewind offset.
+  // - GetChecksum() will return the old one before writing document3.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result2,
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              compression_threshold_bytes_, compression_mem_level_,
+              enable_smaller_decompression_buffer_size_)));
+  auto proto_log2 = std::move(create_result2.proto_log);
+  EXPECT_THAT(create_result2.data_loss, Eq(DataLoss::PARTIAL));
+  EXPECT_THAT(proto_log2->GetChecksum(), IsOkAndHolds(kChecksumWithDocument2));
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       GetChecksumShouldBeCorrectWithErasedProtoAfterRewindOffset) {
   DocumentProto document1 =
       DocumentBuilder().SetKey("namespace", "uri1").Build();
   DocumentProto document2 =
@@ -1749,13 +1891,13 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
       DocumentBuilder().SetKey("namespace", "uri3").Build();
   DocumentProto document4 =
       DocumentBuilder().SetKey("namespace", "uri4").Build();
-
-  int64_t document2_offset;
-  int64_t document3_offset;
+  DocumentProto document5 =
+      DocumentBuilder().SetKey("namespace", "uri5").Build();
+  DocumentProto document6 =
+      DocumentBuilder().SetKey("namespace", "uri6").Build();
 
   {
-    // Erase data after the rewind position. This won't update the checksum
-    // immediately.
+    // Write 3 protos.
     ICING_ASSERT_OK_AND_ASSIGN(
         PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
         PortableFileBackedProtoLog<DocumentProto>::Create(
@@ -1766,26 +1908,21 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
                 enable_smaller_decompression_buffer_size_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check: empty checksum.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(0u))));
 
     // Writes 3 protos
-    ICING_ASSERT_OK_AND_ASSIGN(int64_t document1_offset,
-                               proto_log->WriteProto(document1));
-    ICING_ASSERT_OK_AND_ASSIGN(document2_offset,
-                               proto_log->WriteProto(document2));
-    ICING_ASSERT_OK_AND_ASSIGN(document3_offset,
-                               proto_log->WriteProto(document3));
-
-    // Erases the 1st proto, checksum won't be updated immediately because the
-    // rewind position is 0.
-    ICING_ASSERT_OK(proto_log->EraseProto(document1_offset));
-
-    EXPECT_THAT(proto_log->UpdateChecksum(),
-                IsOkAndHolds(Eq(Crc32(2175574628))));
-  }  // New checksum is updated in destructor.
+    ICING_ASSERT_OK(proto_log->WriteProto(document1));
+    ICING_ASSERT_OK(proto_log->WriteProto(document2));
+    ICING_ASSERT_OK(proto_log->WriteProto(document3));
+    // Although we didn't call UpdateChecksum() or PersistToDisk(),
+    // GetChecksum() should return the value reflecting the new written proto.
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+  }  // New checksum is written to the header and flushed in destructor.
 
   {
-    // Erase data before the rewind position. This will update the checksum
-    // immediately.
+    // Erase data after the rewind position.
     ICING_ASSERT_OK_AND_ASSIGN(
         PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
         PortableFileBackedProtoLog<DocumentProto>::Create(
@@ -1797,38 +1934,22 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_FALSE(create_result.has_data_loss());
 
-    // Erases the 2nd proto that is now before the rewind position. Checksum
-    // is updated.
-    ICING_ASSERT_OK(proto_log->EraseProto(document2_offset));
+    // Sanity check that the checksum is identical to the previous one.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
 
-    EXPECT_THAT(proto_log->UpdateChecksum(),
-                IsOkAndHolds(Eq(Crc32(790877774))));
-  }
+    // Write 2 more documents to the unsynced tail.
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document4_offset,
+                               proto_log->WriteProto(document4));
+    ICING_ASSERT_OK(proto_log->WriteProto(document5));
+    // Although we didn't call UpdateChecksum() or PersistToDisk(),
+    // GetChecksum() should return the value reflecting the new written proto.
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(705827520u))));
 
-  {
-    // Append data and erase data before the rewind position. This will update
-    // the checksum twice: in EraseProto() and destructor.
-    ICING_ASSERT_OK_AND_ASSIGN(
-        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
-        PortableFileBackedProtoLog<DocumentProto>::Create(
-            &filesystem_, file_path_,
-            PortableFileBackedProtoLog<DocumentProto>::Options(
-                compress_, max_proto_size_, compression_level_,
-                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
-                enable_smaller_decompression_buffer_size_)));
-    auto proto_log = std::move(create_result.proto_log);
-    ASSERT_FALSE(create_result.has_data_loss());
-
-    // Append a new document which is after the rewind position.
-    ICING_ASSERT_OK(proto_log->WriteProto(document4));
-
-    // Erases the 3rd proto that is now before the rewind position. Checksum
-    // is updated.
-    ICING_ASSERT_OK(proto_log->EraseProto(document3_offset));
-
-    EXPECT_THAT(proto_log->UpdateChecksum(),
-                IsOkAndHolds(Eq(Crc32(2344803210))));
-  }  // Checksum is updated with the newly appended document.
+    // Erases the 4th proto that is after the rewind position. GetChecksum()
+    // should return the new checksum reflecting the erased proto.
+    ICING_ASSERT_OK(proto_log->EraseProto(document4_offset));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1052805596u))));
+  }  // New checksum is written to the header and flushed in destructor.
 
   {
     // A successful creation means that the checksum matches.
@@ -1842,7 +1963,364 @@ TEST_F(PortableFileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
                 enable_smaller_decompression_buffer_size_)));
     auto proto_log = std::move(create_result.proto_log);
     EXPECT_FALSE(create_result.has_data_loss());
+
+    // The checksum should match the one from the previous case.
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1052805596u))));
   }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       GetChecksumShouldBeCorrectWithErasedProtoBeforeRewindOffset) {
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace", "uri3").Build();
+  DocumentProto document4 =
+      DocumentBuilder().SetKey("namespace", "uri4").Build();
+  DocumentProto document5 =
+      DocumentBuilder().SetKey("namespace", "uri5").Build();
+  DocumentProto document6 =
+      DocumentBuilder().SetKey("namespace", "uri6").Build();
+
+  int64_t document2_offset;
+  int64_t document3_offset;
+  {
+    // Write 3 protos.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check: empty checksum.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(0u))));
+
+    // Writes 3 protos
+    ICING_ASSERT_OK(proto_log->WriteProto(document1));
+    ICING_ASSERT_OK_AND_ASSIGN(document2_offset,
+                               proto_log->WriteProto(document2));
+    ICING_ASSERT_OK_AND_ASSIGN(document3_offset,
+                               proto_log->WriteProto(document3));
+    // Although we didn't call UpdateChecksum() or PersistToDisk(),
+    // GetChecksum() should return the value reflecting the new written proto.
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+
+    // Call PersistToDisk() so that the unsynced tail is flushed and becomes
+    // synced section.
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+  }
+
+  {
+    // Erase data before the rewind position.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check that the checksum is identical to the previous one.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+
+    // Erases the 2nd proto that is before the rewind position.
+    // GetChecksum() should return the new checksum reflecting the erased proto.
+    ICING_ASSERT_OK(proto_log->EraseProto(document2_offset));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1845730629u))));
+  }  // New checksum is written to the header and flushed in destructor.
+
+  {
+    // Append data to the unsynced tail and erase data before the rewind
+    // position.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check that the checksum is identical to the previous one.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1845730629u))));
+
+    // Append a new document which is after the rewind position.
+    ICING_ASSERT_OK(proto_log->WriteProto(document6));
+
+    // Erases the 3rd proto that is before the rewind position.
+    // GetChecksum() should return the new checksum reflecting document6 and the
+    // erased proto.
+    ICING_ASSERT_OK(proto_log->EraseProto(document3_offset));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3659111045u))));
+  }  // New checksum is written to the header and flushed in destructor.
+
+  {
+    // A successful creation means that the checksum matches.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                compression_threshold_bytes_, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    EXPECT_FALSE(create_result.has_data_loss());
+
+    // The checksum should match the one from the previous case.
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3659111045u))));
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       ErasedProtoAfterRewindOffsetShouldNotUpdateHeader) {
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace", "uri3").Build();
+  DocumentProto document4 =
+      DocumentBuilder().SetKey("namespace", "uri4").Build();
+  DocumentProto document5 =
+      DocumentBuilder().SetKey("namespace", "uri5").Build();
+
+  {
+    // Write 3 protos.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check: empty checksum.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(0u))));
+
+    // Writes 3 protos
+    ICING_ASSERT_OK(proto_log->WriteProto(document1));
+    ICING_ASSERT_OK(proto_log->WriteProto(document2));
+    ICING_ASSERT_OK(proto_log->WriteProto(document3));
+    // Although we didn't call UpdateChecksum() or PersistToDisk(),
+    // GetChecksum() should return the value reflecting the new written proto.
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+  }  // New checksum is written to the header and flushed in destructor.
+
+  // Erase data after the rewind position.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+              enable_smaller_decompression_buffer_size_)));
+  auto proto_log = std::move(create_result.proto_log);
+  ASSERT_FALSE(create_result.has_data_loss());
+
+  // Sanity check that the checksum is identical to the previous one.
+  ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+
+  // Write 2 more documents to the unsynced tail.
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t document4_offset,
+                             proto_log->WriteProto(document4));
+  ICING_ASSERT_OK(proto_log->WriteProto(document5));
+  // Although we didn't call UpdateChecksum() or PersistToDisk(),
+  // GetChecksum() should return the value reflecting the new written proto.
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(705827520u))));
+
+  // Read the header.
+  Header header_before_erase = ReadHeader(filesystem_, file_path_);
+
+  // Erases the 4th proto that is after the rewind position. GetChecksum()
+  // should return the new checksum reflecting the erased proto.
+  ICING_ASSERT_OK(proto_log->EraseProto(document4_offset));
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1052805596u))));
+
+  // Manually check the header is not updated.
+  Header header_after_erase = ReadHeader(filesystem_, file_path_);
+  EXPECT_THAT(header_after_erase.GetLegacyHeaderChecksum(),
+              Eq(header_before_erase.GetLegacyHeaderChecksum()));
+  EXPECT_THAT(header_after_erase.GetRewindOffset(),
+              Eq(header_before_erase.GetRewindOffset()));
+  EXPECT_THAT(header_after_erase.GetLogChecksum(),
+              Eq(header_before_erase.GetLogChecksum()));
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       ErasedProtoBeforeRewindOffsetShouldUpdateHeader) {
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace", "uri3").Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+      PortableFileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          PortableFileBackedProtoLog<DocumentProto>::Options(
+              compress_, max_proto_size_, compression_level_,
+              /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+              enable_smaller_decompression_buffer_size_)));
+  auto proto_log = std::move(create_result.proto_log);
+  ASSERT_FALSE(create_result.has_data_loss());
+
+  // Sanity check: empty checksum.
+  ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(0u))));
+
+  // Writes 3 protos
+  ICING_ASSERT_OK(proto_log->WriteProto(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t document2_offset,
+                             proto_log->WriteProto(document2));
+  ICING_ASSERT_OK(proto_log->WriteProto(document3));
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+
+  // Persist to disk in order to make document1 to document3 in the log
+  // checksummed section.
+  ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+  // Read the header.
+  Header header_before_erase = ReadHeader(filesystem_, file_path_);
+
+  // Erases the 2nd proto that is before the rewind position. GetChecksum()
+  // should return the new checksum reflecting the erased proto.
+  ICING_ASSERT_OK(proto_log->EraseProto(document2_offset));
+  EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1845730629u))));
+
+  // Manually check the header:
+  // - Log checksum is updated because the log checksummed section was updated.
+  // - Header checksum is updated because log checksum was updated.
+  // - RewindOffset should remain the same.
+  Header header_after_erase = ReadHeader(filesystem_, file_path_);
+  EXPECT_THAT(header_after_erase.GetLegacyHeaderChecksum(),
+              Ne(header_before_erase.GetLegacyHeaderChecksum()));
+  EXPECT_THAT(header_after_erase.GetRewindOffset(),
+              Eq(header_before_erase.GetRewindOffset()));
+  EXPECT_THAT(header_after_erase.GetLogChecksum(),
+              Ne(header_before_erase.GetLogChecksum()));
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       ReadWriteHeaderShouldIncludePaddingBytes) {
+  // The header should have some padding bytes to make it 8-byte aligned.
+  static_assert(sizeof(Header) - Header::kLegacyHeaderSectionPaddingOffset > 0);
+  std::string bytes = "abc";
+
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace", "uri3").Build();
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check: empty checksum.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(0u))));
+
+    // Writes 2 protos
+    ICING_ASSERT_OK(proto_log->WriteProto(document1));
+    ICING_ASSERT_OK(proto_log->WriteProto(document2));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(1632103647u))));
+    // Persist to disk.
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+    // Overwrite the padding bytes with some random bytes.
+    Header* header = proto_log->header();
+    memcpy(reinterpret_cast<char*>(header) +
+               Header::kLegacyHeaderSectionPaddingOffset,
+           bytes.data(),
+           sizeof(Header) - Header::kLegacyHeaderSectionPaddingOffset);
+
+    // Add 1 more proto. It is a hack to make the proto log dirty and make the
+    // next PersistToDisk take effect.
+    ICING_ASSERT_OK(proto_log->WriteProto(document3));
+    EXPECT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+    // Manually check the header: the padding bytes contain the overwritten
+    // values.
+    // Ensures that write header operation also includes the padding bytes.
+    Header header_after = ReadHeader(filesystem_, file_path_);
+    EXPECT_THAT(
+        std::string(reinterpret_cast<const char*>(&header_after) +
+                        Header::kLegacyHeaderSectionPaddingOffset,
+                    sizeof(Header) - Header::kLegacyHeaderSectionPaddingOffset),
+        Eq(bytes));
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_, compression_level_,
+                /*compression_threshold_bytes_in=*/0, compression_mem_level_,
+                enable_smaller_decompression_buffer_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Sanity check that the checksum is identical to the previous one.
+    ASSERT_THAT(proto_log->GetChecksum(), IsOkAndHolds(Eq(Crc32(3230460271u))));
+
+    // Verify that read header operation includes the padding bytes.
+    Header* header = proto_log->header();
+    EXPECT_THAT(
+        std::string(reinterpret_cast<const char*>(header) +
+                        Header::kLegacyHeaderSectionPaddingOffset,
+                    sizeof(Header) - Header::kLegacyHeaderSectionPaddingOffset),
+        Eq(bytes));
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       CalculateLegacyHeaderChecksumShouldIncludePadding) {
+  // The header should have some padding bytes to make it 8-byte aligned.
+  static_assert(sizeof(Header) - Header::kLegacyHeaderSectionPaddingOffset > 0);
+  std::string bytes = "abc";
+
+  // Create a header instance and set all bytes to 1 for the header.
+  // Note that -1 means 0b111111...111.
+  Header header;
+  memset(&header, -1, sizeof(Header));
+  EXPECT_THAT(header.CalculateLegacyHeaderChecksum(), Eq(2132597986u));
+
+  // Set different bytes to the padding section. Verify that the legacy header
+  // checksum reflects the padding byte changes.
+  memcpy(reinterpret_cast<char*>(&header) +
+             Header::kLegacyHeaderSectionPaddingOffset,
+         bytes.data(),
+         sizeof(Header) - Header::kLegacyHeaderSectionPaddingOffset);
+  EXPECT_THAT(header.CalculateLegacyHeaderChecksum(), Eq(3049742880u));
 }
 
 }  // namespace

@@ -2637,8 +2637,8 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
   new_expected_result.success = true;
   new_expected_result.schema_types_scorable_property_inconsistent_by_id.insert(
       0);
-  new_expected_result.schema_types_changed_fully_compatible_by_name.insert(
-      "email");
+  new_expected_result.schema_types_scorable_property_inconsistent_by_name
+      .insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   new_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
@@ -2647,7 +2647,7 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
 }
 
 TEST_F(SchemaStoreTest,
-       SetSchemaWithReorderedSchemeTypesAndUpdatedScorablePropertyOk) {
+       SetSchemaWithReorderedSchemaTypesAndUpdatedScorablePropertyOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -2705,8 +2705,8 @@ TEST_F(SchemaStoreTest,
   SchemaTypeId email_schema_type_id = 0;
   new_expected_result.schema_types_scorable_property_inconsistent_by_id.insert(
       email_schema_type_id);
-  new_expected_result.schema_types_changed_fully_compatible_by_name.insert(
-      "email");
+  new_expected_result.schema_types_scorable_property_inconsistent_by_name
+      .insert("email");
   new_expected_result.old_schema_type_ids_changed.insert(0);
   new_expected_result.old_schema_type_ids_changed.insert(1);
   EXPECT_THAT(schema_store->SetSchema(
