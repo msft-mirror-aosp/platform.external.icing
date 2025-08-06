@@ -114,7 +114,7 @@ void LogOpenError(const char* desc1, const char* file_name, const char* desc2,
   if (errnum == ENOENT) {
     ICING_VLOG(1) << desc1 << file_name << desc2 << strerror(errnum);
   } else {
-    ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);  
+    ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);
   }
   if (errnum == EMFILE) {
     LogOpenFileDescriptors();
@@ -443,9 +443,7 @@ bool Filesystem::Grow(const char* filename, int64_t new_size) const {
 bool Filesystem::Write(int fd, const void* data, size_t data_size) const {
   size_t write_len = data_size;
   do {
-    // Don't try to write too much at once.
-    size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
-    ssize_t wrote = write(fd, data, chunk_size);
+    ssize_t wrote = write(fd, data, write_len);
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: (" << errno << ") " << strerror(errno);
       return false;
@@ -537,9 +535,7 @@ bool Filesystem::PWrite(int fd, off_t offset, const void* data,
                         size_t data_size) const {
   size_t write_len = data_size;
   do {
-    // Don't try to write too much at once.
-    size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
-    ssize_t wrote = pwrite(fd, data, chunk_size, offset);
+    ssize_t wrote = pwrite(fd, data, write_len, offset);
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: (" << errno << ") " << strerror(errno);
       return false;
