@@ -1335,12 +1335,15 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   ICING_VLOG(1) << "Setting new Schema";
 
   SetSchemaResultProto result_proto;
+  SetSchemaStatsProto* set_schema_stats =
+      result_proto.mutable_set_schema_stats();
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::unique_lock l(&mutex_);
-  ScopedTimer timer(clock_->GetNewTimer(), [&result_proto](int64_t t) {
-    result_proto.set_latency_ms(t);
-  });
+  ScopedTimer overall_timer(clock_->GetNewTimer(),
+                            [&set_schema_stats](int64_t t) {
+                              set_schema_stats->set_overall_latency_ms(t);
+                            });
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
@@ -1419,7 +1422,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   bool join_incompatible =
       !set_schema_result.schema_types_join_incompatible_by_name.empty();
   if (!options_.enable_qualified_id_join_index_v3()) {
-      join_incompatible |= !set_schema_result.old_schema_type_ids_changed.empty();
+    join_incompatible |= !set_schema_result.old_schema_type_ids_changed.empty();
   }
   for (const std::string& join_incompatible_type :
        set_schema_result.schema_types_join_incompatible_by_name) {
@@ -1427,9 +1430,15 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         std::move(join_incompatible_type));
   }
 
+  set_schema_stats->set_schema_store_set_schema_latency_ms(
+      overall_timer.timer().GetElapsedMilliseconds());
   libtextclassifier3::Status status;
   if (set_schema_result.success) {
     if (lost_previous_schema) {
+      ScopedTimer update_schema_store_timer(
+          clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
+            set_schema_stats->set_document_store_update_schema_latency_ms(t);
+          });
       // No previous schema to calculate a diff against. We have to go through
       // and revalidate all the Documents in the DocumentStore
       status = document_store_->UpdateSchemaStore(schema_store_.get());
@@ -1440,6 +1449,11 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     } else if (!set_schema_result.old_schema_type_ids_changed.empty() ||
                !set_schema_result.schema_types_incompatible_by_id.empty() ||
                !set_schema_result.schema_types_deleted_by_id.empty()) {
+      ScopedTimer optimized_update_schema_store_timer(
+          clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
+            set_schema_stats
+                ->set_document_store_optimized_update_schema_latency_ms(t);
+          });
       auto update_status_or = document_store_->OptimizedUpdateSchemaStore(
           schema_store_.get(), set_schema_result);
       if (!update_status_or.ok()) {
@@ -1449,39 +1463,66 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       result_proto.set_deleted_document_count(update_status_or.ValueOrDie());
     }
 
-    if (lost_previous_schema || index_incompatible) {
-      // Clears search indices
-      status = ClearSearchIndices();
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
-        return result_proto;
-      }
-    }
+    {
+      // Restore indices if needed.
+      ScopedTimer index_restoration_timer(
+          clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
+            set_schema_stats->set_index_restoration_latency_ms(t);
+          });
 
-    if (lost_previous_schema || join_incompatible) {
-      // Clears join indices
-      status = ClearJoinIndices();
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
-        return result_proto;
+      if (lost_previous_schema || index_incompatible) {
+        // Clears search indices
+        status = ClearSearchIndices();
+        if (!status.ok()) {
+          TransformStatus(status, result_status);
+          return result_proto;
+        }
       }
-    }
 
-    if (lost_previous_schema || index_incompatible || join_incompatible) {
-      IndexRestorationResult restore_result = RestoreIndexIfNeeded();
-      // DATA_LOSS means that we have successfully re-added content to the
-      // index. Some indexed content was lost, but otherwise the index is in a
-      // valid state and can be queried.
-      if (!restore_result.status.ok() &&
-          !absl_ports::IsDataLoss(restore_result.status)) {
-        TransformStatus(status, result_status);
-        return result_proto;
+      if (lost_previous_schema || join_incompatible) {
+        // Clears join indices
+        status = ClearJoinIndices();
+        if (!status.ok()) {
+          TransformStatus(status, result_status);
+          return result_proto;
+        }
+      }
+
+      if (lost_previous_schema || index_incompatible || join_incompatible) {
+        IndexRestorationResult restore_result = RestoreIndexIfNeeded();
+        result_proto.set_has_term_index_restored(
+            restore_result.has_index_restored);
+        result_proto.set_has_integer_index_restored(
+            restore_result.has_integer_index_restored);
+        result_proto.set_has_qualified_id_join_index_restored(
+            restore_result.has_qualified_id_join_index_restored);
+        result_proto.set_has_embedding_index_restored(
+            restore_result.has_embedding_index_restored);
+        // DATA_LOSS means that we have successfully re-added content to the
+        // index. Some indexed content was lost, but otherwise the index is in a
+        // valid state and can be queried.
+        if (!restore_result.status.ok() &&
+            !absl_ports::IsDataLoss(restore_result.status)) {
+          TransformStatus(status, result_status);
+          return result_proto;
+        }
       }
     }
 
     if (feature_flags_.enable_scorable_properties()) {
       if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
                .empty()) {
+        ScopedTimer scorable_property_cache_regeneration_timer(
+            clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
+              set_schema_stats
+                  ->set_scorable_property_cache_regeneration_latency_ms(t);
+            });
+        for (const std::string& scorable_property_incompatible_type :
+             set_schema_result
+                 .schema_types_scorable_property_inconsistent_by_name) {
+          result_proto.add_scorable_property_incompatible_changed_schema_types(
+              scorable_property_incompatible_type);
+        }
         status = document_store_->RegenerateScorablePropertyCache(
             set_schema_result
                 .schema_types_scorable_property_inconsistent_by_id);
