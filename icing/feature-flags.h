@@ -30,7 +30,8 @@ class FeatureFlags {
                         bool enable_strict_page_byte_size_limit,
                         bool enable_smaller_decompression_buffer_size,
                         bool enable_eigen_embedding_scoring,
-                        bool enable_passing_filter_to_children)
+                        bool enable_passing_filter_to_children,
+                        bool enable_proto_log_new_header_format)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -43,7 +44,9 @@ class FeatureFlags {
         enable_smaller_decompression_buffer_size_(
             enable_smaller_decompression_buffer_size),
         enable_eigen_embedding_scoring_(enable_eigen_embedding_scoring),
-        enable_passing_filter_to_children_(enable_passing_filter_to_children) {}
+        enable_passing_filter_to_children_(enable_passing_filter_to_children),
+        enable_proto_log_new_header_format_(
+            enable_proto_log_new_header_format) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -87,6 +90,10 @@ class FeatureFlags {
     return enable_passing_filter_to_children_;
   }
 
+  bool enable_proto_log_new_header_format() const {
+    return enable_proto_log_new_header_format_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -121,6 +128,11 @@ class FeatureFlags {
   bool enable_eigen_embedding_scoring_;
 
   bool enable_passing_filter_to_children_;
+
+  // Whether to enable the new header format (refactor legacy format and
+  // introduce unsynced tail checksum) related changes in
+  // PortableFileBackedProtoLog.
+  bool enable_proto_log_new_header_format_;
 };
 
 }  // namespace lib
