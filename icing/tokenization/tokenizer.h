@@ -63,9 +63,9 @@ class Tokenizer {
 
     // Make it faster to write/refactor tests.
     std::vector<Token> GetTokensForTest() const {
-        std::vector<Token> result;
-        this->GetTokens(&result);
-        return result;
+      std::vector<Token> result;
+      this->GetTokens(&result);
+      return result;
     }
 
     virtual libtextclassifier3::StatusOr<CharacterIterator>

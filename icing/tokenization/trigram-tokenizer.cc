@@ -66,9 +66,10 @@ class TrigramTokenizerIterator : public Tokenizer::Iterator {
         utf8_char_itrs_.back().utf8_index() +
         i18n_utils::GetUtf8Length(utf8_char_itrs_.back().GetCurrentChar());
 
-    out_tokens->assign({Token(/*type_in=*/Token::Type::TRIGRAM,
-                              /*text_in=*/text_.substr(
-                                  start_byte_idx, end_byte_idx - start_byte_idx))});
+    out_tokens->assign(
+        {Token(/*type_in=*/Token::Type::TRIGRAM,
+               /*text_in=*/text_.substr(start_byte_idx,
+                                        end_byte_idx - start_byte_idx))});
   };
 
   // Returns a character iterator to the start of the current trigram token.
