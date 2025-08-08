@@ -26,11 +26,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <memory>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
 
 using std::vector;
@@ -125,8 +128,14 @@ bool ListDirectoryInternal(const char* dir_name,
                            const std::unordered_set<std::string>& exclude,
                            bool recursive, const char* prefix,
                            std::vector<std::string>* entries) {
-  DIR* dir = opendir(dir_name);
-  if (!dir) {
+  auto closer = [](DIR* dir) {
+    if (closedir(dir) != 0) {
+      ICING_LOG(ERROR) << "Error closing dir (" << errno << ") "
+                       << strerror(errno);
+    }
+  };
+  std::unique_ptr<DIR, decltype(closer)> dir(opendir(dir_name), closer);
+  if (dir == nullptr) {
     LogOpenError("Unable to open directory ", dir_name, ": ", errno);
     return false;
   }
@@ -136,7 +145,7 @@ bool ListDirectoryInternal(const char* dir_name,
   // may be statically allocated, so don't free it.
   dirent* p;
   // readdir's implementation seems to be thread safe.
-  while ((p = readdir(dir)) != nullptr) {
+  while ((p = readdir(dir.get())) != nullptr) {
     std::string file_name(p->d_name);
     if (file_name == "." || file_name == ".." ||
         exclude.find(file_name) != exclude.end()) {
@@ -154,10 +163,6 @@ bool ListDirectoryInternal(const char* dir_name,
         return false;
       }
     }
-  }
-  if (closedir(dir) != 0) {
-    ICING_LOG(ERROR) << "Error closing " << dir_name << " (" << errno << ") "
-                     << strerror(errno);
   }
   return true;
 }
@@ -477,7 +482,7 @@ bool Filesystem::CopyFile(const char* src, const char* dst) const {
   }
   uint64_t size = GetFileSize(*src_fd);
   std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-  if (!Read(*src_fd, buf.get(), size)) {
+  if (Read(*src_fd, buf.get(), size) != size) {
     return false;
   }
   return Write(*dst_fd, buf.get(), size);
@@ -485,15 +490,21 @@ bool Filesystem::CopyFile(const char* src, const char* dst) const {
 
 bool Filesystem::CopyDirectory(const char* src_dir, const char* dst_dir,
                                bool recursive) const {
-  DIR* dir = opendir(src_dir);
-  if (!dir) {
+  auto closer = [](DIR* dir) {
+    if (closedir(dir) != 0) {
+      ICING_LOG(ERROR) << "Error closing dir (" << errno << ") "
+                       << strerror(errno);
+    }
+  };
+  std::unique_ptr<DIR, decltype(closer)> dir(opendir(src_dir), closer);
+  if (dir == nullptr) {
     LogOpenError("Unable to open directory ", src_dir, ": ", errno);
     return false;
   }
 
   dirent* p;
   // readdir's implementation seems to be thread safe.
-  while ((p = readdir(dir)) != nullptr) {
+  while ((p = readdir(dir.get())) != nullptr) {
     std::string file_name(p->d_name);
     if (file_name == "." || file_name == "..") {
       continue;
@@ -518,10 +529,6 @@ bool Filesystem::CopyDirectory(const char* src_dir, const char* dst_dir,
         return false;
       }
     }
-  }
-  if (closedir(dir) != 0) {
-    ICING_LOG(ERROR) << "Error closing " << src_dir << ": (" << errno << ") "
-                     << strerror(errno);
   }
   return true;
 }
@@ -556,45 +563,78 @@ bool Filesystem::PWrite(const char* filename, off_t offset, const void* data,
   return success;
 }
 
-bool Filesystem::Read(int fd, void* buf, size_t buf_size) const {
-  ssize_t read_status = read(fd, buf, buf_size);
-  if (read_status < 0) {
-    ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
-    return false;
+ssize_t Filesystem::Read(int fd, void* buf, size_t buf_size) const {
+  // convenience for pointer arithmetic below.
+  char* buf_ptr = static_cast<char*>(buf);
+  ssize_t processed_size = 0;
+  while (processed_size < buf_size) {
+    ssize_t read_status =
+        read(fd, buf_ptr + processed_size, buf_size - processed_size);
+    if (read_status < 0) {
+      ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
+      return read_status;
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: " << read_status << " < "
+                       << buf_size - processed_size;
+    }
+    if (read_status == 0) {
+      // EOF. Finish reading.
+      return processed_size;
+    }
+    processed_size += read_status;
   }
-  return true;
+  return processed_size;
 }
 
-bool Filesystem::Read(const char* filename, void* buf, size_t buf_size) const {
+ssize_t Filesystem::Read(const char* filename, void* buf,
+                         size_t buf_size) const {
   int fd = OpenForRead(filename);
   if (fd == -1) {
-    return false;
+    return -1;
   }
 
-  bool success = Read(fd, buf, buf_size);
+  ssize_t bytes_read = Read(fd, buf, buf_size);
   close(fd);
-  return success;
+  return bytes_read;
 }
 
-bool Filesystem::PRead(int fd, void* buf, size_t buf_size, off_t offset) const {
-  ssize_t read_status = pread(fd, buf, buf_size, offset);
-  if (read_status < 0) {
-    ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
-    return false;
+ssize_t Filesystem::PRead(int fd, void* buf, size_t buf_size,
+                          off_t offset) const {
+  // convenience for pointer arithmetic below.
+  char* buf_ptr = static_cast<char*>(buf);
+  size_t processed_size = 0;
+  while (processed_size < buf_size) {
+    ssize_t read_status =
+        pread(fd, buf_ptr + processed_size, buf_size - processed_size,
+              offset + processed_size);
+    if (read_status < 0) {
+      ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
+      return read_status;
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: " << read_status << " < "
+                       << buf_size - processed_size;
+    }
+    if (read_status == 0) {
+      // EOF. Finish reading.
+      return processed_size;
+    }
+    processed_size += read_status;
   }
-  return true;
+  return processed_size;
 }
 
-bool Filesystem::PRead(const char* filename, void* buf, size_t buf_size,
-                       off_t offset) const {
+ssize_t Filesystem::PRead(const char* filename, void* buf, size_t buf_size,
+                          off_t offset) const {
   int fd = OpenForRead(filename);
   if (fd == -1) {
-    return false;
+    return -1;
   }
 
-  bool success = PRead(fd, buf, buf_size, offset);
+  ssize_t bytes_read = PRead(fd, buf, buf_size, offset);
   close(fd);
-  return success;
+  return bytes_read;
 }
 
 bool Filesystem::DataSync(int fd) const {

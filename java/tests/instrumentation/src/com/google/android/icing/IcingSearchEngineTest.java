@@ -16,6 +16,7 @@ package com.google.android.icing;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
+import static org.junit.Assert.assertThrows;
 
 import com.google.android.icing.IcingSearchEngine;
 import com.google.android.icing.proto.BatchGetResultProto;
@@ -29,6 +30,7 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
@@ -213,9 +215,6 @@ public final class IcingSearchEngineTest {
     assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
   }
 
-  // TODO: b/383379132 - Re-enable this test once the JNI API is pre-registered and dropped back
-  // into g3.
-  @Ignore
   @Test
   public void setAndGetSchemaWithDatabase_ok() throws Exception {
     IcingSearchEngineOptions options =
@@ -659,6 +658,83 @@ public final class IcingSearchEngineTest {
     icingSearchEngine.invalidateNextPageToken(searchResultProto.getNextPageToken());
 
     searchResultProto = icingSearchEngine.getNextPage(searchResultProto.getNextPageToken());
+    assertStatusOk(searchResultProto.getStatus());
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
+  }
+
+  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
+  // into g3.
+  @Ignore
+  @Test
+  public void getNextPageWithRequestProto() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    Map<String, DocumentProto> documents = new HashMap<>();
+    for (int i = 0; i < 10; i++) {
+      DocumentProto emailDocument =
+          createEmailDocument("namespace", "uri:" + i).toBuilder()
+              .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
+              .build();
+      documents.put("uri:" + i, emailDocument);
+      assertWithMessage(icingSearchEngine.put(emailDocument).getStatus().getMessage())
+          .that(icingSearchEngine.put(emailDocument).getStatus().getCode())
+          .isEqualTo(StatusProto.Code.OK);
+    }
+
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            .setQuery("foo")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+    ResultSpecProto resultSpecProto = ResultSpecProto.newBuilder().setNumPerPage(2).build();
+
+    SearchResultProto searchResultProto =
+        icingSearchEngine.search(
+            searchSpec, ScoringSpecProto.getDefaultInstance(), resultSpecProto);
+    assertStatusOk(searchResultProto.getStatus());
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(2);
+    DocumentProto resultDocument1 = searchResultProto.getResults(0).getDocument();
+    DocumentProto resultDocument2 = searchResultProto.getResults(1).getDocument();
+    assertThat(resultDocument1).isEqualTo(documents.remove(resultDocument1.getUri()));
+    assertThat(resultDocument2).isEqualTo(documents.remove(resultDocument2.getUri()));
+
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
+        .isGreaterThan(0);
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
+    assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
+
+    GetNextPageRequestProto getNextPageRequestProto =
+        GetNextPageRequestProto.newBuilder()
+            .setNextPageToken(searchResultProto.getNextPageToken())
+            .setMaxResultsToRetrieveFromPage(1)
+            .build();
+    // fetch rest pages
+    for (int i = 1; i < 5; i++) {
+      searchResultProto = icingSearchEngine.getNextPage(getNextPageRequestProto);
+      DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
+      assertWithMessage(searchResultProto.getStatus().getMessage())
+          .that(searchResultProto.getStatus().getCode())
+          .isEqualTo(StatusProto.Code.OK);
+      assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+      assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
+    }
+
+    // invalidate rest result
+    icingSearchEngine.invalidateNextPageToken(searchResultProto.getNextPageToken());
+
+    searchResultProto = icingSearchEngine.getNextPage(getNextPageRequestProto);
     assertStatusOk(searchResultProto.getStatus());
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
@@ -1313,5 +1389,48 @@ public final class IcingSearchEngineTest {
 
   private static void assertStatusOk(StatusProto status) {
     assertWithMessage(status.getMessage()).that(status.getCode()).isEqualTo(StatusProto.Code.OK);
+  }
+
+  @Test
+  @Ignore
+  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
+  // into g3.
+  public void throwIfClosed() throws Exception {
+    icingSearchEngine.close();
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.initialize());
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.setSchema(SchemaProto.getDefaultInstance()));
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.getSchema());
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.getSchemaType("type"));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.put(DocumentProto.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.batchPut(PutDocumentRequest.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.batchGet(GetResultSpecProto.getDefaultInstance()));
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.optimize());
+    assertThrows(
+        IllegalStateException.class, () -> icingSearchEngine.persistToDisk(PersistType.Code.LITE));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.reportUsage(UsageReport.getDefaultInstance()));
+    assertThrows(IllegalStateException.class, () -> icingSearchEngine.getStorageInfo());
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            icingSearchEngine.search(
+                SearchSpecProto.getDefaultInstance(),
+                ScoringSpecProto.getDefaultInstance(),
+                ResultSpecProto.getDefaultInstance()));
+    assertThrows(
+        IllegalStateException.class,
+        () -> icingSearchEngine.getNextPage(GetNextPageRequestProto.getDefaultInstance()));
   }
 }

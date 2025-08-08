@@ -1431,6 +1431,54 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
               IsOkAndHolds(EqualsProto(db3_schema)));
 }
 
+TEST_F(SchemaStoreTest, SetEmptySchemaOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get(),
+                          /*initialize_stats=*/nullptr));
+
+  // Set schema for the first time
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("db/email").SetDatabase("db/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db/message")
+                       .SetDatabase("db/"))
+          .Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("db/email");
+  result.schema_types_new_by_name.insert("db/message");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  // Verify schema.
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(schema))));
+
+  // Reset to an empty schema.
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_deleted_by_name.insert("db/email");
+  result.schema_types_deleted_by_name.insert("db/message");
+  result.schema_types_deleted_by_id.insert(0);  // email
+  result.schema_types_deleted_by_id.insert(1);  // message
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  SchemaProto(), /*database=*/"db/",
+                  /*ignore_errors_and_delete_documents=*/true)),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  // Check the schema. It should be empty.
+  EXPECT_THAT(schema_store->GetSchema(),
+              IsOkAndHolds(Pointee(EqualsProto(SchemaProto()))));
+
+  EXPECT_THAT(schema_store->PersistToDisk(), IsOk());
+}
+
 TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2589,8 +2637,8 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
   new_expected_result.success = true;
   new_expected_result.schema_types_scorable_property_inconsistent_by_id.insert(
       0);
-  new_expected_result.schema_types_changed_fully_compatible_by_name.insert(
-      "email");
+  new_expected_result.schema_types_scorable_property_inconsistent_by_name
+      .insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   new_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
@@ -2599,7 +2647,7 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
 }
 
 TEST_F(SchemaStoreTest,
-       SetSchemaWithReorderedSchemeTypesAndUpdatedScorablePropertyOk) {
+       SetSchemaWithReorderedSchemaTypesAndUpdatedScorablePropertyOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -2657,8 +2705,8 @@ TEST_F(SchemaStoreTest,
   SchemaTypeId email_schema_type_id = 0;
   new_expected_result.schema_types_scorable_property_inconsistent_by_id.insert(
       email_schema_type_id);
-  new_expected_result.schema_types_changed_fully_compatible_by_name.insert(
-      "email");
+  new_expected_result.schema_types_scorable_property_inconsistent_by_name
+      .insert("email");
   new_expected_result.old_schema_type_ids_changed.insert(0);
   new_expected_result.old_schema_type_ids_changed.insert(1);
   EXPECT_THAT(schema_store->SetSchema(

@@ -445,6 +445,11 @@ class IcingSearchEngine {
   //   ABORTED if failed to get results but existing data is not affected
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
+  SearchResultProto GetNextPage(GetNextPageRequestProto&& get_next_page_request)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // TODO: b/417644758 - Remove this method once all old callers are migrated to
+  // the new GetNextPage API. Internally, this should just be used in tests.
   SearchResultProto GetNextPage(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -715,8 +720,13 @@ class IcingSearchEngine {
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
+  //
+  // @param persist_type: The type of persistence guarantee that PersistToDisk
+  // should provide.
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
   libtextclassifier3::Status InternalPersistToDisk(
-      PersistType::Code persist_type) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+      PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public

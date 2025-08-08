@@ -469,15 +469,16 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   }
 
   DocumentStore::Header header;
-  if (!filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
-                         sizeof(header))) {
+  if (filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
+                        sizeof(header)) != sizeof(header)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic != DocumentStore::Header::kMagic) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
+  if (header.magic != Header::kMagic) {
+    ICING_LOG(ERROR) << "Invalid header magic for DocumentStore. Expected: "
+                     << Header::kMagic << ", actual: " << header.magic;
+    return absl_ports::InternalError("Invalid header magic for DocumentStore");
   }
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
@@ -1860,14 +1861,25 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 }
 
 libtextclassifier3::Status DocumentStore::PersistToDisk(
-    PersistType::Code persist_type) {
-  ICING_RETURN_IF_ERROR(document_log_->PersistToDisk());
+    PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats) {
+  ICING_RETURN_IF_ERROR(document_log_->PersistToDisk(persist_stats, &clock_));
   if (persist_type == PersistType::LITE) {
     // only persist the document log.
     return libtextclassifier3::Status::OK;
   }
+
+  std::unique_ptr<Timer> overall_timer;
+
+  if (persist_stats) {
+    overall_timer = clock_.GetNewTimer();
+  }
   if (persist_type == PersistType::RECOVERY_PROOF) {
-    return UpdateChecksum().status();
+    libtextclassifier3::Status status = UpdateChecksum().status();
+    if (persist_stats) {
+      persist_stats->set_document_store_checksum_update_latency_ms(
+          overall_timer->GetElapsedMilliseconds());
+    }
+    return status;
   }
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
@@ -1879,8 +1891,18 @@ libtextclassifier3::Status DocumentStore::PersistToDisk(
   ICING_RETURN_IF_ERROR(corpus_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(corpus_score_cache_->PersistToDisk());
 
+  if (persist_stats) {
+    persist_stats->set_document_store_components_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+    overall_timer = clock_.GetNewTimer();
+  }
+
   // Update the combined checksum and write to header file.
   ICING_RETURN_IF_ERROR(UpdateChecksum());
+  if (persist_stats) {
+    persist_stats->set_document_store_checksum_update_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+  }
   return libtextclassifier3::Status::OK;
 }
 
@@ -2071,7 +2093,7 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
+libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
     const SchemaStore* schema_store,
     const SchemaStore::SetSchemaResult& set_schema_result) {
   if (!set_schema_result.success) {
@@ -2084,6 +2106,7 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
+  int deleted_document_count = 0;
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
@@ -2131,14 +2154,16 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
     if (delete_document) {
       // Document is no longer valid with the new SchemaStore. Mark as deleted
       auto delete_status = Delete(document_id, current_time_ms);
-      if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+      if (delete_status.ok()) {
+        ++deleted_document_count;
+      } else if (!absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
       }
     }
   }
 
-  return libtextclassifier3::Status::OK;
+  return deleted_document_count;
 }
 
 libtextclassifier3::Status DocumentStore::RegenerateScorablePropertyCache(

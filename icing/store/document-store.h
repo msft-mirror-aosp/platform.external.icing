@@ -513,7 +513,9 @@ class DocumentStore {
   // Returns:
   //   OK on success
   //   INTERNAL on I/O error
-  libtextclassifier3::Status PersistToDisk(PersistType::Code persist_type);
+  libtextclassifier3::Status PersistToDisk(
+      PersistType::Code persist_type,
+      PersistToDiskStatsProto* persist_stats = nullptr);
 
   // Calculates the StorageInfo for the Document Store.
   //
@@ -543,9 +545,9 @@ class DocumentStore {
   // what's changed between the old and new SchemaStore.
   //
   // Returns;
-  //   OK on success
+  //   number of documents deleted on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status OptimizedUpdateSchemaStore(
+  libtextclassifier3::StatusOr<int> OptimizedUpdateSchemaStore(
       const SchemaStore* schema_store,
       const SchemaStore::SetSchemaResult& set_schema_result);
 

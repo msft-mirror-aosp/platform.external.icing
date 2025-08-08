@@ -115,7 +115,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, InitializeNewFiles) {
       filesystem_.PRead(metadata_file_path.c_str(), metadata_buffer.get(),
                         QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                         /*offset=*/0),
-      IsTrue());
+      Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
   // Check info section
   const Info* info = reinterpret_cast<const Info*>(
@@ -437,7 +437,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
     // Manually change magic and update checksum
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -457,10 +457,12 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
 
   // Attempt to create the qualified id join index with different magic. This
   // should fail.
-  EXPECT_THAT(QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
-                                                 *feature_flags_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
-                       HasSubstr("Incorrect magic value")));
+  EXPECT_THAT(
+      QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
+                                         *feature_flags_),
+      StatusIs(
+          libtextclassifier3::StatusCode::FAILED_PRECONDITION,
+          HasSubstr("Invalid header magic for QualifiedIdJoinIndexImplV3")));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test,
@@ -489,7 +491,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
     // Manually corrupt all_crc
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -537,7 +539,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
     // Modify info, but don't update the checksum. This would be similar to
     // corruption of info.

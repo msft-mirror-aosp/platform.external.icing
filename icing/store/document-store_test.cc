@@ -4243,8 +4243,10 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   EXPECT_NE(old_email_schema_type_id, new_email_schema_type_id);
   EXPECT_NE(old_message_schema_type_id, new_message_schema_type_id);
 
-  ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
-      schema_store.get(), set_schema_result));
+  ICING_ASSERT_OK_AND_ASSIGN(int deleted_document_count,
+                             document_store->OptimizedUpdateSchemaStore(
+                                 schema_store.get(), set_schema_result));
+  EXPECT_THAT(deleted_document_count, Eq(0));
 
   // Check that the FilterCache holds the new SchemaTypeIds
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
@@ -4340,8 +4342,10 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
       schema_store->SetSchema(schema,
                               /*ignore_errors_and_delete_documents=*/true));
 
-  ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
-      schema_store.get(), set_schema_result));
+  ICING_ASSERT_OK_AND_ASSIGN(int deleted_document_count,
+                             document_store->OptimizedUpdateSchemaStore(
+                                 schema_store.get(), set_schema_result));
+  EXPECT_THAT(deleted_document_count, Eq(1));
 
   // The email without a subject should be marked as deleted
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
@@ -4425,8 +4429,10 @@ TEST_P(DocumentStoreTest,
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/true));
 
-  ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
-      schema_store.get(), set_schema_result));
+  ICING_ASSERT_OK_AND_ASSIGN(int deleted_document_count,
+                             document_store->OptimizedUpdateSchemaStore(
+                                 schema_store.get(), set_schema_result));
+  EXPECT_THAT(deleted_document_count, Eq(1));
 
   // The "email" type is unknown now, so the "email" document should be deleted
   EXPECT_THAT(document_store->Get(email_document_id),
@@ -5113,7 +5119,7 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
 
     // Set dirty bit to true to reflect that something changed in the log.
     header.SetDirtyFlag(true);
-    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+    header.SetLegacyHeaderChecksum(header.CalculateLegacyHeaderChecksum());
 
     WriteDocumentLogHeader(filesystem_, document_log_file, header);
   }
