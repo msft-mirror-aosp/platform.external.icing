@@ -1314,10 +1314,9 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   // Deserialize proto
   ProtoT proto;
   if (header_->GetCompressFlag()) {
-    // Buffer size of -1 will default to kDefaultBufferSize.
-    int64_t buffer_size = -1;
+    int buffer_size = protobuf_ports::kDefaultBufferSize;
     if (enable_smaller_decompression_buffer_size_) {
-      buffer_size = kProtoCompressionRatio * stored_size;
+      buffer_size = std::min(buffer_size, kProtoCompressionRatio * stored_size);
     }
     protobuf_ports::GzipInputStream decompress_stream(
         &proto_stream, protobuf_ports::GzipInputStream::AUTO, buffer_size);
