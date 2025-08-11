@@ -20,6 +20,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
