@@ -5119,7 +5119,8 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
 
     // Set dirty bit to true to reflect that something changed in the log.
     header.SetDirtyFlag(true);
-    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+    header.UpdateHeaderChecksums(
+        feature_flags_->enable_proto_log_new_header_format());
 
     WriteDocumentLogHeader(filesystem_, document_log_file, header);
   }

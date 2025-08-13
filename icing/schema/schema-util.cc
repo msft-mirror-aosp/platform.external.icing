@@ -1326,8 +1326,16 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                                    old_type_config_map, new_type_config_map);
     }
 
+    // Scorable-property inconsistent types are already added to the schema
+    // delta in FindScorablePropertyInconsistentTypes above.
+    bool is_scorable_property_cache_incompatible =
+        !schema_delta.schema_types_scorable_property_inconsistent.empty() &&
+        schema_delta.schema_types_scorable_property_inconsistent.find(
+            old_type_config.schema_type()) !=
+            schema_delta.schema_types_scorable_property_inconsistent.end();
+
     if (!is_incompatible && !is_index_incompatible && !is_join_incompatible &&
-        has_property_changed) {
+        !is_scorable_property_cache_incompatible && has_property_changed) {
       schema_delta.schema_types_changed_fully_compatible.insert(
           old_type_config.schema_type());
     }
