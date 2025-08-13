@@ -443,7 +443,7 @@ bool Filesystem::Grow(const char* filename, int64_t new_size) const {
 bool Filesystem::Write(int fd, const void* data, size_t data_size) const {
   size_t write_len = data_size;
   do {
-    ssize_t wrote = write(fd, data, write_len);
+    ssize_t wrote = TEMP_FAILURE_RETRY(write(fd, data, write_len));
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: (" << errno << ") " << strerror(errno);
       return false;
@@ -535,7 +535,7 @@ bool Filesystem::PWrite(int fd, off_t offset, const void* data,
                         size_t data_size) const {
   size_t write_len = data_size;
   do {
-    ssize_t wrote = pwrite(fd, data, write_len, offset);
+    ssize_t wrote = TEMP_FAILURE_RETRY(pwrite(fd, data, write_len, offset));
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: (" << errno << ") " << strerror(errno);
       return false;
