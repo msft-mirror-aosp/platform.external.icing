@@ -33,9 +33,9 @@ TEST(Rfc822TokenizerTest, StartingState) {
   std::string text = "a@g.c";
   auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();
 
-  ASSERT_THAT(token_iterator->GetTokens(), IsEmpty());
+  ASSERT_THAT(token_iterator->GetTokensForTest(), IsEmpty());
   ASSERT_TRUE(token_iterator->Advance());
-  ASSERT_THAT(token_iterator->GetTokens(), Not(IsEmpty()));
+  ASSERT_THAT(token_iterator->GetTokensForTest(), Not(IsEmpty()));
 }
 
 TEST(Rfc822TokenizerTest, EmptyMiddleToken) {
@@ -967,10 +967,10 @@ TEST(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
   ASSERT_TRUE(token_iterator->Advance());
 
   ASSERT_TRUE(token_iterator->ResetToTokenStartingAfter(-1));
-  EXPECT_THAT(token_iterator->GetTokens().at(0).text, "a@g.c");
+  EXPECT_THAT(token_iterator->GetTokensForTest().at(0).text, "a@g.c");
 
   ASSERT_TRUE(token_iterator->ResetToTokenStartingAfter(5));
-  EXPECT_THAT(token_iterator->GetTokens().at(0).text, "b@g.c");
+  EXPECT_THAT(token_iterator->GetTokensForTest().at(0).text, "b@g.c");
 
   ASSERT_FALSE(token_iterator->ResetToTokenStartingAfter(6));
 }
@@ -982,7 +982,7 @@ TEST(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
   token_iterator->Advance();
 
   ASSERT_TRUE(token_iterator->ResetToTokenEndingBefore(5));
-  EXPECT_THAT(token_iterator->GetTokens().at(0).text, "a@g.c");
+  EXPECT_THAT(token_iterator->GetTokensForTest().at(0).text, "a@g.c");
 
   ASSERT_FALSE(token_iterator->ResetToTokenEndingBefore(4));
 }
