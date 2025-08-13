@@ -206,6 +206,10 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
     return libtextclassifier3::Status::OK;
   }
 
+  // Set dirty for the entire storage here once we make sure there are children
+  // to migrate for this parent doc.
+  SetDirty();
+
   ICING_ASSIGN_OR_RETURN(
       bool is_extended,
       ExtendParentDocumentIdToChildArrayInfoIfNecessary(new_document_id));
