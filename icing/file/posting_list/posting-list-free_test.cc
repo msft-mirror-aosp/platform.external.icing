@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/file/posting_list/posting-list-free.h"
+#include "third_party/icing/file/posting_list/posting-list-free.h"
 
 #include <cstdint>
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gtest/gtest.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
-#include "icing/testing/common-matchers.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/index/main/posting-list-hit-serializer.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

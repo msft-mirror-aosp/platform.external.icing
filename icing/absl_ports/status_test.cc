@@ -14,10 +14,10 @@
 
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/proto/document.pb.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/proto/document.proto.h"
 
 namespace icing {
 namespace lib {

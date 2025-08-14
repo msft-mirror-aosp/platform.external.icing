@@ -12,24 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/tokenizer-factory.h"
+#include "third_party/icing/tokenization/tokenizer-factory.h"
 
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/plain-tokenizer.h"
-#include "icing/tokenization/rfc822-tokenizer.h"
-#include "icing/tokenization/tokenizer.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/plain-tokenizer.h"
+#include "third_party/icing/tokenization/rfc822-tokenizer.h"
+#include "third_party/icing/tokenization/tokenizer.h"
 
 #ifdef ENABLE_URL_TOKENIZER
-#include "icing/tokenization/url-tokenizer.h"
+#include "third_party/icing/tokenization/url-tokenizer.h"
 #endif  // ENABLE_URL_TOKENIZER
 
-#include "icing/tokenization/verbatim-tokenizer.h"
-#include "icing/util/status-macros.h"
+#include "third_party/icing/tokenization/verbatim-tokenizer.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

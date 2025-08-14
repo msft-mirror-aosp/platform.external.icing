@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
-#define ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
+#ifndef THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
+#define THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
 
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/proto/document.pb.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_join.h"
+#include "third_party/icing/proto/document.proto.h"
 
 namespace icing {
 namespace lib {
@@ -88,4 +88,4 @@ struct MonkeyTokenizedDocument {
 
 }  // namespace lib
 }  // namespace icing
-#endif  // ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
+#endif  // THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_

@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_ICU_I18N_TEST_UTILS_H_
-#define ICING_TESTING_ICU_I18N_TEST_UTILS_H_
+#ifndef THIRD_PARTY_ICING_TESTING_ICU_I18N_TEST_UTILS_H_
+#define THIRD_PARTY_ICING_TESTING_ICU_I18N_TEST_UTILS_H_
 
 #include <string>
 
-#include "unicode/umachine.h"
+#include "third_party/icu/include/unicode/umachine.h"
 
 namespace icing {
 namespace lib {
@@ -27,4 +27,4 @@ std::string UCharToString(UChar32 uchar);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_ICU_I18N_TEST_UTILS_H_
+#endif  // THIRD_PARTY_ICING_TESTING_ICU_I18N_TEST_UTILS_H_

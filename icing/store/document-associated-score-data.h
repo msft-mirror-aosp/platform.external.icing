@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_DOCUMENT_ASSOCIATED_SCORE_DATA_H_
-#define ICING_STORE_DOCUMENT_ASSOCIATED_SCORE_DATA_H_
+#ifndef THIRD_PARTY_ICING_STORE_DOCUMENT_ASSOCIATED_SCORE_DATA_H_
+#define THIRD_PARTY_ICING_STORE_DOCUMENT_ASSOCIATED_SCORE_DATA_H_
 
 #include <cstdint>
 #include <type_traits>
 
-#include "icing/legacy/core/icing-packed-pod.h"
-#include "icing/store/corpus-id.h"
+#include "third_party/icing/legacy/core/icing-packed-pod.h"
+#include "third_party/icing/store/corpus-id.h"
 
 namespace icing {
 namespace lib {
@@ -89,4 +89,4 @@ static_assert(icing_is_packed_pod<DocumentAssociatedScoreData>::value,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_DOCUMENT_ASSOCIATED_SCORE_DATA_H_
+#endif  // THIRD_PARTY_ICING_STORE_DOCUMENT_ASSOCIATED_SCORE_DATA_H_

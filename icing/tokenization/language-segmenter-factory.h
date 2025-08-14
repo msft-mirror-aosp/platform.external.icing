@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TOKENIZATION_LANGUAGE_SEGMENTER_FACTORY_H_
-#define ICING_TOKENIZATION_LANGUAGE_SEGMENTER_FACTORY_H_
+#ifndef THIRD_PARTY_ICING_TOKENIZATION_LANGUAGE_SEGMENTER_FACTORY_H_
+#define THIRD_PARTY_ICING_TOKENIZATION_LANGUAGE_SEGMENTER_FACTORY_H_
 
 #include <memory>
 #include <string_view>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/tokenization/language-segmenter.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
 
 namespace icing {
 namespace lib {
@@ -66,4 +66,4 @@ libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TOKENIZATION_LANGUAGE_SEGMENTER_FACTORY_H_
+#endif  // THIRD_PARTY_ICING_TOKENIZATION_LANGUAGE_SEGMENTER_FACTORY_H_

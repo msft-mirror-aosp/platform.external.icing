@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_EXPAND_STEMMING_STEMMING_EXPANDER_H_
-#define ICING_EXPAND_STEMMING_STEMMING_EXPANDER_H_
+#ifndef THIRD_PARTY_ICING_EXPAND_STEMMING_STEMMING_EXPANDER_H_
+#define THIRD_PARTY_ICING_EXPAND_STEMMING_STEMMING_EXPANDER_H_
 
 #include <memory>
 #include <string>
@@ -21,11 +21,11 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/mutex.h"
-#include "icing/absl_ports/thread_annotations.h"
-#include "icing/expand/expander.h"
-#include "icing/expand/stemming/stemmer.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/absl_ports/thread_annotations.h"
+#include "third_party/icing/expand/expander.h"
+#include "third_party/icing/expand/stemming/stemmer.h"
 
 namespace icing {
 namespace lib {
@@ -94,4 +94,4 @@ class StemmingExpander : public Expander {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_EXPAND_STEMMING_STEMMING_EXPANDER_H_
+#endif  // THIRD_PARTY_ICING_EXPAND_STEMMING_STEMMING_EXPANDER_H_

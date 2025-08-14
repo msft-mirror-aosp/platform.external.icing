@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TRANSFORM_NORMALIZER_FACTORY_H_
-#define ICING_TRANSFORM_NORMALIZER_FACTORY_H_
+#ifndef THIRD_PARTY_ICING_TRANSFORM_NORMALIZER_FACTORY_H_
+#define THIRD_PARTY_ICING_TRANSFORM_NORMALIZER_FACTORY_H_
 
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -40,4 +40,4 @@ libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TRANSFORM_NORMALIZER_FACTORY_H_
+#endif  // THIRD_PARTY_ICING_TRANSFORM_NORMALIZER_FACTORY_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 
 #include <cstdint>
 #include <memory>
@@ -22,21 +22,21 @@
 #include <unordered_map>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator-data-holder.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/section-restrict-data.h"
-#include "icing/proto/search.pb.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_join.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-data-holder.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/iterator/section-restrict-data.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

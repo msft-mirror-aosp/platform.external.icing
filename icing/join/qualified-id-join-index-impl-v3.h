@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_IMPL_V3_H_
-#define ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_IMPL_V3_H_
+#ifndef THIRD_PARTY_ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_IMPL_V3_H_
+#define THIRD_PARTY_ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_IMPL_V3_H_
 
 #include <cstdint>
 #include <memory>
@@ -22,22 +22,22 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/feature-flags.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/file/persistent-storage.h"
-#include "icing/join/document-join-id-pair.h"
-#include "icing/join/qualified-id-join-index.h"
-#include "icing/schema/joinable-property.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/store/namespace-id-fingerprint.h"
-#include "icing/store/namespace-id.h"
-#include "icing/util/crc32.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/file/persistent-storage.h"
+#include "third_party/icing/join/document-join-id-pair.h"
+#include "third_party/icing/join/qualified-id-join-index.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/namespace-id-fingerprint.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -404,4 +404,4 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_IMPL_V3_H_
+#endif  // THIRD_PARTY_ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_IMPL_V3_H_

@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCHEMA_BUILDER_H_
-#define ICING_SCHEMA_BUILDER_H_
+#ifndef THIRD_PARTY_ICING_SCHEMA_BUILDER_H_
+#define THIRD_PARTY_ICING_SCHEMA_BUILDER_H_
 
 #include <initializer_list>
 #include <string>
 #include <string_view>
 #include <utility>
 
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/term.proto.h"
 
 namespace icing {
 namespace lib {
@@ -290,4 +290,4 @@ class SchemaBuilder {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCHEMA_BUILDER_H_
+#endif  // THIRD_PARTY_ICING_SCHEMA_BUILDER_H_

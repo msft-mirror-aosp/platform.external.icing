@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/clock.h"
+#include "third_party/icing/util/clock.h"
 
 #include <chrono>  // NOLINT. Abseil library is not available in AOSP so we have
                    // to use chrono to get current time in milliseconds.

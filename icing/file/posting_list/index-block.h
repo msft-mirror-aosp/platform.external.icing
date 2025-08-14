@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
-#define ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
+#ifndef THIRD_PARTY_ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
+#define THIRD_PARTY_ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
 
 #include <sys/types.h>
 
 #include <cstdint>
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/posting_list/posting-list-common.h"
-#include "icing/file/posting_list/posting-list-used.h"
-#include "icing/legacy/index/icing-bit-util.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/posting_list/posting-list-common.h"
+#include "third_party/icing/file/posting_list/posting-list-used.h"
+#include "third_party/icing/legacy/index/icing-bit-util.h"
 
 namespace icing {
 namespace lib {
@@ -366,4 +366,4 @@ class IndexBlock {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
+#endif  // THIRD_PARTY_ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_

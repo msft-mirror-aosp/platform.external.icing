@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_SCHEMA_GENERATOR_H_
-#define ICING_TESTING_SCHEMA_GENERATOR_H_
+#ifndef THIRD_PARTY_ICING_TESTING_SCHEMA_GENERATOR_H_
+#define THIRD_PARTY_ICING_TESTING_SCHEMA_GENERATOR_H_
 
 #include <random>
 #include <string>
 
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/term.proto.h"
 
 namespace icing {
 namespace lib {
@@ -106,4 +106,4 @@ class SchemaGenerator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_SCHEMA_GENERATOR_H_
+#endif  // THIRD_PARTY_ICING_TESTING_SCHEMA_GENERATOR_H_

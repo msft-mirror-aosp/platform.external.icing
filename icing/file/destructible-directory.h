@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_DESTRUCTIBLE_DIRECTORY_H_
-#define ICING_FILE_DESTRUCTIBLE_DIRECTORY_H_
+#ifndef THIRD_PARTY_ICING_FILE_DESTRUCTIBLE_DIRECTORY_H_
+#define THIRD_PARTY_ICING_FILE_DESTRUCTIBLE_DIRECTORY_H_
 
-#include "icing/file/filesystem.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -71,4 +71,4 @@ class DestructibleDirectory {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_DESTRUCTIBLE_DIRECTORY_H_
+#endif  // THIRD_PARTY_ICING_FILE_DESTRUCTIBLE_DIRECTORY_H_

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCHEMA_SCHEMA_PROPERTY_ITERATOR_H_
-#define ICING_SCHEMA_SCHEMA_PROPERTY_ITERATOR_H_
+#ifndef THIRD_PARTY_ICING_SCHEMA_SCHEMA_PROPERTY_ITERATOR_H_
+#define THIRD_PARTY_ICING_SCHEMA_SCHEMA_PROPERTY_ITERATOR_H_
 
 #include <algorithm>
 #include <numeric>
@@ -23,10 +23,10 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema/property-util.h"
-#include "icing/schema/schema-util.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema/property-util.h"
+#include "third_party/icing/schema/schema-util.h"
 
 namespace icing {
 namespace lib {
@@ -219,4 +219,4 @@ class SchemaPropertyIterator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCHEMA_SCHEMA_PROPERTY_ITERATOR_H_
+#endif  // THIRD_PARTY_ICING_SCHEMA_SCHEMA_PROPERTY_ITERATOR_H_

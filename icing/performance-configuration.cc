@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/performance-configuration.h"
+#include "third_party/icing/performance-configuration.h"
 
-#include "icing/scoring/scored-document-hit.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {
@@ -24,10 +24,10 @@ namespace {
 // Search performance mainly involves the following components:
 // 1. QueryProcessor
 //    Running time is O(query_length) according to results of
-//    //icing/query:query-processor_benchmark.
+//    //third_party/icing/query:query-processor_benchmark.
 // 2. ScoringProcessor and Ranker
 //    Running time is O(num_to_score) according to results of
-//    //icing/scoring:score-and-rank_benchmark. Note that the
+//    //third_party/icing/scoring:score-and-rank_benchmark. Note that the
 //    process includes scoring, building a heap, and popping results from the
 //    heap.
 // 3. ResultRetriever
@@ -43,7 +43,7 @@ namespace {
 // ResultSpecProto).
 // 1. Set query_length to 23000 so that any query can be executed by
 //    QueryProcessor within 15 ms on a Pixel 3 XL according to results of
-//    //icing/query:query-processor_benchmark.
+//    //third_party/icing/query:query-processor_benchmark.
 //
 // In the worse-case scenario, we still have [33 ms - 15 ms - 3 ms] = 15 ms left
 // for all the other things like proto parsing, document fetching, and even

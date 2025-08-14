@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/index.h"
+#include "third_party/icing/index/index.h"
 
 #include <unistd.h>
 
@@ -27,27 +27,27 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-mock-filesystem.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/always-true-suggestion-result-checker-impl.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/random-string.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/lite/term-id-hit-pair.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/legacy/index/icing-mock-filesystem.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/always-true-suggestion-result-checker-impl.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/random-string.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

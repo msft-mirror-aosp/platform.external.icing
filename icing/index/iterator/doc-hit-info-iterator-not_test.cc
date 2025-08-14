@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/iterator/doc-hit-info-iterator-not.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-not.h"
 
 #include <string>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/common-matchers.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

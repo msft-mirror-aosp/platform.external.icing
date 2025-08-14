@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_PERFORMANCE_CONFIGURATION_H_
-#define ICING_PERFORMANCE_CONFIGURATION_H_
+#ifndef THIRD_PARTY_ICING_PERFORMANCE_CONFIGURATION_H_
+#define THIRD_PARTY_ICING_PERFORMANCE_CONFIGURATION_H_
 
 namespace icing {
 namespace lib {
@@ -46,4 +46,4 @@ struct PerformanceConfiguration {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_PERFORMANCE_CONFIGURATION_H_
+#endif  // THIRD_PARTY_ICING_PERFORMANCE_CONFIGURATION_H_

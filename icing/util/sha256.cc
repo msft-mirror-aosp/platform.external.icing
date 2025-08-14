@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/sha256.h"
+#include "third_party/icing/util/sha256.h"
 
 #include <array>
 #include <cstdint>

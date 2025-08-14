@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_NUMERIC_INTEGER_INDEX_BUCKET_UTIL_H_
-#define ICING_INDEX_NUMERIC_INTEGER_INDEX_BUCKET_UTIL_H_
+#ifndef THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_BUCKET_UTIL_H_
+#define THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_BUCKET_UTIL_H_
 
 #include <cstdint>
 #include <utility>
 #include <vector>
 
-#include "icing/index/numeric/integer-index-data.h"
+#include "third_party/icing/index/numeric/integer-index-data.h"
 
 namespace icing {
 namespace lib {
@@ -78,4 +78,4 @@ std::vector<DataRangeAndBucketInfo> Split(std::vector<IntegerIndexData>& data,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_NUMERIC_INTEGER_INDEX_BUCKET_UTIL_H_
+#endif  // THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_BUCKET_UTIL_H_

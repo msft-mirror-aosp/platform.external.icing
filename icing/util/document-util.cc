@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/document-util.h"
+#include "third_party/icing/util/document-util.h"
 
 #include <utility>
 
-#include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
 
 namespace icing {
 namespace lib {

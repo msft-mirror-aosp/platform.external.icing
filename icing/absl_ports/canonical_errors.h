@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
-#define ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
+#ifndef THIRD_PARTY_ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
+#define THIRD_PARTY_ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
 
 #include <string>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
 
 namespace icing {
 namespace lib {
@@ -93,4 +93,4 @@ bool IsUnauthenticated(const libtextclassifier3::Status& status);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_ABSL_PORTS_CANONICAL_ERRORS_H_
+#endif  // THIRD_PARTY_ICING_ABSL_PORTS_CANONICAL_ERRORS_H_

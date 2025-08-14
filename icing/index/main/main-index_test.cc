@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/main-index.h"
+#include "third_party/icing/index/main/main-index.h"
 
 #include <cstdint>
 #include <memory>
@@ -20,27 +20,27 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/lite/lite-index.h"
-#include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/main/doc-hit-info-iterator-term-main.h"
-#include "icing/index/main/main-index-merger.h"
-#include "icing/index/term-id-codec.h"
-#include "icing/legacy/index/icing-dynamic-trie.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-mock-filesystem.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/namespace-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/lite/lite-index.h"
+#include "third_party/icing/index/lite/term-id-hit-pair.h"
+#include "third_party/icing/index/main/doc-hit-info-iterator-term-main.h"
+#include "third_party/icing/index/main/main-index-merger.h"
+#include "third_party/icing/index/term-id-codec.h"
+#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/legacy/index/icing-mock-filesystem.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result/result-adjustment-info.h"
+#include "third_party/icing/result/result-adjustment-info.h"
 
 #include <memory>
 #include <string>
@@ -20,26 +20,26 @@
 #include <unordered_set>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/query/query-terms.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/snippet-context.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/embedding-test-utils.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/result/projection-tree.h"
+#include "third_party/icing/result/snippet-context.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/embedding-test-utils.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
-#define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
+#ifndef THIRD_PARTY_ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
+#define THIRD_PARTY_ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
 
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -120,4 +120,4 @@ class DocHitInfoIteratorAndNary
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
+#endif  // THIRD_PARTY_ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_

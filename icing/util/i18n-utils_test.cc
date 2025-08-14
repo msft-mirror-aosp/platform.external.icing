@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/i18n-utils.h"
+#include "third_party/icing/util/i18n-utils.h"
 
 #include <memory>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "unicode/uchar.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icu/include/unicode/uchar.h"
 
 namespace icing {
 namespace lib {

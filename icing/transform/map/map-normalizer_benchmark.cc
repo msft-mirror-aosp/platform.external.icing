@@ -16,25 +16,25 @@
 #include <memory>
 
 #include "testing/base/public/benchmark.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/transform/map:map-normalizer_benchmark
+//    //third_party/icing/transform/map:map-normalizer_benchmark
 //
-//    $ blaze-bin/icing/transform/map/map-normalizer_benchmark
+//    $ blaze-bin/third_party/icing/transform/map/map-normalizer_benchmark
 //    --benchmark_filter=all
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/transform/map:map-normalizer_benchmark
+//    //third_party/icing/transform/map:map-normalizer_benchmark
 //
 //    $ adb push
-//    blaze-bin/icing/transform/map/map-normalizer_benchmark
+//    blaze-bin/third_party/icing/transform/map/map-normalizer_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/map-normalizer_benchmark --benchmark_filter=all

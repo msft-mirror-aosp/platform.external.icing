@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-join-indexing-handler.h"
+#include "third_party/icing/join/qualified-id-join-indexing-handler.h"
 
 #include <cstdint>
 #include <limits>
@@ -22,24 +22,24 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/join/document-join-id-pair.h"
-#include "icing/join/qualified-id-join-index.h"
-#include "icing/join/qualified-id.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/schema/joinable-property.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/store/namespace-id-fingerprint.h"
-#include "icing/store/namespace-id.h"
-#include "icing/util/clock.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/join/document-join-id-pair.h"
+#include "third_party/icing/join/qualified-id-join-index.h"
+#include "third_party/icing/join/qualified-id.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/store/namespace-id-fingerprint.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {

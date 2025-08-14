@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_AGGREGATION_SCORER_H_
-#define ICING_JOIN_AGGREGATION_SCORER_H_
+#ifndef THIRD_PARTY_ICING_JOIN_AGGREGATION_SCORER_H_
+#define THIRD_PARTY_ICING_JOIN_AGGREGATION_SCORER_H_
 
 #include <memory>
 #include <vector>
 
-#include "icing/proto/search.pb.h"
-#include "icing/scoring/scored-document-hit.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {
@@ -38,4 +38,4 @@ class AggregationScorer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_AGGREGATION_SCORER_H_
+#endif  // THIRD_PARTY_ICING_JOIN_AGGREGATION_SCORER_H_

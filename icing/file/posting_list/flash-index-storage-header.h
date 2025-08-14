@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_HEADER_H_
-#define ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_HEADER_H_
+#ifndef THIRD_PARTY_ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_HEADER_H_
+#define THIRD_PARTY_ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_HEADER_H_
 
 #include <cstdint>
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/file/filesystem.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/file/filesystem.h"
 
 namespace icing {
 namespace lib {
@@ -119,4 +119,4 @@ static_assert(16 == sizeof(HeaderBlock::Header),
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_HEADER_H_
+#endif  // THIRD_PARTY_ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_HEADER_H_

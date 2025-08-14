@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/scoring/advanced_scoring/score-expression.h"
+#include "third_party/icing/scoring/advanced_scoring/score-expression.h"
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
-#include "icing/testing/common-matchers.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/scoring/advanced_scoring/double-list.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

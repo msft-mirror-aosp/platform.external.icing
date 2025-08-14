@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_DESTRUCTIBLE_FILE_H_
-#define ICING_FILE_DESTRUCTIBLE_FILE_H_
+#ifndef THIRD_PARTY_ICING_FILE_DESTRUCTIBLE_FILE_H_
+#define THIRD_PARTY_ICING_FILE_DESTRUCTIBLE_FILE_H_
 
 #include <unistd.h>
 
 #include <string>
 
-#include "icing/file/filesystem.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -69,4 +69,4 @@ class DestructibleFile {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_DESTRUCTIBLE_FILE_H_
+#endif  // THIRD_PARTY_ICING_FILE_DESTRUCTIBLE_FILE_H_

@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/document-join-id-pair.h"
+#include "third_party/icing/join/document-join-id-pair.h"
 
-#include "icing/schema/joinable-property.h"
-#include "icing/store/document-id.h"
-#include "icing/util/bit-util.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/bit-util.h"
 
 namespace icing {
 namespace lib {

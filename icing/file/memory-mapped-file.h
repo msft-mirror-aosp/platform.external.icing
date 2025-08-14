@@ -72,8 +72,8 @@
 // mmapped_file->mutable_region()[10] = write_byte;
 // mmapped_file.reset();
 
-#ifndef ICING_FILE_MEMORY_MAPPED_FILE_H_
-#define ICING_FILE_MEMORY_MAPPED_FILE_H_
+#ifndef THIRD_PARTY_ICING_FILE_MEMORY_MAPPED_FILE_H_
+#define THIRD_PARTY_ICING_FILE_MEMORY_MAPPED_FILE_H_
 
 #include <unistd.h>
 
@@ -82,9 +82,9 @@
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/filesystem.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/file/filesystem.h"
 
 namespace icing {
 namespace lib {
@@ -382,4 +382,4 @@ class MemoryMappedFile {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_MEMORY_MAPPED_FILE_H_
+#endif  // THIRD_PARTY_ICING_FILE_MEMORY_MAPPED_FILE_H_

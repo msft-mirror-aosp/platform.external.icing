@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_DOCUMENT_ID_H_
-#define ICING_STORE_DOCUMENT_ID_H_
+#ifndef THIRD_PARTY_ICING_STORE_DOCUMENT_ID_H_
+#define THIRD_PARTY_ICING_STORE_DOCUMENT_ID_H_
 
 #include <cstdint>
 
@@ -38,4 +38,4 @@ constexpr bool IsDocumentIdValid(DocumentId document_id) {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_DOCUMENT_ID_H_
+#endif  // THIRD_PARTY_ICING_STORE_DOCUMENT_ID_H_

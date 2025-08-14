@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/tmp-directory.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 #include <string>
 
-#include "icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_cat.h"
 
 namespace icing {
 namespace lib {
@@ -28,13 +28,13 @@ namespace lib {
 //    the sdcard file format is FAT32
 //    (https://developer.android.com/studio/command-line/mksdcard). FAT32
 //    doesn't support sparse files so that it fails some tests in
-//    //icing/file/filesystem_test.cc.
+//    //third_party/icing/file/filesystem_test.cc.
 //    The sparse file related methods are mostly for reporting/logging purposes
 //    and not affecting any system behaviors.
 std::string GetTestTempDir() {
 #ifdef ICING_REVERSE_JNI_SEGMENTATION
   // The "icing.jni" should be whatever the package name is set for the
-  // Android test app. Set in //icing/testing/AndroidManifest.xml
+  // Android test app. Set in //third_party/icing/testing/AndroidManifest.xml
   // For JNI tests, we can only write to our package's directory.
   return "/data/data/icing.jni";
 #elif defined(__ANDROID__)

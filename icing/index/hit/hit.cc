@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/hit/hit.h"
+#include "third_party/icing/index/hit/hit.h"
 
 #include <cstring>
 #include <limits>
 
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/util/bit-util.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/bit-util.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

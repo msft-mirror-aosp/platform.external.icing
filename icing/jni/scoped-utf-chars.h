@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JNI_SCOPED_UTF_CHARS_H_
-#define ICING_JNI_SCOPED_UTF_CHARS_H_
+#ifndef THIRD_PARTY_ICING_JNI_SCOPED_UTF_CHARS_H_
+#define THIRD_PARTY_ICING_JNI_SCOPED_UTF_CHARS_H_
 
 #include <jni.h>
 
@@ -78,4 +78,4 @@ class ScopedUtfChars {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JNI_SCOPED_UTF_CHARS_H_
+#endif  // THIRD_PARTY_ICING_JNI_SCOPED_UTF_CHARS_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/join-children-fetcher-impl-deprecated.h"
+#include "third_party/icing/join/join-children-fetcher-impl-deprecated.h"
 
 #include <memory>
 #include <string>
@@ -20,15 +20,15 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/join/join-processor.h"
-#include "icing/proto/search.pb.h"
-#include "icing/schema/section.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/common-matchers.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/join/join-processor.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

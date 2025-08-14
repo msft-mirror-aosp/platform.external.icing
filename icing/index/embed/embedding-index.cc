@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-index.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -23,33 +23,33 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/feature-flags.h"
-#include "icing/file/destructible-directory.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/file/posting_list/flash-index-storage.h"
-#include "icing/file/posting_list/posting-list-identifier.h"
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/index/embed/embedding-scorer.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
-#include "icing/index/embed/quantizer.h"
-#include "icing/index/hit/hit.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/store/dynamic-trie-key-mapper.h"
-#include "icing/store/key-mapper.h"
-#include "icing/util/clock.h"
-#include "icing/util/crc32.h"
-#include "icing/util/encode-util.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/destructible-directory.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/file/posting_list/flash-index-storage.h"
+#include "third_party/icing/file/posting_list/posting-list-identifier.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/index/embed/embedding-scorer.h"
+#include "third_party/icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "third_party/icing/index/embed/quantizer.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/store/dynamic-trie-key-mapper.h"
+#include "third_party/icing/store/key-mapper.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/encode-util.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_ICING_SEARCH_ENGINE_H_
-#define ICING_ICING_SEARCH_ENGINE_H_
+#ifndef THIRD_PARTY_ICING_ICING_SEARCH_ENGINE_H_
+#define THIRD_PARTY_ICING_ICING_SEARCH_ENGINE_H_
 
 #include <cstdint>
 #include <memory>
@@ -23,47 +23,47 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/mutex.h"
-#include "icing/absl_ports/thread_annotations.h"
-#include "icing/feature-flags.h"
-#include "icing/file/derived-file-util.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/data-indexing-handler.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/index.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/join/join-children-fetcher.h"
-#include "icing/join/qualified-id-join-index.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/performance-configuration.h"
-#include "icing/proto/blob.pb.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/optimize.pb.h"
-#include "icing/proto/persist.pb.h"
-#include "icing/proto/reset.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/query/query-terms.h"
-#include "icing/result/result-state-manager.h"
-#include "icing/schema/schema-store.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/store/blob-store.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
-#include "icing/util/icu-data-file-helper.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/absl_ports/thread_annotations.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/derived-file-util.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/data-indexing-handler.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/numeric/numeric-index.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/join/join-children-fetcher.h"
+#include "third_party/icing/join/qualified-id-join-index.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/performance-configuration.h"
+#include "third_party/icing/proto/blob.proto.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/optimize.proto.h"
+#include "third_party/icing/proto/persist.proto.h"
+#include "third_party/icing/proto/reset.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/result/result-state-manager.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/store/blob-store.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -539,7 +539,7 @@ class IcingSearchEngine {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto GetAllBlobInfo() ICING_LOCKS_EXCLUDED(mutex_);
+  BlobProto GetAllBlobInfos() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Puts the blob info protos from the blob proto to the blob info proto log
   // file.
@@ -547,7 +547,7 @@ class IcingSearchEngine {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto PutBlobInfos(BlobProto&& blob_info_protos)
+  BlobProto PutBlobInfos(const BlobProto& blob_info_protos)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Makes sure that every update/delete received till this point is flushed
@@ -1086,4 +1086,4 @@ class IcingSearchEngine {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_ICING_SEARCH_ENGINE_H_
+#endif  // THIRD_PARTY_ICING_ICING_SEARCH_ENGINE_H_

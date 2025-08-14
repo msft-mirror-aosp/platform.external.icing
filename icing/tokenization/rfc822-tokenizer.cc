@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/rfc822-tokenizer.h"
+#include "third_party/icing/tokenization/rfc822-tokenizer.h"
 
 #include <algorithm>
 #include <deque>
@@ -21,12 +21,12 @@
 #include <utility>
 #include <vector>
 
-#include "icing/tokenization/token.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/util/character-iterator.h"
-#include "icing/util/i18n-utils.h"
-#include "icing/util/status-macros.h"
-#include "unicode/umachine.h"
+#include "third_party/icing/tokenization/token.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/util/character-iterator.h"
+#include "third_party/icing/util/i18n-utils.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icu/include/unicode/umachine.h"
 
 namespace icing {
 namespace lib {

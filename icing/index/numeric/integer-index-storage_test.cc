@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/numeric/integer-index-storage.h"
+#include "third_party/icing/index/numeric/integer-index-storage.h"
 
 #include <unistd.h>
 
@@ -23,22 +23,22 @@
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/persistent-storage.h"
-#include "icing/file/posting_list/posting-list-identifier.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/numeric/posting-list-integer-index-serializer.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/crc32.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/persistent-storage.h"
+#include "third_party/icing/file/posting_list/posting-list-identifier.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {

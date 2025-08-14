@@ -20,20 +20,20 @@
 #include <thread>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/lite/lite-index.h"
-#include "icing/index/term-id-codec.h"
-#include "icing/legacy/index/icing-dynamic-trie.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/namespace-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/lite/lite-index.h"
+#include "third_party/icing/index/term-id-codec.h"
+#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

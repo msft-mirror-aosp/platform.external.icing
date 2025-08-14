@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/timestamp-util.h"
+#include "third_party/icing/util/timestamp-util.h"
 
 #include <cstdint>
 #include <limits>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
 
 namespace icing {
 namespace lib {

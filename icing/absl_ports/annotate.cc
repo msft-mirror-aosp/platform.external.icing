@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/absl_ports/annotate.h"
+#include "third_party/icing/absl_ports/annotate.h"
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/absl_ports/str_cat.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/absl_ports/str_cat.h"
 
 namespace icing {
 namespace lib {

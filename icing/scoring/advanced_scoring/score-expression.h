@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCORING_ADVANCED_SCORING_SCORE_EXPRESSION_H_
-#define ICING_SCORING_ADVANCED_SCORING_SCORE_EXPRESSION_H_
+#ifndef THIRD_PARTY_ICING_SCORING_ADVANCED_SCORING_SCORE_EXPRESSION_H_
+#define THIRD_PARTY_ICING_SCORING_ADVANCED_SCORING_SCORE_EXPRESSION_H_
 
 #include <cstdint>
 #include <memory>
@@ -24,18 +24,18 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/join/join-children-fetcher.h"
-#include "icing/schema/schema-store.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
-#include "icing/scoring/bm25f-calculator.h"
-#include "icing/scoring/section-weights.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-store.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/join/join-children-fetcher.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/scoring/advanced_scoring/double-list.h"
+#include "third_party/icing/scoring/bm25f-calculator.h"
+#include "third_party/icing/scoring/section-weights.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -574,4 +574,4 @@ class GetScorablePropertyFunctionScoreExpression : public ScoreExpression {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCORING_ADVANCED_SCORING_SCORE_EXPRESSION_H_
+#endif  // THIRD_PARTY_ICING_SCORING_ADVANCED_SCORING_SCORE_EXPRESSION_H_

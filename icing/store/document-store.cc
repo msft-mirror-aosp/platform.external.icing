@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/store/document-store.h"
+#include "third_party/icing/store/document-store.h"
 
 #include <cstdint>
 #include <memory>
@@ -24,55 +24,55 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/annotate.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/feature-flags.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file-backed-proto-log.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
-#include "icing/proto/internal/scorable_property_set.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/optimize.pb.h"
-#include "icing/proto/persist.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/schema/property-util.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/scorable_property_manager.h"
-#include "icing/store/blob-store.h"
-#include "icing/store/corpus-associated-scoring-data.h"
-#include "icing/store/corpus-id.h"
-#include "icing/store/document-associated-score-data.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-log-creator.h"
-#include "icing/store/dynamic-trie-key-mapper.h"
-#include "icing/store/key-mapper.h"
-#include "icing/store/namespace-id-fingerprint.h"
-#include "icing/store/namespace-id.h"
-#include "icing/store/persistent-hash-map-key-mapper.h"
-#include "icing/store/usage-store.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/util/clock.h"
-#include "icing/util/crc32.h"
-#include "icing/util/data-loss.h"
-#include "icing/util/document-util.h"
-#include "icing/util/fingerprint-util.h"
-#include "icing/util/logging.h"
-#include "icing/util/scorable_property_set.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/timestamp-util.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/annotate.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file-backed-proto-log.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
+#include "third_party/icing/proto/internal/scorable_property_set.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/optimize.proto.h"
+#include "third_party/icing/proto/persist.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/schema/property-util.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/scorable_property_manager.h"
+#include "third_party/icing/store/blob-store.h"
+#include "third_party/icing/store/corpus-associated-scoring-data.h"
+#include "third_party/icing/store/corpus-id.h"
+#include "third_party/icing/store/document-associated-score-data.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-log-creator.h"
+#include "third_party/icing/store/dynamic-trie-key-mapper.h"
+#include "third_party/icing/store/key-mapper.h"
+#include "third_party/icing/store/namespace-id-fingerprint.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/store/persistent-hash-map-key-mapper.h"
+#include "third_party/icing/store/usage-store.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/data-loss.h"
+#include "third_party/icing/util/document-util.h"
+#include "third_party/icing/util/fingerprint-util.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/scorable_property_set.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/timestamp-util.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
@@ -2496,9 +2496,9 @@ libtextclassifier3::Status DocumentStore::SetUsageScores(
 }
 
 libtextclassifier3::StatusOr<
-    google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
+    proto2::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
-  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
+  proto2::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
       schema_store_->GetSchema();
   if (!schema_proto_or.ok()) {
@@ -2545,7 +2545,7 @@ DocumentStore::GetDebugInfo(int verbosity) const {
   debug_info.set_crc(crc.Get());
   if (verbosity > 0) {
     ICING_ASSIGN_OR_RETURN(
-        google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
+        proto2::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
             corpus_info,
         CollectCorpusInfo());
     *debug_info.mutable_corpus_info() = std::move(corpus_info);

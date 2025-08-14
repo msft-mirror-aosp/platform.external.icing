@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCHEMA_SECTION_H_
-#define ICING_SCHEMA_SECTION_H_
+#ifndef THIRD_PARTY_ICING_SCHEMA_SECTION_H_
+#define THIRD_PARTY_ICING_SCHEMA_SECTION_H_
 
 #include <cstdint>
 #include <string>
@@ -21,9 +21,9 @@
 #include <utility>
 #include <vector>
 
-#include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/term.proto.h"
 
 namespace icing {
 namespace lib {
@@ -177,4 +177,4 @@ struct SectionGroup {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCHEMA_SECTION_H_
+#endif  // THIRD_PARTY_ICING_SCHEMA_SECTION_H_

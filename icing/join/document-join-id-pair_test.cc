@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/document-join-id-pair.h"
+#include "third_party/icing/join/document-join-id-pair.h"
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/schema/joinable-property.h"
-#include "icing/store/document-id.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {

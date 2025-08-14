@@ -19,8 +19,8 @@
 //
 // TODO(b/133793579) Consider exposing a checksum mismatch to callers.
 
-#ifndef ICING_FILE_FILE_BACKED_PROTO_H_
-#define ICING_FILE_FILE_BACKED_PROTO_H_
+#ifndef THIRD_PARTY_ICING_FILE_FILE_BACKED_PROTO_H_
+#define THIRD_PARTY_ICING_FILE_FILE_BACKED_PROTO_H_
 
 #include <algorithm>
 #include <cstdint>
@@ -28,17 +28,17 @@
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/mutex.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/thread_annotations.h"
-#include "icing/file/filesystem.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/thread_annotations.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -68,10 +68,10 @@ class FileBackedProto {
   // Reset the internal file_path for the file backed proto.
   // Example use:
   //   auto file_backed_proto1 = *FileBackedProto<Proto>::Create(...);
-  //   auto file_backed_google::protobuf = *FileBackedProto<Proto>::Create(...);
+  //   auto file_backed_proto2 = *FileBackedProto<Proto>::Create(...);
   //   filesystem.SwapFiles(file1, file2);
   //   file_backed_proto1.SetSwappedFilepath(file2);
-  //   file_backed_google::protobuf.SetSwappedFilepath(file1);
+  //   file_backed_proto2.SetSwappedFilepath(file1);
   void SetSwappedFilepath(std::string_view swapped_to_file_path) {
     file_path_ = swapped_to_file_path;
   }
@@ -303,4 +303,4 @@ libtextclassifier3::Status FileBackedProto<ProtoT>::Write(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_FILE_BACKED_PROTO_H_
+#endif  // THIRD_PARTY_ICING_FILE_FILE_BACKED_PROTO_H_

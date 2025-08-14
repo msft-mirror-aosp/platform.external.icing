@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_QUERY_QUERY_RESULTS_H_
-#define ICING_QUERY_QUERY_RESULTS_H_
+#ifndef THIRD_PARTY_ICING_QUERY_QUERY_RESULTS_H_
+#define THIRD_PARTY_ICING_QUERY_QUERY_RESULTS_H_
 
 #include <memory>
 #include <unordered_set>
 
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/query/query-features.h"
-#include "icing/query/query-terms.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/query/query-features.h"
+#include "third_party/icing/query/query-terms.h"
 
 namespace icing {
 namespace lib {
@@ -48,4 +48,4 @@ struct QueryResults {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_QUERY_QUERY_RESULTS_H_
+#endif  // THIRD_PARTY_ICING_QUERY_QUERY_RESULTS_H_

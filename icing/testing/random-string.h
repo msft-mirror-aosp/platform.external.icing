@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_RANDOM_STRING_H_
-#define ICING_TESTING_RANDOM_STRING_H_
+#ifndef THIRD_PARTY_ICING_TESTING_RANDOM_STRING_H_
+#define THIRD_PARTY_ICING_TESTING_RANDOM_STRING_H_
 
 #include <algorithm>
 #include <random>
@@ -69,4 +69,4 @@ std::vector<std::string> GenerateUniqueTerms(int num_terms);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_RANDOM_STRING_H_
+#endif  // THIRD_PARTY_ICING_TESTING_RANDOM_STRING_H_

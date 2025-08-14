@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/file/file-backed-bitmap.h"
+#include "third_party/icing/file/file-backed-bitmap.h"
 
 #include <cstdint>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
-#include "icing/util/math-util.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/math-util.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

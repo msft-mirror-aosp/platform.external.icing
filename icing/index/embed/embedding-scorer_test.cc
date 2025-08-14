@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/embed/embedding-scorer.h"
+#include "third_party/icing/index/embed/embedding-scorer.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -21,9 +21,9 @@
 #include <tuple>
 #include <vector>
 
-#include "gtest/gtest.h"
-#include "icing/index/embed/quantizer.h"
-#include "icing/testing/common-matchers.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/index/embed/quantizer.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

@@ -19,36 +19,36 @@
 #include <string_view>
 #include <utility>
 
-#include "icing/icing-search-engine.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/jni/scoped-primitive-array-critical.h"
-#include "icing/jni/scoped-utf-chars.h"
-#include "icing/proto/blob.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/proto/optimize.pb.h"
-#include "icing/proto/persist.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/status.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/util/clock.h"
-#include "icing/util/logging.h"
-#include <google/protobuf/message_lite.h>
+#include "third_party/icing/icing-search-engine.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/jni/scoped-primitive-array-critical.h"
+#include "third_party/icing/jni/scoped-utf-chars.h"
+#include "third_party/icing/proto/blob.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/proto/optimize.proto.h"
+#include "third_party/icing/proto/persist.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/status.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/protobuf/message_lite.h"
 
 namespace {
 // TODO(b/347054358): Increase this class's test coverage for Failed to parse
 // Proto cases.
 bool ParseProtoFromJniByteArray(JNIEnv* env, jbyteArray bytes,
-                                google::protobuf::MessageLite* protobuf) {
+                                proto2::MessageLite* protobuf) {
   icing::lib::ScopedPrimitiveArrayCritical<uint8_t> scoped_array(env, bytes);
   return protobuf->ParseFromArray(scoped_array.data(), scoped_array.size());
 }
 
 jbyteArray SerializeProtoToJniByteArray(JNIEnv* env,
-                                        const google::protobuf::MessageLite& protobuf) {
+                                        const proto2::MessageLite& protobuf) {
   int size = protobuf.ByteSizeLong();
   jbyteArray ret = env->NewByteArray(size);
   if (ret == nullptr) {
@@ -423,6 +423,41 @@ jbyteArray nativeCommitBlob(JNIEnv* env, jclass clazz, jobject object,
   }
 
   icing::lib::BlobProto blob_result_proto = icing->CommitBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetAllBlobInfos(JNIEnv* env, jclass clazz,
+                                                  jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::BlobProto blob_result_proto = icing->GetAllBlobInfos();
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativePutBlobInfos(JNIEnv* env, jclass clazz,
+                                                jobject object,
+                                                jbyteArray blob_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::BlobProto blob_proto;
+  if (!ParseProtoFromJniByteArray(env, blob_bytes, &blob_proto)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobInfo in nativePutBlobInfos";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto =
+      icing->PutBlobInfos(std::move(blob_proto));
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }

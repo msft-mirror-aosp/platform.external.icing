@@ -12,25 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_QUERY_SUGGESTION_PROCESSOR_H_
-#define ICING_QUERY_SUGGESTION_PROCESSOR_H_
+#ifndef THIRD_PARTY_ICING_QUERY_SUGGESTION_PROCESSOR_H_
+#define THIRD_PARTY_ICING_QUERY_SUGGESTION_PROCESSOR_H_
 
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/feature-flags.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/index.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/index/term-metadata.h"
-#include "icing/proto/search.pb.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-store.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/numeric/numeric-index.h"
+#include "third_party/icing/index/term-metadata.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -88,4 +88,4 @@ class SuggestionProcessor {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_QUERY_SUGGESTION_PROCESSOR_H_
+#endif  // THIRD_PARTY_ICING_QUERY_SUGGESTION_PROCESSOR_H_

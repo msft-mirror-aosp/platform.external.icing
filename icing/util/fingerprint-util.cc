@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/fingerprint-util.h"
+#include "third_party/icing/util/fingerprint-util.h"
 
 namespace icing {
 namespace lib {

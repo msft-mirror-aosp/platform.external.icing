@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/scoring/ranker.h"
+#include "third_party/icing/scoring/ranker.h"
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/testing/common-matchers.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

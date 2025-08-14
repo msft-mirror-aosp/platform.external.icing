@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/schema/schema-property-iterator.h"
+#include "third_party/icing/schema/schema-property-iterator.h"
 
 #include <algorithm>
 #include <string>
@@ -20,11 +20,11 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema/property-util.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema/property-util.h"
 
 namespace icing {
 namespace lib {

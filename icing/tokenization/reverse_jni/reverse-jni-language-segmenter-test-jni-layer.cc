@@ -14,8 +14,8 @@
 
 #include <jni.h>
 
-#include "gtest/gtest.h"
-#include "icing/testing/logging-event-listener.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/testing/logging-event-listener.h"
 
 // Global variable used so that the test implementation can access the JNIEnv.
 JNIEnv* g_jenv = nullptr;

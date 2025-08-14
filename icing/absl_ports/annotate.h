@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_ABSL_PORTS_ANNOTATE_H_
-#define ICING_ABSL_PORTS_ANNOTATE_H_
+#ifndef THIRD_PARTY_ICING_ABSL_PORTS_ANNOTATE_H_
+#define THIRD_PARTY_ICING_ABSL_PORTS_ANNOTATE_H_
 
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
 
 namespace icing {
 namespace lib {
@@ -46,4 +46,4 @@ libtextclassifier3::Status Annotate(const libtextclassifier3::Status& s,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_ABSL_PORTS_ANNOTATE_H_
+#endif  // THIRD_PARTY_ICING_ABSL_PORTS_ANNOTATE_H_

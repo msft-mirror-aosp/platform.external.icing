@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_
-#define ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_
+#ifndef THIRD_PARTY_ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_
+#define THIRD_PARTY_ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_
 
 #include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/schema/joinable-property-manager.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/key-mapper.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/schema/joinable-property-manager.h"
+#include "third_party/icing/schema/schema-util.h"
+#include "third_party/icing/schema/section-manager.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/key-mapper.h"
 
 namespace icing {
 namespace lib {
@@ -76,4 +76,4 @@ class SchemaTypeManager {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_
+#endif  // THIRD_PARTY_ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_

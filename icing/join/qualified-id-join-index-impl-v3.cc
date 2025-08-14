@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-join-index-impl-v3.h"
+#include "third_party/icing/join/qualified-id-join-index-impl-v3.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -23,23 +23,23 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/feature-flags.h"
-#include "icing/file/destructible-directory.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/join/document-join-id-pair.h"
-#include "icing/join/qualified-id-join-index.h"
-#include "icing/store/document-id.h"
-#include "icing/store/namespace-id.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
-#include "icing/util/math-util.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/destructible-directory.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/join/document-join-id-pair.h"
+#include "third_party/icing/join/qualified-id-join-index.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/math-util.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -205,6 +205,10 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
     // need to migrate.
     return libtextclassifier3::Status::OK;
   }
+
+  // Set dirty for the entire storage here once we make sure there are children
+  // to migrate for this parent doc.
+  SetDirty();
 
   ICING_ASSIGN_OR_RETURN(
       bool is_extended,

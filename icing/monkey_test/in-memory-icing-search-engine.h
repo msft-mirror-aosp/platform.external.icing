@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
-#define ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
+#ifndef THIRD_PARTY_ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
+#define THIRD_PARTY_ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
 
 #include <cstdint>
 #include <memory>
@@ -23,15 +23,15 @@
 #include <unordered_set>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/monkey_test/monkey-test-util.h"
-#include "icing/monkey_test/monkey-tokenized-document.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/store/document-id.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/monkey_test/monkey-test-util.h"
+#include "third_party/icing/monkey_test/monkey-tokenized-document.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -177,4 +177,4 @@ class InMemoryIcingSearchEngine {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
+#endif  // THIRD_PARTY_ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_

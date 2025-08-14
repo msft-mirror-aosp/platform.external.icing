@@ -18,35 +18,35 @@
 #include <string>
 
 #include "testing/base/public/benchmark.h"
-#include "icing/document-builder.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/proto/document.pb.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/random-string.h"
-#include "icing/testing/tmp-directory.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/random-string.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 // go/microbenchmarks
 //
 // To build and run on a local machine:
 //   $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//   icing/file:portable-file-backed-proto-log_benchmark
+//   third_party/icing/file:portable-file-backed-proto-log_benchmark
 //
-//   $ blaze-bin/icing/file/portable-file-backed-proto-log_benchmark
+//   $ blaze-bin/third_party/icing/file/portable-file-backed-proto-log_benchmark
 //   --benchmark_filter=all
 //
 //
 // To build and run on an Android device (must be connected and rooted):
 //   $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //   --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//   icing/file:portable-file-backed-proto-log_benchmark
+//   third_party/icing/file:portable-file-backed-proto-log_benchmark
 //
 //   $ adb root
 //
 //   $ adb push
-//   blaze-bin/icing/file/portable-file-backed-proto-log_benchmark
+//   blaze-bin/third_party/icing/file/portable-file-backed-proto-log_benchmark
 //   /data/local/tmp/
 //
 //   $ adb shell /data/local/tmp/portable-file-backed-proto-log-benchmark
@@ -70,7 +70,8 @@ std::unique_ptr<PortableFileBackedProtoLog<DocumentProto>> CreateProtoLog(
                      DocumentProto>::kDefaultCompressionThresholdBytes,
                  protobuf_ports::kDefaultMemLevel,
                  /*enable_smaller_decompression_buffer_size=*/true,
-                 /*enable_new_header_format=*/true))
+                 /*enable_new_header_format=*/true,
+                 /*enable_reusable_decompression_buffer=*/true))
       .ValueOrDie()
       .proto_log;
 }

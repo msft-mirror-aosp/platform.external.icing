@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/legacy/index/icing-storage-collection.h"
+#include "third_party/icing/legacy/index/icing-storage-collection.h"
 
 #include <string>
 
-#include "icing/legacy/core/icing-compat.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/util/crc32.h"
+#include "third_party/icing/legacy/core/icing-compat.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {

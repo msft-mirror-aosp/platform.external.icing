@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result/result-state-v2.h"
+#include "third_party/icing/result/result-state-v2.h"
 
 #include <atomic>
 #include <cstdint>
@@ -21,10 +21,10 @@
 #include <utility>
 #include <vector>
 
-#include "icing/proto/search.pb.h"
-#include "icing/result/result-adjustment-info.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
-#include "icing/store/document-store.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/result/result-adjustment-info.h"
+#include "third_party/icing/scoring/scored-document-hits-ranker.h"
+#include "third_party/icing/store/document-store.h"
 
 namespace icing {
 namespace lib {

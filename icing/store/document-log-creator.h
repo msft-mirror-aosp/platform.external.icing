@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_DOCUMENT_LOG_CREATOR_H_
-#define ICING_STORE_DOCUMENT_LOG_CREATOR_H_
+#ifndef THIRD_PARTY_ICING_STORE_DOCUMENT_LOG_CREATOR_H_
+#define THIRD_PARTY_ICING_STORE_DOCUMENT_LOG_CREATOR_H_
 
 #include <cstdint>
 #include <string>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/proto/document_wrapper.pb.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
 
 namespace icing {
 namespace lib {
@@ -86,4 +86,4 @@ class DocumentLogCreator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_DOCUMENT_LOG_CREATOR_H_
+#endif  // THIRD_PARTY_ICING_STORE_DOCUMENT_LOG_CREATOR_H_

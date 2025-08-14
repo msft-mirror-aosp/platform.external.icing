@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result/projection-tree.h"
+#include "third_party/icing/result/projection-tree.h"
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/proto/search.pb.h"
-#include "icing/schema/schema-store.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/schema/schema-store.h"
 
 namespace icing {
 namespace lib {

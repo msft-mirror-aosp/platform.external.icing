@@ -17,19 +17,19 @@
 //
 // A disk-backed array.
 
-#ifndef ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
-#define ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
+#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-mmapper.h"
-#include "icing/util/crc32.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/legacy/index/icing-mmapper.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -181,4 +181,4 @@ class IcingArrayStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_

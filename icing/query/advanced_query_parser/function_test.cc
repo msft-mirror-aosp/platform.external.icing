@@ -11,15 +11,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "icing/query/advanced_query_parser/function.h"
+#include "third_party/icing/query/advanced_query_parser/function.h"
 
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gtest/gtest.h"
-#include "icing/query/advanced_query_parser/param.h"
-#include "icing/query/advanced_query_parser/pending-value.h"
-#include "icing/testing/common-matchers.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/query/advanced_query_parser/param.h"
+#include "third_party/icing/query/advanced_query_parser/pending-value.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

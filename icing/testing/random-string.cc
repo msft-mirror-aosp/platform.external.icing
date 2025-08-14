@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/random-string.h"
+#include "third_party/icing/testing/random-string.h"
 
 namespace icing {
 namespace lib {

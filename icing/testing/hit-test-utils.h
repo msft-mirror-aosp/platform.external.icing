@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_HIT_TEST_UTILS_H_
-#define ICING_TESTING_HIT_TEST_UTILS_H_
+#ifndef THIRD_PARTY_ICING_TESTING_HIT_TEST_UTILS_H_
+#define THIRD_PARTY_ICING_TESTING_HIT_TEST_UTILS_H_
 
 #include <cstdint>
 #include <vector>
 
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/index/hit/hit.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -63,4 +63,4 @@ std::vector<EmbeddingHit> CreateEmbeddingHits(int num_hits,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_HIT_TEST_UTILS_H_
+#endif  // THIRD_PARTY_ICING_TESTING_HIT_TEST_UTILS_H_

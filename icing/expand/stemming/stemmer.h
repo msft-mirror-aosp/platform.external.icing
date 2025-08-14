@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_EXPAND_STEMMING_STEMMER_H_
-#define ICING_EXPAND_STEMMING_STEMMER_H_
+#ifndef THIRD_PARTY_ICING_EXPAND_STEMMING_STEMMER_H_
+#define THIRD_PARTY_ICING_EXPAND_STEMMING_STEMMER_H_
 
 #include <string>
 #include <string_view>
@@ -41,4 +41,4 @@ class Stemmer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_EXPAND_STEMMING_STEMMER_H_
+#endif  // THIRD_PARTY_ICING_EXPAND_STEMMING_STEMMER_H_

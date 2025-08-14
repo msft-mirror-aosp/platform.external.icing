@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_RESULT_PROJECTOR_H_
-#define ICING_RESULT_PROJECTOR_H_
+#ifndef THIRD_PARTY_ICING_RESULT_PROJECTOR_H_
+#define THIRD_PARTY_ICING_RESULT_PROJECTOR_H_
 
 #include <vector>
 
-#include "icing/proto/document.pb.h"
-#include "icing/result/projection-tree.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/result/projection-tree.h"
 
 namespace icing {
 namespace lib {
@@ -33,4 +33,4 @@ void Project(const std::vector<ProjectionTree::Node>& projection_tree,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_RESULT_PROJECTOR_H_
+#endif  // THIRD_PARTY_ICING_RESULT_PROJECTOR_H_

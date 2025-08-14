@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/expand/stemming/stemming-expander.h"
+#include "third_party/icing/expand/stemming/stemming-expander.h"
 
 #include <memory>
 #include <string>
@@ -20,12 +20,12 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/mutex.h"
-#include "icing/expand/expander.h"
-#include "icing/expand/stemming/stemmer-factory.h"
-#include "icing/expand/stemming/stemmer.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/expand/expander.h"
+#include "third_party/icing/expand/stemming/stemmer-factory.h"
+#include "third_party/icing/expand/stemming/stemmer.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

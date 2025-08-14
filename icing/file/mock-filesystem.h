@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_MOCK_FILESYSTEM_H_
-#define ICING_FILE_MOCK_FILESYSTEM_H_
+#ifndef THIRD_PARTY_ICING_FILE_MOCK_FILESYSTEM_H_
+#define THIRD_PARTY_ICING_FILE_MOCK_FILESYSTEM_H_
 
 #include <cstdint>
 
-#include "gmock/gmock.h"
-#include "icing/file/filesystem.h"
+#include "testing/base/public/gmock.h"
+#include "third_party/icing/file/filesystem.h"
 
 namespace icing {
 namespace lib {
@@ -340,4 +340,4 @@ class MockFilesystem : public Filesystem {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_MOCK_FILESYSTEM_H_
+#endif  // THIRD_PARTY_ICING_FILE_MOCK_FILESYSTEM_H_

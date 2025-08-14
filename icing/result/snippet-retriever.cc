@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result/snippet-retriever.h"
+#include "third_party/icing/result/snippet-retriever.h"
 
 #include <map>
 #include <memory>
@@ -23,28 +23,28 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/query/query-terms.h"
-#include "icing/result/snippet-context.h"
-#include "icing/schema/property-util.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/token.h"
-#include "icing/tokenization/tokenizer-factory.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/character-iterator.h"
-#include "icing/util/i18n-utils.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/result/snippet-context.h"
+#include "third_party/icing/schema/property-util.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/token.h"
+#include "third_party/icing/tokenization/tokenizer-factory.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/character-iterator.h"
+#include "third_party/icing/util/i18n-utils.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

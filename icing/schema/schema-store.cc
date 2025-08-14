@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/schema/schema-store.h"
+#include "third_party/icing/schema/schema-store.h"
 
 #include <cinttypes>
 #include <cstddef>
@@ -27,35 +27,35 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/feature-flags.h"
-#include "icing/file/destructible-directory.h"
-#include "icing/file/file-backed-proto.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/version-util.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/schema/backup-schema-producer.h"
-#include "icing/schema/joinable-property.h"
-#include "icing/schema/schema-property-iterator.h"
-#include "icing/schema/schema-type-manager.h"
-#include "icing/schema/schema-util.h"
-#include "icing/schema/scorable_property_manager.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/dynamic-trie-key-mapper.h"
-#include "icing/util/clock.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/destructible-directory.h"
+#include "third_party/icing/file/file-backed-proto.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/version-util.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/schema/backup-schema-producer.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/schema/schema-property-iterator.h"
+#include "third_party/icing/schema/schema-type-manager.h"
+#include "third_party/icing/schema/schema-util.h"
+#include "third_party/icing/schema/scorable_property_manager.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/dynamic-trie-key-mapper.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -689,7 +689,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
       // Although the current version is 5, the schema is compatible with
       // version 1, so min_overlay_version_compatibility should be 1.
       int32_t min_overlay_version_compatibility = version_util::kVersionOne;
-      // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
+      // LINT.ThenChange(//depot/google3/third_party/icing/file/version-util.h:kVersion)
       header_->SetOverlayInfo(
           /*overlay_created=*/true, min_overlay_version_compatibility);
       // Rebuild in memory data - references to the old schema will be invalid
@@ -1356,7 +1356,7 @@ libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
 
 std::vector<SchemaStore::ExpandedTypePropertyMask>
 SchemaStore::ExpandTypePropertyMasks(
-    const google::protobuf::RepeatedPtrField<TypePropertyMask>& type_property_masks)
+    const proto2::RepeatedPtrField<TypePropertyMask>& type_property_masks)
     const {
   std::unordered_map<SchemaTypeId, ExpandedTypePropertyMask> result_map;
   for (const TypePropertyMask& type_field_mask : type_property_masks) {

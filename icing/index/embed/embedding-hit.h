@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_EMBED_EMBEDDING_HIT_H_
-#define ICING_INDEX_EMBED_EMBEDDING_HIT_H_
+#ifndef THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_HIT_H_
+#define THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_HIT_H_
 
 #include <cstdint>
 
-#include "icing/index/hit/hit.h"
+#include "third_party/icing/index/hit/hit.h"
 
 namespace icing {
 namespace lib {
@@ -64,4 +64,4 @@ static_assert(sizeof(EmbeddingHit) == 8);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_EMBED_EMBEDDING_HIT_H_
+#endif  // THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_HIT_H_

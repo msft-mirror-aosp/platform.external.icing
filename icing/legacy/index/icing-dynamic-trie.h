@@ -32,8 +32,8 @@
 //
 // Not thread-safe.
 
-#ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
-#define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
+#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -43,13 +43,13 @@
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/legacy/core/icing-packed-pod.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-storage.h"
-#include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
-#include "icing/util/crc32.h"
-#include "unicode/utf8.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/legacy/core/icing-packed-pod.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/legacy/index/icing-storage.h"
+#include "third_party/icing/legacy/index/proto/icing-dynamic-trie-header.proto.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icu/include/unicode/utf8.h"
 
 namespace icing {
 namespace lib {
@@ -667,4 +667,4 @@ class IcingDynamicTrie : public IIcingStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_

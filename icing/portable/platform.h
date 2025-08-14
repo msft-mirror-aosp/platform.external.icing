@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_PORTABLE_PLATFORM_H_
-#define ICING_PORTABLE_PLATFORM_H_
+#ifndef THIRD_PARTY_ICING_PORTABLE_PLATFORM_H_
+#define THIRD_PARTY_ICING_PORTABLE_PLATFORM_H_
 
-#include "unicode/uconfig.h"  // IWYU pragma: keep
+#include "third_party/icu/include/unicode/uconfig.h"  // IWYU pragma: keep
 // clang-format: do not reorder the above include.
 
-#include "icing/expand/stemming/stemmer-factory.h"
-#include "unicode/uvernum.h"
+#include "third_party/icing/expand/stemming/stemmer-factory.h"
+#include "third_party/icu/include/unicode/uvernum.h"
 
 namespace icing {
 namespace lib {
@@ -115,4 +115,4 @@ inline Architecture GetArchitecture() {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_PORTABLE_PLATFORM_H_
+#endif  // THIRD_PARTY_ICING_PORTABLE_PLATFORM_H_

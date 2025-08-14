@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/store/namespace-id-fingerprint.h"
+#include "third_party/icing/store/namespace-id-fingerprint.h"
 
 #include <cstdint>
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/store/namespace-id.h"
-#include "icing/util/encode-util.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/hash/farmhash.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/util/encode-util.h"
 
 namespace icing {
 namespace lib {

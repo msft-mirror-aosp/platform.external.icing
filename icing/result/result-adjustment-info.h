@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_RESULT_RESULT_ADJUSTMENT_INFO_H_
-#define ICING_RESULT_RESULT_ADJUSTMENT_INFO_H_
+#ifndef THIRD_PARTY_ICING_RESULT_RESULT_ADJUSTMENT_INFO_H_
+#define THIRD_PARTY_ICING_RESULT_RESULT_ADJUSTMENT_INFO_H_
 
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/query/query-terms.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/snippet-context.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/result/projection-tree.h"
+#include "third_party/icing/result/snippet-context.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -59,4 +59,4 @@ struct ResultAdjustmentInfo {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_RESULT_RESULT_ADJUSTMENT_INFO_H_
+#endif  // THIRD_PARTY_ICING_RESULT_RESULT_ADJUSTMENT_INFO_H_

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/jni/scoped-primitive-array-critical.h"
+#include "third_party/icing/jni/scoped-primitive-array-critical.h"
 
 #include <jni.h>
 
 #include <utility>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
 #include "util/java/mock_jni_env.h"
 
 namespace icing {

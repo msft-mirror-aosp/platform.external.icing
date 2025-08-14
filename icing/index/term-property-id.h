@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_TERM_PROPERTY_ID_H_
-#define ICING_INDEX_TERM_PROPERTY_ID_H_
+#ifndef THIRD_PARTY_ICING_INDEX_TERM_PROPERTY_ID_H_
+#define THIRD_PARTY_ICING_INDEX_TERM_PROPERTY_ID_H_
 
 #include <cstdint>
 
-#include "icing/legacy/index/icing-dynamic-trie.h"
-#include "icing/store/namespace-id.h"
+#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "third_party/icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -44,4 +44,4 @@ uint32_t GetNamespacePropertyId(NamespaceId namespace_id);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_TERM_PROPERTY_ID_H_
+#endif  // THIRD_PARTY_ICING_INDEX_TERM_PROPERTY_ID_H_

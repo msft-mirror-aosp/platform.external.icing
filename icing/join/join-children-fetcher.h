@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
-#define ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
+#ifndef THIRD_PARTY_ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
+#define THIRD_PARTY_ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
 
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/proto/search.pb.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/store/document-id.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -58,4 +58,4 @@ class JoinChildrenFetcher {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_JOIN_CHILDREN_FETCHER_H_
+#endif  // THIRD_PARTY_ICING_JOIN_JOIN_CHILDREN_FETCHER_H_

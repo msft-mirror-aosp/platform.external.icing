@@ -21,23 +21,23 @@
 #include <utility>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/document-builder.h"
-#include "icing/file/filesystem.h"
-#include "icing/icing-search-engine.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/clock.h"
-#include "icing/util/sha256.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/icing-search-engine.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/jni-test-helpers.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/sha256.h"
 
 namespace icing {
 namespace lib {
@@ -262,7 +262,7 @@ TEST_P(IcingSearchEngineBlobTest, GetAllBlobInfo) {
   BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
-  BlobProto blob_proto = icing.GetAllBlobInfo();
+  BlobProto blob_proto = icing.GetAllBlobInfos();
   EXPECT_THAT(blob_proto.status(), ProtoIsOk());
   EXPECT_THAT(blob_proto.blob_info_protos_size(), Eq(1));
   EXPECT_THAT(blob_proto.blob_info_protos(0).blob_handle().namespace_(),
@@ -291,7 +291,7 @@ TEST_P(IcingSearchEngineBlobTest, PutBlobInfos) {
   BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
-  BlobProto blob_proto = icing.GetAllBlobInfo();
+  BlobProto blob_proto = icing.GetAllBlobInfos();
   EXPECT_THAT(blob_proto.status(), ProtoIsOk());
   EXPECT_THAT(blob_proto.blob_info_protos_size(), Eq(1));
   EXPECT_THAT(blob_proto.blob_info_protos(0).blob_handle().namespace_(),

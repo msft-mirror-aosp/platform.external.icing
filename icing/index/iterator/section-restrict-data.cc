@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/iterator/section-restrict-data.h"
+#include "third_party/icing/index/iterator/section-restrict-data.h"
 
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {

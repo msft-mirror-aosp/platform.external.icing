@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/query/advanced_query_parser/query-visitor.h"
+#include "third_party/icing/query/advanced_query_parser/query-visitor.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -27,44 +27,45 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/annotate.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
-#include "icing/index/iterator/doc-hit-info-iterator-and.h"
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
-#include "icing/index/iterator/doc-hit-info-iterator-match-score-expression.h"
-#include "icing/index/iterator/doc-hit-info-iterator-none.h"
-#include "icing/index/iterator/doc-hit-info-iterator-not.h"
-#include "icing/index/iterator/doc-hit-info-iterator-or.h"
-#include "icing/index/iterator/doc-hit-info-iterator-property-in-document.h"
-#include "icing/index/iterator/doc-hit-info-iterator-property-in-schema.h"
-#include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/property-existence-indexing-handler.h"
-#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
-#include "icing/query/advanced_query_parser/function.h"
-#include "icing/query/advanced_query_parser/lexer.h"
-#include "icing/query/advanced_query_parser/param.h"
-#include "icing/query/advanced_query_parser/parser.h"
-#include "icing/query/advanced_query_parser/pending-value.h"
-#include "icing/query/advanced_query_parser/util/string-util.h"
-#include "icing/query/query-features.h"
-#include "icing/query/query-results.h"
-#include "icing/schema/property-util.h"
-#include "icing/schema/section.h"
-#include "icing/scoring/advanced_scoring/score-expression-util.h"
-#include "icing/scoring/advanced_scoring/score-expression.h"
-#include "icing/tokenization/token.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/embedding-util.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/annotate.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_join.h"
+#include "third_party/icing/index/embed/doc-hit-info-iterator-embedding-v1.h"
+#include "third_party/icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-and.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-filter.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-match-score-expression.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-none.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-not.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-or.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-property-in-document.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-property-in-schema.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/property-existence-indexing-handler.h"
+#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "third_party/icing/query/advanced_query_parser/function.h"
+#include "third_party/icing/query/advanced_query_parser/lexer.h"
+#include "third_party/icing/query/advanced_query_parser/param.h"
+#include "third_party/icing/query/advanced_query_parser/parser.h"
+#include "third_party/icing/query/advanced_query_parser/pending-value.h"
+#include "third_party/icing/query/advanced_query_parser/util/string-util.h"
+#include "third_party/icing/query/query-features.h"
+#include "third_party/icing/query/query-results.h"
+#include "third_party/icing/schema/property-util.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/scoring/advanced_scoring/score-expression-util.h"
+#include "third_party/icing/scoring/advanced_scoring/score-expression.h"
+#include "third_party/icing/tokenization/token.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/embedding-util.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -466,16 +467,30 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
       embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
                                                        metric_type));
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      DocHitInfoIteratorEmbedding::Create(
-          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, info_map, embedding_query_results_.global_scores.get(),
-          get_embedding_match_info_
-              ? embedding_query_results_.global_section_infos.get()
-              : nullptr,
-          &embedding_index_, &document_store_, &schema_store_,
-          current_time_ms_));
+  std::unique_ptr<DocHitInfoIterator> iterator;
+  if (feature_flags_.enable_embedding_iterator_v2()) {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV2::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV1::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  }
   return PendingValue(std::move(iterator));
 }
 

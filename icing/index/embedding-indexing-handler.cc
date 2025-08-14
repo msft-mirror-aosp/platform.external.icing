@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/embedding-indexing-handler.h"
+#include "third_party/icing/index/embedding-indexing-handler.h"
 
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/hit/hit.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/util/clock.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {

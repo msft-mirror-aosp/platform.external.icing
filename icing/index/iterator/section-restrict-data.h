@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_ITERATOR_SECTION_RESTRICT_DATA_H_
-#define ICING_INDEX_ITERATOR_SECTION_RESTRICT_DATA_H_
+#ifndef THIRD_PARTY_ICING_INDEX_ITERATOR_SECTION_RESTRICT_DATA_H_
+#define THIRD_PARTY_ICING_INDEX_ITERATOR_SECTION_RESTRICT_DATA_H_
 
 #include <cstdint>
 #include <set>
@@ -22,11 +22,11 @@
 #include <utility>
 #include <vector>
 
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -136,4 +136,4 @@ class DocHitInfoIteratorHandlingSectionRestrict
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_ITERATOR_SECTION_RESTRICT_DATA_H_
+#endif  // THIRD_PARTY_ICING_INDEX_ITERATOR_SECTION_RESTRICT_DATA_H_

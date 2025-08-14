@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCORING_BM25F_CALCULATOR_H_
-#define ICING_SCORING_BM25F_CALCULATOR_H_
+#ifndef THIRD_PARTY_ICING_SCORING_BM25F_CALCULATOR_H_
+#define THIRD_PARTY_ICING_SCORING_BM25F_CALCULATOR_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,15 +21,15 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/legacy/index/icing-bit-util.h"
-#include "icing/scoring/section-weights.h"
-#include "icing/store/corpus-id.h"
-#include "icing/store/document-associated-score-data.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/legacy/index/icing-bit-util.h"
+#include "third_party/icing/scoring/section-weights.h"
+#include "third_party/icing/store/corpus-id.h"
+#include "third_party/icing/store/document-associated-score-data.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -179,4 +179,4 @@ class Bm25fCalculator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCORING_BM25F_CALCULATOR_H_
+#endif  // THIRD_PARTY_ICING_SCORING_BM25F_CALCULATOR_H_

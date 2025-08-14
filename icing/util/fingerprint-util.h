@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_FINGERPRINT_UTIL_H_
-#define ICING_UTIL_FINGERPRINT_UTIL_H_
+#ifndef THIRD_PARTY_ICING_UTIL_FINGERPRINT_UTIL_H_
+#define THIRD_PARTY_ICING_UTIL_FINGERPRINT_UTIL_H_
 
 #include <cstdint>
 #include <string>
@@ -44,4 +44,4 @@ class FingerprintStringFormatter {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_FINGERPRINT_UTIL_H_
+#endif  // THIRD_PARTY_ICING_UTIL_FINGERPRINT_UTIL_H_

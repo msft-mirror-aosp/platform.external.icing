@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_NUMERIC_NORMAL_DISTRIBUTION_NUMBER_GENERATOR_H_
-#define ICING_TESTING_NUMERIC_NORMAL_DISTRIBUTION_NUMBER_GENERATOR_H_
+#ifndef THIRD_PARTY_ICING_TESTING_NUMERIC_NORMAL_DISTRIBUTION_NUMBER_GENERATOR_H_
+#define THIRD_PARTY_ICING_TESTING_NUMERIC_NORMAL_DISTRIBUTION_NUMBER_GENERATOR_H_
 
 #include <cmath>
 #include <random>
 
-#include "icing/testing/numeric/number-generator.h"
+#include "third_party/icing/testing/numeric/number-generator.h"
 
 namespace icing {
 namespace lib {
@@ -39,4 +39,4 @@ class NormalDistributionNumberGenerator : public NumberGenerator<T> {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_NUMERIC_NORMAL_DISTRIBUTION_NUMBER_GENERATOR_H_
+#endif  // THIRD_PARTY_ICING_TESTING_NUMERIC_NORMAL_DISTRIBUTION_NUMBER_GENERATOR_H_

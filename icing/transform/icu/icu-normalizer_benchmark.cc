@@ -16,31 +16,31 @@
 #include <memory>
 
 #include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/test-data.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/icu-data-file-helper.h"
+#include "testing/base/public/gmock.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/transform/icu:icu-normalizer_benchmark
+//    //third_party/icing/transform/icu:icu-normalizer_benchmark
 //
-//    $ blaze-bin/icing/transform/icu/icu-normalizer_benchmark
+//    $ blaze-bin/third_party/icing/transform/icu/icu-normalizer_benchmark
 //    --benchmark_filter=all
 //
 // Run on an Android device:
-//    Make target //icing/transform:normalizer depend on
+//    Make target //third_party/icing/transform:normalizer depend on
 //    //third_party/icu
 //
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/transform/icu:icu-normalizer_benchmark
+//    //third_party/icing/transform/icu:icu-normalizer_benchmark
 //
 //    $ adb push
-//    blaze-bin/icing/transform/icu/icu-normalizer_benchmark
+//    blaze-bin/third_party/icing/transform/icu/icu-normalizer_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/icu-normalizer_benchmark
@@ -59,7 +59,7 @@ void BM_NormalizeUppercase(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(
@@ -92,7 +92,7 @@ void BM_NormalizeAccent(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(
@@ -129,7 +129,7 @@ void BM_NormalizeGreekAccent(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(
@@ -166,7 +166,7 @@ void BM_NormalizeHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(
@@ -203,7 +203,7 @@ void BM_UppercaseSubTokenLength(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(
@@ -238,7 +238,7 @@ void BM_AccentSubTokenLength(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(
@@ -278,7 +278,7 @@ void BM_HiraganaSubTokenLength(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   NormalizerOptions options(

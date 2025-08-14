@@ -18,14 +18,14 @@
 // This header is used to declare typedefs and constants
 // that are shared across several modules.
 
-#ifndef ICING_LEGACY_CORE_ICING_CORE_TYPES_H_
-#define ICING_LEGACY_CORE_ICING_CORE_TYPES_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_CORE_ICING_CORE_TYPES_H_
+#define THIRD_PARTY_ICING_LEGACY_CORE_ICING_CORE_TYPES_H_
 
 #include <cstddef>  // size_t not defined implicitly for all platforms.
 #include <cstdint>
 #include <vector>
 
-#include "icing/legacy/core/icing-compat.h"
+#include "third_party/icing/legacy/core/icing-compat.h"
 
 namespace icing {
 namespace lib {
@@ -58,4 +58,4 @@ enum IcingTokenizerType {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_CORE_ICING_CORE_TYPES_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_CORE_ICING_CORE_TYPES_H_

@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/string-section-indexing-handler.h"
+#include "third_party/icing/index/string-section-indexing-handler.h"
 
 #include <cstdint>
 #include <memory>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/index.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {

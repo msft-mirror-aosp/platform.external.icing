@@ -11,17 +11,17 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#ifndef ICING_QUERY_ADVANCED_QUERY_PARSER_FUNCTION_H_
-#define ICING_QUERY_ADVANCED_QUERY_PARSER_FUNCTION_H_
+#ifndef THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_FUNCTION_H_
+#define THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_FUNCTION_H_
 
 #include <functional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/query/advanced_query_parser/param.h"
-#include "icing/query/advanced_query_parser/pending-value.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/query/advanced_query_parser/param.h"
+#include "third_party/icing/query/advanced_query_parser/pending-value.h"
 
 namespace icing {
 namespace lib {
@@ -65,4 +65,4 @@ class Function {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_QUERY_ADVANCED_QUERY_PARSER_FUNCTION_H_
+#endif  // THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_FUNCTION_H_

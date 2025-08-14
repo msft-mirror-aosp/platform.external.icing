@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/schema/property-util.h"
+#include "third_party/icing/schema/property-util.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,10 +20,10 @@
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/proto/document.pb.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_join.h"
+#include "third_party/icing/proto/document.proto.h"
 
 namespace icing {
 namespace lib {

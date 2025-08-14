@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_NUMERIC_DOC_HIT_INFO_ITERATOR_NUMERIC_H_
-#define ICING_INDEX_NUMERIC_DOC_HIT_INFO_ITERATOR_NUMERIC_H_
+#ifndef THIRD_PARTY_ICING_INDEX_NUMERIC_DOC_HIT_INFO_ITERATOR_NUMERIC_H_
+#define THIRD_PARTY_ICING_INDEX_NUMERIC_DOC_HIT_INFO_ITERATOR_NUMERIC_H_
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/schema/section.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/numeric/numeric-index.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -88,4 +88,4 @@ class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_NUMERIC_DOC_HIT_INFO_ITERATOR_NUMERIC_H_
+#endif  // THIRD_PARTY_ICING_INDEX_NUMERIC_DOC_HIT_INFO_ITERATOR_NUMERIC_H_

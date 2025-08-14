@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TOKENIZATION_RFC822_TOKENIZER_H_
-#define ICING_TOKENIZATION_RFC822_TOKENIZER_H_
+#ifndef THIRD_PARTY_ICING_TOKENIZATION_RFC822_TOKENIZER_H_
+#define THIRD_PARTY_ICING_TOKENIZATION_RFC822_TOKENIZER_H_
 
 #include <vector>
 
-#include "icing/tokenization/tokenizer.h"
+#include "third_party/icing/tokenization/tokenizer.h"
 
 namespace icing {
 namespace lib {
@@ -35,4 +35,4 @@ class Rfc822Tokenizer : public Tokenizer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TOKENIZATION_RFC822_TOKENIZER_H_
+#endif  // THIRD_PARTY_ICING_TOKENIZATION_RFC822_TOKENIZER_H_

@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
-#define ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
+#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
 
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/store/document-id.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -124,4 +124,4 @@ static_assert(24 == sizeof(LiteIndex_HeaderImpl::HeaderData),
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_

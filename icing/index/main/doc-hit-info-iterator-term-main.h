@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
-#define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
+#ifndef THIRD_PARTY_ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
+#define THIRD_PARTY_ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
 
 #include <array>
 #include <memory>
@@ -22,14 +22,14 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/main/main-index.h"
-#include "icing/index/main/posting-list-hit-accessor.h"
-#include "icing/schema/section.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/main/main-index.h"
+#include "third_party/icing/index/main/posting-list-hit-accessor.h"
+#include "third_party/icing/schema/section.h"
 
 namespace icing {
 namespace lib {
@@ -206,4 +206,4 @@ class DocHitInfoIteratorTermMainPrefix : public DocHitInfoIteratorTermMain {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
+#endif  // THIRD_PARTY_ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_

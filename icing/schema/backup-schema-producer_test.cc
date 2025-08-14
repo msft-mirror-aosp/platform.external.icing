@@ -12,24 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/schema/backup-schema-producer.h"
+#include "third_party/icing/schema/backup-schema-producer.h"
 
 #include <memory>
 #include <string>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-type-manager.h"
-#include "icing/schema/schema-util.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/dynamic-trie-key-mapper.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-type-manager.h"
+#include "third_party/icing/schema/schema-util.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/dynamic-trie-key-mapper.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
@@ -957,7 +957,10 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true),
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true
+                      ),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -970,7 +973,9 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true)));
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true)));
 
 }  // namespace
 

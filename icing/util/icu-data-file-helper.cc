@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
 
 #include <sys/mman.h>
 
 #include <cstdint>
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/file/filesystem.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/file/filesystem.h"
 #ifdef CUSTOM_ICU_DAT_FILE
-#include "unicode/udata.h"
-#include "unicode/utypes.h"
+#include "third_party/icu/include/unicode/udata.h"
+#include "third_party/icu/include/unicode/utypes.h"
 #endif  // CUSTOM_ICU_DAT_FILE
 namespace icing {
 namespace lib {

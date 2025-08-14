@@ -11,18 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "icing/query/advanced_query_parser/function.h"
+#include "third_party/icing/query/advanced_query_parser/function.h"
 
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/query/advanced_query_parser/param.h"
-#include "icing/query/advanced_query_parser/pending-value.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/query/advanced_query_parser/param.h"
+#include "third_party/icing/query/advanced_query_parser/pending-value.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

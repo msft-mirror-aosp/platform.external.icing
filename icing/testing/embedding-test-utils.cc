@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/embedding-test-utils.h"
+#include "third_party/icing/testing/embedding-test-utils.h"
 
 #include <cstdint>
 #include <memory>
@@ -20,16 +20,16 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
-#include "icing/index/embed/quantizer.h"
-#include "icing/proto/document.pb.h"
-#include "icing/store/document-id.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "third_party/icing/index/embed/quantizer.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

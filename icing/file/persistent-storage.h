@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_PERSISTENT_STORAGE_H_
-#define ICING_FILE_PERSISTENT_STORAGE_H_
+#ifndef THIRD_PARTY_ICING_FILE_PERSISTENT_STORAGE_H_
+#define THIRD_PARTY_ICING_FILE_PERSISTENT_STORAGE_H_
 
 #include <cstdint>
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/file/filesystem.h"
-#include "icing/util/crc32.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -397,4 +397,4 @@ class PersistentStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_PERSISTENT_STORAGE_H_
+#endif  // THIRD_PARTY_ICING_FILE_PERSISTENT_STORAGE_H_

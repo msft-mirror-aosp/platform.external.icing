@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-join-index-impl-v3.h"
+#include "third_party/icing/join/qualified-id-join-index-impl-v3.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,22 +21,22 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/feature-flags.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/file/persistent-storage.h"
-#include "icing/join/document-join-id-pair.h"
-#include "icing/join/qualified-id-join-index.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/crc32.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/file/persistent-storage.h"
+#include "third_party/icing/join/document-join-id-pair.h"
+#include "third_party/icing/join/qualified-id-join-index.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -1291,6 +1291,58 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
 
   // Sanity check that the file size is extended and remap happens.
   EXPECT_THAT(file_size_after, Gt(file_size_before));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParentShouldSetDirty) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  DocumentId parent_doc_id1 = 1;
+  DocumentId parent_doc_id2 = 1024;
+
+  // Add 2 children with their parents to the index.
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair1,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair2,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+
+  // Sanity check.
+  ASSERT_THAT(index, Pointee(SizeIs(2)));
+  ASSERT_THAT(
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+  ASSERT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
+              IsOkAndHolds(IsEmpty()));
+  // PersistToDisk after putting data and get the checksum. This will reset the
+  // dirty flag.
+  ICING_ASSERT_OK(index->PersistToDisk());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, index->GetChecksum());
+
+  // Migrate parent document id 1 to 1024.
+  ICING_ASSERT_OK(index->MigrateParent(parent_doc_id1, parent_doc_id2));
+
+  // Call UpdateChecksums(). The checksum should be recomputed and be different
+  // from the previous one. This validates that MigrateParent() should set the
+  // dirty flag.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, index->UpdateChecksums());
+  EXPECT_THAT(crc2, Ne(crc1));
+
+  // Create another qualified id join index instance with the same file. It
+  // should succeed and GetChecksum() should return the same checksum as the
+  // previous one.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index2,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc3, index2->GetChecksum());
+  EXPECT_THAT(crc3, Eq(crc2));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {

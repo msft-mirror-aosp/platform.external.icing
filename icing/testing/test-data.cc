@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/test-data.h"
+#include "third_party/icing/testing/test-data.h"
 
 #include <sys/mman.h>
 
 #include <cstdint>
 
 #include "devtools/build/runtime/get_runfiles_dir.h"
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/file/filesystem.h"
-#include "unicode/udata.h"
-#include "unicode/utypes.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icu/include/unicode/udata.h"
+#include "third_party/icu/include/unicode/utypes.h"
 
 namespace icing {
 namespace lib {

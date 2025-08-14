@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_TIMESTAMP_UTIL_H_
-#define ICING_UTIL_TIMESTAMP_UTIL_H_
+#ifndef THIRD_PARTY_ICING_UTIL_TIMESTAMP_UTIL_H_
+#define THIRD_PARTY_ICING_UTIL_TIMESTAMP_UTIL_H_
 
 #include <cstdint>
 
@@ -39,4 +39,4 @@ int64_t CalculateRawExpirationTimestampMs(int64_t creation_timestamp_ms,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_TIMESTAMP_UTIL_H_
+#endif  // THIRD_PARTY_ICING_UTIL_TIMESTAMP_UTIL_H_

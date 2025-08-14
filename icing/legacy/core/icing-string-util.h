@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
-#define ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
+#define THIRD_PARTY_ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 
 #include <cstdarg>
 #include <cstdint>
 #include <string>
 
-#include "icing/legacy/core/icing-compat.h"
+#include "third_party/icing/legacy/core/icing-compat.h"
 
 namespace icing {
 namespace lib {
@@ -59,4 +59,4 @@ class IcingStringUtil {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_CORE_ICING_STRING_UTIL_H_

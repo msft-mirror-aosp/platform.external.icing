@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TOKENIZATION_VERBATIM_H_
-#define ICING_TOKENIZATION_VERBATIM_H_
+#ifndef THIRD_PARTY_ICING_TOKENIZATION_VERBATIM_H_
+#define THIRD_PARTY_ICING_TOKENIZATION_VERBATIM_H_
 
 #include <memory>
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/tokenization/tokenizer.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/tokenization/tokenizer.h"
 
 namespace icing {
 namespace lib {
@@ -38,4 +38,4 @@ class VerbatimTokenizer : public Tokenizer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TOKENIZATION_VERBATIM_H_
+#endif  // THIRD_PARTY_ICING_TOKENIZATION_VERBATIM_H_

@@ -18,62 +18,62 @@
 #include <string>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
 #include "third_party/absl/flags/flag.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/document-builder.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/index.h"
-#include "icing/index/numeric/dummy-numeric-index.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/query/query-processor.h"
-#include "icing/query/query-results.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
-#include "icing/util/document-util.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/logging.h"
-#include "unicode/uloc.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/numeric/dummy-numeric-index.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/query/query-processor.h"
+#include "third_party/icing/query/query-results.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/document-util.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icu/include/unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/query:query-processor_benchmark
+//    //third_party/icing/query:query-processor_benchmark
 //
-//    $ blaze-bin/icing/query/query-processor_benchmark
+//    $ blaze-bin/third_party/icing/query/query-processor_benchmark
 //    --benchmark_filter=all
 //
 // Run on an Android device:
-//    Make target //icing/tokenization:language-segmenter depend on
+//    Make target //third_party/icing/tokenization:language-segmenter depend on
 //    //third_party/icu
 //
-//    Make target //icing/transform:normalizer depend on
+//    Make target //third_party/icing/transform:normalizer depend on
 //    //third_party/icu
 //
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/query:query-processor_benchmark
+//    //third_party/icing/query:query-processor_benchmark
 //
-//    $ adb push blaze-bin/icing/query/query-processor_benchmark
+//    $ adb push blaze-bin/third_party/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/query-processor_benchmark
@@ -131,7 +131,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   FeatureFlags feature_flags = GetTestFeatureFlags();
@@ -271,7 +271,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   FeatureFlags feature_flags = GetTestFeatureFlags();
@@ -429,7 +429,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   FeatureFlags feature_flags = GetTestFeatureFlags();
@@ -572,7 +572,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("icing/icu.dat")));
+        GetTestFilePath("third_party/icing/icu.dat")));
   }
 
   FeatureFlags feature_flags = GetTestFeatureFlags();

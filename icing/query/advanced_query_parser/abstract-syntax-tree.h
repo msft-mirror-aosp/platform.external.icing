@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_H_
-#define ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_H_
+#ifndef THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_H_
+#define THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_H_
 
 #include <memory>
 #include <string>
@@ -180,4 +180,4 @@ class NaryOperatorNode : public Node {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_H_
+#endif  // THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_H_

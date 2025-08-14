@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/index-processor.h"
+#include "third_party/icing/index/index-processor.h"
 
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/index/data-indexing-handler.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/store/document-id.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/index/data-indexing-handler.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {

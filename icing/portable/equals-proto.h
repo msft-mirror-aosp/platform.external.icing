@@ -17,11 +17,11 @@
 // in the non-google3 version of protobufs, and includes the existing
 // EqualsProto matcher in the google3 version, based on the build flags.
 
-#ifndef ICING_PORTABLE_EQUALS_PROTO_H_
-#define ICING_PORTABLE_EQUALS_PROTO_H_
+#ifndef THIRD_PARTY_ICING_PORTABLE_EQUALS_PROTO_H_
+#define THIRD_PARTY_ICING_PORTABLE_EQUALS_PROTO_H_
 
-#include "gmock/gmock.h"          // IWYU pragma: export
-#include <google/protobuf/message_lite.h>  // IWYU pragma: export
+#include "testing/base/public/gmock.h"          // IWYU pragma: export
+#include "third_party/protobuf/message_lite.h"  // IWYU pragma: export
 
 namespace icing {
 namespace lib {
@@ -55,4 +55,4 @@ using ::testing::EqualsProto;
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_PORTABLE_EQUALS_PROTO_H_
+#endif  // THIRD_PARTY_ICING_PORTABLE_EQUALS_PROTO_H_

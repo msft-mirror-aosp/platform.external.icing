@@ -19,8 +19,8 @@
 // exactly the same as their standard variants, but don't require including the
 // dangerous netinet/in.h.
 
-#ifndef ICING_PORTABLE_ENDIAN_H_
-#define ICING_PORTABLE_ENDIAN_H_
+#ifndef THIRD_PARTY_ICING_PORTABLE_ENDIAN_H_
+#define THIRD_PARTY_ICING_PORTABLE_ENDIAN_H_
 
 #include <cstdint>
 
@@ -205,4 +205,4 @@ inline uint64_t GNetworkToHostLL(uint64_t x) { return GHostToNetworkLL(x); }
 #define NetworkToHostLL(x) GHostToNetworkLL(x)
 #endif  // NetworkToHostLL
 
-#endif  // ICING_PORTABLE_ENDIAN_H_
+#endif  // THIRD_PARTY_ICING_PORTABLE_ENDIAN_H_

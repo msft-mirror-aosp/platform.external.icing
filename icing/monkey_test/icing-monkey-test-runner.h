@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_
-#define ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_
+#ifndef THIRD_PARTY_ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_
+#define THIRD_PARTY_ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include "icing/file/filesystem.h"
-#include "icing/icing-search-engine.h"
-#include "icing/monkey_test/in-memory-icing-search-engine.h"
-#include "icing/monkey_test/monkey-test-generators.h"
-#include "icing/monkey_test/monkey-test-util.h"
-#include "icing/proto/schema.pb.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/icing-search-engine.h"
+#include "third_party/icing/monkey_test/in-memory-icing-search-engine.h"
+#include "third_party/icing/monkey_test/monkey-test-generators.h"
+#include "third_party/icing/monkey_test/monkey-test-util.h"
+#include "third_party/icing/proto/schema.proto.h"
 
 namespace icing {
 namespace lib {
@@ -78,4 +78,4 @@ class IcingMonkeyTestRunner {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_
+#endif  // THIRD_PARTY_ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_

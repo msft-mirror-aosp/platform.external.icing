@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_INDEX_H_
-#define ICING_INDEX_INDEX_H_
+#ifndef THIRD_PARTY_ICING_INDEX_INDEX_H_
+#define THIRD_PARTY_ICING_INDEX_INDEX_H_
 
 #include <cstdint>
 #include <memory>
@@ -23,28 +23,28 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/lite/lite-index.h"
-#include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/main/main-index-merger.h"
-#include "icing/index/main/main-index.h"
-#include "icing/index/term-id-codec.h"
-#include "icing/index/term-metadata.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/namespace-id.h"
-#include "icing/store/suggestion-result-checker.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/lite/lite-index.h"
+#include "third_party/icing/index/lite/term-id-hit-pair.h"
+#include "third_party/icing/index/main/main-index-merger.h"
+#include "third_party/icing/index/main/main-index.h"
+#include "third_party/icing/index/term-id-codec.h"
+#include "third_party/icing/index/term-metadata.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/store/suggestion-result-checker.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -364,4 +364,4 @@ class Index {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_INDEX_H_
+#endif  // THIRD_PARTY_ICING_INDEX_INDEX_H_

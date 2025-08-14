@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/absl_ports/ascii_str_to_lower.h"
+#include "third_party/icing/absl_ports/ascii_str_to_lower.h"
 
 #include <string>
 

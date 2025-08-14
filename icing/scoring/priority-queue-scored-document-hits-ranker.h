@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
-#define ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
+#ifndef THIRD_PARTY_ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
+#define THIRD_PARTY_ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
 
 #include <memory>
 #include <queue>
 #include <unordered_set>
 #include <vector>
 
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/scoring/scored-document-hits-ranker.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -227,4 +227,4 @@ void PriorityQueueScoredDocumentHitsRanker<ScoredDataType,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
+#endif  // THIRD_PARTY_ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_

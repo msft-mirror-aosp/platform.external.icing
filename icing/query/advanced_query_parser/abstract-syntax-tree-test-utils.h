@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_TEST_UTILS_H_
-#define ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_TEST_UTILS_H_
+#ifndef THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_TEST_UTILS_H_
+#define THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_TEST_UTILS_H_
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
 
 namespace icing {
 namespace lib {
@@ -100,4 +100,4 @@ class SimpleVisitor : public AbstractSyntaxTreeVisitor {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_TEST_UTILS_H_
+#endif  // THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_ABSTRACT_SYNTAX_TREE_TEST_UTILS_H_

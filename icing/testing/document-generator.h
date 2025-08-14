@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_DOCUMENT_GENERATOR_H_
-#define ICING_TESTING_DOCUMENT_GENERATOR_H_
+#ifndef THIRD_PARTY_ICING_TESTING_DOCUMENT_GENERATOR_H_
+#define THIRD_PARTY_ICING_TESTING_DOCUMENT_GENERATOR_H_
 
 #include <random>
 #include <string>
 #include <vector>
 
-#include "icing/document-builder.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
 
 namespace icing {
 namespace lib {
@@ -131,4 +131,4 @@ class DocumentGenerator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_DOCUMENT_GENERATOR_H_
+#endif  // THIRD_PARTY_ICING_TESTING_DOCUMENT_GENERATOR_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/tokenized-document.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 #include <cstdint>
 #include <memory>
@@ -20,19 +20,19 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
-#include "icing/schema/joinable-property.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/token.h"
-#include "icing/tokenization/tokenizer-factory.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/util/document-util.h"
-#include "icing/util/document-validator.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/token.h"
+#include "third_party/icing/tokenization/tokenizer-factory.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/util/document-util.h"
+#include "third_party/icing/util/document-validator.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

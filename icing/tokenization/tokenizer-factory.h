@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TOKENIZATION_TOKENIZER_FACTORY_H_
-#define ICING_TOKENIZATION_TOKENIZER_FACTORY_H_
+#ifndef THIRD_PARTY_ICING_TOKENIZATION_TOKENIZER_FACTORY_H_
+#define THIRD_PARTY_ICING_TOKENIZATION_TOKENIZER_FACTORY_H_
 
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/tokenizer.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/tokenizer.h"
 
 namespace icing {
 namespace lib {
@@ -44,4 +44,4 @@ CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TOKENIZATION_TOKENIZER_FACTORY_H_
+#endif  // THIRD_PARTY_ICING_TOKENIZATION_TOKENIZER_FACTORY_H_

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_ABSL_PORTS_STR_JOIN_H_
-#define ICING_ABSL_PORTS_STR_JOIN_H_
+#ifndef THIRD_PARTY_ICING_ABSL_PORTS_STR_JOIN_H_
+#define THIRD_PARTY_ICING_ABSL_PORTS_STR_JOIN_H_
 
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_cat.h"
 
 namespace icing {
 namespace lib {
@@ -117,4 +117,4 @@ std::vector<std::string_view> StrSplit(std::string_view text,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_ABSL_PORTS_STR_JOIN_H_
+#endif  // THIRD_PARTY_ICING_ABSL_PORTS_STR_JOIN_H_

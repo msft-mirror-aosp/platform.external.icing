@@ -15,16 +15,16 @@
 // Copyright 2012 Google Inc. All Rights Reserved.
 // Author: sbanacho@google.com (Scott Banachowski)
 //
-#include "icing/legacy/index/icing-mmapper.h"
+#include "third_party/icing/legacy/index/icing-mmapper.h"
 
 #include <sys/mman.h>
 
 #include <cerrno>
 #include <cstring>
 
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

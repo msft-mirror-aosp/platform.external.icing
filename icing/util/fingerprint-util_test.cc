@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/fingerprint-util.h"
+#include "third_party/icing/util/fingerprint-util.h"
 
 #include <cstdint>
 #include <limits>
 
-#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/hash/farmhash.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
 
 namespace icing {
 namespace lib {

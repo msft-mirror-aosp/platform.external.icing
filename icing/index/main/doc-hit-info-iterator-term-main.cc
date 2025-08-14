@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/doc-hit-info-iterator-term-main.h"
+#include "third_party/icing/index/main/doc-hit-info-iterator-term-main.h"
 
 #include <memory>
 #include <optional>
@@ -20,18 +20,18 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/main/main-index.h"
-#include "icing/index/main/posting-list-hit-accessor.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/main/main-index.h"
+#include "third_party/icing/index/main/posting-list-hit-accessor.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

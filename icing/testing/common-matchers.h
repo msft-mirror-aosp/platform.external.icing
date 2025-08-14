@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_COMMON_MATCHERS_H_
-#define ICING_TESTING_COMMON_MATCHERS_H_
+#ifndef THIRD_PARTY_ICING_TESTING_COMMON_MATCHERS_H_
+#define THIRD_PARTY_ICING_TESTING_COMMON_MATCHERS_H_
 
 #include <algorithm>
 #include <array>
@@ -22,27 +22,27 @@
 #include <string>
 #include <unordered_map>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/status_macros.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/status.pb.h"
-#include "icing/result/snippet-context.h"
-#include "icing/schema/joinable-property.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/scorable_property_manager.h"
-#include "icing/schema/section.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/util/character-iterator.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status_macros.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/absl_ports/str_join.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/status.proto.h"
+#include "third_party/icing/result/snippet-context.h"
+#include "third_party/icing/schema/joinable-property.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/scorable_property_manager.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -722,4 +722,4 @@ MATCHER_P(EqualsEmbeddingMatchSnippetProto, expected, "") {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_COMMON_MATCHERS_H_
+#endif  // THIRD_PARTY_ICING_TESTING_COMMON_MATCHERS_H_

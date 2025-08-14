@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
-#define ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
+#ifndef THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
+#define THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
 
 #include <cstdint>
 #include <cstring>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/file/posting_list/posting-list-common.h"
-#include "icing/file/posting_list/posting-list-utils.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/file/posting_list/posting-list-common.h"
+#include "third_party/icing/file/posting_list/posting-list-utils.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -118,4 +118,4 @@ class PostingListFree {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
+#endif  // THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_

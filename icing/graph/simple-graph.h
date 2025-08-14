@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_GRAPH_SIMPLE_GRAPH_H_
-#define ICING_GRAPH_SIMPLE_GRAPH_H_
+#ifndef THIRD_PARTY_ICING_GRAPH_SIMPLE_GRAPH_H_
+#define THIRD_PARTY_ICING_GRAPH_SIMPLE_GRAPH_H_
 
 #include <memory>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/graph/graph-interface.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/graph/graph-interface.h"
 
 namespace icing {
 namespace lib {
@@ -104,4 +104,4 @@ class SimpleGraph : public GraphInterface<int> {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_GRAPH_SIMPLE_GRAPH_H_
+#endif  // THIRD_PARTY_ICING_GRAPH_SIMPLE_GRAPH_H_

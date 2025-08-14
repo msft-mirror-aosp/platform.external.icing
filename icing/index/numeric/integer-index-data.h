@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_NUMERIC_INTEGER_INDEX_DATA_H_
-#define ICING_INDEX_NUMERIC_INTEGER_INDEX_DATA_H_
+#ifndef THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_DATA_H_
+#define THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_DATA_H_
 
 #include <cstdint>
 
-#include "icing/index/hit/hit.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -56,4 +56,4 @@ static_assert(sizeof(IntegerIndexData) == 12, "");
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_NUMERIC_INTEGER_INDEX_DATA_H_
+#endif  // THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_DATA_H_

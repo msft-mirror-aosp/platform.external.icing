@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/embed/posting-list-embedding-hit-serializer.h"
+#include "third_party/icing/index/embed/posting-list-embedding-hit-serializer.h"
 
 #include <cinttypes>
 #include <cstdint>
@@ -20,15 +20,15 @@
 #include <limits>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/file/posting_list/posting-list-used.h"
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/legacy/index/icing-bit-util.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/file/posting_list/posting-list-used.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/legacy/index/icing-bit-util.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

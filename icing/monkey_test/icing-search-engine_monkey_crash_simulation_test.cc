@@ -19,13 +19,13 @@
 #include <memory>
 #include <random>
 
-#include "gtest/gtest.h"
-#include "icing/monkey_test/icing-monkey-test-runner.h"
-#include "icing/monkey_test/monkey-test-util.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/schema/section.h"
-#include "icing/util/logging.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/monkey_test/icing-monkey-test-runner.h"
+#include "third_party/icing/monkey_test/monkey-test-util.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

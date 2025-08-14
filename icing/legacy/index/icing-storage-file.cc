@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/legacy/index/icing-storage-file.h"
+#include "third_party/icing/legacy/index/icing-storage-file.h"
 
 #include <unistd.h>
 
 #include <cinttypes>
 #include <string>
 
-#include "icing/legacy/core/icing-compat.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/legacy/core/icing-timer.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/legacy/core/icing-compat.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/legacy/core/icing-timer.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

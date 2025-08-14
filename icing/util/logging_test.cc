@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/logging.h"
+#include "third_party/icing/util/logging.h"
 #include <cerrno>
 #include <cstring>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/util/logging_raw.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/util/logging_raw.h"
 
 namespace icing {
 namespace lib {

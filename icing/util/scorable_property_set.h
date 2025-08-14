@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_SCORABLE_PROPERTY_SET_H_
-#define ICING_UTIL_SCORABLE_PROPERTY_SET_H_
+#ifndef THIRD_PARTY_ICING_UTIL_SCORABLE_PROPERTY_SET_H_
+#define THIRD_PARTY_ICING_UTIL_SCORABLE_PROPERTY_SET_H_
 
 #include <memory>
 #include <string>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/proto/internal/scorable_property_set.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-filter-data.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/proto/internal/scorable_property_set.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-filter-data.h"
 
 namespace icing {
 namespace lib {
@@ -91,4 +91,4 @@ class ScorablePropertySet {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_SCORABLE_PROPERTY_SET_H_
+#endif  // THIRD_PARTY_ICING_UTIL_SCORABLE_PROPERTY_SET_H_

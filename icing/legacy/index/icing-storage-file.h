@@ -14,13 +14,13 @@
 
 // Base class for single file-based IIcingStorage implementations.
 
-#ifndef ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
-#define ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
+#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
 
 #include <string>
 
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-storage.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/legacy/index/icing-storage.h"
 
 namespace icing {
 namespace lib {
@@ -93,4 +93,4 @@ class IcingStorageFile : virtual public IIcingStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_

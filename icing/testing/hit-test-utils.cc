@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/hit-test-utils.h"
+#include "third_party/icing/testing/hit-test-utils.h"
 
 #include <cstdint>
 #include <vector>
 
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-hit-serializer.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/main/posting-list-hit-serializer.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {

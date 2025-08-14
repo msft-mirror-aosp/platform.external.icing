@@ -14,13 +14,13 @@
 
 #include <cstdint>
 
-#include "icing/file/file-backed-vector.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/store/document-id.h"
-#include "icing/util/crc32.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/crc32.h"
 
-#ifndef ICING_STORE_USAGE_STORE_H_
-#define ICING_STORE_USAGE_STORE_H_
+#ifndef THIRD_PARTY_ICING_STORE_USAGE_STORE_H_
+#define THIRD_PARTY_ICING_STORE_USAGE_STORE_H_
 
 namespace icing {
 namespace lib {
@@ -207,4 +207,4 @@ class UsageStore {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_USAGE_STORE_H_
+#endif  // THIRD_PARTY_ICING_STORE_USAGE_STORE_H_

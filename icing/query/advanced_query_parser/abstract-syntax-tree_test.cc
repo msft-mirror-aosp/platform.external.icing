@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
 
 #include <memory>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/query/advanced_query_parser/abstract-syntax-tree-test-utils.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree-test-utils.h"
 
 namespace icing {
 namespace lib {

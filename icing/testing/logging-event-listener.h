@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_LOGGING_EVENT_LISTENER_H_
-#define ICING_TESTING_LOGGING_EVENT_LISTENER_H_
+#ifndef THIRD_PARTY_ICING_TESTING_LOGGING_EVENT_LISTENER_H_
+#define THIRD_PARTY_ICING_TESTING_LOGGING_EVENT_LISTENER_H_
 
-#include "gtest/gtest.h"
+#include "testing/base/public/gunit.h"
 
 namespace icing {
 namespace lib {
@@ -59,4 +59,4 @@ class LoggingEventListener : public ::testing::TestEventListener {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_LOGGING_EVENT_LISTENER_H_
+#endif  // THIRD_PARTY_ICING_TESTING_LOGGING_EVENT_LISTENER_H_

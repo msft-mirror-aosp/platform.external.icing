@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_SHA256_H_
-#define ICING_UTIL_SHA256_H_
+#ifndef THIRD_PARTY_ICING_UTIL_SHA256_H_
+#define THIRD_PARTY_ICING_UTIL_SHA256_H_
 
 #include <array>
 #include <cstddef>
@@ -49,4 +49,4 @@ class Sha256 {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_SHA256_H_
+#endif  // THIRD_PARTY_ICING_UTIL_SHA256_H_

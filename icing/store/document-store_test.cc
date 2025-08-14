@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/store/document-store.h"
+#include "third_party/icing/store/document-store.h"
 
 #include <cstdint>
 #include <limits>
@@ -22,55 +22,55 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/document-builder.h"
-#include "icing/feature-flags.h"
-#include "icing/file/file-backed-vector.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/file/mock-filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
-#include "icing/proto/internal/scorable_property_set.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/corpus-associated-scoring-data.h"
-#include "icing/store/corpus-id.h"
-#include "icing/store/document-associated-score-data.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-log-creator.h"
-#include "icing/store/namespace-id-fingerprint.h"
-#include "icing/store/namespace-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/util/clock.h"
-#include "icing/util/crc32.h"
-#include "icing/util/data-loss.h"
-#include "icing/util/document-util.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/logging.h"
-#include "icing/util/scorable_property_set.h"
-#include "unicode/uloc.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/file-backed-vector.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/file/mock-filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
+#include "third_party/icing/proto/internal/scorable_property_set.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/corpus-associated-scoring-data.h"
+#include "third_party/icing/store/corpus-id.h"
+#include "third_party/icing/store/document-associated-score-data.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-log-creator.h"
+#include "third_party/icing/store/namespace-id-fingerprint.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/data-loss.h"
+#include "third_party/icing/util/document-util.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/scorable_property_set.h"
+#include "third_party/icu/include/unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -221,9 +221,9 @@ class DocumentStoreTest
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //icing/BUILD.
+      // File generated via icu_data_file rule in //third_party/icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("icing/icu.dat");
+          GetTestFilePath("third_party/icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -5153,15 +5153,15 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   std::string document_store_without_length_in_tokens;
   if (IsAndroidArm() || IsIosPlatform()) {
     document_store_without_length_in_tokens = GetTestFilePath(
-        "icing/testdata/score_cache_without_length_in_tokens/"
+        "third_party/icing/testdata/score_cache_without_length_in_tokens/"
         "document_store_android_ios_compatible");
   } else if (IsAndroidX86()) {
     document_store_without_length_in_tokens = GetTestFilePath(
-        "icing/testdata/score_cache_without_length_in_tokens/"
+        "third_party/icing/testdata/score_cache_without_length_in_tokens/"
         "document_store_android_x86");
   } else {
     document_store_without_length_in_tokens = GetTestFilePath(
-        "icing/testdata/score_cache_without_length_in_tokens/"
+        "third_party/icing/testdata/score_cache_without_length_in_tokens/"
         "document_store");
   }
   Filesystem filesystem;
@@ -5822,19 +5822,19 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   std::string document_store_without_portable_log;
   if (IsAndroidX86()) {
     document_store_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
+        "third_party/icing/testdata/not_portable_log/"
         "icing_search_engine_android_x86/document_dir");
   } else if (IsAndroidArm()) {
     document_store_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
+        "third_party/icing/testdata/not_portable_log/"
         "icing_search_engine_android_arm/document_dir");
   } else if (IsIosPlatform()) {
     document_store_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
+        "third_party/icing/testdata/not_portable_log/"
         "icing_search_engine_ios/document_dir");
   } else {
     document_store_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
+        "third_party/icing/testdata/not_portable_log/"
         "icing_search_engine_linux/document_dir");
   }
 

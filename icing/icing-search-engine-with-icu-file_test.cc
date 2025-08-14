@@ -15,21 +15,21 @@
 #include <string>
 #include <utility>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/document-builder.h"
-#include "icing/icing-search-engine.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/status.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/icing-search-engine.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/status.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

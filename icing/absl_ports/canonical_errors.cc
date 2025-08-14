@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
 
 #include <string>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
 
 namespace icing {
 namespace lib {

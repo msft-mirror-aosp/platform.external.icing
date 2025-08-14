@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
-#define ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
+#ifndef THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
+#define THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
 
 #include <cstdint>
 
-#include "icing/file/posting_list/posting-list-common.h"
-#include "icing/legacy/index/icing-bit-util.h"
+#include "third_party/icing/file/posting_list/posting-list-common.h"
+#include "third_party/icing/legacy/index/icing-bit-util.h"
 
 namespace icing {
 namespace lib {
@@ -117,4 +117,4 @@ static_assert(sizeof(PostingListIdentifier) == 4, "");
 }  //  namespace lib
 }  //  namespace icing
 
-#endif  // ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
+#endif  // THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_

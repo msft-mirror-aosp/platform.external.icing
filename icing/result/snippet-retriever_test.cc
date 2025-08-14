@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result/snippet-retriever.h"
+#include "third_party/icing/result/snippet-retriever.h"
 
 #include <cstdint>
 #include <limits>
@@ -22,40 +22,40 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/document-builder.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/query/query-terms.h"
-#include "icing/result/snippet-context.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/embedding-test-utils.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/snippet-helpers.h"
-#include "unicode/uloc.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/result/snippet-context.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/embedding-test-utils.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/jni-test-helpers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/snippet-helpers.h"
+#include "third_party/icu/include/unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -112,9 +112,9 @@ class SnippetRetrieverTest : public testing::Test {
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //icing/BUILD.
+          // File generated via icu_data_file rule in //third_party/icing/BUILD.
           icu_data_file_helper::SetUpIcuDataFile(
-              GetTestFilePath("icing/icu.dat")));
+              GetTestFilePath("third_party/icing/icu.dat")));
     }
 
     jni_cache_ = GetTestJniCache();

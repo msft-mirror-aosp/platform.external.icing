@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/file/version-util.h"
+#include "third_party/icing/file/version-util.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,15 +21,15 @@
 #include <unordered_set>
 #include <utility>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/file/derived-file-util.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/posting_list/flash-index-storage-header.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/file/derived-file-util.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/posting_list/flash-index-storage-header.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

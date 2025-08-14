@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and∂∂
 // limitations under the License.
 
-#include "icing/expand/expander-manager.h"
+#include "third_party/icing/expand/expander-manager.h"
 
 #include <array>
 #include <memory>
@@ -21,13 +21,13 @@
 #include <thread>  // NOLINT
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/expand/expander.h"
-#include "icing/portable/platform.h"
-#include "icing/testing/common-matchers.h"
-#include "unicode/uloc.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/expand/expander.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icu/include/unicode/uloc.h"
 
 namespace icing {
 namespace lib {

@@ -17,17 +17,17 @@
 #include <unordered_map>
 
 #include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/file/destructible-directory.h"
-#include "icing/file/filesystem.h"
-#include "icing/store/dynamic-trie-key-mapper.h"
-#include "icing/store/key-mapper.h"
-#include "icing/store/persistent-hash-map-key-mapper.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/random-string.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/file/destructible-directory.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/store/dynamic-trie-key-mapper.h"
+#include "third_party/icing/store/key-mapper.h"
+#include "third_party/icing/store/persistent-hash-map-key-mapper.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/random-string.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
+#include "third_party/icing/icing-search-engine.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -27,90 +27,90 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/annotate.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/mutex.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/feature-flags.h"
-#include "icing/file/derived-file-util.h"
-#include "icing/file/file-backed-proto.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/marker-file.h"
-#include "icing/file/version-util.h"
-#include "icing/index/data-indexing-handler.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/embedding-indexing-handler.h"
-#include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/index-processor.h"
-#include "icing/index/index.h"
-#include "icing/index/integer-section-indexing-handler.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/numeric/integer-index.h"
-#include "icing/index/term-indexing-handler.h"
-#include "icing/index/term-metadata.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/join/join-children-fetcher.h"
-#include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-join-index-impl-v2.h"
-#include "icing/join/qualified-id-join-index-impl-v3.h"
-#include "icing/join/qualified-id-join-index.h"
-#include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/performance-configuration.h"
-#include "icing/portable/endian.h"
-#include "icing/proto/blob.pb.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/proto/internal/optimize.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/optimize.pb.h"
-#include "icing/proto/persist.pb.h"
-#include "icing/proto/reset.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/status.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/query/advanced_query_parser/lexer.h"
-#include "icing/query/query-features.h"
-#include "icing/query/query-processor.h"
-#include "icing/query/query-results.h"
-#include "icing/query/query-terms.h"
-#include "icing/query/suggestion-processor.h"
-#include "icing/result/page-result.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/projector.h"
-#include "icing/result/result-adjustment-info.h"
-#include "icing/result/result-retriever-v2.h"
-#include "icing/result/result-state-manager.h"
-#include "icing/schema/schema-store.h"
-#include "icing/scoring/advanced_scoring/score-expression.h"
-#include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
-#include "icing/scoring/scoring-processor.h"
-#include "icing/store/blob-store.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/util/clock.h"
-#include "icing/util/data-loss.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/status-util.h"
-#include "icing/util/tokenized-document.h"
-#include "unicode/uloc.h"
-#include <google/protobuf/repeated_field.h>
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/annotate.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/derived-file-util.h"
+#include "third_party/icing/file/file-backed-proto.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/marker-file.h"
+#include "third_party/icing/file/version-util.h"
+#include "third_party/icing/index/data-indexing-handler.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/embedding-indexing-handler.h"
+#include "third_party/icing/index/hit/doc-hit-info.h"
+#include "third_party/icing/index/index-processor.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/integer-section-indexing-handler.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/numeric/integer-index.h"
+#include "third_party/icing/index/term-indexing-handler.h"
+#include "third_party/icing/index/term-metadata.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/join/join-children-fetcher.h"
+#include "third_party/icing/join/join-processor.h"
+#include "third_party/icing/join/qualified-id-join-index-impl-v2.h"
+#include "third_party/icing/join/qualified-id-join-index-impl-v3.h"
+#include "third_party/icing/join/qualified-id-join-index.h"
+#include "third_party/icing/join/qualified-id-join-indexing-handler.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/performance-configuration.h"
+#include "third_party/icing/portable/endian.h"
+#include "third_party/icing/proto/blob.proto.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/proto/internal/optimize.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/optimize.proto.h"
+#include "third_party/icing/proto/persist.proto.h"
+#include "third_party/icing/proto/reset.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/status.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/query/advanced_query_parser/lexer.h"
+#include "third_party/icing/query/query-features.h"
+#include "third_party/icing/query/query-processor.h"
+#include "third_party/icing/query/query-results.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/query/suggestion-processor.h"
+#include "third_party/icing/result/page-result.h"
+#include "third_party/icing/result/projection-tree.h"
+#include "third_party/icing/result/projector.h"
+#include "third_party/icing/result/result-adjustment-info.h"
+#include "third_party/icing/result/result-retriever-v2.h"
+#include "third_party/icing/result/result-state-manager.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/scoring/advanced_scoring/score-expression.h"
+#include "third_party/icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/scoring/scored-document-hits-ranker.h"
+#include "third_party/icing/scoring/scoring-processor.h"
+#include "third_party/icing/store/blob-store.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/data-loss.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/status-util.h"
+#include "third_party/icing/util/tokenized-document.h"
+#include "third_party/icu/include/unicode/uloc.h"
+#include "third_party/protobuf/repeated_ptr_field.h"
 
 namespace icing {
 namespace lib {
@@ -515,7 +515,9 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_smaller_decompression_buffer_size(),
                      options_.enable_eigen_embedding_scoring(),
                      options_.enable_passing_filter_to_children(),
-                     options_.enable_proto_log_new_header_format()),
+                     options_.enable_proto_log_new_header_format(),
+                     options_.enable_embedding_iterator_v2(),
+                     options_.enable_reusable_decompression_buffer()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1102,10 +1104,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
 
   ICING_ASSIGN_OR_RETURN(
       auto blob_store_or,
-      BlobStore::Create(
-          filesystem_.get(), blob_dir, clock_.get(),
-          orphan_blob_time_to_live_ms, blob_store_compression_level,
-          blob_store_compression_mem_level, options_.manage_blob_files()));
+      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get(),
+                        orphan_blob_time_to_live_ms,
+                        blob_store_compression_level,
+                        blob_store_compression_mem_level,
+                        options_.manage_blob_files(), &feature_flags_));
   blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
   return libtextclassifier3::Status::OK;
 }
@@ -2493,7 +2496,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     // optimize blob store
     libtextclassifier3::StatusOr<std::vector<std::string>>
         blob_file_names_to_remove_or = blob_store_->Optimize(
-            optimize_result_or.ValueOrDie().dead_blob_handles);
+            optimize_result_or.ValueOrDie().dead_blob_handles, &feature_flags_);
     if (!blob_file_names_to_remove_or.ok()) {
       TransformStatus(blob_file_names_to_remove_or.status(), result_status);
       return result_proto;
@@ -3490,7 +3493,7 @@ BlobProto IcingSearchEngine::CommitBlob(
   return blob_store_->CommitBlob(blob_handle);
 }
 
-BlobProto IcingSearchEngine::GetAllBlobInfo() {
+BlobProto IcingSearchEngine::GetAllBlobInfos() {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);
@@ -3507,10 +3510,10 @@ BlobProto IcingSearchEngine::GetAllBlobInfo() {
     ICING_LOG(ERROR) << status->message();
     return blob_proto;
   }
-  return blob_store_->GetAllBlobInfo();
+  return blob_store_->GetAllBlobInfos();
 }
 
-BlobProto IcingSearchEngine::PutBlobInfos(BlobProto&& blob_info_protos) {
+BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
   BlobProto result_blob_proto;
   StatusProto* status = result_blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);

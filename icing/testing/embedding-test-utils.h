@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_EMBEDDING_TEST_UTILS_H_
-#define ICING_TESTING_EMBEDDING_TEST_UTILS_H_
+#ifndef THIRD_PARTY_ICING_TESTING_EMBEDDING_TEST_UTILS_H_
+#define THIRD_PARTY_ICING_TESTING_EMBEDDING_TEST_UTILS_H_
 
 #include <cstdint>
 #include <initializer_list>
@@ -21,12 +21,12 @@
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/proto/document.pb.h"
-#include "icing/store/document-id.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -71,4 +71,4 @@ EmbeddingMatchInfos& GetOrCreateEmbeddingMatchInfosForDocument(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_EMBEDDING_TEST_UTILS_H_
+#endif  // THIRD_PARTY_ICING_TESTING_EMBEDDING_TEST_UTILS_H_

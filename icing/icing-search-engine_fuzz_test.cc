@@ -13,25 +13,25 @@
 // limitations under the License.
 
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
 #include "testing/fuzzing/fuzztest.h"
-#include "icing/document-builder.h"
-#include "icing/file/filesystem.h"
-#include "icing/icing-search-engine.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/status.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/icu-data-file-helper.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/icing-search-engine.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/status.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -62,7 +62,7 @@ SearchSpecProto SetSearchSpec(const std::string& data) {
 void StringFuzzTest(const std::string& data) {
   // Initialize
   IcingSearchEngineOptions icing_options = Setup();
-  std::string icu_data_file_path = GetTestFilePath("icing/icu.dat");
+  std::string icu_data_file_path = GetTestFilePath("third_party/icing/icu.dat");
   if (!icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path).ok()) {
     return;
   }

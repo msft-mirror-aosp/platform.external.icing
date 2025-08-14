@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
-#define ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
+#ifndef THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
+#define THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
 
 #include <cstdint>
 
@@ -30,4 +30,4 @@ inline constexpr uint32_t kInvalidBlockIndex = 0;
 }  //  namespace lib
 }  //  namespace icing
 
-#endif  // ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
+#endif  // THIRD_PARTY_ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_

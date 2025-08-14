@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_QUERY_ADVANCED_QUERY_PARSER_QUERY_VISITOR_H_
-#define ICING_QUERY_ADVANCED_QUERY_PARSER_QUERY_VISITOR_H_
+#ifndef THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_QUERY_VISITOR_H_
+#define THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_QUERY_VISITOR_H_
 
 #include <cstdint>
 #include <memory>
@@ -25,26 +25,26 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/feature-flags.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/document-filter-predicate.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/join/join-children-fetcher.h"
-#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
-#include "icing/query/advanced_query_parser/function.h"
-#include "icing/query/advanced_query_parser/pending-value.h"
-#include "icing/query/query-features.h"
-#include "icing/query/query-results.h"
-#include "icing/query/query-terms.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-store.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/transform/normalizer.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/iterator/document-filter-predicate.h"
+#include "third_party/icing/index/numeric/numeric-index.h"
+#include "third_party/icing/join/join-children-fetcher.h"
+#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "third_party/icing/query/advanced_query_parser/function.h"
+#include "third_party/icing/query/advanced_query_parser/pending-value.h"
+#include "third_party/icing/query/query-features.h"
+#include "third_party/icing/query/query-results.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -413,4 +413,4 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_QUERY_ADVANCED_QUERY_PARSER_QUERY_VISITOR_H_
+#endif  // THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_QUERY_VISITOR_H_

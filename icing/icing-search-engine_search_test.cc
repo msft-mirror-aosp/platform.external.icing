@@ -23,44 +23,44 @@
 #include <utility>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/document-builder.h"
-#include "icing/file/filesystem.h"
-#include "icing/icing-search-engine.h"
-#include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/join/join-processor.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/portable/equals-proto.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/proto/optimize.pb.h"
-#include "icing/proto/persist.pb.h"
-#include "icing/proto/reset.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/status.pb.h"
-#include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/proto/usage.pb.h"
-#include "icing/query/query-features.h"
-#include "icing/result/result-state-manager.h"
-#include "icing/schema-builder.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/embedding-test-utils.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/clock.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/snippet-helpers.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/icing-search-engine.h"
+#include "third_party/icing/index/lite/term-id-hit-pair.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/join/join-processor.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/portable/equals-proto.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/proto/optimize.proto.h"
+#include "third_party/icing/proto/persist.proto.h"
+#include "third_party/icing/proto/reset.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/status.proto.h"
+#include "third_party/icing/proto/storage.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/proto/usage.proto.h"
+#include "third_party/icing/query/query-features.h"
+#include "third_party/icing/result/result-state-manager.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/embedding-test-utils.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/jni-test-helpers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/snippet-helpers.h"
 
 namespace icing {
 namespace lib {
@@ -68,6 +68,7 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::AnyOf;
 using ::testing::DoubleEq;
 using ::testing::DoubleNear;
 using ::testing::ElementsAre;
@@ -107,9 +108,9 @@ class IcingSearchEngineSearchTest : public ::testing::Test {
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //icing/BUILD.
+      // File generated via icu_data_file rule in //third_party/icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("icing/icu.dat");
+          GetTestFilePath("third_party/icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -142,6 +143,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
   icing_options.set_enable_passing_filter_to_children(true);
+  icing_options.set_enable_embedding_iterator_v2(true);
   return icing_options;
 }
 
@@ -651,16 +653,16 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithNumToScore) {
   //   still skips document_one, because posting list reads document_two first
   //   and ScoringProcessor stops after document_two given that total # of
   //   scored document has already reached num_to_score.
-  SearchResultProto expected_search_result_google::protobuf;
-  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
+  SearchResultProto expected_search_result_proto2;
+  expected_search_result_proto2.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto2.mutable_results()->Add()->mutable_document() =
       document_two;
 
   search_result_proto =
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_google::protobuf));
+                                       expected_search_result_proto2));
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -5080,10 +5082,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
 
   SearchResultProto expected_result2;
   expected_result2.mutable_status()->set_code(StatusProto::OK);
-  SearchResultProto::ResultProto* result_google::protobuf =
+  SearchResultProto::ResultProto* result_proto2 =
       expected_result2.mutable_results()->Add();
-  *result_google::protobuf->mutable_document() = person2;
-  *result_google::protobuf->mutable_joined_results()->Add()->mutable_document() = email3;
+  *result_proto2->mutable_document() = person2;
+  *result_proto2->mutable_joined_results()->Add()->mutable_document() = email3;
 
   SearchResultProto expected_result3;
   expected_result3.mutable_status()->set_code(StatusProto::OK);
@@ -5674,10 +5676,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedId) {
 
   SearchResultProto expected_result2;
   expected_result2.mutable_status()->set_code(StatusProto::OK);
-  SearchResultProto::ResultProto* result_google::protobuf =
+  SearchResultProto::ResultProto* result_proto2 =
       expected_result2.mutable_results()->Add();
-  *result_google::protobuf->mutable_document() = person2;
-  *result_google::protobuf->mutable_joined_results()->Add()->mutable_document() = email2;
+  *result_proto2->mutable_document() = person2;
+  *result_proto2->mutable_joined_results()->Add()->mutable_document() = email2;
 
   SearchResultProto expected_result3;
   expected_result3.mutable_status()->set_code(StatusProto::OK);
@@ -5847,10 +5849,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedIdMultipleNamespaces) {
 
   SearchResultProto expected_result2;
   expected_result2.mutable_status()->set_code(StatusProto::OK);
-  SearchResultProto::ResultProto* result_google::protobuf =
+  SearchResultProto::ResultProto* result_proto2 =
       expected_result2.mutable_results()->Add();
-  *result_google::protobuf->mutable_document() = person2;
-  *result_google::protobuf->mutable_joined_results()->Add()->mutable_document() = email3;
+  *result_proto2->mutable_document() = person2;
+  *result_proto2->mutable_joined_results()->Add()->mutable_document() = email3;
 
   SearchResultProto result1 =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -6015,16 +6017,16 @@ TEST_F(IcingSearchEngineSearchTest,
       expected_result_proto1.mutable_joined_results()->Add();
   *child_result_proto1->mutable_document() = email2;
   child_result_proto1->set_score(99);
-  SearchResultProto::ResultProto* child_result_google::protobuf =
+  SearchResultProto::ResultProto* child_result_proto2 =
       expected_result_proto1.mutable_joined_results()->Add();
-  *child_result_google::protobuf->mutable_document() = email3;
-  child_result_google::protobuf->set_score(98);
+  *child_result_proto2->mutable_document() = email3;
+  child_result_proto2->set_score(98);
 
-  SearchResultProto::ResultProto expected_result_google::protobuf;
-  *expected_result_google::protobuf.mutable_document() = person1;
-  expected_result_google::protobuf.set_score(1);
+  SearchResultProto::ResultProto expected_result_proto2;
+  *expected_result_proto2.mutable_document() = person1;
+  expected_result_proto2.set_score(1);
   SearchResultProto::ResultProto* child_result_proto3 =
-      expected_result_google::protobuf.mutable_joined_results()->Add();
+      expected_result_proto2.mutable_joined_results()->Add();
   *child_result_proto3->mutable_document() = email1;
   child_result_proto3->set_score(100);
 
@@ -6039,7 +6041,7 @@ TEST_F(IcingSearchEngineSearchTest,
   next_page_token = result2.next_page_token();
   EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
   EXPECT_THAT(result2.results(),
-              ElementsAre(EqualsProto(expected_result_google::protobuf)));
+              ElementsAre(EqualsProto(expected_result_proto2)));
 }
 
 TEST_F(IcingSearchEngineSearchTest, JoinWithZeroMaxJoinedChildPerParent) {
@@ -6187,9 +6189,9 @@ TEST_F(IcingSearchEngineSearchTest, JoinWithZeroMaxJoinedChildPerParent) {
   *expected_result_proto1.mutable_document() = person2;
   expected_result_proto1.set_score(3);
 
-  SearchResultProto::ResultProto expected_result_google::protobuf;
-  *expected_result_google::protobuf.mutable_document() = person1;
-  expected_result_google::protobuf.set_score(1);
+  SearchResultProto::ResultProto expected_result_proto2;
+  *expected_result_proto2.mutable_document() = person1;
+  expected_result_proto2.set_score(1);
 
   SearchResultProto result1 =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -6202,7 +6204,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinWithZeroMaxJoinedChildPerParent) {
   next_page_token = result2.next_page_token();
   EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
   EXPECT_THAT(result2.results(),
-              ElementsAre(EqualsProto(expected_result_google::protobuf)));
+              ElementsAre(EqualsProto(expected_result_proto2)));
 }
 
 TEST_F(IcingSearchEngineSearchTest, JoinAfterUpdatingParent) {
@@ -7909,9 +7911,9 @@ class IcingSearchEngineEmbeddingSearchTest
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //icing/BUILD.
+      // File generated via icu_data_file rule in //third_party/icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("icing/icu.dat");
+          GetTestFilePath("third_party/icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -8510,9 +8512,9 @@ class IcingSearchEngineEmbeddingSearchQuantizationTest
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //icing/BUILD.
+      // File generated via icu_data_file rule in //third_party/icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("icing/icu.dat");
+          GetTestFilePath("third_party/icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -8931,6 +8933,137 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding) {
   EXPECT_THAT(results.results(0).document(), EqualsProto(doc_b));
   // Score should be 0.4 + 0.5 + 0.6 = 1.5
   EXPECT_THAT(results.results(0).score(), DoubleNear(1.5, kEps));
+}
+
+TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding_manyHits) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeB").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeC").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add 600 documents of TypeA, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriA" + std::to_string(i))
+            .SetSchema("TypeA")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.1, 0.2, 0.3}),
+                               CreateVector("my_model", {0.1, 0.2, 0.3}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+  // Add 600 documents of TypeB, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriB" + std::to_string(i))
+            .SetSchema("TypeB")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.4, 0.5, 0.6}),
+                               CreateVector("my_model", {0.4, 0.5, 0.6}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+  // Add 600 documents of TypeC, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriC" + std::to_string(i))
+            .SetSchema("TypeC")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.7, 0.8, 0.9}),
+                               CreateVector("my_model", {0.7, 0.8, 0.9}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+
+  SearchSpecProto search_spec;
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  // Let the score be the number of embedding hits.
+  scoring_spec.set_advanced_scoring_expression(
+      "len(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(10000);
+
+  // Filter for TypeA only
+  search_spec.add_schema_type_filters("TypeA");
+  SearchResultProto results =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeA"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeB only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeB");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeB"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeC only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeC");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeC"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeA and TypeC
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeA");
+  search_spec.add_schema_type_filters("TypeC");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(1200));
+  for (int i = 0; i < 1200; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(),
+                AnyOf(Eq("TypeA"), Eq("TypeC")));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
 }
 
 TEST_F(IcingSearchEngineSearchTest, SearchWithUriFilters) {

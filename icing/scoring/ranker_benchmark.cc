@@ -16,8 +16,8 @@
 #include <random>
 
 #include "testing/base/public/benchmark.h"
-#include "icing/scoring/ranker.h"
-#include "icing/scoring/scored-document-hit.h"
+#include "third_party/icing/scoring/ranker.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {
@@ -25,17 +25,17 @@ namespace lib {
 namespace {
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/scoring:ranker_benchmark
+//    //third_party/icing/scoring:ranker_benchmark
 //
-//    $ blaze-bin/icing/scoring/ranker_benchmark --benchmark_filter=all
+//    $ blaze-bin/third_party/icing/scoring/ranker_benchmark --benchmark_filter=all
 //    --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/scoring:ranker_benchmark
+//    //third_party/icing/scoring:ranker_benchmark
 //
-//    $ adb push blaze-bin/icing/scoring/ranker_benchmark
+//    $ adb push blaze-bin/third_party/icing/scoring/ranker_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/ranker_benchmark --benchmark_filter=all

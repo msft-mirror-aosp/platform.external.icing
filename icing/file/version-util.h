@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_VERSION_UTIL_H_
-#define ICING_FILE_VERSION_UTIL_H_
+#ifndef THIRD_PARTY_ICING_FILE_VERSION_UTIL_H_
+#define THIRD_PARTY_ICING_FILE_VERSION_UTIL_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/file/derived-file-util.h"
-#include "icing/file/filesystem.h"
-#include "icing/proto/initialize.pb.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/file/derived-file-util.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/proto/initialize.proto.h"
 
 namespace icing {
 namespace lib {
@@ -39,7 +39,17 @@ namespace version_util {
 // - Version 3: M-2024-02. Schema is compatible with v1 and v2.
 // - Version 4: Android V base. Schema is compatible with v1, v2 and v3.
 // - Version 5: M-2025-02. Schema is compatible with v1, v2, v3 and v4.
+// ICING_STRIP
+// LINT.IfChange(kVersion)
+// ICING_END_STRIP
 inline static constexpr int32_t kVersion = 8;
+// ICING_STRIP
+// LINT.ThenChange(
+//    //depot/google3/third_party/icing/file/version-util.cc:should_rebuild_derived_files_upgrade_check,
+//    //depot/google3/third_party/icing/schema/schema-store.cc:min_overlay_version_compatibility,
+//    //depot/google3/third_party/java_src/android_libs/icing/javatests/com/google/android/icing/compatibility/release/README.md
+// )
+// ICING_END_STRIP
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;
@@ -212,4 +222,4 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_VERSION_UTIL_H_
+#endif  // THIRD_PARTY_ICING_FILE_VERSION_UTIL_H_

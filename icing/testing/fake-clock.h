@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_FAKE_CLOCK_H_
-#define ICING_TESTING_FAKE_CLOCK_H_
+#ifndef THIRD_PARTY_ICING_TESTING_FAKE_CLOCK_H_
+#define THIRD_PARTY_ICING_TESTING_FAKE_CLOCK_H_
 
-#include "icing/util/clock.h"
+#include "third_party/icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -62,4 +62,4 @@ class FakeClock : public Clock {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_FAKE_CLOCK_H_
+#endif  // THIRD_PARTY_ICING_TESTING_FAKE_CLOCK_H_

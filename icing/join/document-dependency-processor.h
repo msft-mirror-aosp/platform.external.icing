@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_DOCUMENT_DEPENDENCY_PROCESSOR_H_
-#define ICING_JOIN_DOCUMENT_DEPENDENCY_PROCESSOR_H_
+#ifndef THIRD_PARTY_ICING_JOIN_DOCUMENT_DEPENDENCY_PROCESSOR_H_
+#define THIRD_PARTY_ICING_JOIN_DOCUMENT_DEPENDENCY_PROCESSOR_H_
 
 #include <cstdint>
 #include <string_view>
@@ -22,13 +22,13 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/join/qualified-id.h"
-#include "icing/proto/document.pb.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/join/qualified-id.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
@@ -141,4 +141,4 @@ class DocumentDependencyProcessor {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_DOCUMENT_DEPENDENCY_PROCESSOR_H_
+#endif  // THIRD_PARTY_ICING_JOIN_DOCUMENT_DEPENDENCY_PROCESSOR_H_

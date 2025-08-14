@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
-#define ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
+#ifndef THIRD_PARTY_ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
+#define THIRD_PARTY_ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
 
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -41,4 +41,4 @@ class SuggestionResultChecker {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
+#endif  // THIRD_PARTY_ICING_STORE_SUGGESTION_RESULT_CHECKER_H_

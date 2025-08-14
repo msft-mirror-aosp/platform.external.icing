@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_I18N_UTILS_H_
-#define ICING_UTIL_I18N_UTILS_H_
+#ifndef THIRD_PARTY_ICING_UTIL_I18N_UTILS_H_
+#define THIRD_PARTY_ICING_UTIL_I18N_UTILS_H_
 
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "unicode/umachine.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icu/include/unicode/umachine.h"
 
 namespace icing {
 namespace lib {
@@ -100,4 +100,4 @@ void AppendUchar32ToUtf8(std::string* utf8_string, UChar32 uchar);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_I18N_UTILS_H_
+#endif  // THIRD_PARTY_ICING_UTIL_I18N_UTILS_H_

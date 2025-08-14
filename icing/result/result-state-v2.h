@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_RESULT_RESULT_STATE_V2_H_
-#define ICING_RESULT_RESULT_STATE_V2_H_
+#ifndef THIRD_PARTY_ICING_RESULT_RESULT_STATE_V2_H_
+#define THIRD_PARTY_ICING_RESULT_RESULT_STATE_V2_H_
 
 #include <atomic>
 #include <cstdint>
@@ -21,12 +21,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include "icing/absl_ports/mutex.h"
-#include "icing/absl_ports/thread_annotations.h"
-#include "icing/proto/search.pb.h"
-#include "icing/result/result-adjustment-info.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
-#include "icing/store/document-store.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/absl_ports/thread_annotations.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/result/result-adjustment-info.h"
+#include "third_party/icing/scoring/scored-document-hits-ranker.h"
+#include "third_party/icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -172,4 +172,4 @@ class ResultStateV2 {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_RESULT_RESULT_STATE_V2_H_
+#endif  // THIRD_PARTY_ICING_RESULT_RESULT_STATE_V2_H_

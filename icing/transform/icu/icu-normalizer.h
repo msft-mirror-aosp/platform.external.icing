@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
-#define ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
+#ifndef THIRD_PARTY_ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
+#define THIRD_PARTY_ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
 
 #include <memory>
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/character-iterator.h"
-#include "unicode/unorm2.h"
-#include "unicode/utrans.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/character-iterator.h"
+#include "third_party/icu/include/unicode/unorm2.h"
+#include "third_party/icu/include/unicode/utrans.h"
 
 namespace icing {
 namespace lib {
@@ -147,4 +147,4 @@ class IcuNormalizer : public Normalizer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
+#endif  // THIRD_PARTY_ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_

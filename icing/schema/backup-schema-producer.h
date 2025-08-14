@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_
-#define ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_
+#ifndef THIRD_PARTY_ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_
+#define THIRD_PARTY_ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/feature-flags.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema/section-manager.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema/section-manager.h"
 
 namespace icing {
 namespace lib {
@@ -57,4 +57,4 @@ class BackupSchemaProducer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_
+#endif  // THIRD_PARTY_ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_

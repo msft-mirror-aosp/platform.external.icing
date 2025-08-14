@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/query/advanced_query_parser/query-visitor.h"
+#include "third_party/icing/query/advanced_query_parser/query-visitor.h"
 
 #include <cmath>
 #include <cstdint>
@@ -26,62 +26,62 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/document-builder.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/document-filter-predicate.h"
-#include "icing/index/numeric/dummy-numeric-index.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/index/property-existence-indexing-handler.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/search.pb.h"
-#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
-#include "icing/query/advanced_query_parser/lexer.h"
-#include "icing/query/advanced_query_parser/parser.h"
-#include "icing/query/query-features.h"
-#include "icing/query/query-results.h"
-#include "icing/query/query-utils.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/embedding-test-utils.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/tokenizer-factory.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
-#include "icing/util/document-util.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/status-macros.h"
-#include "unicode/uloc.h"
-#include <google/protobuf/repeated_field.h>
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "third_party/icing/index/iterator/document-filter-predicate.h"
+#include "third_party/icing/index/numeric/dummy-numeric-index.h"
+#include "third_party/icing/index/numeric/numeric-index.h"
+#include "third_party/icing/index/property-existence-indexing-handler.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "third_party/icing/query/advanced_query_parser/lexer.h"
+#include "third_party/icing/query/advanced_query_parser/parser.h"
+#include "third_party/icing/query/query-features.h"
+#include "third_party/icing/query/query-results.h"
+#include "third_party/icing/query/query-utils.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/scoring/advanced_scoring/double-list.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/store/namespace-id.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/embedding-test-utils.h"
+#include "third_party/icing/testing/jni-test-helpers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/tokenizer-factory.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/document-util.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icu/include/unicode/uloc.h"
+#include "third_party/protobuf/repeated_ptr_field.h"
 
 namespace icing {
 namespace lib {
@@ -201,18 +201,35 @@ enum class QueryType {
 struct QueryVisitorTestParams {
   QueryType query_type;
   bool get_embedding_match_info;
+  bool enable_embedding_iterator_v2;
 
   explicit QueryVisitorTestParams(QueryType query_type,
-                                  bool get_embedding_match_info)
+                                  bool get_embedding_match_info,
+                                  bool enable_embedding_iterator_v2)
       : query_type(query_type),
-        get_embedding_match_info(get_embedding_match_info) {}
+        get_embedding_match_info(get_embedding_match_info),
+        enable_embedding_iterator_v2(enable_embedding_iterator_v2) {}
 };
 
 class QueryVisitorTest
     : public ::testing::TestWithParam<QueryVisitorTestParams> {
  protected:
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        FeatureFlags(/*enable_circular_schema_definitions=*/true,
+                     /*enable_scorable_properties=*/true,
+                     /*enable_embedding_quantization=*/true,
+                     /*enable_repeated_field_joins=*/true,
+                     /*enable_embedding_backup_generation=*/true,
+                     /*enable_schema_database=*/true,
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size_limit=*/true,
+                     /*enable_smaller_decompression_buffer_size=*/true,
+                     /*enable_eigen_embedding_scoring=*/true,
+                     /*enable_passing_filter_to_children=*/true,
+                     /*enable_proto_log_new_header_format=*/true,
+                     GetParam().enable_embedding_iterator_v2,
+                    /*enable_reusable_decompression_buffer=*/true));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
@@ -233,9 +250,9 @@ class QueryVisitorTest
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //icing/BUILD.
+          // File generated via icu_data_file rule in //third_party/icing/BUILD.
           icu_data_file_helper::SetUpIcuDataFile(
-              GetTestFilePath("icing/icu.dat")));
+              GetTestFilePath("third_party/icing/icu.dat")));
     }
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -5492,10 +5509,31 @@ TEST_P(QueryVisitorTest, MatchScoreExpressionFunctionWithEvaluationErrors) {
 
 INSTANTIATE_TEST_SUITE_P(
     QueryVisitorTest, QueryVisitorTest,
-    testing::Values(QueryVisitorTestParams(QueryType::kSearch, true),
-                    QueryVisitorTestParams(QueryType::kSearch, false),
-                    QueryVisitorTestParams(QueryType::kPlain, true),
-                    QueryVisitorTestParams(QueryType::kPlain, false)));
+    testing::Values(
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false)));
 
 }  // namespace
 

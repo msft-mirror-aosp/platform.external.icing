@@ -16,11 +16,11 @@
 #include <string>
 #include <string_view>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/expand/stemming/stemmer-factory.h"
-#include "icing/expand/stemming/stemmer.h"
-#include "icing/testing/common-matchers.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/expand/stemming/stemmer-factory.h"
+#include "third_party/icing/expand/stemming/stemmer.h"
+#include "third_party/icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/file/version-util.h"
+#include "third_party/icing/file/version-util.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,17 +21,17 @@
 #include <unordered_set>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/file/derived-file-util.h"
-#include "icing/file/file-backed-proto.h"
-#include "icing/file/filesystem.h"
-#include "icing/index/index.h"
-#include "icing/proto/initialize.pb.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/file/derived-file-util.h"
+#include "third_party/icing/file/file-backed-proto.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/proto/initialize.proto.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -398,7 +398,7 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
         // This should not happen. Rebuild anyway if unsure.
         should_rebuild |= true;
     }
-    // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
+    // LINT.ThenChange(//depot/google3/third_party/icing/file/version-util.h:kVersion)
     ++existing_version;
   }
   return should_rebuild;

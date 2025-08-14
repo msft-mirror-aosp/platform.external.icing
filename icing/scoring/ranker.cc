@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/scoring/ranker.h"
+#include "third_party/icing/scoring/ranker.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/term-metadata.h"
-#include "icing/scoring/scored-document-hit.h"
-#include "icing/util/logging.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/index/term-metadata.h"
+#include "third_party/icing/scoring/scored-document-hit.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

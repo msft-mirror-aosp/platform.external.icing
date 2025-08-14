@@ -14,7 +14,7 @@
 
 // Test for Filesystem class and utils.
 
-#include "icing/file/filesystem.h"
+#include "third_party/icing/file/filesystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -25,9 +25,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/testing/tmp-directory.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/testing/tmp-directory.h"
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>

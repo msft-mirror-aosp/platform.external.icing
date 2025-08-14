@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_EMBED_QUANTIZER_H_
-#define ICING_INDEX_EMBED_QUANTIZER_H_
+#ifndef THIRD_PARTY_ICING_INDEX_EMBED_QUANTIZER_H_
+#define THIRD_PARTY_ICING_INDEX_EMBED_QUANTIZER_H_
 
 #include <algorithm>
 #include <cmath>
@@ -21,8 +21,8 @@
 #include <cstring>
 #include <limits>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
 
 namespace icing {
 namespace lib {
@@ -91,4 +91,4 @@ class Quantizer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_EMBED_QUANTIZER_H_
+#endif  // THIRD_PARTY_ICING_INDEX_EMBED_QUANTIZER_H_

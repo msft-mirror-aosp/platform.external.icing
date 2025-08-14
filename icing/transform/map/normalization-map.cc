@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/transform/map/normalization-map.h"
+#include "third_party/icing/transform/map/normalization-map.h"
 
 #include <cstdint>
-#include "icing/legacy/core/icing-packed-pod.h"
+#include "third_party/icing/legacy/core/icing-packed-pod.h"
 
 namespace icing {
 namespace lib {

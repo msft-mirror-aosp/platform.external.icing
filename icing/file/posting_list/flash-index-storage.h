@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
-#define ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
+#ifndef THIRD_PARTY_ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
+#define THIRD_PARTY_ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/posting_list/flash-index-storage-header.h"
-#include "icing/file/posting_list/index-block.h"
-#include "icing/file/posting_list/posting-list-identifier.h"
-#include "icing/file/posting_list/posting-list-used.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/store/document-id.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/posting_list/flash-index-storage-header.h"
+#include "third_party/icing/file/posting_list/index-block.h"
+#include "third_party/icing/file/posting_list/posting-list-identifier.h"
+#include "third_party/icing/file/posting_list/posting-list-used.h"
+#include "third_party/icing/proto/debug.proto.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -378,4 +378,4 @@ class FlashIndexStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
+#endif  // THIRD_PARTY_ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/embed/embedding-index.h"
 
 #include <unistd.h>
 
@@ -23,33 +23,33 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/document-builder.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/index/embed/embedding-hit.h"
-#include "icing/index/embed/quantizer.h"
-#include "icing/index/hit/hit.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/proto/document.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/embedding-test-utils.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/clock.h"
-#include "icing/util/crc32.h"
-#include "icing/util/document-util.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/index/embed/embedding-hit.h"
+#include "third_party/icing/index/embed/quantizer.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/embedding-test-utils.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/document-util.h"
 
 namespace icing {
 namespace lib {

@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
-#define ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
+#ifndef THIRD_PARTY_ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
+#define THIRD_PARTY_ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
 
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/lite/lite-index.h"
-#include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/main/main-index.h"
-#include "icing/index/term-id-codec.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/index/lite/lite-index.h"
+#include "third_party/icing/index/lite/term-id-hit-pair.h"
+#include "third_party/icing/index/main/main-index.h"
+#include "third_party/icing/index/term-id-codec.h"
 
 namespace icing {
 namespace lib {
@@ -47,4 +47,4 @@ class MainIndexMerger {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_
+#endif  // THIRD_PARTY_ICING_INDEX_MAIN_MAIN_INDEX_MERGER_H_

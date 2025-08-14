@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/util/document-validator.h"
+#include "third_party/icing/util/document-validator.h"
 
 #include <cstdint>
 #include <string>
@@ -21,18 +21,18 @@
 #include <unordered_set>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/schema-util.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/str_cat.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/schema-util.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/util/logging.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

@@ -26,8 +26,8 @@
 //
 // Only includes lowercase and isletter characters.
 
-#ifndef ICING_LEGACY_INDEX_ICING_VARIANT_MAP_H_
-#define ICING_LEGACY_INDEX_ICING_VARIANT_MAP_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_VARIANT_MAP_H_
+#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_VARIANT_MAP_H_
 
 const char kVariantMapElts[] =
     "ʰ"             // [0] -> [ʰ] \312\260
@@ -802,4 +802,4 @@ const int kVariantMapIndex[] = {
     1782,  // z
 };
 
-#endif  // ICING_LEGACY_INDEX_ICING_VARIANT_MAP_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_VARIANT_MAP_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/expiration-timestamp-util.h"
+#include "third_party/icing/join/expiration-timestamp-util.h"
 
 #include <memory>
 #include <optional>
@@ -20,37 +20,37 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/document-builder.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/join/qualified-id-join-index-impl-v3.h"
-#include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-store.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/status-macros.h"
-#include "icing/util/tokenized-document.h"
-#include "unicode/uloc.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/document-builder.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/join/qualified-id-join-index-impl-v3.h"
+#include "third_party/icing/join/qualified-id-join-indexing-handler.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/document.proto.h"
+#include "third_party/icing/proto/document_wrapper.proto.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/schema-builder.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-filter-data.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icing/util/tokenized-document.h"
+#include "third_party/icu/include/unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -79,9 +79,9 @@ class ExpirationTimestampUtilTest : public ::testing::Test {
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //icing/BUILD.
+          // File generated via icu_data_file rule in //third_party/icing/BUILD.
           icu_data_file_helper::SetUpIcuDataFile(
-              GetTestFilePath("icing/icu.dat")));
+              GetTestFilePath("third_party/icing/icu.dat")));
     }
 
     language_segmenter_factory::SegmenterOptions options(ULOC_US);

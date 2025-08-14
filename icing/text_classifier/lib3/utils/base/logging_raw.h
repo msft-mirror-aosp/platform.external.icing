@@ -1,23 +1,9 @@
-// Copyright (C) 2019 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_RAW_H_
-#define ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_RAW_H_
+#ifndef KNOWLEDGE_CEREBRA_SENSE_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_RAW_H_
+#define KNOWLEDGE_CEREBRA_SENSE_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_RAW_H_
 
 #include <string>
 
-#include "icing/text_classifier/lib3/utils/base/logging_levels.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/logging_levels.h"
 
 namespace libtextclassifier3 {
 namespace logging {
@@ -31,4 +17,4 @@ void LowLevelLogging(LogSeverity severity, const std::string &tag,
 }  // namespace logging
 }  // namespace libtextclassifier3
 
-#endif  // ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_RAW_H_
+#endif  // KNOWLEDGE_CEREBRA_SENSE_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_RAW_H_

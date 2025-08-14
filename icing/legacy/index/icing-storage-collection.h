@@ -18,14 +18,14 @@
 // An implementation of IIcingStorage that holds an arbitrary number of nested
 // IIcingStorage items.
 
-#ifndef ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
-#define ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
+#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
+#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
 
 #include <string>
 #include <vector>
 
-#include "icing/legacy/index/icing-storage.h"
-#include "icing/util/crc32.h"
+#include "third_party/icing/legacy/index/icing-storage.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -64,4 +64,4 @@ class IcingStorageCollection : public IIcingStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
+#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_

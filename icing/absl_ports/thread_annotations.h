@@ -29,8 +29,8 @@
 // you want to refer to is not in scope, you may use a member pointer
 // (e.g. &MyClass::mutex_) to refer to a mutex in some (unknown) object.
 
-#ifndef ICING_ABSL_PORTS_THREAD_ANNOTATIONS_H_
-#define ICING_ABSL_PORTS_THREAD_ANNOTATIONS_H_
+#ifndef THIRD_PARTY_ICING_ABSL_PORTS_THREAD_ANNOTATIONS_H_
+#define THIRD_PARTY_ICING_ABSL_PORTS_THREAD_ANNOTATIONS_H_
 
 #if defined(__clang__)
 #define ICING_INTERNAL_THREAD_ANNOTATION_ATTRIBUTE(x) __attribute__((x))
@@ -211,4 +211,4 @@
 #define ICING_ASSERT_SHARED_LOCK(...) \
   ICING_INTERNAL_THREAD_ANNOTATION_ATTRIBUTE(assert_shared_lock(__VA_ARGS__))
 
-#endif  // ICING_ABSL_PORTS_THREAD_ANNOTATIONS_H_
+#endif  // THIRD_PARTY_ICING_ABSL_PORTS_THREAD_ANNOTATIONS_H_

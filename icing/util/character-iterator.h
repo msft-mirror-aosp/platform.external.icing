@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_CHARACTER_ITERATOR_H_
-#define ICING_UTIL_CHARACTER_ITERATOR_H_
+#ifndef THIRD_PARTY_ICING_UTIL_CHARACTER_ITERATOR_H_
+#define THIRD_PARTY_ICING_UTIL_CHARACTER_ITERATOR_H_
 
 #include <string>
 #include <string_view>
 
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/i18n-utils.h"
-#include "unicode/utypes.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/util/i18n-utils.h"
+#include "third_party/icu/include/unicode/utypes.h"
 
 namespace icing {
 namespace lib {
@@ -141,4 +141,4 @@ class CharacterIterator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_CHARACTER_ITERATOR_H_
+#endif  // THIRD_PARTY_ICING_UTIL_CHARACTER_ITERATOR_H_

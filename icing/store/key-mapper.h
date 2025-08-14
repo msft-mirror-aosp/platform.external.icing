@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_KEY_MAPPER_H_
-#define ICING_STORE_KEY_MAPPER_H_
+#ifndef THIRD_PARTY_ICING_STORE_KEY_MAPPER_H_
+#define THIRD_PARTY_ICING_STORE_KEY_MAPPER_H_
 
 #include <cstdint>
 #include <cstring>
@@ -22,10 +22,10 @@
 #include <type_traits>
 #include <unordered_map>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/str_join.h"
-#include "icing/util/crc32.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/str_join.h"
+#include "third_party/icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -138,4 +138,4 @@ class KeyMapper {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_KEY_MAPPER_H_
+#endif  // THIRD_PARTY_ICING_STORE_KEY_MAPPER_H_

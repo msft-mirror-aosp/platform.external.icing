@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_INDEX_PROCESSOR_H_
-#define ICING_INDEX_INDEX_PROCESSOR_H_
+#ifndef THIRD_PARTY_ICING_INDEX_INDEX_PROCESSOR_H_
+#define THIRD_PARTY_ICING_INDEX_INDEX_PROCESSOR_H_
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/index/data-indexing-handler.h"
-#include "icing/proto/logging.pb.h"
-#include "icing/store/document-id.h"
-#include "icing/util/clock.h"
-#include "icing/util/tokenized-document.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "third_party/icing/index/data-indexing-handler.h"
+#include "third_party/icing/proto/logging.proto.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/clock.h"
+#include "third_party/icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
@@ -72,4 +72,4 @@ class IndexProcessor {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_INDEX_PROCESSOR_H_
+#endif  // THIRD_PARTY_ICING_INDEX_INDEX_PROCESSOR_H_

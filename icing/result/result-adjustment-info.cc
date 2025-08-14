@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result/result-adjustment-info.h"
+#include "third_party/icing/result/result-adjustment-info.h"
 
 #include <string>
 #include <unordered_map>
@@ -20,19 +20,19 @@
 #include <utility>
 #include <vector>
 
-#include "icing/index/embed/embedding-query-results.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/query/query-terms.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/snippet-context.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/scoring/advanced_scoring/double-list.h"
-#include "icing/store/document-id.h"
-#include "icing/util/embedding-util.h"
-#include "icing/util/logging.h"
+#include "third_party/icing/index/embed/embedding-query-results.h"
+#include "third_party/icing/proto/scoring.proto.h"
+#include "third_party/icing/proto/search.proto.h"
+#include "third_party/icing/proto/term.proto.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/result/projection-tree.h"
+#include "third_party/icing/result/snippet-context.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/scoring/advanced_scoring/double-list.h"
+#include "third_party/icing/store/document-id.h"
+#include "third_party/icing/util/embedding-util.h"
+#include "third_party/icing/util/logging.h"
 
 namespace icing {
 namespace lib {

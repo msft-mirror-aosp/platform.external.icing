@@ -22,43 +22,43 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/feature-flags.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/index/embed/embedding-index.h"
-#include "icing/index/index.h"
-#include "icing/index/numeric/dummy-numeric-index.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/jni/jni-cache.h"
-#include "icing/legacy/index/icing-filesystem.h"
-#include "icing/portable/gzip_stream.h"
-#include "icing/portable/platform.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/query/query-processor.h"
-#include "icing/query/query-results.h"
-#include "icing/query/query-terms.h"
-#include "icing/schema/schema-store.h"
-#include "icing/store/document-store.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/fake-clock.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/test-data.h"
-#include "icing/testing/test-feature-flags.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/token.h"
-#include "icing/tokenization/tokenizer-factory.h"
-#include "icing/tokenization/tokenizer.h"
-#include "icing/transform/normalizer-factory.h"
-#include "icing/transform/normalizer-options.h"
-#include "icing/transform/normalizer.h"
-#include "icing/util/icu-data-file-helper.h"
-#include "icing/util/status-macros.h"
-#include "unicode/uloc.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/feature-flags.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/portable-file-backed-proto-log.h"
+#include "third_party/icing/index/embed/embedding-index.h"
+#include "third_party/icing/index/index.h"
+#include "third_party/icing/index/numeric/dummy-numeric-index.h"
+#include "third_party/icing/index/numeric/numeric-index.h"
+#include "third_party/icing/jni/jni-cache.h"
+#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "third_party/icing/portable/gzip_stream.h"
+#include "third_party/icing/portable/platform.h"
+#include "third_party/icing/proto/schema.proto.h"
+#include "third_party/icing/query/query-processor.h"
+#include "third_party/icing/query/query-results.h"
+#include "third_party/icing/query/query-terms.h"
+#include "third_party/icing/schema/schema-store.h"
+#include "third_party/icing/store/document-store.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/fake-clock.h"
+#include "third_party/icing/testing/jni-test-helpers.h"
+#include "third_party/icing/testing/test-data.h"
+#include "third_party/icing/testing/test-feature-flags.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/tokenization/language-segmenter-factory.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/token.h"
+#include "third_party/icing/tokenization/tokenizer-factory.h"
+#include "third_party/icing/tokenization/tokenizer.h"
+#include "third_party/icing/transform/normalizer-factory.h"
+#include "third_party/icing/transform/normalizer-options.h"
+#include "third_party/icing/transform/normalizer.h"
+#include "third_party/icing/util/icu-data-file-helper.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icu/include/unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -88,9 +88,9 @@ class CombinedTokenizerTest : public ::testing::Test {
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //icing/BUILD.
+          // File generated via icu_data_file rule in //third_party/icing/BUILD.
           icu_data_file_helper::SetUpIcuDataFile(
-              GetTestFilePath("icing/icu.dat")));
+              GetTestFilePath("third_party/icing/icu.dat")));
     }
     jni_cache_ = GetTestJniCache();
 

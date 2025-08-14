@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/random-string.h"
+#include "third_party/icing/testing/random-string.h"
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
 
 using ::testing::ElementsAre;
 using ::testing::Eq;

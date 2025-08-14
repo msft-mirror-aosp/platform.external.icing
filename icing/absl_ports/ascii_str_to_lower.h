@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_ABSL_PORTS_ASCII_STR_TO_LOWER_H_
-#define ICING_ABSL_PORTS_ASCII_STR_TO_LOWER_H_
+#ifndef THIRD_PARTY_ICING_ABSL_PORTS_ASCII_STR_TO_LOWER_H_
+#define THIRD_PARTY_ICING_ABSL_PORTS_ASCII_STR_TO_LOWER_H_
 
 #include <string>
 
@@ -35,4 +35,4 @@ inline std::string AsciiStrToLower(std::string_view s) {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_ABSL_PORTS_ASCII_TO_LOWER_H_
+#endif  // THIRD_PARTY_ICING_ABSL_PORTS_ASCII_TO_LOWER_H_

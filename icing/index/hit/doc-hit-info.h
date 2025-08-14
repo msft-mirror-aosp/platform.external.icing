@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_HIT_DOC_HIT_INFO_H_
-#define ICING_INDEX_HIT_DOC_HIT_INFO_H_
+#ifndef THIRD_PARTY_ICING_INDEX_HIT_DOC_HIT_INFO_H_
+#define THIRD_PARTY_ICING_INDEX_HIT_DOC_HIT_INFO_H_
 
 #include <limits>
 
-#include "icing/index/hit/hit.h"
-#include "icing/legacy/core/icing-packed-pod.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
+#include "third_party/icing/index/hit/hit.h"
+#include "third_party/icing/legacy/core/icing-packed-pod.h"
+#include "third_party/icing/schema/section.h"
+#include "third_party/icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -88,4 +88,4 @@ static_assert(icing_is_packed_pod<DocHitInfo>::value, "go/icing-ubsan");
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_HIT_DOC_HIT_INFO_H_
+#endif  // THIRD_PARTY_ICING_INDEX_HIT_DOC_HIT_INFO_H_

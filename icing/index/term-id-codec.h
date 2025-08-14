@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_TERM_ID_CODEC_H_
-#define ICING_INDEX_TERM_ID_CODEC_H_
+#ifndef THIRD_PARTY_ICING_INDEX_TERM_ID_CODEC_H_
+#define THIRD_PARTY_ICING_INDEX_TERM_ID_CODEC_H_
 
 #include <cstdint>
 #include <memory>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
 
 // Encodes/decodes TermIds into different TviTypes. A "tvi" is a
 // term_value_index into some space, essentially a unique id within that space.
@@ -104,4 +104,4 @@ class TermIdCodec {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_TERM_ID_CODEC_H_
+#endif  // THIRD_PARTY_ICING_INDEX_TERM_ID_CODEC_H_

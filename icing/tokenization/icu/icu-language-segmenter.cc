@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/icu/icu-language-segmenter.h"
+#include "third_party/icing/tokenization/icu/icu-language-segmenter.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,17 +21,17 @@
 #include <utility>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/mutex.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/character-iterator.h"
-#include "icing/util/i18n-utils.h"
-#include "icing/util/status-macros.h"
-#include "unicode/ubrk.h"
-#include "unicode/uchar.h"
-#include "unicode/umachine.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/absl_ports/mutex.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/util/character-iterator.h"
+#include "third_party/icing/util/i18n-utils.h"
+#include "third_party/icing/util/status-macros.h"
+#include "third_party/icu/include/unicode/ubrk.h"
+#include "third_party/icu/include/unicode/uchar.h"
+#include "third_party/icu/include/unicode/umachine.h"
 
 namespace icing {
 namespace lib {

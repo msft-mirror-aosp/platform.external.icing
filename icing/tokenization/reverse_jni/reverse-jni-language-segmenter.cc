@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/reverse_jni/reverse-jni-language-segmenter.h"
+#include "third_party/icing/tokenization/reverse_jni/reverse-jni-language-segmenter.h"
 
 #include <cctype>
 #include <memory>
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/canonical_errors.h"
-#include "icing/legacy/core/icing-string-util.h"
-#include "icing/tokenization/language-segmenter.h"
-#include "icing/tokenization/reverse_jni/reverse-jni-break-iterator.h"
-#include "icing/util/character-iterator.h"
-#include "icing/util/i18n-utils.h"
-#include "icing/util/status-macros.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "third_party/icing/tokenization/language-segmenter.h"
+#include "third_party/icing/tokenization/reverse_jni/reverse-jni-break-iterator.h"
+#include "third_party/icing/util/character-iterator.h"
+#include "third_party/icing/util/i18n-utils.h"
+#include "third_party/icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
