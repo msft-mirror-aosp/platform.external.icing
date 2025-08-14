@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_UTIL_LOGGING_RAW_H_
-#define THIRD_PARTY_ICING_UTIL_LOGGING_RAW_H_
+#ifndef ICING_UTIL_LOGGING_RAW_H_
+#define ICING_UTIL_LOGGING_RAW_H_
 
 #include <string>
 
-#include "third_party/icing/proto/debug.proto.h"
+#include "icing/proto/debug.pb.h"
 
 namespace icing {
 namespace lib {
@@ -31,4 +31,4 @@ void LowLevelLogging(LogSeverity::Code severity, const std::string &tag,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_UTIL_LOGGING_RAW_H_
+#endif  // ICING_UTIL_LOGGING_RAW_H_

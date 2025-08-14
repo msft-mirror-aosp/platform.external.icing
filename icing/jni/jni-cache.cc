@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/jni/jni-cache.h"
+#include "icing/jni/jni-cache.h"
 
 #ifdef ICING_REVERSE_JNI_SEGMENTATION
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/java/jni-base.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/java/jni-helper.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/java/jni-base.h"
+#include "icing/text_classifier/lib3/utils/java/jni-helper.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

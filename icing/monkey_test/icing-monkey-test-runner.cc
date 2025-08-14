@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/monkey_test/icing-monkey-test-runner.h"
+#include "icing/monkey_test/icing-monkey-test-runner.h"
 
 #include <algorithm>
 #include <array>
@@ -28,27 +28,27 @@
 #include <utility>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/monkey_test/in-memory-icing-search-engine.h"
-#include "third_party/icing/monkey_test/monkey-test-generators.h"
-#include "third_party/icing/monkey_test/monkey-test-util.h"
-#include "third_party/icing/monkey_test/monkey-tokenized-document.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/proto/status.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/query/query-features.h"
-#include "third_party/icing/result/result-state-manager.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/logging.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/icing-search-engine.h"
+#include "icing/monkey_test/in-memory-icing-search-engine.h"
+#include "icing/monkey_test/monkey-test-generators.h"
+#include "icing/monkey_test/monkey-test-util.h"
+#include "icing/monkey_test/monkey-tokenized-document.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/query/query-features.h"
+#include "icing/result/result-state-manager.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -123,14 +123,10 @@ SearchSpecProto GenerateRandomSearchSpecProto(
           query);
     }
   }
-  // %50 chance of getting one type filter
-  // %25 chance of getting two type filters
-  // %25 chance of getting no type filters
-  for (int i = 0; i < 2; ++i) {
-    if (GetRandomBoolean(random)) {
-      search_spec.add_schema_type_filters(
-          document_generator->GetType().schema_type());
-    }
+  // %50 chance of getting a type filter.
+  if (GetRandomBoolean(random)) {
+    search_spec.add_schema_type_filters(
+        document_generator->GetType().schema_type());
   }
   search_spec.set_query(query);
   return search_spec;
@@ -572,13 +568,12 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_document_store_namespace_id_fingerprint(
       GetRandomBoolean(&random_));
   icing_options.set_enable_embedding_index(true);
-  icing_options.set_enable_embedding_quantization(true);
+  icing_options.set_enable_embedding_quantization(GetRandomBoolean(&random_));
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
   icing_options.set_enable_eigen_embedding_scoring(GetRandomBoolean(&random_));
   icing_options.set_enable_passing_filter_to_children(
       GetRandomBoolean(&random_));
-  icing_options.set_enable_embedding_iterator_v2(GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

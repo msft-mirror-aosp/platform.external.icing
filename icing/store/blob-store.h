@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_STORE_BLOB_STORE_H_
-#define THIRD_PARTY_ICING_STORE_BLOB_STORE_H_
+#ifndef ICING_STORE_BLOB_STORE_H_
+#define ICING_STORE_BLOB_STORE_H_
 
 #include <cstdint>
 #include <memory>
@@ -23,15 +23,14 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/proto/blob.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/util/clock.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/blob.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -69,8 +68,7 @@ class BlobStore {
   static libtextclassifier3::StatusOr<BlobStore> Create(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
       int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-      int32_t compression_mem_level, bool manage_blob_files,
-      const FeatureFlags* feature_flags);
+      int32_t compression_mem_level, bool manage_blob_files);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
@@ -149,7 +147,7 @@ class BlobStore {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto GetAllBlobInfos();
+  BlobProto GetAllBlobInfo();
 
   // Puts the blob info protos from the blob proto to the blob info proto log
   // file.
@@ -157,7 +155,7 @@ class BlobStore {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto PutBlobInfos(const BlobProto& blob_proto);
+  BlobProto PutBlobInfos(BlobProto&& blob_proto);
 
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
@@ -181,8 +179,7 @@ class BlobStore {
   //   manages blob files, this list will be empty.
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<std::vector<std::string>> Optimize(
-      const std::unordered_set<std::string>& dead_blob_handles,
-      const FeatureFlags* feature_flags);
+      const std::unordered_set<std::string>& dead_blob_handles);
 
   // Calculates the StorageInfo for the Blob Store.
   //
@@ -247,4 +244,4 @@ class BlobStore {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_STORE_BLOB_STORE_H_
+#endif  // ICING_STORE_BLOB_STORE_H_

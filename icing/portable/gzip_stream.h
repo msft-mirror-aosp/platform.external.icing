@@ -24,24 +24,23 @@
 // GzipOutputStream is an ZeroCopyOutputStream that compresses data to
 // an underlying ZeroCopyOutputStream.
 
-#ifndef GOOGLE3_THIRD_PARTY_ICING_PORTABLE_GZIP_STREAM_H_
-#define GOOGLE3_THIRD_PARTY_ICING_PORTABLE_GZIP_STREAM_H_
+#ifndef GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_
+#define GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_
 
-#include <cstddef>
 #include <cstdint>
 
-#include "third_party/icing/portable/zlib.h"
-#include "third_party/protobuf/io/zero_copy_stream_impl_lite.h"
+#include "icing/portable/zlib.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
 namespace protobuf_ports {
 
-static constexpr size_t kDefaultBufferSize = 64 * 1024;  // 64kb
+static constexpr int64_t kDefaultBufferSize = 64 * 1024;  // 64kb
 static constexpr int kDefaultMemLevel = 8;
 
 // A ZeroCopyInputStream that reads compressed data through zlib
-class GzipInputStream : public proto2::io::ZeroCopyInputStream {
+class GzipInputStream : public google::protobuf::io::ZeroCopyInputStream {
  public:
   // Format key for constructor
   enum Format {
@@ -56,9 +55,8 @@ class GzipInputStream : public proto2::io::ZeroCopyInputStream {
   };
 
   // buffer_size and format may be -1 for default of 64kB and GZIP format
-  explicit GzipInputStream(proto2::io::ZeroCopyInputStream* sub_stream,
-                           Format format, void* output_buffer,
-                           size_t buffer_size);
+  explicit GzipInputStream(google::protobuf::io::ZeroCopyInputStream* sub_stream,
+                           Format format = AUTO, int buffer_size = -1);
   virtual ~GzipInputStream();
 
   // Return last error message or NULL if no error.
@@ -74,12 +72,12 @@ class GzipInputStream : public proto2::io::ZeroCopyInputStream {
  private:
   Format format_;
 
-  proto2::io::ZeroCopyInputStream* sub_stream_;  // Does not own.
+  google::protobuf::io::ZeroCopyInputStream* sub_stream_;
 
   z_stream zcontext_;
   int zerror_;
 
-  void* output_buffer_;  // Does not own.
+  void* output_buffer_;
   void* output_position_;
   size_t output_buffer_length_;
   int64_t byte_count_;
@@ -88,7 +86,7 @@ class GzipInputStream : public proto2::io::ZeroCopyInputStream {
   void DoNextOutput(const void** data, int* size);
 };
 
-class GzipOutputStream : public proto2::io::ZeroCopyOutputStream {
+class GzipOutputStream : public google::protobuf::io::ZeroCopyOutputStream {
  public:
   // Format key for constructor
   enum Format {
@@ -129,10 +127,10 @@ class GzipOutputStream : public proto2::io::ZeroCopyOutputStream {
   };
 
   // Create a GzipOutputStream with default options.
-  explicit GzipOutputStream(proto2::io::ZeroCopyOutputStream* sub_stream);
+  explicit GzipOutputStream(google::protobuf::io::ZeroCopyOutputStream* sub_stream);
 
   // Create a GzipOutputStream with the given options.
-  GzipOutputStream(proto2::io::ZeroCopyOutputStream* sub_stream,
+  GzipOutputStream(google::protobuf::io::ZeroCopyOutputStream* sub_stream,
                    const Options& options);
 
   virtual ~GzipOutputStream();
@@ -167,7 +165,7 @@ class GzipOutputStream : public proto2::io::ZeroCopyOutputStream {
   int64_t ByteCount() const override;
 
  private:
-  proto2::io::ZeroCopyOutputStream* sub_stream_;
+  google::protobuf::io::ZeroCopyOutputStream* sub_stream_;
   // Result from calling Next() on sub_stream_
   void* sub_data_;
   int sub_data_size_;
@@ -178,7 +176,7 @@ class GzipOutputStream : public proto2::io::ZeroCopyOutputStream {
   size_t input_buffer_length_;
 
   // Shared constructor code.
-  void Init(proto2::io::ZeroCopyOutputStream* sub_stream,
+  void Init(google::protobuf::io::ZeroCopyOutputStream* sub_stream,
             const Options& options);
 
   // Do some compression.
@@ -191,4 +189,4 @@ class GzipOutputStream : public proto2::io::ZeroCopyOutputStream {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // GOOGLE3_THIRD_PARTY_ICING_PORTABLE_GZIP_STREAM_H_
+#endif  // GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_

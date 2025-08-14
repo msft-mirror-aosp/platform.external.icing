@@ -18,20 +18,20 @@
 #include <string>
 #include <utility>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/portable/endian.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/icing-search-engine.h"
+#include "icing/portable/endian.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
+#include "icing/schema-builder.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
@@ -81,18 +81,18 @@ ScoringSpecProto GetDefaultScoringSpec() {
 std::string GetTestDataDir(std::string_view test_subdir) {
   if (IsAndroidX86()) {
     return GetTestFilePath(
-        absl_ports::StrCat("third_party/icing/testdata/", test_subdir,
+        absl_ports::StrCat("icing/testdata/", test_subdir,
                            "/icing_search_engine_android_x86"));
   } else if (IsAndroidArm()) {
     return GetTestFilePath(
-        absl_ports::StrCat("third_party/icing/testdata/", test_subdir,
+        absl_ports::StrCat("icing/testdata/", test_subdir,
                            "/icing_search_engine_android_arm"));
   } else if (IsIosPlatform()) {
-    return GetTestFilePath(absl_ports::StrCat("third_party/icing/testdata/",
+    return GetTestFilePath(absl_ports::StrCat("icing/testdata/",
                                               test_subdir,
                                               "/icing_search_engine_ios"));
   } else {
-    return GetTestFilePath(absl_ports::StrCat("third_party/icing/testdata/",
+    return GetTestFilePath(absl_ports::StrCat("icing/testdata/",
                                               test_subdir,
                                               "/icing_search_engine_linux"));
   }

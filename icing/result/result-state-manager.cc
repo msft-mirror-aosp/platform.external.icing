@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/result/result-state-manager.h"
+#include "icing/result/result-state-manager.h"
 
 #include <cstdint>
 #include <limits>
@@ -20,18 +20,18 @@
 #include <queue>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/result/page-result.h"
-#include "third_party/icing/result/result-adjustment-info.h"
-#include "third_party/icing/result/result-retriever-v2.h"
-#include "third_party/icing/result/result-state-v2.h"
-#include "third_party/icing/scoring/scored-document-hits-ranker.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/result/page-result.h"
+#include "icing/result/result-adjustment-info.h"
+#include "icing/result/result-retriever-v2.h"
+#include "icing/result/result-state-v2.h"
+#include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-store.h"
+#include "icing/util/clock.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {

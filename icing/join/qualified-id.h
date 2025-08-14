@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_JOIN_QUALIFIED_ID_H_
-#define THIRD_PARTY_ICING_JOIN_QUALIFIED_ID_H_
+#ifndef ICING_JOIN_QUALIFIED_ID_H_
+#define ICING_JOIN_QUALIFIED_ID_H_
 
 #include <cstddef>
 #include <functional>
@@ -21,7 +21,7 @@
 #include <string_view>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 
 namespace icing {
 namespace lib {
@@ -76,4 +76,4 @@ class QualifiedId {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_JOIN_QUALIFIED_ID_H_
+#endif  // ICING_JOIN_QUALIFIED_ID_H_

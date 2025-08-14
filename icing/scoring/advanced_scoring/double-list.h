@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCORING_ADVANCED_SCORING_DOUBLE_LIST_H_
-#define THIRD_PARTY_ICING_SCORING_ADVANCED_SCORING_DOUBLE_LIST_H_
+#ifndef ICING_SCORING_ADVANCED_SCORING_DOUBLE_LIST_H_
+#define ICING_SCORING_ADVANCED_SCORING_DOUBLE_LIST_H_
 
 #include <cstddef>
 #include <type_traits>
@@ -96,4 +96,4 @@ class DoubleList {
   std::variant<std::vector<double>, DataView> storage_;
 };
 
-#endif  // THIRD_PARTY_ICING_SCORING_ADVANCED_SCORING_DOUBLE_LIST_H_
+#endif  // ICING_SCORING_ADVANCED_SCORING_DOUBLE_LIST_H_

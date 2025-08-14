@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/store/key-mapper.h"
+#include "icing/store/key-mapper.h"
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/dynamic-trie-key-mapper.h"
-#include "third_party/icing/store/persistent-hash-map-key-mapper.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/filesystem.h"
+#include "icing/store/document-id.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
 
 using ::testing::IsEmpty;
 using ::testing::IsTrue;

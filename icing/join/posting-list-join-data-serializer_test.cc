@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/join/posting-list-join-data-serializer.h"
+#include "icing/join/posting-list-join-data-serializer.h"
 
 #include <algorithm>
 #include <iterator>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/posting_list/posting-list-used.h"
-#include "third_party/icing/join/document-id-to-join-info.h"
-#include "third_party/icing/store/namespace-id-fingerprint.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/posting_list/posting-list-used.h"
+#include "icing/join/document-id-to-join-info.h"
+#include "icing/store/namespace-id-fingerprint.h"
+#include "icing/testing/common-matchers.h"
 
 using testing::ElementsAre;
 using testing::ElementsAreArray;

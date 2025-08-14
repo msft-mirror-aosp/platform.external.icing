@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/result/result-state-v2.h"
+#include "icing/result/result-state-v2.h"
 
 #include <atomic>
 #include <cstdint>
@@ -22,28 +22,28 @@
 #include <utility>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/portable/gzip_stream.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/priority-queue-scored-document-hits-ranker.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/clock.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {

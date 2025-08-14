@@ -17,7 +17,7 @@
 #include <string_view>
 #include <utility>
 
-#include "third_party/icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/lexer.h"
 
 namespace icing {
 namespace lib {

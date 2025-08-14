@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
-#define THIRD_PARTY_ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
+#ifndef ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
+#define ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
 
 #include <memory>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/index/index.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/tokenized-document.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/index.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/store/document-id.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
@@ -78,4 +78,4 @@ class StringSectionIndexingHandler {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
+#endif  // ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_

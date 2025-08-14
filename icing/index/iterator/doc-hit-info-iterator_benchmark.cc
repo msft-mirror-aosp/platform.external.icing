@@ -15,14 +15,14 @@
 #include <vector>
 
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator-and.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-and.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -31,19 +31,19 @@ namespace {
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/index/iterator:doc-hit-info-iterator_benchmark
+//    //icing/index/iterator:doc-hit-info-iterator_benchmark
 //
 //    $
-//    blaze-bin/third_party/icing/index/iterator/doc-hit-info-iterator_benchmark
+//    blaze-bin/icing/index/iterator/doc-hit-info-iterator_benchmark
 //    --benchmark_filter=all
 //
 // Run on an Android device:
 //    $ blaze build --config=android_arm64 -c opt --dynamic_mode=off
 //    --copt=-gmlt
-//    //third_party/icing/index/iterator:doc-hit-info-iterator_benchmark
+//    //icing/index/iterator:doc-hit-info-iterator_benchmark
 //
 //    $ adb push
-//    blaze-bin/third_party/icing/index/iterator/doc-hit-info-iterator_benchmark
+//    blaze-bin/icing/index/iterator/doc-hit-info-iterator_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/doc-hit-info-iterator_benchmark

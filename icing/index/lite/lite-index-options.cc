@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/lite/lite-index-options.h"
+#include "icing/index/lite/lite-index-options.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
-#include "third_party/icing/index/lite/term-id-hit-pair.h"
-#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {
 namespace lib {

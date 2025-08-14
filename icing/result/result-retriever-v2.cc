@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/result/result-retriever-v2.h"
+#include "icing/result/result-retriever-v2.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -24,29 +24,29 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/result/page-result.h"
-#include "third_party/icing/result/projection-tree.h"
-#include "third_party/icing/result/projector.h"
-#include "third_party/icing/result/result-adjustment-info.h"
-#include "third_party/icing/result/result-state-v2.h"
-#include "third_party/icing/result/snippet-context.h"
-#include "third_party/icing/result/snippet-retriever.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/store/namespace-id.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/result/page-result.h"
+#include "icing/result/projection-tree.h"
+#include "icing/result/projector.h"
+#include "icing/result/result-adjustment-info.h"
+#include "icing/result/result-state-v2.h"
+#include "icing/result/snippet-context.h"
+#include "icing/result/snippet-retriever.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

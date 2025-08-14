@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_STORE_DOCUMENT_STORE_H_
-#define THIRD_PARTY_ICING_STORE_DOCUMENT_STORE_H_
+#ifndef ICING_STORE_DOCUMENT_STORE_H_
+#define ICING_STORE_DOCUMENT_STORE_H_
 
 #include <cstdint>
 #include <memory>
@@ -23,40 +23,40 @@
 #include <unordered_set>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/file-backed-vector.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file-backed-proto-log.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/proto/internal/scorable_property_set.proto.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/proto/optimize.proto.h"
-#include "third_party/icing/proto/persist.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/proto/usage.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/corpus-associated-scoring-data.h"
-#include "third_party/icing/store/corpus-id.h"
-#include "third_party/icing/store/document-associated-score-data.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/key-mapper.h"
-#include "third_party/icing/store/namespace-id-fingerprint.h"
-#include "third_party/icing/store/namespace-id.h"
-#include "third_party/icing/store/usage-store.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/data-loss.h"
-#include "third_party/icing/util/document-validator.h"
-#include "third_party/icing/util/fingerprint-util.h"
-#include "third_party/icing/util/scorable_property_set.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file-backed-proto-log.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/usage.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/corpus-associated-scoring-data.h"
+#include "icing/store/corpus-id.h"
+#include "icing/store/document-associated-score-data.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/key-mapper.h"
+#include "icing/store/namespace-id-fingerprint.h"
+#include "icing/store/namespace-id.h"
+#include "icing/store/usage-store.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/util/clock.h"
+#include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
+#include "icing/util/document-validator.h"
+#include "icing/util/fingerprint-util.h"
+#include "icing/util/scorable_property_set.h"
 
 namespace icing {
 namespace lib {
@@ -925,7 +925,7 @@ class DocumentStore {
   //   - on success, a RepeatedPtrField for CorpusInfo collected.
   //   - OUT_OF_RANGE, this should never happen.
   libtextclassifier3::StatusOr<
-      proto2::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
+      google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
   CollectCorpusInfo() const;
 
   // Extracts the ScorablePropertySetProto from the |document| and add it to
@@ -946,4 +946,4 @@ class DocumentStore {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_STORE_DOCUMENT_STORE_H_
+#endif  // ICING_STORE_DOCUMENT_STORE_H_

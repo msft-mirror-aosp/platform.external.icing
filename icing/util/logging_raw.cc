@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/logging_raw.h"
+#include "icing/util/logging_raw.h"
 
 #include <cstdio>
 #include <string>
 
-#include "third_party/icing/proto/debug.proto.h"
+#include "icing/proto/debug.pb.h"
 
 // NOTE: this file contains two implementations: one for Android, one for all
 // other cases.  We always build exactly one implementation.

@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/schema-type-manager.h"
+#include "icing/schema/schema-type-manager.h"
 
 #include <memory>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/schema/joinable-property-manager.h"
-#include "third_party/icing/schema/property-util.h"
-#include "third_party/icing/schema/schema-property-iterator.h"
-#include "third_party/icing/schema/schema-util.h"
-#include "third_party/icing/schema/section-manager.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/key-mapper.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/schema/joinable-property-manager.h"
+#include "icing/schema/property-util.h"
+#include "icing/schema/schema-property-iterator.h"
+#include "icing/schema/schema-util.h"
+#include "icing/schema/section-manager.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/key-mapper.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

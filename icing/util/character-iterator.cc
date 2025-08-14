@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/character-iterator.h"
+#include "icing/util/character-iterator.h"
 
 #include <string_view>
 
-#include "third_party/icing/util/i18n-utils.h"
-#include "third_party/icu/include/unicode/utypes.h"
+#include "icing/util/i18n-utils.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {

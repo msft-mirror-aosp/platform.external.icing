@@ -15,15 +15,15 @@
 #include <memory>
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/transform/normalizer-factory.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/test-data.h"
+#include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -34,9 +34,9 @@ class IcuNormalizerTest : public testing::Test {
  protected:
   void SetUp() override {
     ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //third_party/icing/BUILD.
+        // File generated via icu_data_file rule in //icing/BUILD.
         icu_data_file_helper::SetUpIcuDataFile(
-            GetTestFilePath("third_party/icing/icu.dat")));
+            GetTestFilePath("icing/icu.dat")));
 
     NormalizerOptions options(/*max_term_byte_size=*/1024);
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_,

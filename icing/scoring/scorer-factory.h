@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCORING_SCORER_FACTORY_H_
-#define THIRD_PARTY_ICING_SCORING_SCORER_FACTORY_H_
+#ifndef ICING_SCORING_SCORER_FACTORY_H_
+#define ICING_SCORING_SCORER_FACTORY_H_
 
 #include <cstdint>
 #include <memory>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/join/join-children-fetcher.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/scoring/scorer.h"
-#include "third_party/icing/store/document-store.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/join/join-children-fetcher.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/scorer.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -55,4 +55,4 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCORING_SCORER_FACTORY_H_
+#endif  // ICING_SCORING_SCORER_FACTORY_H_

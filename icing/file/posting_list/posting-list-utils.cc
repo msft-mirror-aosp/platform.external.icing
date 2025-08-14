@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/posting_list/posting-list-utils.h"
+#include "icing/file/posting_list/posting-list-utils.h"
 
-#include "third_party/icing/legacy/index/icing-bit-util.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/legacy/index/icing-bit-util.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {

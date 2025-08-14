@@ -53,8 +53,8 @@
 //
 // vector->PersistToDisk();  // Persist contents to disk.
 
-#ifndef THIRD_PARTY_ICING_FILE_FILE_BACKED_VECTOR_H_
-#define THIRD_PARTY_ICING_FILE_FILE_BACKED_VECTOR_H_
+#ifndef ICING_FILE_FILE_BACKED_VECTOR_H_
+#define ICING_FILE_FILE_BACKED_VECTOR_H_
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -70,18 +70,18 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/math-util.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
+#include "icing/util/math-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -1172,4 +1172,4 @@ libtextclassifier3::StatusOr<int64_t> FileBackedVector<T>::GetElementsFileSize()
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_FILE_FILE_BACKED_VECTOR_H_
+#endif  // ICING_FILE_FILE_BACKED_VECTOR_H_

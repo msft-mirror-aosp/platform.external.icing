@@ -23,84 +23,84 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/file-backed-vector.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/file/mock-filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/file/version-util.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/index/data-indexing-handler.h"
-#include "third_party/icing/index/embed/embedding-index.h"
-#include "third_party/icing/index/embedding-indexing-handler.h"
-#include "third_party/icing/index/index-processor.h"
-#include "third_party/icing/index/index.h"
-#include "third_party/icing/index/integer-section-indexing-handler.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/index/numeric/integer-index.h"
-#include "third_party/icing/index/numeric/numeric-index.h"
-#include "third_party/icing/index/term-indexing-handler.h"
-#include "third_party/icing/jni/jni-cache.h"
-#include "third_party/icing/join/document-join-id-pair.h"
-#include "third_party/icing/join/join-processor.h"
-#include "third_party/icing/join/qualified-id-join-index-impl-v3.h"
-#include "third_party/icing/join/qualified-id-join-index.h"
-#include "third_party/icing/join/qualified-id-join-indexing-handler.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/legacy/index/icing-mock-filesystem.h"
-#include "third_party/icing/portable/endian.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/portable/gzip_stream.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/proto/optimize.proto.h"
-#include "third_party/icing/proto/persist.proto.h"
-#include "third_party/icing/proto/reset.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/proto/status.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/proto/usage.proto.h"
-#include "third_party/icing/query/query-features.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/blob-store.h"
-#include "third_party/icing/store/document-associated-score-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-log-creator.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/store/namespace-id-fingerprint.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/embedding-test-utils.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer-factory.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/document-util.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
-#include "third_party/icing/util/tokenized-document.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/file/version-util.h"
+#include "icing/icing-search-engine.h"
+#include "icing/index/data-indexing-handler.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/embedding-indexing-handler.h"
+#include "icing/index/index-processor.h"
+#include "icing/index/index.h"
+#include "icing/index/integer-section-indexing-handler.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/index/term-indexing-handler.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/join/document-join-id-pair.h"
+#include "icing/join/join-processor.h"
+#include "icing/join/qualified-id-join-index-impl-v3.h"
+#include "icing/join/qualified-id-join-index.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-mock-filesystem.h"
+#include "icing/portable/endian.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/reset.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/blob-store.h"
+#include "icing/store/document-associated-score-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-log-creator.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id-fingerprint.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "icing/util/tokenized-document.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -189,9 +189,9 @@ class IcingSearchEngineInitializationTest : public testing::Test {
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //third_party/icing/BUILD.
+      // File generated via icu_data_file rule in //icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("third_party/icing/icu.dat");
+          GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -1100,10 +1100,10 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromMissingHeaderFile) {
   search_spec2.set_query("indexableInteger == 123");
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, ScoringSpecProto::default_instance(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 
   // Checks that Schema is still since it'll be needed to validate the document
@@ -1312,18 +1312,18 @@ TEST_F(IcingSearchEngineInitializationTest,
   search_spec1.add_schema_type_filters("Message");
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SearchResultProto expected_search_result_proto2;
-  expected_search_result_proto2.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_proto2.mutable_results()->Add()->mutable_document() =
+  SearchResultProto expected_search_result_google::protobuf;
+  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
       document2_with_additional_property;
-  *expected_search_result_proto2.mutable_results()->Add()->mutable_document() =
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
       document1;
 
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, ScoringSpecProto::default_instance(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
-                                        expected_search_result_proto2));
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_google::protobuf));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
@@ -1463,9 +1463,9 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
       EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto1));
 
   // Searching "test" will get "fake_type/1".
-  SearchResultProto expected_search_result_proto2;
-  expected_search_result_proto2.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_proto2.mutable_results()->Add()->mutable_document() =
+  SearchResultProto expected_search_result_google::protobuf;
+  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
       document2;
   SearchSpecProto search_spec2;
   search_spec2.set_query("test");
@@ -1473,7 +1473,7 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
   EXPECT_THAT(
       icing.Search(search_spec2, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance()),
-      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto2));
+      EqualsSearchResultIgnoreStatsAndScores(expected_search_result_google::protobuf));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -1574,7 +1574,7 @@ TEST_F(IcingSearchEngineInitializationTest,
             /*orphan_blob_time_to_live_ms=*/0,
             PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
             protobuf_ports::kDefaultMemLevel,
-            /*manage_blob_files=*/true, feature_flags_.get()));
+            /*manage_blob_files=*/true));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -1679,10 +1679,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   search_spec2.set_query("indexableInteger == 123");
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, ScoringSpecProto::default_instance(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -6336,7 +6336,7 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             /*orphan_blob_time_to_live_ms=*/0,
             PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
             protobuf_ports::kDefaultMemLevel,
-            /*manage_blob_files=*/true, feature_flags_.get()));
+            /*manage_blob_files=*/true));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -6527,10 +6527,10 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
   search_spec2.set_query("indexableInteger == 123");
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, ScoringSpecProto::default_instance(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -7391,10 +7391,10 @@ TEST_P(IcingSearchEngineInitializationSchemaDatabaseMigrationTest,
   SearchSpecProto search_spec2;
   search_spec2.set_query("subject");
   search_spec2.set_term_match_type(TermMatchType::EXACT_ONLY);
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         all_email_search_result_proto));
 
   // Verify numeric (integer) search

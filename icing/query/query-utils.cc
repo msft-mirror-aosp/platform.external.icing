@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/query/query-utils.h"
+#include "icing/query/query-utils.h"
 
 #include <cstdint>
 #include <memory>
 #include <string_view>
 #include <unordered_set>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/index/iterator/document-filter-predicate.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/store/namespace-id.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/iterator/document-filter-predicate.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {

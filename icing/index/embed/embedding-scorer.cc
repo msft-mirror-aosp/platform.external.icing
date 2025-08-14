@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/embed/embedding-scorer.h"
+#include "icing/index/embed/embedding-scorer.h"
 
 #include <cmath>
 #include <cstdint>
@@ -20,15 +20,15 @@
 #include <string>
 #include <type_traits>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/index/embed/quantizer.h"
-#include "third_party/icing/proto/search.proto.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/quantizer.h"
+#include "icing/proto/search.pb.h"
 
 #ifndef ICING_DISABLE_EIGEN
-#include "third_party/eigen3/Eigen/Core"
-#include "third_party/eigen3/Eigen/Dense"
+#include <Eigen/Core>
+#include <Eigen/Dense>
 #endif  // ICING_DISABLE_EIGEN
 
 namespace icing {

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_JNI_SCOPED_PRIMITIVE_ARRAY_CRITICAL_H_
-#define THIRD_PARTY_ICING_JNI_SCOPED_PRIMITIVE_ARRAY_CRITICAL_H_
+#ifndef ICING_JNI_SCOPED_PRIMITIVE_ARRAY_CRITICAL_H_
+#define ICING_JNI_SCOPED_PRIMITIVE_ARRAY_CRITICAL_H_
 
 #include <jni.h>
 
@@ -83,4 +83,4 @@ class ScopedPrimitiveArrayCritical {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_JNI_SCOPED_PRIMITIVE_ARRAY_CRITICAL_H_
+#endif  // ICING_JNI_SCOPED_PRIMITIVE_ARRAY_CRITICAL_H_

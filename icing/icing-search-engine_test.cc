@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/icing-search-engine.h"
+#include "icing/icing-search-engine.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,38 +21,38 @@
 #include <string>
 #include <utility>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/mock-filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/jni/jni-cache.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/proto/optimize.proto.h"
-#include "third_party/icing/proto/persist.proto.h"
-#include "third_party/icing/proto/reset.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/proto/status.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/proto/usage.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/reset.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -97,9 +97,9 @@ class IcingSearchEngineTest : public testing::Test {
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //third_party/icing/BUILD.
+      // File generated via icu_data_file rule in //icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("third_party/icing/icu.dat");
+          GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -266,12 +266,12 @@ TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitOver1) {
       std::move(expected_get_result_proto1));
 
   // result for doc2 should be ABORTED
-  GetResultProto expected_get_result_proto2;
-  expected_get_result_proto2.mutable_status()->set_code(
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(
       StatusProto::ABORTED);
-  expected_get_result_proto2.set_uri("uri2ForBiggerDocument");
+  expected_get_result_google::protobuf.set_uri("uri2ForBiggerDocument");
   expected_batch_get_result_proto.mutable_get_result_protos()->Add(
-      std::move(expected_get_result_proto2));
+      std::move(expected_get_result_google::protobuf));
 
   // doc3 should be ABORTED
   GetResultProto expected_get_result_proto3;
@@ -327,12 +327,12 @@ TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitOver2) {
       std::move(expected_get_result_proto1));
 
   // doc2 should be OK.
-  GetResultProto expected_get_result_proto2;
-  expected_get_result_proto2.mutable_status()->set_code(StatusProto::OK);
-  expected_get_result_proto2.set_uri("uri2ForBiggerDocument");
-  *expected_get_result_proto2.mutable_document() = biggerDocument2;
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_google::protobuf.set_uri("uri2ForBiggerDocument");
+  *expected_get_result_google::protobuf.mutable_document() = biggerDocument2;
   expected_batch_get_result_proto.mutable_get_result_protos()->Add(
-      std::move(expected_get_result_proto2));
+      std::move(expected_get_result_google::protobuf));
 
   // doc3 should be ABORTED
   GetResultProto expected_get_result_proto3;
@@ -388,13 +388,13 @@ TEST_F(IcingSearchEngineTest,
       std::move(expected_get_result_proto1));
 
   // uriNotExist should not be found.
-  GetResultProto expected_get_result_proto2;
-  expected_get_result_proto2.set_uri("uriNotExist");
-  expected_get_result_proto2.mutable_status()->set_code(StatusProto::NOT_FOUND);
-  expected_get_result_proto2.mutable_status()->set_message(
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.set_uri("uriNotExist");
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
       "Document (namespace, uriNotExist) not found.");
   expected_batch_get_result_proto.mutable_get_result_protos()->Add(
-      std::move(expected_get_result_proto2));
+      std::move(expected_get_result_google::protobuf));
 
   // doc3 should be ABORTED
   GetResultProto expected_get_result_proto3;
@@ -456,11 +456,11 @@ TEST_F(IcingSearchEngineTest, BatchGetDocumentAlwaysReturnOneDoc) {
       std::move(expected_get_result_proto1));
 
   // result for doc2 should be ABORTED
-  GetResultProto expected_get_result_proto2;
-  expected_get_result_proto2.mutable_status()->set_code(StatusProto::ABORTED);
-  expected_get_result_proto2.set_uri("uri2");
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::ABORTED);
+  expected_get_result_google::protobuf.set_uri("uri2");
   expected_batch_get_result_proto.mutable_get_result_protos()->Add(
-      std::move(expected_get_result_proto2));
+      std::move(expected_get_result_google::protobuf));
 
   // doc3 should be ABORTED
   GetResultProto expected_get_result_proto3;
@@ -516,12 +516,12 @@ TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitNotOver) {
       std::move(expected_get_result_proto1));
 
   // doc2 should be OK.
-  GetResultProto expected_get_result_proto2;
-  expected_get_result_proto2.mutable_status()->set_code(StatusProto::OK);
-  expected_get_result_proto2.set_uri("uri2ForBiggerDocument");
-  *expected_get_result_proto2.mutable_document() = biggerDocument2;
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_google::protobuf.set_uri("uri2ForBiggerDocument");
+  *expected_get_result_google::protobuf.mutable_document() = biggerDocument2;
   expected_batch_get_result_proto.mutable_get_result_protos()->Add(
-      std::move(expected_get_result_proto2));
+      std::move(expected_get_result_google::protobuf));
 
   // doc3 should be OK
   GetResultProto expected_get_result_proto3;

@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
-#define THIRD_PARTY_ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
+#ifndef ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
+#define ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
 
 #include <jni.h>
 
 #include <queue>
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/java/jni-base.h"
-#include "third_party/icing/jni/jni-cache.h"
+#include "icing/text_classifier/lib3/utils/java/jni-base.h"
+#include "icing/jni/jni-cache.h"
 
 namespace icing {
 namespace lib {
@@ -121,4 +121,4 @@ class ReverseJniBreakIterator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
+#endif  // ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_

@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/join/aggregation-scorer.h"
+#include "icing/join/aggregation-scorer.h"
 
 #include <algorithm>
 #include <memory>
 #include <numeric>
 #include <vector>
 
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
+#include "icing/proto/search.pb.h"
+#include "icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {

@@ -14,8 +14,8 @@
 
 // Methods for interacting with the filesystem.
 
-#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
-#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
+#ifndef ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
+#define ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
 
 #include <sys/types.h>
 
@@ -250,4 +250,4 @@ class IcingFilesystem {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
+#endif  // ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_

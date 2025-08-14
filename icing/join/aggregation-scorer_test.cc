@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/join/aggregation-scorer.h"
+#include "icing/join/aggregation-scorer.h"
 
 #include <algorithm>
 #include <iterator>
 #include <memory>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {

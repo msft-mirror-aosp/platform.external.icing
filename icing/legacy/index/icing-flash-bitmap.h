@@ -34,16 +34,16 @@
 // It's ok to call Init after InitForRead. The last "Init" call takes
 // effect.
 
-#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
-#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
+#ifndef ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
+#define ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/legacy/index/icing-mmapper.h"
-#include "third_party/icing/util/crc32.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -152,4 +152,4 @@ class IcingFlashBitmap {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
+#endif  // ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_

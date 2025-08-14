@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_DOCUMENT_BUILDER_H_
-#define THIRD_PARTY_ICING_DOCUMENT_BUILDER_H_
+#ifndef ICING_DOCUMENT_BUILDER_H_
+#define ICING_DOCUMENT_BUILDER_H_
 
 #include <cstdint>
 #include <initializer_list>
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-#include "third_party/icing/proto/document.proto.h"
+#include "icing/proto/document.pb.h"
 
 namespace icing {
 namespace lib {
@@ -240,4 +240,4 @@ class DocumentBuilder {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_DOCUMENT_BUILDER_H_
+#endif  // ICING_DOCUMENT_BUILDER_H_

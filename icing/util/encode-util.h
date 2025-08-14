@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_UTIL_ENCODE_UTIL_H_
-#define THIRD_PARTY_ICING_UTIL_ENCODE_UTIL_H_
+#ifndef ICING_UTIL_ENCODE_UTIL_H_
+#define ICING_UTIL_ENCODE_UTIL_H_
 
 #include <cstdint>
 #include <string>
@@ -54,4 +54,4 @@ std::string EncodeStringToCString(const std::string& input);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_UTIL_ENCODE_UTIL_H_
+#endif  // ICING_UTIL_ENCODE_UTIL_H_

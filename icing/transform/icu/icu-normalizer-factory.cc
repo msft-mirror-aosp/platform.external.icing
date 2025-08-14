@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TRANSFORM_ICU_ICU_NORMALIZER_FACTORY_H_
-#define THIRD_PARTY_ICING_TRANSFORM_ICU_ICU_NORMALIZER_FACTORY_H_
+#ifndef ICING_TRANSFORM_ICU_ICU_NORMALIZER_FACTORY_H_
+#define ICING_TRANSFORM_ICU_ICU_NORMALIZER_FACTORY_H_
 
 #include <memory>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/transform/icu/icu-normalizer.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/transform/icu/icu-normalizer.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -49,4 +49,4 @@ libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TRANSFORM_ICU_ICU_NORMALIZER_FACTORY_H_
+#endif  // ICING_TRANSFORM_ICU_ICU_NORMALIZER_FACTORY_H_

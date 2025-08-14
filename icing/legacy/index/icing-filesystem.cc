@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-filesystem.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -36,10 +36,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/legacy/index/icing-mmapper.h"
-#include "third_party/icing/legacy/portable/icing-zlib.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/legacy/index/icing-mmapper.h"
+#include "icing/legacy/portable/icing-zlib.h"
+#include "icing/util/logging.h"
 
 using std::vector;
 
@@ -448,7 +448,9 @@ bool IcingFilesystem::GrowUsingPWrite(int fd, uint64_t new_size) const {
 bool IcingFilesystem::Write(int fd, const void *data, size_t data_size) const {
   size_t write_len = data_size;
   do {
-    ssize_t wrote = write(fd, data, write_len);
+    // Don't try to write too much at once.
+    size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
+    ssize_t wrote = write(fd, data, chunk_size);
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
       return false;
@@ -464,7 +466,8 @@ bool IcingFilesystem::PWrite(int fd, off_t offset, const void *data,
   size_t write_len = data_size;
   do {
     // Don't try to write too much at once.
-    ssize_t wrote = pwrite(fd, data, write_len, offset);
+    size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
+    ssize_t wrote = pwrite(fd, data, chunk_size, offset);
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
       return false;

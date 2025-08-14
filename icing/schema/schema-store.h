@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCHEMA_SCHEMA_STORE_H_
-#define THIRD_PARTY_ICING_SCHEMA_SCHEMA_STORE_H_
+#ifndef ICING_SCHEMA_SCHEMA_STORE_H_
+#define ICING_SCHEMA_SCHEMA_STORE_H_
 
 #include <cstdint>
 #include <cstring>
@@ -27,30 +27,30 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/version-util.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/schema/joinable-property.h"
-#include "third_party/icing/schema/schema-type-manager.h"
-#include "third_party/icing/schema/schema-util.h"
-#include "third_party/icing/schema/scorable_property_manager.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/key-mapper.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/version-util.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/schema/joinable-property.h"
+#include "icing/schema/schema-type-manager.h"
+#include "icing/schema/schema-util.h"
+#include "icing/schema/scorable_property_manager.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/key-mapper.h"
+#include "icing/util/clock.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -579,7 +579,7 @@ class SchemaStore {
   // - Expanded paths of A: {P1, P2}
   // - Expanded paths of B: {P1, P2, P3}
   std::vector<ExpandedTypePropertyMask> ExpandTypePropertyMasks(
-      const proto2::RepeatedPtrField<TypePropertyMask>& type_property_masks)
+      const google::protobuf::RepeatedPtrField<TypePropertyMask>& type_property_masks)
       const;
 
  private:
@@ -978,4 +978,4 @@ class SchemaStore {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCHEMA_SCHEMA_STORE_H_
+#endif  // ICING_SCHEMA_SCHEMA_STORE_H_

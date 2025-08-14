@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/legacy/index/icing-array-storage.h"
+#include "icing/legacy/index/icing-array-storage.h"
 
 #include <sys/mman.h>
 
@@ -21,13 +21,13 @@
 #include <cstdint>
 #include <cstring>
 
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/legacy/core/icing-timer.h"
-#include "third_party/icing/legacy/index/icing-bit-util.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/legacy/index/icing-mmapper.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/core/icing-timer.h"
+#include "icing/legacy/index/icing-bit-util.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 
 using std::max;
 using std::min;

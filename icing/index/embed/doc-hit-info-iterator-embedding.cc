@@ -12,36 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/embed/doc-hit-info-iterator-embedding-v1.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
 
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/index/embed/embedding-hit.h"
-#include "third_party/icing/index/embed/embedding-index.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/index/embed/embedding-scorer.h"
-#include "third_party/icing/index/embed/posting-list-embedding-hit-accessor.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/embed/embedding-scorer.h"
+#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIteratorEmbeddingV1>>
-DocHitInfoIteratorEmbeddingV1::Create(
+libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIteratorEmbedding>>
+DocHitInfoIteratorEmbedding::Create(
     const PropertyProto::VectorProto* query,
     SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
     double score_low, double score_high,
@@ -75,8 +75,8 @@ DocHitInfoIteratorEmbeddingV1::Create(
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<EmbeddingScorer> embedding_scorer,
                          EmbeddingScorer::Create(metric_type));
 
-  return std::unique_ptr<DocHitInfoIteratorEmbeddingV1>(
-      new DocHitInfoIteratorEmbeddingV1(
+  return std::unique_ptr<DocHitInfoIteratorEmbedding>(
+      new DocHitInfoIteratorEmbedding(
           query, metric_type, std::move(embedding_scorer), score_low,
           score_high, info_map, global_scores, global_section_infos,
           embedding_index, std::move(pl_accessor), document_store, schema_store,
@@ -84,7 +84,7 @@ DocHitInfoIteratorEmbeddingV1::Create(
 }
 
 libtextclassifier3::StatusOr<const EmbeddingHit*>
-DocHitInfoIteratorEmbeddingV1::AdvanceToNextEmbeddingHit() {
+DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
   if (cached_embedding_hits_idx_ == cached_embedding_hits_.size()) {
     ICING_ASSIGN_OR_RETURN(cached_embedding_hits_,
                            posting_list_accessor_->GetNextHitsBatch());
@@ -124,7 +124,7 @@ DocHitInfoIteratorEmbeddingV1::AdvanceToNextEmbeddingHit() {
 }
 
 libtextclassifier3::Status
-DocHitInfoIteratorEmbeddingV1::AdvanceToNextUnfilteredDocument() {
+DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
   if (no_more_hit_ || posting_list_accessor_ == nullptr) {
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
@@ -199,7 +199,7 @@ DocHitInfoIteratorEmbeddingV1::AdvanceToNextUnfilteredDocument() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocHitInfoIteratorEmbeddingV1::Advance() {
+libtextclassifier3::Status DocHitInfoIteratorEmbedding::Advance() {
   do {
     ICING_RETURN_IF_ERROR(AdvanceToNextUnfilteredDocument());
   } while (doc_hit_info_.hit_section_ids_mask() == kSectionIdMaskNone);

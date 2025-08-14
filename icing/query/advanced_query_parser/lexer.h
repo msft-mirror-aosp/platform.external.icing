@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_LEXER_H_
-#define THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_LEXER_H_
+#ifndef ICING_QUERY_ADVANCED_QUERY_PARSER_LEXER_H_
+#define ICING_QUERY_ADVANCED_QUERY_PARSER_LEXER_H_
 
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 
 namespace icing {
 namespace lib {
@@ -166,4 +166,4 @@ class Lexer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_QUERY_ADVANCED_QUERY_PARSER_LEXER_H_
+#endif  // ICING_QUERY_ADVANCED_QUERY_PARSER_LEXER_H_

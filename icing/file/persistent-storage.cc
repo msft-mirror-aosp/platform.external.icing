@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/persistent-storage.h"
+#include "icing/file/persistent-storage.h"
 
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/legacy/core/icing-string-util.h"
 
 namespace icing {
 namespace lib {

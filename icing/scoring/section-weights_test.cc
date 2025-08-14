@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/section-weights.h"
+#include "icing/scoring/section-weights.h"
 
 #include <cfloat>
 #include <memory>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

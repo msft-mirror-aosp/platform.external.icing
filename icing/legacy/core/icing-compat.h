@@ -15,8 +15,8 @@
 // Copyright 2014 Google Inc. All Rights Reserved.
 // Author: csyoung@google.com (C. Sean Young)
 
-#ifndef THIRD_PARTY_ICING_LEGACY_CORE_ICING_COMPAT_H_
-#define THIRD_PARTY_ICING_LEGACY_CORE_ICING_COMPAT_H_
+#ifndef ICING_LEGACY_CORE_ICING_COMPAT_H_
+#define ICING_LEGACY_CORE_ICING_COMPAT_H_
 
 #ifdef __APPLE__
 // iOS does not allow dlopen/dlclose/dlsym.
@@ -30,4 +30,4 @@
 #define ICING_ALLOW_DYNAMIC_EXTENSIONS 1
 #endif  // __APPLE__
 
-#endif  // THIRD_PARTY_ICING_LEGACY_CORE_ICING_COMPAT_H_
+#endif  // ICING_LEGACY_CORE_ICING_COMPAT_H_

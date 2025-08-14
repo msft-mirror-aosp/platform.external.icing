@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,17 +20,17 @@
 #include <limits>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/posting_list/posting-list-used.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/legacy/index/icing-bit-util.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/hit-test-utils.h"
-#include "third_party/icing/util/math-util.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/posting_list/posting-list-used.h"
+#include "icing/index/hit/hit.h"
+#include "icing/legacy/index/icing-bit-util.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/hit-test-utils.h"
+#include "icing/util/math-util.h"
 
 using testing::ElementsAre;
 using testing::Eq;

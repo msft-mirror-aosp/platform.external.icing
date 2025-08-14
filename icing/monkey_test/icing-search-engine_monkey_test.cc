@@ -16,13 +16,13 @@
 #include <random>
 #include <utility>
 
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/monkey_test/icing-monkey-test-runner.h"
-#include "third_party/icing/monkey_test/monkey-test-util.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/util/logging.h"
+#include "gtest/gtest.h"
+#include "icing/monkey_test/icing-monkey-test-runner.h"
+#include "icing/monkey_test/monkey-test-util.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/schema/section.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -46,7 +46,7 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
                                     kTotalNumSections + 1,
                                     kTotalNumSections * 2};
   config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
-  config.possible_num_vectors = {0, 1, 4, 8};
+  config.possible_num_vectors = {0, 1, 4};
   config.possible_vector_dimensions = {128, 512, 768};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},

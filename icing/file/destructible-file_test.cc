@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/destructible-file.h"
+#include "icing/file/destructible-file.h"
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/filesystem.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
-#define THIRD_PARTY_ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
+#ifndef ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
+#define ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
 
 #include <string>
 #include <string_view>
 
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/character-iterator.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -60,4 +60,4 @@ class MapNormalizer : public Normalizer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
+#endif  // ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_

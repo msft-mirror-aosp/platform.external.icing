@@ -17,13 +17,13 @@
 //
 // Interface class for disk-backed storage.
 
-#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_H_
-#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_H_
+#ifndef ICING_LEGACY_INDEX_ICING_STORAGE_H_
+#define ICING_LEGACY_INDEX_ICING_STORAGE_H_
 
 #include <cstdint>
 #include <string>
 
-#include "third_party/icing/util/crc32.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -90,4 +90,4 @@ class IIcingStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_STORAGE_H_
+#endif  // ICING_LEGACY_INDEX_ICING_STORAGE_H_

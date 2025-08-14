@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_EXPAND_EXPANDER_MANAGER_H_
-#define THIRD_PARTY_ICING_EXPAND_EXPANDER_MANAGER_H_
+#ifndef ICING_EXPAND_EXPANDER_MANAGER_H_
+#define ICING_EXPAND_EXPANDER_MANAGER_H_
 
 #include <memory>
 #include <string>
@@ -22,12 +22,12 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/absl_ports/thread_annotations.h"
-#include "third_party/icing/expand/expander.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/thread_annotations.h"
+#include "icing/expand/expander.h"
+#include "icing/proto/term.pb.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -109,4 +109,4 @@ class ExpanderManager {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_EXPAND_EXPANDER_MANAGER_H_
+#endif  // ICING_EXPAND_EXPANDER_MANAGER_H_

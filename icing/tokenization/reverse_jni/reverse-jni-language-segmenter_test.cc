@@ -17,18 +17,18 @@
 #include <memory>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "testing/base/public/gmock.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/jni/jni-cache.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/icu-i18n-test-utils.h"
-#include "third_party/icing/testing/iterator-test-utils.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "gmock/gmock.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/iterator-test-utils.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {

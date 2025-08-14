@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_ABSL_PORTS_ARRAYSIZE_MACROS_H_
-#define THIRD_PARTY_ICING_ABSL_PORTS_ARRAYSIZE_MACROS_H_
+#ifndef ICING_ABSL_PORTS_ARRAYSIZE_MACROS_H_
+#define ICING_ABSL_PORTS_ARRAYSIZE_MACROS_H_
 
 #include <cstddef>
 
@@ -37,4 +37,4 @@ auto ArraySizeHelper(const T (&array)[N]) -> char (&)[N];
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_ARRAYSIZE_MACROS_H_
+#endif  // ICING_ARRAYSIZE_MACROS_H_

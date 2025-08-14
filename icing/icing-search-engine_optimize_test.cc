@@ -22,46 +22,46 @@
 #include <utility>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/marker-file.h"
-#include "third_party/icing/file/mock-filesystem.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/jni/jni-cache.h"
-#include "third_party/icing/join/join-processor.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/proto/optimize.proto.h"
-#include "third_party/icing/proto/persist.proto.h"
-#include "third_party/icing/proto/reset.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/proto/status.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/proto/usage.proto.h"
-#include "third_party/icing/query/query-features.h"
-#include "third_party/icing/result/result-state-manager.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/store/document-log-creator.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/embedding-test-utils.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/marker-file.h"
+#include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/join/join-processor.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/reset.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
+#include "icing/result/result-state-manager.h"
+#include "icing/schema-builder.h"
+#include "icing/store/document-log-creator.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
 
 namespace icing {
 namespace lib {
@@ -112,9 +112,9 @@ class IcingSearchEngineOptimizeTest : public testing::Test {
       // Technically, we could choose to use reverse-JNI for segmentation AND
       // include an ICU data file, but that seems unlikely and our current BUILD
       // setup doesn't do this.
-      // File generated via icu_data_file rule in //third_party/icing/BUILD.
+      // File generated via icu_data_file rule in //icing/BUILD.
       std::string icu_data_file_path =
-          GetTestFilePath("third_party/icing/icu.dat");
+          GetTestFilePath("icing/icu.dat");
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
@@ -1247,10 +1247,10 @@ TEST_F(IcingSearchEngineOptimizeTest, SearchShouldWorkAfterOptimization) {
                                           expected_search_result_proto));
 
     // Numeric (integer) search
-    SearchResultProto search_result_proto2 =
+    SearchResultProto search_result_google::protobuf =
         icing.Search(search_spec2, GetDefaultScoringSpec(),
                      ResultSpecProto::default_instance());
-    EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+    EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                           expected_search_result_proto));
   }  // Destroys IcingSearchEngine to make sure nothing is cached.
 
@@ -1265,10 +1265,10 @@ TEST_F(IcingSearchEngineOptimizeTest, SearchShouldWorkAfterOptimization) {
                                         expected_search_result_proto));
 
   // Verify numeric (integer) search
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 }
 
@@ -1492,9 +1492,9 @@ TEST_F(IcingSearchEngineOptimizeTest,
   *result_proto1->mutable_document() = person1;
   *result_proto1->mutable_joined_results()->Add()->mutable_document() =
       message2;
-  SearchResultProto::ResultProto* result_proto2 =
+  SearchResultProto::ResultProto* result_google::protobuf =
       expected_search_result_proto.mutable_results()->Add();
-  *result_proto2->mutable_document() = person2;
+  *result_google::protobuf->mutable_document() = person2;
 
   {
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -1639,10 +1639,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
   search_spec2.set_query("indexableInteger == 123");
   search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -1776,10 +1776,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
                                         expected_search_result_proto));
 
   // Numeric (integer) search
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 
   // Searching new content returns the new document
@@ -1794,9 +1794,9 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
   // Numeric (integer) search
   search_spec2.set_query("indexableInteger == 456");
-  search_result_proto2 = icing.Search(search_spec2, GetDefaultScoringSpec(),
+  search_result_google::protobuf = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                       ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 }
 
@@ -1895,10 +1895,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
                                         expected_search_result_proto));
 
   // Numeric (integer) search
-  SearchResultProto search_result_proto2 =
+  SearchResultProto search_result_google::protobuf =
       icing.Search(search_spec2, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 
   // Searching new content returns the new document
@@ -1913,9 +1913,9 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
   // Numeric (integer) search
   search_spec2.set_query("indexableInteger == 456");
-  search_result_proto2 = icing.Search(search_spec2, GetDefaultScoringSpec(),
+  search_result_google::protobuf = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                       ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto2, EqualsSearchResultIgnoreStatsAndScores(
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_search_result_proto));
 }
 

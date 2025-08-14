@@ -14,11 +14,11 @@
 
 #include <memory>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/transform/map/map-normalizer.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/transform/map/map-normalizer.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {

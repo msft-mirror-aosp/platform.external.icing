@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/result/projection-tree.h"
+#include "icing/result/projection-tree.h"
 
 #include <algorithm>
 
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/property-util.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/property-util.h"
 
 namespace icing {
 namespace lib {

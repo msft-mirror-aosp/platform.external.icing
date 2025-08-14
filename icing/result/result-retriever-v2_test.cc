@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/result/result-retriever-v2.h"
+#include "icing/result/result-retriever-v2.h"
 
 #include <atomic>
 #include <cstddef>
@@ -25,46 +25,46 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/mock-filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/portable/gzip_stream.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/result/page-result.h"
-#include "third_party/icing/result/result-state-v2.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/priority-queue-scored-document-hits-ranker.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer-factory.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/document-util.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/result/page-result.h"
+#include "icing/result/result-state-v2.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -108,9 +108,9 @@ class ResultRetrieverV2Test : public ::testing::TestWithParam<FeatureFlags> {
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //third_party/icing/BUILD.
+          // File generated via icu_data_file rule in //icing/BUILD.
           icu_data_file_helper::SetUpIcuDataFile(
-              GetTestFilePath("third_party/icing/icu.dat")));
+              GetTestFilePath("icing/icu.dat")));
     }
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -1340,9 +1340,7 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true,
-                        /*enable_embedding_iterator_v2=*/true,
-                        /*enable_reusable_decompression_buffer=*/true),
+                        /*enable_proto_log_new_header_format=*/true),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -1355,9 +1353,7 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true,
-                        /*enable_embedding_iterator_v2=*/true,
-                        /*enable_reusable_decompression_buffer=*/true)));
+                        /*enable_proto_log_new_header_format=*/true)));
 
 }  // namespace
 

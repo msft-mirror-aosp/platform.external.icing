@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/iterator/doc-hit-info-iterator-or.h"
+#include "icing/index/iterator/doc-hit-info-iterator-or.h"
 
 #include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

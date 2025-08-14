@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
-#define THIRD_PARTY_ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
+#ifndef ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
+#define ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
 
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/suggestion-result-checker.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/store/suggestion-result-checker.h"
 
 namespace icing {
 namespace lib {
@@ -33,4 +33,4 @@ class AlwaysFalseSuggestionResultCheckerImpl : public SuggestionResultChecker {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
+#endif  // ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_

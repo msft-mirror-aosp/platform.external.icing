@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
-#define THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
+#ifndef ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
+#define ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
 
 #include <cstdint>
 #include <random>
@@ -23,11 +23,11 @@
 #include <unordered_set>
 #include <vector>
 
-#include "third_party/icing/monkey_test/monkey-test-common-words.h"
-#include "third_party/icing/monkey_test/monkey-test-util.h"
-#include "third_party/icing/monkey_test/monkey-tokenized-document.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/util/clock.h"
+#include "icing/monkey_test/monkey-test-common-words.h"
+#include "icing/monkey_test/monkey-test-util.h"
+#include "icing/monkey_test/monkey-tokenized-document.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -145,4 +145,4 @@ class MonkeyDocumentGenerator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_
+#endif  // ICING_MONKEY_TEST_MONKEY_TEST_GENERATORS_H_

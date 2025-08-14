@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/lite/lite-index.h"
+#include "icing/index/lite/lite-index.h"
 
 #include <sys/mman.h>
 
@@ -27,35 +27,35 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/lite/lite-index-header.h"
-#include "third_party/icing/index/lite/term-id-hit-pair.h"
-#include "third_party/icing/index/term-id-codec.h"
-#include "third_party/icing/index/term-property-id.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/legacy/core/icing-timer.h"
-#include "third_party/icing/legacy/index/icing-array-storage.h"
-#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/legacy/index/icing-mmapper.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/namespace-id.h"
-#include "third_party/icing/store/suggestion-result-checker.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/lite/lite-index-header.h"
+#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/term-id-codec.h"
+#include "icing/index/term-property-id.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/core/icing-timer.h"
+#include "icing/legacy/index/icing-array-storage.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-mmapper.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

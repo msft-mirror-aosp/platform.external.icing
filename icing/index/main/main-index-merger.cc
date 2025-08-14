@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/main/main-index-merger.h"
+#include "icing/index/main/main-index-merger.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -21,18 +21,18 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/file/posting_list/posting-list-common.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/lite/lite-index.h"
-#include "third_party/icing/index/lite/term-id-hit-pair.h"
-#include "third_party/icing/index/main/main-index.h"
-#include "third_party/icing/index/term-id-codec.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/math-util.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/lite/lite-index.h"
+#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/main/main-index.h"
+#include "icing/index/term-id-codec.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/util/logging.h"
+#include "icing/util/math-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

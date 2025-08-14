@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/join/document-dependent-graph.h"
+#include "icing/join/document-dependent-graph.h"
 
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/graph/graph-interface.h"
-#include "third_party/icing/join/qualified-id-join-index.h"
-#include "third_party/icing/schema/joinable-property.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/graph/graph-interface.h"
+#include "icing/join/qualified-id-join-index.h"
+#include "icing/schema/joinable-property.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

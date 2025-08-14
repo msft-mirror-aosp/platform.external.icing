@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_EMBED_POSTING_LIST_EMBEDDING_HIT_SERIALIZER_H_
-#define THIRD_PARTY_ICING_INDEX_EMBED_POSTING_LIST_EMBEDDING_HIT_SERIALIZER_H_
+#ifndef ICING_INDEX_EMBED_POSTING_LIST_EMBEDDING_HIT_SERIALIZER_H_
+#define ICING_INDEX_EMBED_POSTING_LIST_EMBEDDING_HIT_SERIALIZER_H_
 
 #include <cstdint>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/file/posting_list/posting-list-common.h"
-#include "third_party/icing/file/posting_list/posting-list-used.h"
-#include "third_party/icing/index/embed/embedding-hit.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-used.h"
+#include "icing/index/embed/embedding-hit.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -281,4 +281,4 @@ PostingListEmbeddingHitSerializer::PrependHitArray(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_EMBED_POSTING_LIST_EMBEDDING_HIT_SERIALIZER_H_
+#endif  // ICING_INDEX_EMBED_POSTING_LIST_EMBEDDING_HIT_SERIALIZER_H_

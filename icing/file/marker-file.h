@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_FILE_MARKER_FILE_H_
-#define THIRD_PARTY_ICING_FILE_MARKER_FILE_H_
+#ifndef ICING_FILE_MARKER_FILE_H_
+#define ICING_FILE_MARKER_FILE_H_
 
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/filesystem.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -86,4 +86,4 @@ class MarkerFile {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_FILE_MARKER_FILE_H_
+#endif  // ICING_FILE_MARKER_FILE_H_

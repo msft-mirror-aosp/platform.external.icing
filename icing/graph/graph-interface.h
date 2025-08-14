@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_GRAPH_GRAPH_INTERFACE_H_
-#define THIRD_PARTY_ICING_GRAPH_GRAPH_INTERFACE_H_
+#ifndef ICING_GRAPH_GRAPH_INTERFACE_H_
+#define ICING_GRAPH_GRAPH_INTERFACE_H_
 
 #include <memory>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 
 namespace icing {
 namespace lib {
@@ -71,4 +71,4 @@ class GraphInterface {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_GRAPH_GRAPH_INTERFACE_H_
+#endif  // ICING_GRAPH_GRAPH_INTERFACE_H_

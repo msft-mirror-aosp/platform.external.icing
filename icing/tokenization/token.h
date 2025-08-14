@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TOKENIZATION_TOKEN_H_
-#define THIRD_PARTY_ICING_TOKENIZATION_TOKEN_H_
+#ifndef ICING_TOKENIZATION_TOKEN_H_
+#define ICING_TOKENIZATION_TOKEN_H_
 
 #include <string_view>
 
@@ -80,4 +80,4 @@ struct Token {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TOKENIZATION_TOKEN_H_
+#endif  // ICING_TOKENIZATION_TOKEN_H_

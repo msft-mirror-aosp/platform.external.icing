@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/schema-store.h"
+#include "icing/schema/schema-store.h"
 
 #include <cstdint>
 #include <memory>
@@ -22,31 +22,31 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/mock-filesystem.h"
-#include "third_party/icing/file/version-util.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/logging.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/crc32.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/mock-filesystem.h"
+#include "icing/file/version-util.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {

@@ -60,7 +60,7 @@
 // of pages. No changes get written to disk until an explicit call to
 // Flush. Then we only write the pages that have their dirty bit set.
 
-#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -80,24 +80,24 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/legacy/core/icing-timer.h"
-#include "third_party/icing/legacy/index/icing-array-storage.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/legacy/index/icing-flash-bitmap.h"
-#include "third_party/icing/legacy/index/icing-mmapper.h"
-#include "third_party/icing/legacy/index/icing-storage.h"
-#include "third_party/icing/legacy/index/proto/icing-dynamic-trie-header.proto.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/i18n-utils.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/math-util.h"
-#include "third_party/icing/util/status-macros.h"
-#include "third_party/icu/include/unicode/utf8.h"
-#include "third_party/icu/include/unicode/utypes.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/core/icing-timer.h"
+#include "icing/legacy/index/icing-array-storage.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-flash-bitmap.h"
+#include "icing/legacy/index/icing-mmapper.h"
+#include "icing/legacy/index/icing-storage.h"
+#include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
+#include "icing/util/crc32.h"
+#include "icing/util/i18n-utils.h"
+#include "icing/util/logging.h"
+#include "icing/util/math-util.h"
+#include "icing/util/status-macros.h"
+#include "unicode/utf8.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {

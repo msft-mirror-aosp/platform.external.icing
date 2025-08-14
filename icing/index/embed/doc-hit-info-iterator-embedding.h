@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Google LLC
+// Copyright (C) 2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V2_H_
-#define THIRD_PARTY_ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V2_H_
+#ifndef ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
+#define ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,26 +21,27 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/index/embed/embedding-index.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/index/embed/embedding-scorer.h"
-#include "third_party/icing/index/embed/posting-list-embedding-hit-accessor.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/index/iterator/document-filter-predicate.h"
-#include "third_party/icing/index/iterator/section-restrict-data.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-store.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/embed/embedding-scorer.h"
+#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
+#include "icing/index/iterator/section-restrict-data.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorEmbeddingV2
+class DocHitInfoIteratorEmbedding
     : public DocHitInfoIteratorHandlingSectionRestrict,
       public DocHitInfoIteratorHandlingFilter {
  public:
@@ -55,10 +56,10 @@ class DocHitInfoIteratorEmbeddingV2
   // help of DocHitInfoIteratorHandlingSectionRestrict.
   //
   // Returns:
-  //   - a DocHitInfoIteratorEmbeddingV2 instance on success.
+  //   - a DocHitInfoIteratorEmbedding instance on success.
   //   - Any error from posting lists.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<DocHitInfoIteratorEmbeddingV2>>
+      std::unique_ptr<DocHitInfoIteratorEmbedding>>
   Create(const PropertyProto::VectorProto* query,
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
          double score_low, double score_high,
@@ -98,12 +99,7 @@ class DocHitInfoIteratorEmbeddingV2
       SectionIdMask filtering_section_mask) const override {}
 
  private:
-  struct HitWithScore {
-    BasicHit hit;
-    float score;
-  };
-
-  explicit DocHitInfoIteratorEmbeddingV2(
+  explicit DocHitInfoIteratorEmbedding(
       const PropertyProto::VectorProto* query,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
@@ -126,38 +122,29 @@ class DocHitInfoIteratorEmbeddingV2
         global_section_infos_(global_section_infos),
         embedding_index_(*embedding_index),
         posting_list_accessor_(std::move(posting_list_accessor)),
-        cached_hit_scores_idx_(0),
+        cached_embedding_hits_idx_(0),
+        current_allowed_sections_mask_(kSectionIdMaskAll),
         no_more_hit_(false),
+        schema_type_id_(kInvalidSchemaTypeId),
         document_store_(*document_store),
         schema_store_(*schema_store),
         current_time_ms_(current_time_ms),
         num_advance_calls_(0) {}
 
-  // Retrieve the next batch of embedding hits from the posting list.
-  //
-  // Hits that do not pass section restriction or document filter will be
-  // filtered out. Otherwise, the hits will be scored and added to
-  // cached_hit_scores_.
-  //
-  // Returns:
-  //   - OK, if it is able to retrieve the next batch of embedding hits.
-  //   - Any error from posting lists.
-  libtextclassifier3::Status RetrieveNextHitsBatch();
-
   // Advance to the next embedding hit of the current document. If the current
   // document id is kInvalidDocumentId, the method will advance to the first
   // embedding hit of the next document and update doc_hit_info_.
   //
-  // This method also properly updates cached_hit_scores_,
-  // cached_hit_scores_idx_, and no_more_hit_ to reflect the current
-  // state.
+  // This method also properly updates cached_embedding_hits_,
+  // cached_embedding_hits_idx_, current_allowed_sections_mask_, and
+  // no_more_hit_ to reflect the current state.
   //
   // Returns:
   //   - a const pointer to the next embedding hit on success.
   //   - nullptr, if there is no more hit for the current document, or no more
   //     hit in general if the current document id is kInvalidDocumentId.
   //   - Any error from posting lists.
-  libtextclassifier3::StatusOr<const HitWithScore*> AdvanceToNextEmbeddingHit();
+  libtextclassifier3::StatusOr<const EmbeddingHit*> AdvanceToNextEmbeddingHit();
 
   // Similar to Advance(), this method advances the iterator to the next
   // document, but it does not guarantee that the next document will have
@@ -190,9 +177,11 @@ class DocHitInfoIteratorEmbeddingV2
   std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor_;
 
   // Cached data from the embeddings index
-  std::vector<HitWithScore> cached_hit_scores_;
-  int cached_hit_scores_idx_;
+  std::vector<EmbeddingHit> cached_embedding_hits_;
+  int cached_embedding_hits_idx_;
+  SectionIdMask current_allowed_sections_mask_;
   bool no_more_hit_;
+  SchemaTypeId schema_type_id_;  // The schema type id for the current document.
 
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
@@ -203,4 +192,4 @@ class DocHitInfoIteratorEmbeddingV2
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V2_H_
+#endif  // ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_

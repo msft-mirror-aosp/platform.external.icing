@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
-#define THIRD_PARTY_ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
+#ifndef ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
+#define ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
 
 #include <cstdint>
 #include <functional>
@@ -26,21 +26,21 @@
 #include <unordered_set>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/persistent-storage.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/index/numeric/doc-hit-info-iterator-numeric.h"
-#include "third_party/icing/index/numeric/numeric-index.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/persistent-storage.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/doc-hit-info-iterator-numeric.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -359,4 +359,4 @@ libtextclassifier3::Status DummyNumericIndex<T>::Optimize(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
+#endif  // ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_

@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/schema-util.h"
+#include "icing/schema/schema-util.h"
 
 #include <memory>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {
@@ -4441,9 +4441,7 @@ TEST_P(SchemaUtilTest,
       /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_eigen_embedding_scoring=*/true,
       /*enable_passing_filter_to_children=*/true,
-      /*enable_proto_log_new_header_format=*/true,
-      /*enable_embedding_iterator_v2=*/true,
-      /*enable_reusable_decompression_buffer=*/true);
+      /*enable_proto_log_new_header_format=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4510,9 +4508,7 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_eigen_embedding_scoring=*/true,
       /*enable_passing_filter_to_children=*/true,
-      /*enable_proto_log_new_header_format=*/true,
-      /*enable_embedding_iterator_v2=*/true,
-      /*enable_reusable_decompression_buffer=*/true);
+      /*enable_proto_log_new_header_format=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5844,9 +5840,7 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true,
-                        /*enable_embedding_iterator_v2=*/true,
-                        /*enable_reusable_decompression_buffer=*/true),
+                        /*enable_proto_log_new_header_format=*/true),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -5859,9 +5853,7 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true,
-                        /*enable_embedding_iterator_v2=*/true,
-                        /*enable_reusable_decompression_buffer=*/true)));
+                        /*enable_proto_log_new_header_format=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

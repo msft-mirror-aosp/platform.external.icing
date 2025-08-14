@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/query/suggestion-processor.h"
+#include "icing/query/suggestion-processor.h"
 
 #include <cstdint>
 #include <memory>
@@ -23,29 +23,29 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/index/embed/embedding-index.h"
-#include "third_party/icing/index/index.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/index/numeric/numeric-index.h"
-#include "third_party/icing/index/term-metadata.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/query/query-processor.h"
-#include "third_party/icing/query/query-results.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/store/namespace-id.h"
-#include "third_party/icing/store/suggestion-result-checker-impl.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
+#include "icing/index/embed/embedding-index.h"
+#include "icing/index/index.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/index/term-metadata.h"
+#include "icing/proto/search.pb.h"
+#include "icing/query/query-processor.h"
+#include "icing/query/query-results.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker-impl.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

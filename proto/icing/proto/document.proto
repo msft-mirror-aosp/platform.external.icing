@@ -16,9 +16,9 @@ syntax = "proto2";
 
 package icing.lib;
 
-import "third_party/icing/proto/logging.proto";
-import "third_party/icing/proto/persist.proto";
-import "third_party/icing/proto/status.proto";
+import "icing/proto/logging.proto";
+import "icing/proto/persist.proto";
+import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;

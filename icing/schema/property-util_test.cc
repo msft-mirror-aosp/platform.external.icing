@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/property-util.h"
+#include "icing/schema/property-util.h"
 
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/document-builder.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/proto/document.pb.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

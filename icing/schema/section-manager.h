@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCHEMA_SECTION_MANAGER_H_
-#define THIRD_PARTY_ICING_SCHEMA_SECTION_MANAGER_H_
+#ifndef ICING_SCHEMA_SECTION_MANAGER_H_
+#define ICING_SCHEMA_SECTION_MANAGER_H_
 
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/key-mapper.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/proto/document.pb.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/key-mapper.h"
 
 namespace icing {
 namespace lib {
@@ -131,4 +131,4 @@ class SectionManager {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCHEMA_SECTION_MANAGER_H_
+#endif  // ICING_SCHEMA_SECTION_MANAGER_H_

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/testing/logging-event-listener.h"
+#include "icing/testing/logging-event-listener.h"
 
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/schema-util.h"
+#include "icing/schema/schema-util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -24,17 +24,17 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/annotate.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/absl_ports/str_join.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/annotate.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/str_join.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

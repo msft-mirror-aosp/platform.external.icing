@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/testing/test-feature-flags.h"
+#include "icing/testing/test-feature-flags.h"
 
-#include "third_party/icing/feature-flags.h"
+#include "icing/feature-flags.h"
 
 namespace icing {
 namespace lib {
@@ -32,9 +32,7 @@ FeatureFlags GetTestFeatureFlags() {
       /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_eigen_embedding_scoring=*/true,
       /*enable_passing_filter_to_children=*/true,
-      /*enable_proto_log_new_header_format=*/true,
-      /*enable_embedding_iterator_v2=*/true,
-      /*enable_reusable_decompression_buffer=*/true);
+      /*enable_proto_log_new_header_format=*/true);
 }
 
 }  // namespace lib

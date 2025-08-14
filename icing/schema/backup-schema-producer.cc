@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/backup-schema-producer.h"
+#include "icing/schema/backup-schema-producer.h"
 
 #include <algorithm>
 #include <string_view>
@@ -20,14 +20,14 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/schema/property-util.h"
-#include "third_party/icing/schema/section-manager.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/schema/property-util.h"
+#include "icing/schema/section-manager.h"
+#include "icing/schema/section.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

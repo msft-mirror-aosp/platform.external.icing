@@ -50,8 +50,8 @@
 //   Document same_document = proto_log->ReadProto(document_offset));
 //   proto_log->PersistToDisk();
 
-#ifndef THIRD_PARTY_ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
-#define THIRD_PARTY_ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
+#ifndef ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
+#define ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -62,26 +62,25 @@
 #include <string_view>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/mutex.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/constants.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/portable/endian.h"
-#include "third_party/icing/portable/gzip_stream.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/persist.proto.h"
-#include "third_party/icing/util/bit-util.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/data-loss.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
-#include "third_party/protobuf/io/zero_copy_stream_impl_lite.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/constants.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/endian.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/util/bit-util.h"
+#include "icing/util/clock.h"
+#include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
@@ -129,10 +128,6 @@ class PortableFileBackedProtoLog {
     // related changes.
     const bool enable_new_header_format;
 
-    // Whether to retain a decompression buffer that reads can reuse rather than
-    // allocating a new one for each read.
-    const bool enable_reusable_decompression_buffer;
-
     // Must specify values for options.
     Options() = delete;
     explicit Options(bool compress_in, const int32_t max_proto_size_in,
@@ -140,8 +135,7 @@ class PortableFileBackedProtoLog {
                      const uint32_t compression_threshold_bytes_in,
                      const int32_t compression_mem_level_in,
                      const bool enable_smaller_decompression_buffer_size_in,
-                     const bool enable_new_header_format_in,
-                     const bool enable_reusable_decompression_buffer_in)
+                     const bool enable_new_header_format_in)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
           compression_level(compression_level_in),
@@ -149,9 +143,7 @@ class PortableFileBackedProtoLog {
           compression_mem_level(compression_mem_level_in),
           enable_smaller_decompression_buffer_size(
               enable_smaller_decompression_buffer_size_in),
-          enable_new_header_format(enable_new_header_format_in),
-          enable_reusable_decompression_buffer(
-              enable_reusable_decompression_buffer_in) {}
+          enable_new_header_format(enable_new_header_format_in) {}
   };
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
@@ -673,7 +665,7 @@ class PortableFileBackedProtoLog {
       int32_t compression_level, uint32_t compression_threshold_bytes,
       int32_t compression_mem_level,
       bool enable_smaller_decompression_buffer_size,
-      bool enable_new_header_format, bool enable_reusable_decompression_buffer);
+      bool enable_new_header_format);
 
   // Initializes a new proto log.
   //
@@ -741,30 +733,6 @@ class PortableFileBackedProtoLog {
   // Metadata format: 8 bits magic + 24 bits size
   static uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
 
-  class BufferHolder {
-   public:
-    BufferHolder(const PortableFileBackedProtoLog* log,
-                 std::unique_ptr<uint8_t[]> buffer, size_t size)
-        : log_(log), buffer_(std::move(buffer)), size_(size) {}
-
-    ~BufferHolder() { log_->ReturnBuffer(std::move(buffer_), size_); }
-
-    uint8_t* data() { return buffer_.get(); }
-    size_t size() const { return size_; }
-
-   private:
-    const PortableFileBackedProtoLog* log_;
-    std::unique_ptr<uint8_t[]> buffer_;
-    size_t size_;
-  };
-
-  // Returns the buffer to the log. It will either be cached or destroyed.
-  void ReturnBuffer(std::unique_ptr<uint8_t[]> buffer, size_t size) const;
-
-  // Returns a buffer holder to the caller - either a newly constructed one or
-  // the cached one if it is big enough.
-  BufferHolder PossiblyBorrowBuffer(size_t size) const;
-
   // Magic number added in front of every proto. Used when reading out protos
   // as a first check for corruption in each entry in the file. Even if there is
   // a corruption, the best we can do is roll back to our last recovery point
@@ -787,11 +755,6 @@ class PortableFileBackedProtoLog {
   const int32_t compression_mem_level_;
   const bool enable_smaller_decompression_buffer_size_;
   const bool enable_new_header_format_;
-  const bool enable_reusable_decompression_buffer_;
-
-  mutable std::unique_ptr<uint8_t[]> read_buffer_ ICING_GUARDED_BY(mutex_);
-  mutable size_t read_buffer_size_ ICING_GUARDED_BY(mutex_);
-  mutable absl_ports::shared_mutex mutex_;
 };
 
 template <typename ProtoT>
@@ -801,7 +764,7 @@ PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     int32_t compression_level, uint32_t compression_threshold_bytes,
     int32_t compression_mem_level,
     bool enable_smaller_decompression_buffer_size,
-    bool enable_new_header_format, bool enable_reusable_decompression_buffer)
+    bool enable_new_header_format)
     : filesystem_(filesystem),
       file_path_(file_path),
       header_(std::move(header)),
@@ -811,10 +774,7 @@ PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
       compression_mem_level_(compression_mem_level),
       enable_smaller_decompression_buffer_size_(
           enable_smaller_decompression_buffer_size),
-      enable_new_header_format_(enable_new_header_format),
-      enable_reusable_decompression_buffer_(
-          enable_reusable_decompression_buffer),
-      read_buffer_size_(0) {
+      enable_new_header_format_(enable_new_header_format) {
   fd_.reset(filesystem_->OpenForAppend(file_path.c_str()));
 }
 
@@ -931,8 +891,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
               options.compression_threshold_bytes,
               options.compression_mem_level,
               options.enable_smaller_decompression_buffer_size,
-              options.enable_new_header_format,
-              options.enable_reusable_decompression_buffer)),
+              options.enable_new_header_format)),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
@@ -1140,8 +1099,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
               options.compression_level, options.compression_threshold_bytes,
               options.compression_mem_level,
               options.enable_smaller_decompression_buffer_size,
-              options.enable_new_header_format,
-              options.enable_reusable_decompression_buffer)),
+              options.enable_new_header_format)),
       data_loss, recalculated_checksum};
 
   return create_result;
@@ -1244,7 +1202,7 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   int final_size = 0;
 
   std::string proto_str;
-  proto2::io::StringOutputStream proto_stream(&proto_str);
+  google::protobuf::io::StringOutputStream proto_stream(&proto_str);
 
   if (header_->GetCompressFlag()) {
     protobuf_ports::GzipOutputStream::Options options;
@@ -1255,11 +1213,8 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
     } else {
       options.compression_level = 0;
     }
-    options.buffer_size = proto_size;
-    if (proto_size < 0 ||
-        static_cast<size_t>(proto_size) > protobuf_ports::kDefaultBufferSize) {
-      options.buffer_size = protobuf_ports::kDefaultBufferSize;
-    }
+    options.buffer_size =
+        std::min(protobuf_ports::kDefaultBufferSize, proto_size);
 
     protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 
@@ -1354,20 +1309,18 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
     return absl_ports::NotFoundError("The proto data has been erased.");
   }
 
-  proto2::io::ArrayInputStream proto_stream(buf.get(), stored_size);
+  google::protobuf::io::ArrayInputStream proto_stream(buf.get(), stored_size);
 
   // Deserialize proto
   ProtoT proto;
   if (header_->GetCompressFlag()) {
-    size_t buffer_size = protobuf_ports::kDefaultBufferSize;
-    if (enable_smaller_decompression_buffer_size_ && stored_size >= 0) {
-      buffer_size = std::min(buffer_size, kProtoCompressionRatio *
-                                              static_cast<size_t>(stored_size));
+    // Buffer size of -1 will default to kDefaultBufferSize.
+    int64_t buffer_size = -1;
+    if (enable_smaller_decompression_buffer_size_) {
+      buffer_size = kProtoCompressionRatio * stored_size;
     }
-    BufferHolder buffer_holder = PossiblyBorrowBuffer(buffer_size);
     protobuf_ports::GzipInputStream decompress_stream(
-        &proto_stream, protobuf_ports::GzipInputStream::AUTO,
-        buffer_holder.data(), buffer_holder.size());
+        &proto_stream, protobuf_ports::GzipInputStream::AUTO, buffer_size);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);
@@ -1714,37 +1667,7 @@ PortableFileBackedProtoLog<ProtoT>::GetChecksum() const {
   }
 }
 
-template <typename ProtoT>
-void PortableFileBackedProtoLog<ProtoT>::ReturnBuffer(
-    std::unique_ptr<uint8_t[]> buffer, size_t size) const {
-  if (!enable_reusable_decompression_buffer_) {
-    return;
-  }
-  absl_ports::unique_lock lock(&mutex_);
-  if (read_buffer_ == nullptr || read_buffer_size_ < size) {
-    read_buffer_.swap(buffer);
-    read_buffer_size_ = size;
-  }
-}
-
-template <typename ProtoT>
-PortableFileBackedProtoLog<ProtoT>::BufferHolder
-PortableFileBackedProtoLog<ProtoT>::PossiblyBorrowBuffer(size_t size) const {
-  if (!enable_reusable_decompression_buffer_) {
-    return BufferHolder(this, std::make_unique<uint8_t[]>(size), size);
-  }
-  absl_ports::unique_lock lock(&mutex_);
-  if (read_buffer_ == nullptr || read_buffer_size_ < size) {
-    return BufferHolder(this, std::make_unique<uint8_t[]>(size), size);
-  }
-  std::unique_ptr<uint8_t[]> temp;
-  temp.swap(read_buffer_);
-  size_t temp_size = read_buffer_size_;
-  read_buffer_size_ = 0;
-  return BufferHolder(this, std::move(temp), temp_size);
-}
-
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
+#endif  // ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_

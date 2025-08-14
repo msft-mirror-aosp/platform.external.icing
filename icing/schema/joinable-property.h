@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCHEMA_JOINABLE_PROPERTY_H_
-#define THIRD_PARTY_ICING_SCHEMA_JOINABLE_PROPERTY_H_
+#ifndef ICING_SCHEMA_JOINABLE_PROPERTY_H_
+#define ICING_SCHEMA_JOINABLE_PROPERTY_H_
 
 #include <cstdint>
 #include <string>
@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "third_party/icing/proto/schema.proto.h"
+#include "icing/proto/schema.pb.h"
 
 namespace icing {
 namespace lib {
@@ -150,4 +150,4 @@ struct JoinablePropertyGroup {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCHEMA_JOINABLE_PROPERTY_H_
+#endif  // ICING_SCHEMA_JOINABLE_PROPERTY_H_

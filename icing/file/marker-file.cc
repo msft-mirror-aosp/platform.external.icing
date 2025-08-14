@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/marker-file.h"
+#include "icing/file/marker-file.h"
 
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/filesystem.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

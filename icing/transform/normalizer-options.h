@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TRANSFORM_NORMALIZER_OPTIONS_H_
-#define THIRD_PARTY_ICING_TRANSFORM_NORMALIZER_OPTIONS_H_
+#ifndef ICING_TRANSFORM_NORMALIZER_OPTIONS_H_
+#define ICING_TRANSFORM_NORMALIZER_OPTIONS_H_
 
 namespace icing {
 namespace lib {
@@ -43,4 +43,4 @@ struct NormalizerOptions {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TRANSFORM_NORMALIZER_OPTIONS_H_
+#endif  // ICING_TRANSFORM_NORMALIZER_OPTIONS_H_

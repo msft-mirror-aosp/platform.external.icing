@@ -15,9 +15,9 @@
 #include <memory>
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/expand/stemming/simple/none-stemmer.h"
-#include "third_party/icing/expand/stemming/stemmer.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/expand/stemming/simple/none-stemmer.h"
+#include "icing/expand/stemming/stemmer.h"
 
 namespace icing {
 namespace lib {

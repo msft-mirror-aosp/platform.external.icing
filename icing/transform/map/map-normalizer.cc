@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/transform/map/map-normalizer.h"
+#include "icing/transform/map/map-normalizer.h"
 
 #include <cctype>
 #include <string>
@@ -20,13 +20,13 @@
 #include <unordered_map>
 #include <utility>
 
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/transform/map/normalization-map.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/character-iterator.h"
-#include "third_party/icing/util/i18n-utils.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icu/include/unicode/utypes.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/transform/map/normalization-map.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/character-iterator.h"
+#include "icing/util/i18n-utils.h"
+#include "icing/util/logging.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {

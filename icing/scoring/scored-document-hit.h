@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCORING_SCORED_DOCUMENT_HIT_H_
-#define THIRD_PARTY_ICING_SCORING_SCORED_DOCUMENT_HIT_H_
+#ifndef ICING_SCORING_SCORED_DOCUMENT_HIT_H_
+#define ICING_SCORING_SCORED_DOCUMENT_HIT_H_
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -208,4 +208,4 @@ class JoinedScoredDocumentHit {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCORING_SCORED_DOCUMENT_HIT_H_
+#endif  // ICING_SCORING_SCORED_DOCUMENT_HIT_H_

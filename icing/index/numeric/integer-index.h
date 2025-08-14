@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_H_
-#define THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_H_
+#ifndef ICING_INDEX_NUMERIC_INTEGER_INDEX_H_
+#define ICING_INDEX_NUMERIC_INTEGER_INDEX_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,19 +21,19 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/index/numeric/integer-index-storage.h"
-#include "third_party/icing/index/numeric/numeric-index.h"
-#include "third_party/icing/index/numeric/posting-list-integer-index-serializer.h"
-#include "third_party/icing/index/numeric/wildcard-property-storage.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/crc32.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/index/numeric/integer-index-storage.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/index/numeric/wildcard-property-storage.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -360,4 +360,4 @@ class IntegerIndex : public NumericIndex<int64_t> {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_H_
+#endif  // ICING_INDEX_NUMERIC_INTEGER_INDEX_H_

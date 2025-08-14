@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/advanced_scoring/score-expression.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,30 +29,30 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/join/join-children-fetcher.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/proto/internal/scorable_property_set.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/advanced_scoring/double-list.h"
-#include "third_party/icing/scoring/bm25f-calculator.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/scoring/section-weights.h"
-#include "third_party/icing/store/document-associated-score-data.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/embedding-util.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/scorable_property_set.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/join/join-children-fetcher.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
+#include "icing/scoring/bm25f-calculator.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/scoring/section-weights.h"
+#include "icing/store/document-associated-score-data.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/embedding-util.h"
+#include "icing/util/logging.h"
+#include "icing/util/scorable_property_set.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

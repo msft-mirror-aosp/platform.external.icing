@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/jni/jni-cache.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/reverse_jni/reverse-jni-language-segmenter.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/reverse_jni/reverse-jni-language-segmenter.h"
+#include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {

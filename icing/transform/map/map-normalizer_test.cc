@@ -15,14 +15,14 @@
 #include <memory>
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/transform/normalizer-factory.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/character-iterator.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {

@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_PORTABLE_ZLIB_H_
-#define THIRD_PARTY_ICING_PORTABLE_ZLIB_H_
+#ifndef ICING_PORTABLE_ZLIB_H_
+#define ICING_PORTABLE_ZLIB_H_
 
 // Though we use the same zlib header on all platforms, the implementation used
 // is from NDK on android and from third_party/zlib on iOS/linux. See BUILD
 // rule.
 #include <zlib.h>  // IWYU pragma: export
 
-#endif  // THIRD_PARTY_ICING_PORTABLE_ZLIB_H_
+#endif  // ICING_PORTABLE_ZLIB_H_

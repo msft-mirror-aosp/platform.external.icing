@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/scoring-processor.h"
+#include "icing/scoring/scoring-processor.h"
 
 #include <cstdint>
 #include <limits>
@@ -22,20 +22,20 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/join/join-children-fetcher.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/scoring/scorer-factory.h"
-#include "third_party/icing/scoring/scorer.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/join/join-children-fetcher.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/scoring/scorer-factory.h"
+#include "icing/scoring/scorer.h"
+#include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

@@ -41,17 +41,17 @@
 // bitmap.PersistToDisk();  // Optional. Immediately syncs all changes to disk.
 // bitmap.reset();
 
-#ifndef THIRD_PARTY_ICING_FILE_FILE_BACKED_BITMAP_H_
-#define THIRD_PARTY_ICING_FILE_FILE_BACKED_BITMAP_H_
+#ifndef ICING_FILE_FILE_BACKED_BITMAP_H_
+#define ICING_FILE_FILE_BACKED_BITMAP_H_
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
 
 namespace icing {
 namespace lib {
@@ -217,4 +217,4 @@ class FileBackedBitmap {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_FILE_FILE_BACKED_BITMAP_H_
+#endif  // ICING_FILE_FILE_BACKED_BITMAP_H_

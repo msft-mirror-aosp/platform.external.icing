@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCORING_SCORER_H_
-#define THIRD_PARTY_ICING_SCORING_SCORER_H_
+#ifndef ICING_SCORING_SCORER_H_
+#define ICING_SCORING_SCORER_H_
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -72,4 +72,4 @@ class Scorer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCORING_SCORER_H_
+#endif  // ICING_SCORING_SCORER_H_

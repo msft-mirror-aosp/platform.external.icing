@@ -18,14 +18,14 @@
 #include <string>
 
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/destructible-directory.h"
-#include "third_party/icing/file/file-backed-vector.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/destructible-directory.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

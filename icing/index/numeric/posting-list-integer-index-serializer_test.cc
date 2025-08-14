@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
 
 #include <memory>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/posting_list/posting-list-used.h"
-#include "third_party/icing/index/numeric/integer-index-data.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/posting_list/posting-list-used.h"
+#include "icing/index/numeric/integer-index-data.h"
+#include "icing/testing/common-matchers.h"
 
 using testing::ElementsAre;
 using testing::ElementsAreArray;

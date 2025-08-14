@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_ABSL_PORTS_MUTEX_H_
-#define THIRD_PARTY_ICING_ABSL_PORTS_MUTEX_H_
+#ifndef ICING_ABSL_PORTS_MUTEX_H_
+#define ICING_ABSL_PORTS_MUTEX_H_
 
 #include <mutex>         // NOLINT
 #include <shared_mutex>  // NOLINT
 
-#include "third_party/icing/absl_ports/thread_annotations.h"
+#include "icing/absl_ports/thread_annotations.h"
 
 namespace icing {
 namespace lib {
@@ -75,4 +75,4 @@ class ICING_SCOPED_LOCKABLE shared_lock {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_ABSL_PORTS_MUTEX_H_
+#endif  // ICING_ABSL_PORTS_MUTEX_H_

@@ -27,34 +27,34 @@
 #include <vector>
 
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/proto/initialize.proto.h"
-#include "third_party/icing/proto/persist.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/status.proto.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/document-generator.h"
-#include "third_party/icing/testing/random-string.h"
-#include "third_party/icing/testing/schema-generator.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/icing-search-engine.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/status.pb.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/document-generator.h"
+#include "icing/testing/random-string.h"
+#include "icing/testing/schema-generator.h"
+#include "icing/testing/tmp-directory.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing:icing-search-engine_flush_benchmark
+//    //icing:icing-search-engine_flush_benchmark
 //
-//    $ blaze-bin/third_party/icing/icing-search-engine_flush_benchmark
+//    $ blaze-bin/icing/icing-search-engine_flush_benchmark
 //    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing:icing-search-engine_flush_benchmark
+//    //icing:icing-search-engine_flush_benchmark
 //
-//    $ adb push blaze-bin/third_party/icing/icing-search-engine_flush_benchmark
+//    $ adb push blaze-bin/icing/icing-search-engine_flush_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/icing-search-engine_flush_benchmark

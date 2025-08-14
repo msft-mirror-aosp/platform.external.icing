@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/encode-util.h"
+#include "icing/util/encode-util.h"
 
 #include <cstdint>
 #include <string>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace icing {
 namespace lib {

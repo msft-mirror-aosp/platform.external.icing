@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_STORE_DOCUMENT_FILTER_DATA_H_
-#define THIRD_PARTY_ICING_STORE_DOCUMENT_FILTER_DATA_H_
+#ifndef ICING_STORE_DOCUMENT_FILTER_DATA_H_
+#define ICING_STORE_DOCUMENT_FILTER_DATA_H_
 
 #include <cstdint>
 
-#include "third_party/icing/legacy/core/icing-packed-pod.h"
-#include "third_party/icing/store/namespace-id.h"
+#include "icing/legacy/core/icing-packed-pod.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -88,4 +88,4 @@ static_assert(icing_is_packed_pod<DocumentFilterData>::value, "go/icing-ubsan");
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_STORE_DOCUMENT_FILTER_DATA_H_
+#endif  // ICING_STORE_DOCUMENT_FILTER_DATA_H_

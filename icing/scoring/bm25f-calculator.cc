@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/bm25f-calculator.h"
+#include "icing/scoring/bm25f-calculator.h"
 
 #include <cmath>
 #include <cstdint>
@@ -22,18 +22,18 @@
 #include <unordered_map>
 #include <vector>
 
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/section-weights.h"
-#include "third_party/icing/store/corpus-associated-scoring-data.h"
-#include "third_party/icing/store/corpus-id.h"
-#include "third_party/icing/store/document-associated-score-data.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/section-weights.h"
+#include "icing/store/corpus-associated-scoring-data.h"
+#include "icing/store/corpus-id.h"
+#include "icing/store/document-associated-score-data.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {

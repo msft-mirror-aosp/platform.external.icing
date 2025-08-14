@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_STORE_NAMESPACE_ID_FINGERPRINT_H_
-#define THIRD_PARTY_ICING_STORE_NAMESPACE_ID_FINGERPRINT_H_
+#ifndef ICING_STORE_NAMESPACE_ID_FINGERPRINT_H_
+#define ICING_STORE_NAMESPACE_ID_FINGERPRINT_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -21,8 +21,8 @@
 #include <string>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/store/namespace-id.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -83,4 +83,4 @@ static_assert(sizeof(NamespaceIdFingerprint) == 10, "");
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_STORE_NAMESPACE_ID_FINGERPRINT_H_
+#endif  // ICING_STORE_NAMESPACE_ID_FINGERPRINT_H_

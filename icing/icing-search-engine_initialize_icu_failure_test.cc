@@ -16,16 +16,16 @@
 #include <string>
 #include <utility>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/icing-search-engine.h"
+#include "icing/proto/document.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

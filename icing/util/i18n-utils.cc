@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/i18n-utils.h"
+#include "icing/util/i18n-utils.h"
 
 #include <cctype>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icu/include/unicode/uchar.h"
-#include "third_party/icu/include/unicode/umachine.h"
-#include "third_party/icu/include/unicode/ustring.h"
-#include "third_party/icu/include/unicode/utf16.h"
-#include "third_party/icu/include/unicode/utf8.h"
-#include "third_party/icu/include/unicode/utypes.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/util/logging.h"
+#include "unicode/uchar.h"
+#include "unicode/umachine.h"
+#include "unicode/ustring.h"
+#include "unicode/utf16.h"
+#include "unicode/utf8.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {

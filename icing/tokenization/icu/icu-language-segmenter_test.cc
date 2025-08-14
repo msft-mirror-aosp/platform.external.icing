@@ -15,22 +15,22 @@
 #include <memory>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/jni/jni-cache.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/icu-i18n-test-utils.h"
-#include "third_party/icing/testing/iterator-test-utils.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/portable/platform.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/iterator-test-utils.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -49,9 +49,9 @@ class IcuLanguageSegmenterAllLocalesTest
       GTEST_SKIP() << "ICU tokenization not enabled!";
     }
     ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //third_party/icing/BUILD.
+        // File generated via icu_data_file rule in //icing/BUILD.
         icu_data_file_helper::SetUpIcuDataFile(
-            GetTestFilePath("third_party/icing/icu.dat")));
+            GetTestFilePath("icing/icu.dat")));
   }
 
   static std::string GetLocale() { return GetParam(); }

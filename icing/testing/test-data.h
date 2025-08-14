@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TESTING_TEST_DATA_H_
-#define THIRD_PARTY_ICING_TESTING_TEST_DATA_H_
+#ifndef ICING_TESTING_TEST_DATA_H_
+#define ICING_TESTING_TEST_DATA_H_
 
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 
 // This file provides functions for getting / setting up absolute test file
 // paths. They are specific to Blaze and Google3 and should be changed when used
@@ -34,4 +34,4 @@ std::string GetTestFilePath(const std::string& google3_relative_file_path);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TESTING_TEST_DATA_H_
+#endif  // ICING_TESTING_TEST_DATA_H_

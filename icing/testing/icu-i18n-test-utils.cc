@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/icu-i18n-test-utils.h"
 
 #include <cstdint>
 #include <string>
 
-#include "third_party/icing/util/logging.h"
-#include "third_party/icu/include/unicode/umachine.h"
-#include "third_party/icu/include/unicode/utf8.h"
+#include "icing/util/logging.h"
+#include "unicode/umachine.h"
+#include "unicode/utf8.h"
 
 namespace icing {
 namespace lib {

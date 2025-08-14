@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/lexer.h"
 
 #include <string>
 #include <utility>
 
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/util/i18n-utils.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/util/i18n-utils.h"
 
 namespace icing {
 namespace lib {

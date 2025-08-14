@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -27,17 +27,17 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/hash/farmhash.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/random-string.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/random-string.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {

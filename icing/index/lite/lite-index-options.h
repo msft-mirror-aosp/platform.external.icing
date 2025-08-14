@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
-#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
+#ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
+#define ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 
 #include <cstdint>
 #include <string>
 
-#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {
 namespace lib {
@@ -47,4 +47,4 @@ struct LiteIndexOptions {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
+#endif  // ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_

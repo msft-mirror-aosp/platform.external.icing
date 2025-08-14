@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCORING_SECTION_WEIGHTS_H_
-#define THIRD_PARTY_ICING_SCORING_SECTION_WEIGHTS_H_
+#ifndef ICING_SCORING_SECTION_WEIGHTS_H_
+#define ICING_SCORING_SECTION_WEIGHTS_H_
 
 #include <unordered_map>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-store.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -93,4 +93,4 @@ class SectionWeights {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCORING_SECTION_WEIGHTS_H_
+#endif  // ICING_SCORING_SECTION_WEIGHTS_H_

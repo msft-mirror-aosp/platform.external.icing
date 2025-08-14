@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/numeric/integer-index-bucket-util.h"
+#include "icing/index/numeric/integer-index-bucket-util.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "third_party/icing/index/numeric/integer-index-data.h"
+#include "icing/index/numeric/integer-index-data.h"
 
 namespace icing {
 namespace lib {

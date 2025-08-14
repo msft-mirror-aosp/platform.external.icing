@@ -18,17 +18,17 @@
 #include <string>
 #include <string_view>
 
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/portable/gzip_stream.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/scoring/advanced_scoring/advanced-scorer.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/testing/fake-clock.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/advanced_scoring/advanced-scorer.h"
+#include "icing/store/document-store.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

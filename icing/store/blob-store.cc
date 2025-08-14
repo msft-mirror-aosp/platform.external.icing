@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/store/blob-store.h"
+#include "icing/store/blob-store.h"
 
 #include <fcntl.h>
 
@@ -29,21 +29,21 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/constants.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/proto/blob.proto.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/encode-util.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/sha256.h"
-#include "third_party/icing/util/status-macros.h"
-#include "third_party/icing/util/status-util.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/constants.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/blob.pb.h"
+#include "icing/proto/document.pb.h"
+#include "icing/util/clock.h"
+#include "icing/util/encode-util.h"
+#include "icing/util/logging.h"
+#include "icing/util/sha256.h"
+#include "icing/util/status-macros.h"
+#include "icing/util/status-util.h"
 
 namespace icing {
 namespace lib {
@@ -141,11 +141,9 @@ BlobProto CreateBlobProtoFromFileDescriptor(int file_descriptor) {
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
     const Filesystem* filesystem, std::string base_dir, const Clock* clock,
     int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-    int32_t compression_mem_level, bool manage_blob_files,
-    const FeatureFlags* feature_flags) {
+    int32_t compression_mem_level, bool manage_blob_files) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
-  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   // Make sure the blob file directory exists.
   if (!filesystem->CreateDirectoryRecursively(
@@ -179,7 +177,7 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
               /*compression_threshold_bytes=*/0, compression_mem_level,
               /*enable_smaller_decompression_buffer_size_in=*/false,
               /*enable_proto_log_new_header_format_in=*/
-              true, feature_flags->enable_reusable_decompression_buffer())));
+              true)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
 
@@ -422,7 +420,7 @@ BlobProto BlobStore::CommitBlob(
   return blob_proto;
 }
 
-BlobProto BlobStore::GetAllBlobInfos() {
+BlobProto BlobStore::GetAllBlobInfo() {
   BlobProto blob_proto;
   blob_proto.mutable_status()->set_code(StatusProto::OK);
   for (auto itr = blob_handle_to_offset_.begin();
@@ -437,7 +435,7 @@ BlobProto BlobStore::GetAllBlobInfos() {
   return blob_proto;
 }
 
-BlobProto BlobStore::PutBlobInfos(const BlobProto& blob_proto) {
+BlobProto BlobStore::PutBlobInfos(BlobProto&& blob_proto) {
   if (manage_blob_files_) {
     ICING_LOG(ERROR)
         << "Cannot put blob infos to blob store that manages blob files.";
@@ -535,8 +533,7 @@ BlobStore::GetPotentiallyOptimizableBlobHandles() const {
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
-    const std::unordered_set<std::string>& dead_blob_handles,
-    const FeatureFlags* feature_flags) {
+    const std::unordered_set<std::string>& dead_blob_handles) {
   std::vector<std::string> blob_file_names_to_remove;
   blob_file_names_to_remove.reserve(dead_blob_handles.size());
 
@@ -558,8 +555,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
               compression_level_, /*compression_threshold_bytes=*/0,
               compression_mem_level_,
               /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format=*/true,
-              feature_flags->enable_reusable_decompression_buffer())));
+              /*enable_proto_log_new_header_format=*/true)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
@@ -627,8 +623,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
               compression_level_, /*compression_threshold_bytes=*/0,
               compression_mem_level_,
               /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format=*/true,
-              feature_flags->enable_reusable_decompression_buffer())));
+              /*enable_proto_log_new_header_format=*/true)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   blob_info_log_ = std::move(log_create_result.proto_log);

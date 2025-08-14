@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_UTIL_DOCUMENT_UTIL_H_
-#define THIRD_PARTY_ICING_UTIL_DOCUMENT_UTIL_H_
+#ifndef ICING_UTIL_DOCUMENT_UTIL_H_
+#define ICING_UTIL_DOCUMENT_UTIL_H_
 
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 
 namespace icing {
 namespace lib {
@@ -31,4 +31,4 @@ DocumentWrapper CreateDocumentWrapper(DocumentProto document);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_UTIL_DOCUMENT_UTIL_H_
+#endif  // ICING_UTIL_DOCUMENT_UTIL_H_

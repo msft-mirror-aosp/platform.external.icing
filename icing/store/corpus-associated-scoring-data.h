@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_STORE_TYPE_NAMESPACE_ASSOCIATED_SCORING_DATA_H_
-#define THIRD_PARTY_ICING_STORE_TYPE_NAMESPACE_ASSOCIATED_SCORING_DATA_H_
+#ifndef ICING_STORE_TYPE_NAMESPACE_ASSOCIATED_SCORING_DATA_H_
+#define ICING_STORE_TYPE_NAMESPACE_ASSOCIATED_SCORING_DATA_H_
 
 #include <cstdint>
 #include <limits>
 #include <type_traits>
 
-#include "third_party/icing/legacy/core/icing-packed-pod.h"
+#include "icing/legacy/core/icing-packed-pod.h"
 
 namespace icing {
 namespace lib {
@@ -76,4 +76,4 @@ static_assert(icing_is_packed_pod<CorpusAssociatedScoreData>::value,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_STORE_TYPE_NAMESPACE_ASSOCIATED_SCORING_DATA_H_
+#endif  // ICING_STORE_TYPE_NAMESPACE_ASSOCIATED_SCORING_DATA_H_

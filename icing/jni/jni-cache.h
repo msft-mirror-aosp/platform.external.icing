@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_JNI_JNI_CACHE_H_
-#define THIRD_PARTY_ICING_JNI_JNI_CACHE_H_
+#ifndef ICING_JNI_JNI_CACHE_H_
+#define ICING_JNI_JNI_CACHE_H_
 
 #ifndef ICING_REVERSE_JNI_SEGMENTATION
 namespace icing {
@@ -27,8 +27,8 @@ class JniCache {};  // Declare an empty class definition for non-Android builds.
 
 #include <jni.h>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/java/jni-base.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/java/jni-base.h"
 
 namespace icing {
 namespace lib {
@@ -87,4 +87,4 @@ struct JniCache {
 
 #endif  // !ICING_REVERSE_JNI_SEGMENTATION
 
-#endif  // THIRD_PARTY_ICING_JNI_JNI_CACHE_H_
+#endif  // ICING_JNI_JNI_CACHE_H_

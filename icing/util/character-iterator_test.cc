@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/character-iterator.h"
+#include "icing/util/character-iterator.h"
 
 #include <cstring>
 #include <string_view>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/icu-i18n-test-utils.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-i18n-test-utils.h"
 
 namespace icing {
 namespace lib {

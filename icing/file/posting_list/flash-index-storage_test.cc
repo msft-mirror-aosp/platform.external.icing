@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 
 #include <unistd.h>
 
@@ -21,17 +21,17 @@
 #include <string>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/posting_list/flash-index-storage-header.h"
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/main/posting-list-hit-serializer.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage-header.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

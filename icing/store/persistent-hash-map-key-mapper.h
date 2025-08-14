@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_STORE_PERSISTENT_HASH_MAP_KEY_MAPPER_H_
-#define THIRD_PARTY_ICING_STORE_PERSISTENT_HASH_MAP_KEY_MAPPER_H_
+#ifndef ICING_STORE_PERSISTENT_HASH_MAP_KEY_MAPPER_H_
+#define ICING_STORE_PERSISTENT_HASH_MAP_KEY_MAPPER_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,14 +21,14 @@
 #include <string_view>
 #include <type_traits>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/str_join.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/persistent-hash-map.h"
-#include "third_party/icing/store/key-mapper.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/str_join.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/persistent-hash-map.h"
+#include "icing/store/key-mapper.h"
+#include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -207,4 +207,4 @@ PersistentHashMapKeyMapper<T, Formatter>::Delete(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_STORE_PERSISTENT_HASH_MAP_KEY_MAPPER_H_
+#endif  // ICING_STORE_PERSISTENT_HASH_MAP_KEY_MAPPER_H_

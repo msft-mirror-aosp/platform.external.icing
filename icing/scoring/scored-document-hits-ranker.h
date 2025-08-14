@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
-#define THIRD_PARTY_ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
+#ifndef ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
+#define ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
 
 #include <unordered_set>
 
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/store/document-id.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -80,4 +80,4 @@ class ScoredDocumentHitsRanker {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
+#endif  // ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_

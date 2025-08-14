@@ -14,8 +14,8 @@
 
 // Methods for interacting with the filesystem.
 
-#ifndef THIRD_PARTY_ICING_FILE_FILESYSTEM_H_
-#define THIRD_PARTY_ICING_FILE_FILESYSTEM_H_
+#ifndef ICING_FILE_FILESYSTEM_H_
+#define ICING_FILE_FILESYSTEM_H_
 
 #include <cstdint>
 #include <cstdio>
@@ -239,9 +239,9 @@ class Filesystem {
     return (file_size != kBadFileSize) ? file_size : -1;
   }
 };
-// LINT.ThenChange(//depot/google3/third_party/icing/file/mock-filesystem.h)
+// LINT.ThenChange(//depot/google3/icing/file/mock-filesystem.h)
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_FILE_FILESYSTEM_H_
+#endif  // ICING_FILE_FILESYSTEM_H_

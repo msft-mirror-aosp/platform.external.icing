@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_QUERY_QUERY_TERMS_H_
-#define THIRD_PARTY_ICING_QUERY_QUERY_TERMS_H_
+#ifndef ICING_QUERY_QUERY_TERMS_H_
+#define ICING_QUERY_QUERY_TERMS_H_
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -37,4 +37,4 @@ using QueryTermIteratorsMap =
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_QUERY_QUERY_TERMS_H_
+#endif  // ICING_QUERY_QUERY_TERMS_H_

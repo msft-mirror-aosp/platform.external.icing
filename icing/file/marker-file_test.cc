@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/marker-file.h"
+#include "icing/file/marker-file.h"
 
 #include <memory>
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/file/file-backed-proto.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/mock-filesystem.h"
-#include "third_party/icing/portable/equals-proto.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/file/file-backed-proto.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/mock-filesystem.h"
+#include "icing/portable/equals-proto.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {

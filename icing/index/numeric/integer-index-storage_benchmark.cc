@@ -21,39 +21,39 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/file/destructible-directory.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/index/numeric/integer-index-storage.h"
-#include "third_party/icing/index/numeric/posting-list-integer-index-serializer.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/numeric/normal-distribution-number-generator.h"
-#include "third_party/icing/testing/numeric/number-generator.h"
-#include "third_party/icing/testing/numeric/uniform-distribution-integer-generator.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/file/destructible-directory.h"
+#include "icing/file/filesystem.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index-storage.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/numeric/normal-distribution-number-generator.h"
+#include "icing/testing/numeric/number-generator.h"
+#include "icing/testing/numeric/uniform-distribution-integer-generator.h"
+#include "icing/testing/tmp-directory.h"
 
 // Run on a Linux workstation:
 //   $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//   //third_party/icing/index/numeric:integer-index-storage_benchmark
+//   //icing/index/numeric:integer-index-storage_benchmark
 //
-//   $ blaze-bin/third_party/icing/index/numeric/integer-index-storage_benchmark
+//   $ blaze-bin/icing/index/numeric/integer-index-storage_benchmark
 //   --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //   $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //   --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//   //third_party/icing/index/numeric:integer-index-storage_benchmark
+//   //icing/index/numeric:integer-index-storage_benchmark
 //
 //   $ adb push
-//   blaze-bin/third_party/icing/index/numeric/integer-index-storage_benchmark
+//   blaze-bin/icing/index/numeric/integer-index-storage_benchmark
 //   /data/local/tmp/
 //
 //   $ adb shell /data/local/tmp/integer-index-storage_benchmark

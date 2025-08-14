@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/advanced_scoring/scoring-visitor.h"
+#include "icing/scoring/advanced_scoring/scoring-visitor.h"
 
 #include <cstdlib>
 #include <memory>
@@ -20,11 +20,11 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
-#include "third_party/icing/scoring/advanced_scoring/score-expression.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 
 namespace icing {
 namespace lib {

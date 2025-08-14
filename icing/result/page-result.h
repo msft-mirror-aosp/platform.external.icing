@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_RESULT_PAGE_RESULT_H_
-#define THIRD_PARTY_ICING_RESULT_PAGE_RESULT_H_
+#ifndef ICING_RESULT_PAGE_RESULT_H_
+#define ICING_RESULT_PAGE_RESULT_H_
 
 #include <vector>
 
-#include "third_party/icing/proto/search.proto.h"
+#include "icing/proto/search.pb.h"
 
 namespace icing {
 namespace lib {
@@ -43,4 +43,4 @@ struct PageResult {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_RESULT_PAGE_RESULT_H_
+#endif  // ICING_RESULT_PAGE_RESULT_H_

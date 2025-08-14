@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/term-property-id.h"
+#include "icing/index/term-property-id.h"
 
 namespace icing {
 namespace lib {

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/logging.h"
+#include "icing/util/logging.h"
 
 #include <atomic>
 #include <exception>
 #include <string_view>
 
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/util/logging_raw.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/util/logging_raw.h"
 
 namespace icing {
 namespace lib {

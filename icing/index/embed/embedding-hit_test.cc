@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-hit.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/index/hit/hit.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {

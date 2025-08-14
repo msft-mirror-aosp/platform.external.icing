@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TESTING_RECORDER_TEST_UTILS_H_
-#define THIRD_PARTY_ICING_TESTING_RECORDER_TEST_UTILS_H_
+#ifndef ICING_TESTING_RECORDER_TEST_UTILS_H_
+#define ICING_TESTING_RECORDER_TEST_UTILS_H_
 
 #include <cstdint>
 #include <string>
@@ -38,4 +38,4 @@ ProfileInfo SummarizeProfileProto(const std::string& filename);
 }  //  namespace lib
 }  //  namespace icing
 
-#endif  // THIRD_PARTY_ICING_TESTING_RECORDER_TEST_UTILS_H_
+#endif  // ICING_TESTING_RECORDER_TEST_UTILS_H_

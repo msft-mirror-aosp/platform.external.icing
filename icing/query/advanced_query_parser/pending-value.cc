@@ -11,13 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "third_party/icing/query/advanced_query_parser/pending-value.h"
+#include "icing/query/advanced_query_parser/pending-value.h"
 
 #include <cstdlib>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 
 namespace icing {
 namespace lib {

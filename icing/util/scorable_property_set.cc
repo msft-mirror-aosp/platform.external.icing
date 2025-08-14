@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/scorable_property_set.h"
+#include "icing/util/scorable_property_set.h"
 
 #include <cstdint>
 #include <memory>
@@ -22,16 +22,16 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/proto/internal/scorable_property_set.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/schema/property-util.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/scorable_property_manager.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/internal/scorable_property_set.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/schema/property-util.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

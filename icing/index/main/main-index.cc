@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "third_party/icing/index/main/main-index.h"
+#include "icing/index/main/main-index.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -23,34 +23,34 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/destructible-directory.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/posting_list/flash-index-storage.h"
-#include "third_party/icing/file/posting_list/posting-list-accessor.h"
-#include "third_party/icing/file/posting_list/posting-list-common.h"
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/index/lite/term-id-hit-pair.h"
-#include "third_party/icing/index/main/posting-list-hit-accessor.h"
-#include "third_party/icing/index/main/posting-list-hit-serializer.h"
-#include "third_party/icing/index/term-id-codec.h"
-#include "third_party/icing/index/term-metadata.h"
-#include "third_party/icing/index/term-property-id.h"
-#include "third_party/icing/legacy/core/icing-string-util.h"
-#include "third_party/icing/legacy/index/icing-dynamic-trie.h"
-#include "third_party/icing/legacy/index/icing-filesystem.h"
-#include "third_party/icing/proto/debug.proto.h"
-#include "third_party/icing/proto/storage.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/namespace-id.h"
-#include "third_party/icing/store/suggestion-result-checker.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/destructible-directory.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-accessor.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
+#include "icing/index/term-id-codec.h"
+#include "icing/index/term-metadata.h"
+#include "icing/index/term-property-id.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

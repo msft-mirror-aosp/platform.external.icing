@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
 
-#include "third_party/icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-common.h"
 
 namespace icing {
 namespace lib {

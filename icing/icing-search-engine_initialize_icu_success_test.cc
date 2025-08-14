@@ -16,16 +16,16 @@
 #include <string>
 #include <utility>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/icing-search-engine.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/tmp-directory.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
+#include "icing/icing-search-engine.h"
+#include "icing/proto/document.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
@@ -84,7 +84,7 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri,
 TEST_F(IcingSearchEngineInitializeIcuSuccessTest,
        InitializeIcuDataValidPathSucceeds) {
   std::string icu_data_file_absolute_path =
-      GetTestFilePath("third_party/icing/icu.dat");
+      GetTestFilePath("icing/icu.dat");
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_icu_data_file_absolute_path(icu_data_file_absolute_path);

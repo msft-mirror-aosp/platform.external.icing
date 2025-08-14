@@ -21,55 +21,55 @@
 #include <vector>
 
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gmock.h"
+#include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/query/query-terms.h"
-#include "third_party/icing/result/snippet-context.h"
-#include "third_party/icing/result/snippet-retriever.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/random-string.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer-factory.h"
-#include "third_party/icing/transform/normalizer-options.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/query/query-terms.h"
+#include "icing/result/snippet-context.h"
+#include "icing/result/snippet-retriever.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/random-string.h"
+#include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/result:snippet-retriever_benchmark
+//    //icing/result:snippet-retriever_benchmark
 //
-//    $ blaze-bin/third_party/icing/result/snippet-retriever_benchmark
+//    $ blaze-bin/icing/result/snippet-retriever_benchmark
 //    --benchmark_filter=all
 //
 // Run on an Android device:
-//    Make target //third_party/icing/tokenization:language-segmenter depend on
+//    Make target //icing/tokenization:language-segmenter depend on
 //    //third_party/icu
 //
-//    Make target //third_party/icing/transform:normalizer depend on
+//    Make target //icing/transform:normalizer depend on
 //    //third_party/icu
 //
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/result:snippet-retriever_benchmark
+//    //icing/result:snippet-retriever_benchmark
 //
-//    $ adb push blaze-bin/third_party/icing/result/snippet-retriever_benchmark
+//    $ adb push blaze-bin/icing/result/snippet-retriever_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/snippet-retriever_benchmark
@@ -92,7 +92,7 @@ void BM_SnippetOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("third_party/icing/icu.dat")));
+        GetTestFilePath("icing/icu.dat")));
   }
 
   FeatureFlags feature_flags = GetTestFeatureFlags();
@@ -222,7 +222,7 @@ void BM_SnippetRfcOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("third_party/icing/icu.dat")));
+        GetTestFilePath("icing/icu.dat")));
   }
 
   FeatureFlags feature_flags = GetTestFeatureFlags();

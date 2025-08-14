@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
-#define THIRD_PARTY_ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
+#ifndef ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
+#define ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
 
 #include <random>
 
-#include "third_party/icing/testing/numeric/number-generator.h"
+#include "icing/testing/numeric/number-generator.h"
 
 namespace icing {
 namespace lib {
@@ -38,4 +38,4 @@ class UniformDistributionIntegerGenerator : public NumberGenerator<T> {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
+#endif  // ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_

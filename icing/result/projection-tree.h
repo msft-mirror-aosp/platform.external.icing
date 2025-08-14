@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_RESULT_PROJECTION_TREE_H_
-#define THIRD_PARTY_ICING_RESULT_PROJECTION_TREE_H_
+#ifndef ICING_RESULT_PROJECTION_TREE_H_
+#define ICING_RESULT_PROJECTION_TREE_H_
 
 #include <string_view>
 #include <vector>
 
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/schema-store.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
 
 namespace icing {
 namespace lib {
@@ -58,4 +58,4 @@ class ProjectionTree {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_RESULT_PROJECTION_TREE_H_
+#endif  // ICING_RESULT_PROJECTION_TREE_H_

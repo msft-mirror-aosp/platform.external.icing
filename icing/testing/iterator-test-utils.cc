@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/testing/iterator-test-utils.h"
+#include "icing/testing/iterator-test-utils.h"
 
 #include <string_view>
 #include <vector>
 
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/util/character-iterator.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {

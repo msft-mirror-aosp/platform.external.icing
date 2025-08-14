@@ -19,8 +19,8 @@
 // Use as a scoped allocator, the memory is mapped
 // on construction and released on destruction.
 
-#ifndef THIRD_PARTY_ICING_LEGACY_INDEX_ICING_MMAPPER_H_
-#define THIRD_PARTY_ICING_LEGACY_INDEX_ICING_MMAPPER_H_
+#ifndef ICING_LEGACY_INDEX_ICING_MMAPPER_H_
+#define ICING_LEGACY_INDEX_ICING_MMAPPER_H_
 
 #include <unistd.h>
 
@@ -93,4 +93,4 @@ class IcingMMapper {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_LEGACY_INDEX_ICING_MMAPPER_H_
+#endif  // ICING_LEGACY_INDEX_ICING_MMAPPER_H_

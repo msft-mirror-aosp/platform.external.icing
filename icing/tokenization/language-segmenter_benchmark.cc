@@ -13,32 +13,32 @@
 // limitations under the License.
 
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gmock.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "gmock/gmock.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/tokenization:language-segmenter_benchmark
+//    //icing/tokenization:language-segmenter_benchmark
 //
-//    $ blaze-bin/third_party/icing/tokenization/language-segmenter_benchmark
+//    $ blaze-bin/icing/tokenization/language-segmenter_benchmark
 //    --benchmark_filter=all
 //
 // Run on an Android device:
-//    Make target //third_party/icing/tokenization:language-segmenter depend on
+//    Make target //icing/tokenization:language-segmenter depend on
 //    //third_party/icu
 //
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/tokenization:language-segmenter_benchmark
+//    //icing/tokenization:language-segmenter_benchmark
 //
 //    $ adb push
-//    blaze-bin/third_party/icing/tokenization/language-segmenter_benchmark
+//    blaze-bin/icing/tokenization/language-segmenter_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/language-segmenter_benchmark --benchmark_filter=all
@@ -57,7 +57,7 @@ void BM_SegmentNoSpace(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("third_party/icing/icu.dat")));
+        GetTestFilePath("icing/icu.dat")));
   }
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -94,7 +94,7 @@ void BM_SegmentWithSpaces(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("third_party/icing/icu.dat")));
+        GetTestFilePath("icing/icu.dat")));
   }
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -134,7 +134,7 @@ void BM_SegmentCJK(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
     ICING_ASSERT_OK(icu_data_file_helper::SetUpIcuDataFile(
-        GetTestFilePath("third_party/icing/icu.dat")));
+        GetTestFilePath("icing/icu.dat")));
   }
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);

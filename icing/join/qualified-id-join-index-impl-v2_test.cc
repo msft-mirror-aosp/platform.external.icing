@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/join/qualified-id-join-index-impl-v2.h"
+#include "icing/join/qualified-id-join-index-impl-v2.h"
 
 #include <cstdint>
 #include <memory>
@@ -22,27 +22,27 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/persistent-storage.h"
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
-#include "third_party/icing/join/document-id-to-join-info.h"
-#include "third_party/icing/join/qualified-id-join-index.h"
-#include "third_party/icing/schema/joinable-property.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/key-mapper.h"
-#include "third_party/icing/store/namespace-id-fingerprint.h"
-#include "third_party/icing/store/namespace-id.h"
-#include "third_party/icing/store/persistent-hash-map-key-mapper.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/persistent-storage.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/join/document-id-to-join-info.h"
+#include "icing/join/qualified-id-join-index.h"
+#include "icing/schema/joinable-property.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/key-mapper.h"
+#include "icing/store/namespace-id-fingerprint.h"
+#include "icing/store/namespace-id.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

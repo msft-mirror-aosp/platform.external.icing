@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_UTIL_STATUS_MACROS_H_
-#define THIRD_PARTY_ICING_UTIL_STATUS_MACROS_H_
+#ifndef ICING_UTIL_STATUS_MACROS_H_
+#define ICING_UTIL_STATUS_MACROS_H_
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status_macros.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
+#include "icing/text_classifier/lib3/utils/base/status_macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 
 #define ICING_RETURN_ERROR_IF_NULL(var)                             \
   do {                                                              \
@@ -42,4 +42,4 @@
        TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_2_))             \
   (__VA_ARGS__)
 
-#endif  // THIRD_PARTY_ICING_UTIL_STATUS_MACROS_H_
+#endif  // ICING_UTIL_STATUS_MACROS_H_

@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_QUERY_QUERY_UTILS_H_
-#define THIRD_PARTY_ICING_QUERY_QUERY_UTILS_H_
+#ifndef ICING_QUERY_QUERY_UTILS_H_
+#define ICING_QUERY_QUERY_UTILS_H_
 
 #include <cstdint>
 #include <memory>
 
-#include "third_party/icing/index/iterator/document-filter-predicate.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-store.h"
+#include "icing/index/iterator/document-filter-predicate.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -33,4 +33,4 @@ std::unique_ptr<DocumentFilterPredicate> GetFilterPredicateBySchemaAndNamespace(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_QUERY_QUERY_UTILS_H_
+#endif  // ICING_QUERY_QUERY_UTILS_H_

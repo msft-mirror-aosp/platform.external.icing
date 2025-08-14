@@ -21,33 +21,33 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/index/hit/doc-hit-info.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/portable/gzip_stream.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/ranker.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/scoring/scoring-processor.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/test-feature-flags.h"
-#include "third_party/icing/testing/tmp-directory.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/document-util.h"
+#include "gtest/gtest.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/ranker.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/scoring/scoring-processor.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 
 // This is an overall benchmark for ScoringProcessor, Scorer, and Ranker. It
 // shows how performance varies when we score different numbers of document
@@ -55,17 +55,17 @@
 //
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/scoring:score-and-rank_benchmark
+//    //icing/scoring:score-and-rank_benchmark
 //
-//    $ blaze-bin/third_party/icing/scoring/score-and-rank_benchmark
+//    $ blaze-bin/icing/scoring/score-and-rank_benchmark
 //    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //third_party/icing/scoring:score-and-rank_benchmark
+//    //icing/scoring:score-and-rank_benchmark
 //
-//    $ adb push blaze-bin/third_party/icing/scoring/score-and-rank_benchmark
+//    $ adb push blaze-bin/icing/scoring/score-and-rank_benchmark
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/score-and-rank_benchmark

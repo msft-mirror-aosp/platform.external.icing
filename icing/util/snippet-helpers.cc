@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/snippet-helpers.h"
+#include "icing/util/snippet-helpers.h"
 
 #include <algorithm>
 #include <string_view>
 
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/property-util.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/property-util.h"
 
 namespace icing {
 namespace lib {

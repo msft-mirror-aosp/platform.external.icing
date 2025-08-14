@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/str_cat.h"
 
 namespace icing {
 namespace lib {

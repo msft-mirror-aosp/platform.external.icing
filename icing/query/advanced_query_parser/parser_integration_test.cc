@@ -17,13 +17,13 @@
 #include <utility>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree-test-utils.h"
-#include "third_party/icing/query/advanced_query_parser/abstract-syntax-tree.h"
-#include "third_party/icing/query/advanced_query_parser/lexer.h"
-#include "third_party/icing/query/advanced_query_parser/parser.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/query/advanced_query_parser/abstract-syntax-tree-test-utils.h"
+#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/parser.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

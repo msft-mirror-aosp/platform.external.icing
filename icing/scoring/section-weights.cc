@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/section-weights.h"
+#include "icing/scoring/section-weights.h"
 
 #include <cfloat>
 #include <unordered_map>
 #include <utility>
 
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/schema/section.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {

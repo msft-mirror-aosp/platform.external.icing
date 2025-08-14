@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_FILE_CONSTANTS_H_
-#define THIRD_PARTY_ICING_FILE_CONSTANTS_H_
+#ifndef ICING_FILE_CONSTANTS_H_
+#define ICING_FILE_CONSTANTS_H_
 
 namespace icing {
 namespace lib {
@@ -32,4 +32,4 @@ static_assert(kMaxProtoSize <= 0x00FFFFFF,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_FILE_CONSTANTS_H_
+#endif  // ICING_FILE_CONSTANTS_H_

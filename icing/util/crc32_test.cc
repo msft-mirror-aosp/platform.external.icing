@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/util/crc32.h"
+#include "icing/util/crc32.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,11 +20,11 @@
 #include <string>
 #include <string_view>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/portable/zlib.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/portable/zlib.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

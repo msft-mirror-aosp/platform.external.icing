@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_STORAGE_H_
-#define THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_STORAGE_H_
+#ifndef ICING_INDEX_NUMERIC_INTEGER_INDEX_STORAGE_H_
+#define ICING_INDEX_NUMERIC_INTEGER_INDEX_STORAGE_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,20 +21,20 @@
 #include <string_view>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/file/file-backed-vector.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/file/persistent-storage.h"
-#include "third_party/icing/file/posting_list/flash-index-storage.h"
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
-#include "third_party/icing/index/iterator/doc-hit-info-iterator.h"
-#include "third_party/icing/index/numeric/integer-index-data.h"
-#include "third_party/icing/index/numeric/posting-list-integer-index-serializer.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/util/crc32.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/file/persistent-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index-data.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -490,4 +490,4 @@ class IntegerIndexStorage : public PersistentStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_NUMERIC_INTEGER_INDEX_STORAGE_H_
+#endif  // ICING_INDEX_NUMERIC_INTEGER_INDEX_STORAGE_H_

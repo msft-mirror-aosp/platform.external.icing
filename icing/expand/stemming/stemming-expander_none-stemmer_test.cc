@@ -19,11 +19,11 @@
 #include <thread>  // NOLINT
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/expand/expander.h"
-#include "third_party/icing/expand/stemming/stemming-expander.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/expand/expander.h"
+#include "icing/expand/stemming/stemming-expander.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

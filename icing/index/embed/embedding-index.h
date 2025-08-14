@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
-#define THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
+#ifndef ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
+#define ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
 
 #include <cstdint>
 #include <memory>
@@ -22,29 +22,29 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/file-backed-vector.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/memory-mapped-file.h"
-#include "third_party/icing/file/persistent-storage.h"
-#include "third_party/icing/file/posting_list/flash-index-storage.h"
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
-#include "third_party/icing/index/embed/embedding-hit.h"
-#include "third_party/icing/index/embed/embedding-scorer.h"
-#include "third_party/icing/index/embed/posting-list-embedding-hit-accessor.h"
-#include "third_party/icing/index/embed/posting-list-embedding-hit-serializer.h"
-#include "third_party/icing/index/embed/quantizer.h"
-#include "third_party/icing/index/hit/hit.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/store/key-mapper.h"
-#include "third_party/icing/util/clock.h"
-#include "third_party/icing/util/crc32.h"
-#include "third_party/icing/util/logging.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
+#include "icing/file/persistent-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-scorer.h"
+#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
+#include "icing/index/embed/posting-list-embedding-hit-serializer.h"
+#include "icing/index/embed/quantizer.h"
+#include "icing/index/hit/hit.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/key-mapper.h"
+#include "icing/util/clock.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -387,4 +387,4 @@ class EmbeddingIndex : public PersistentStorage {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
+#endif  // ICING_INDEX_EMBED_EMBEDDING_INDEX_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/advanced_scoring/advanced-scorer.h"
+#include "icing/scoring/advanced_scoring/advanced-scorer.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,18 +21,18 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/index/embed/embedding-query-results.h"
-#include "third_party/icing/join/join-children-fetcher.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/scoring/advanced_scoring/score-expression-util.h"
-#include "third_party/icing/scoring/advanced_scoring/score-expression.h"
-#include "third_party/icing/scoring/bm25f-calculator.h"
-#include "third_party/icing/scoring/section-weights.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/index/embed/embedding-query-results.h"
+#include "icing/join/join-children-fetcher.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/advanced_scoring/score-expression-util.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
+#include "icing/scoring/bm25f-calculator.h"
+#include "icing/scoring/section-weights.h"
+#include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

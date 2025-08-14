@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/absl_ports/str_join.h"
+#include "icing/absl_ports/str_join.h"
 
 namespace icing {
 namespace lib {

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
-#define THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
+#ifndef ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
+#define ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,16 +21,16 @@
 #include <unordered_map>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/legacy/core/icing-packed-pod.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/advanced_scoring/double-list.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/util/embedding-util.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/legacy/core/icing-packed-pod.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
+#include "icing/store/document-id.h"
+#include "icing/util/embedding-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -270,4 +270,4 @@ class EmbeddingQueryResults {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_
+#endif  // ICING_INDEX_EMBED_EMBEDDING_QUERY_RESULTS_H_

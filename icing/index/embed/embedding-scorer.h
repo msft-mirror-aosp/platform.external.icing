@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_SCORER_H_
-#define THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_SCORER_H_
+#ifndef ICING_INDEX_EMBED_EMBEDDING_SCORER_H_
+#define ICING_INDEX_EMBED_EMBEDDING_SCORER_H_
 
 #include <cstdint>
 #include <memory>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/index/embed/quantizer.h"
-#include "third_party/icing/proto/search.proto.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/embed/quantizer.h"
+#include "icing/proto/search.pb.h"
 
 namespace icing {
 namespace lib {
@@ -82,4 +82,4 @@ class EuclideanDistanceEmbeddingScorer : public EmbeddingScorer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_INDEX_EMBED_EMBEDDING_SCORER_H_
+#endif  // ICING_INDEX_EMBED_EMBEDDING_SCORER_H_

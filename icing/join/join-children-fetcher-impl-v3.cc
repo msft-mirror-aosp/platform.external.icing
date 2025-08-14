@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/join/join-children-fetcher-impl-v3.h"
+#include "icing/join/join-children-fetcher-impl-v3.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -22,20 +22,20 @@
 #include <utility>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/join/document-join-id-pair.h"
-#include "third_party/icing/join/qualified-id-join-index.h"
-#include "third_party/icing/proto/scoring.proto.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/schema/joinable-property.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/store/document-filter-data.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/join/document-join-id-pair.h"
+#include "icing/join/qualified-id-join-index.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/schema/joinable-property.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

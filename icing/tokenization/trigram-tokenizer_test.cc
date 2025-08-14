@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/tokenization/trigram-tokenizer.h"
+#include "icing/tokenization/trigram-tokenizer.h"
 
 #include <memory>
 #include <string_view>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/tokenization/token.h"
-#include "third_party/icing/tokenization/tokenizer.h"
-#include "third_party/icing/util/character-iterator.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/tokenization/token.h"
+#include "icing/tokenization/tokenizer.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {

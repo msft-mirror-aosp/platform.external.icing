@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_UTIL_LOGGING_H_
-#define THIRD_PARTY_ICING_UTIL_LOGGING_H_
+#ifndef ICING_UTIL_LOGGING_H_
+#define ICING_UTIL_LOGGING_H_
 
 #include <atomic>
 #include <cstdint>
 #include <string>
 
-#include "third_party/icing/proto/debug.proto.h"
+#include "icing/proto/debug.pb.h"
 
 // This header provides base/logging.h style macros, ICING_LOG and ICING_VLOG,
 // for logging in various platforms. The macros use __android_log_write on
@@ -156,7 +156,7 @@ class LogMessage {
   LoggingStringStream stream_;
 };
 
-inline constexpr char kIcingLoggingTag[] = "icing";
+inline constexpr char kIcingLoggingTag[] = "AppSearchIcing";
 
 // Define consts to make it easier to refer to log severities in code.
 constexpr ::icing::lib::LogSeverity::Code VERBOSE =
@@ -186,4 +186,4 @@ constexpr ::icing::lib::LogSeverity::Code FATAL =
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_UTIL_LOGGING_H_
+#endif  // ICING_UTIL_LOGGING_H_

@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/tokenization/plain-tokenizer.h"
+#include "icing/tokenization/plain-tokenizer.h"
 
 #include <string>
 #include <string_view>
 
-#include "testing/base/public/gmock.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/icu-i18n-test-utils.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/tokenizer-factory.h"
-#include "third_party/icing/util/icu-data-file-helper.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "gmock/gmock.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/portable/platform.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/tokenizer-factory.h"
+#include "icing/util/icu-data-file-helper.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -40,9 +40,9 @@ class PlainTokenizerTest : public ::testing::Test {
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //third_party/icing/BUILD.
+          // File generated via icu_data_file rule in //icing/BUILD.
           icu_data_file_helper::SetUpIcuDataFile(
-              GetTestFilePath("third_party/icing/icu.dat")));
+              GetTestFilePath("icing/icu.dat")));
     }
   }
 

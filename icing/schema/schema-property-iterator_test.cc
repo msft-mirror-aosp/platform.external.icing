@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/schema/schema-property-iterator.h"
+#include "icing/schema/schema-property-iterator.h"
 
 #include <initializer_list>
 #include <string>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/schema-builder.h"
-#include "third_party/icing/schema/schema-util.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-util.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

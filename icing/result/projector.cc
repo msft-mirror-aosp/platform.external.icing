@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/result/projector.h"
+#include "icing/result/projector.h"
 
 #include <algorithm>
 
-#include "third_party/icing/proto/document.proto.h"
+#include "icing/proto/document.pb.h"
 
 namespace icing {
 namespace lib {

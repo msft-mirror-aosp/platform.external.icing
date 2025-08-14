@@ -12,27 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/store/document-log-creator.h"
+#include "icing/store/document-log-creator.h"
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/annotate.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/file/constants.h"
-#include "third_party/icing/file/file-backed-proto-log.h"
-#include "third_party/icing/file/filesystem.h"
-#include "third_party/icing/file/portable-file-backed-proto-log.h"
-#include "third_party/icing/proto/document.proto.h"
-#include "third_party/icing/proto/document_wrapper.proto.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/annotate.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
+#include "icing/file/constants.h"
+#include "icing/file/file-backed-proto-log.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -106,8 +106,7 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
               compression_threshold_bytes, compression_mem_level,
               feature_flags->enable_smaller_decompression_buffer_size(),
-              feature_flags->enable_proto_log_new_header_format(),
-              feature_flags->enable_reusable_decompression_buffer())));
+              feature_flags->enable_proto_log_new_header_format())));
 
   CreateResult create_result = {std::move(log_create_result),
                                 preexisting_file_version, new_file};
@@ -145,8 +144,7 @@ libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
               /*max_proto_size_in=*/constants::kMaxProtoSize, compression_level,
               compression_threshold_bytes, compression_mem_level,
               feature_flags->enable_smaller_decompression_buffer_size(),
-              feature_flags->enable_proto_log_new_header_format(),
-              feature_flags->enable_reusable_decompression_buffer()));
+              feature_flags->enable_proto_log_new_header_format()));
   if (!v1_create_result_or.ok()) {
     return absl_ports::Annotate(
         v1_create_result_or.status(),

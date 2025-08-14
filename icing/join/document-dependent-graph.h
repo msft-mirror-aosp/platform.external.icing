@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_JOIN_DOCUMENT_DEPENDENT_GRAPH_H_
-#define THIRD_PARTY_ICING_JOIN_DOCUMENT_DEPENDENT_GRAPH_H_
+#ifndef ICING_JOIN_DOCUMENT_DEPENDENT_GRAPH_H_
+#define ICING_JOIN_DOCUMENT_DEPENDENT_GRAPH_H_
 
 #include <memory>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/graph/graph-interface.h"
-#include "third_party/icing/join/qualified-id-join-index.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/store/document-store.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/graph/graph-interface.h"
+#include "icing/join/qualified-id-join-index.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -99,4 +99,4 @@ class DocumentDependentGraph : public graph::GraphInterface<DocumentId> {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_JOIN_DOCUMENT_DEPENDENT_GRAPH_H_
+#endif  // ICING_JOIN_DOCUMENT_DEPENDENT_GRAPH_H_

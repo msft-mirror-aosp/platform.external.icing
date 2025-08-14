@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 
 #include <utility>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/schema/section.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/testing/common-matchers.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/testing/common-matchers.h"
 
 namespace icing {
 namespace lib {

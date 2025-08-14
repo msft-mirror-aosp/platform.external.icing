@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/store/usage-store.h"
+#include "icing/store/usage-store.h"
 
-#include "third_party/icing/file/file-backed-vector.h"
-#include "third_party/icing/proto/usage.proto.h"
-#include "third_party/icing/store/document-id.h"
-#include "third_party/icing/util/crc32.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/proto/usage.pb.h"
+#include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {

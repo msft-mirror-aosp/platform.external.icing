@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_TOKENIZATION_LANGUAGE_SEGMENTER_H_
-#define THIRD_PARTY_ICING_TOKENIZATION_LANGUAGE_SEGMENTER_H_
+#ifndef ICING_TOKENIZATION_LANGUAGE_SEGMENTER_H_
+#define ICING_TOKENIZATION_LANGUAGE_SEGMENTER_H_
 
 #include <cstdint>
 #include <memory>
 #include <string_view>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/util/character-iterator.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -183,4 +183,4 @@ class LanguageSegmenter {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_TOKENIZATION_LANGUAGE_SEGMENTER_H_
+#endif  // ICING_TOKENIZATION_LANGUAGE_SEGMENTER_H_

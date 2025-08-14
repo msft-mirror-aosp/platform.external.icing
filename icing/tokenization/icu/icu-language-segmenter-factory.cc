@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/tokenization/icu/icu-language-segmenter.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/util/logging.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "icing/tokenization/icu/icu-language-segmenter.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {

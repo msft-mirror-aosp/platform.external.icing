@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/scoring/advanced_scoring/double-list.h"
+#include "icing/scoring/advanced_scoring/double-list.h"
 
 #include <cstddef>
 #include <iterator>
@@ -20,8 +20,8 @@
 #include <utility>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace icing {
 namespace lib {

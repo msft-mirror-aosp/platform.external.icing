@@ -17,24 +17,17 @@
 // provided in libprotobuf-full but we would like to link libicing against the
 // smaller libprotobuf-lite instead.
 
-#include "third_party/icing/portable/gzip_stream.h"
+#include "icing/portable/gzip_stream.h"
 
-#include <cstddef>
-
-#include "third_party/icing/util/logging.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
 namespace protobuf_ports {
 
 GzipInputStream::GzipInputStream(ZeroCopyInputStream* sub_stream, Format format,
-                                 void* output_buffer, size_t buffer_size)
-    : format_(format),
-      sub_stream_(sub_stream),
-      zerror_(Z_OK),
-      output_buffer_(output_buffer),
-      output_buffer_length_(buffer_size),
-      byte_count_(0) {
+                                 int buffer_size)
+    : format_(format), sub_stream_(sub_stream), zerror_(Z_OK), byte_count_(0) {
   zcontext_.state = Z_NULL;
   zcontext_.zalloc = Z_NULL;
   zcontext_.zfree = Z_NULL;
@@ -44,12 +37,18 @@ GzipInputStream::GzipInputStream(ZeroCopyInputStream* sub_stream, Format format,
   zcontext_.avail_in = 0;
   zcontext_.total_in = 0;
   zcontext_.msg = NULL;
+  if (buffer_size == -1) {
+    output_buffer_length_ = kDefaultBufferSize;
+  } else {
+    output_buffer_length_ = buffer_size;
+  }
+  output_buffer_ = operator new(output_buffer_length_);
   zcontext_.next_out = static_cast<Bytef*>(output_buffer_);
   zcontext_.avail_out = output_buffer_length_;
   output_position_ = output_buffer_;
 }
-
 GzipInputStream::~GzipInputStream() {
+  operator delete(output_buffer_);
   zerror_ = inflateEnd(&zcontext_);
 }
 

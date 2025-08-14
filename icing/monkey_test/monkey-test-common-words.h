@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TEST_COMMON_WORDS_H_
-#define THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TEST_COMMON_WORDS_H_
+#ifndef ICING_MONKEY_TEST_MONKEY_TEST_COMMON_WORDS_H_
+#define ICING_MONKEY_TEST_MONKEY_TEST_COMMON_WORDS_H_
 
 #include <array>
 #include <string_view>
@@ -281,4 +281,4 @@ static constexpr std::array<std::string_view, 1000> kCommonWords = {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_MONKEY_TEST_MONKEY_TEST_COMMON_WORDS_H_
+#endif  // ICING_MONKEY_TEST_MONKEY_TEST_COMMON_WORDS_H_

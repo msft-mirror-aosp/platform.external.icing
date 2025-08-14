@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_RESULT_RETRIEVER_V2_H_
-#define THIRD_PARTY_ICING_RESULT_RETRIEVER_V2_H_
+#ifndef ICING_RESULT_RETRIEVER_V2_H_
+#define ICING_RESULT_RETRIEVER_V2_H_
 
 #include <cstdint>
 #include <memory>
@@ -21,18 +21,18 @@
 #include <unordered_map>
 #include <utility>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/thread_annotations.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/search.proto.h"
-#include "third_party/icing/result/page-result.h"
-#include "third_party/icing/result/result-state-v2.h"
-#include "third_party/icing/result/snippet-retriever.h"
-#include "third_party/icing/schema/schema-store.h"
-#include "third_party/icing/scoring/scored-document-hit.h"
-#include "third_party/icing/store/document-store.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/transform/normalizer.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/thread_annotations.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/search.pb.h"
+#include "icing/result/page-result.h"
+#include "icing/result/result-state-v2.h"
+#include "icing/result/snippet-retriever.h"
+#include "icing/schema/schema-store.h"
+#include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-store.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -150,4 +150,4 @@ class ResultRetrieverV2 {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_RESULT_RETRIEVER_V2_H_
+#endif  // ICING_RESULT_RETRIEVER_V2_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/monkey_test/monkey-test-generators.h"
+#include "icing/monkey_test/monkey-test-generators.h"
 
 #include <algorithm>
 #include <array>
@@ -24,14 +24,14 @@
 #include <utility>
 #include <vector>
 
-#include "third_party/icing/absl_ports/str_cat.h"
-#include "third_party/icing/absl_ports/str_join.h"
-#include "third_party/icing/document-builder.h"
-#include "third_party/icing/monkey_test/monkey-test-util.h"
-#include "third_party/icing/monkey_test/monkey-tokenized-document.h"
-#include "third_party/icing/proto/schema.proto.h"
-#include "third_party/icing/proto/term.proto.h"
-#include "third_party/icing/schema/section.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/str_join.h"
+#include "icing/document-builder.h"
+#include "icing/monkey_test/monkey-test-util.h"
+#include "icing/monkey_test/monkey-tokenized-document.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/schema/section.h"
 
 namespace icing {
 namespace lib {

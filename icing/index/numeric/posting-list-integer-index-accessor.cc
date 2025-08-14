@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/icing/index/numeric/posting-list-integer-index-accessor.h"
+#include "icing/index/numeric/posting-list-integer-index-accessor.h"
 
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/absl_ports/canonical_errors.h"
-#include "third_party/icing/file/posting_list/flash-index-storage.h"
-#include "third_party/icing/file/posting_list/index-block.h"
-#include "third_party/icing/file/posting_list/posting-list-identifier.h"
-#include "third_party/icing/file/posting_list/posting-list-used.h"
-#include "third_party/icing/index/numeric/integer-index-data.h"
-#include "third_party/icing/index/numeric/posting-list-integer-index-serializer.h"
-#include "third_party/icing/util/status-macros.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/index-block.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-used.h"
+#include "icing/index/numeric/integer-index-data.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

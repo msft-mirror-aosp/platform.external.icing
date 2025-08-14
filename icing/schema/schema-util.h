@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ICING_SCHEMA_SCHEMA_UTIL_H_
-#define THIRD_PARTY_ICING_SCHEMA_SCHEMA_UTIL_H_
+#ifndef ICING_SCHEMA_SCHEMA_UTIL_H_
+#define ICING_SCHEMA_SCHEMA_UTIL_H_
 
 #include <string>
 #include <string_view>
@@ -21,10 +21,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
-#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/statusor.h"
-#include "third_party/icing/feature-flags.h"
-#include "third_party/icing/proto/schema.proto.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
+#include "icing/proto/schema.pb.h"
 
 namespace icing {
 namespace lib {
@@ -425,4 +425,4 @@ class SchemaUtil {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // THIRD_PARTY_ICING_SCHEMA_SCHEMA_UTIL_H_
+#endif  // ICING_SCHEMA_SCHEMA_UTIL_H_
