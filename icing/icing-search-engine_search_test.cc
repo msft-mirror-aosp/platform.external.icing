@@ -68,6 +68,7 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::AnyOf;
 using ::testing::DoubleEq;
 using ::testing::DoubleNear;
 using ::testing::ElementsAre;
@@ -142,6 +143,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
   icing_options.set_enable_passing_filter_to_children(true);
+  icing_options.set_enable_embedding_iterator_v2(true);
   return icing_options;
 }
 
@@ -8931,6 +8933,137 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding) {
   EXPECT_THAT(results.results(0).document(), EqualsProto(doc_b));
   // Score should be 0.4 + 0.5 + 0.6 = 1.5
   EXPECT_THAT(results.results(0).score(), DoubleNear(1.5, kEps));
+}
+
+TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding_manyHits) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeB").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeC").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add 600 documents of TypeA, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriA" + std::to_string(i))
+            .SetSchema("TypeA")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.1, 0.2, 0.3}),
+                               CreateVector("my_model", {0.1, 0.2, 0.3}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+  // Add 600 documents of TypeB, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriB" + std::to_string(i))
+            .SetSchema("TypeB")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.4, 0.5, 0.6}),
+                               CreateVector("my_model", {0.4, 0.5, 0.6}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+  // Add 600 documents of TypeC, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriC" + std::to_string(i))
+            .SetSchema("TypeC")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.7, 0.8, 0.9}),
+                               CreateVector("my_model", {0.7, 0.8, 0.9}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+
+  SearchSpecProto search_spec;
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  // Let the score be the number of embedding hits.
+  scoring_spec.set_advanced_scoring_expression(
+      "len(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(10000);
+
+  // Filter for TypeA only
+  search_spec.add_schema_type_filters("TypeA");
+  SearchResultProto results =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeA"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeB only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeB");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeB"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeC only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeC");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeC"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeA and TypeC
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeA");
+  search_spec.add_schema_type_filters("TypeC");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(1200));
+  for (int i = 0; i < 1200; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(),
+                AnyOf(Eq("TypeA"), Eq("TypeC")));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
 }
 
 TEST_F(IcingSearchEngineSearchTest, SearchWithUriFilters) {

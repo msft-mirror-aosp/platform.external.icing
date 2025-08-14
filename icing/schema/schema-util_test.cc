@@ -4441,7 +4441,9 @@ TEST_P(SchemaUtilTest,
       /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_eigen_embedding_scoring=*/true,
       /*enable_passing_filter_to_children=*/true,
-      /*enable_proto_log_new_header_format=*/true);
+      /*enable_proto_log_new_header_format=*/true,
+      /*enable_embedding_iterator_v2=*/true,
+      /*enable_reusable_decompression_buffer=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4508,7 +4510,9 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_eigen_embedding_scoring=*/true,
       /*enable_passing_filter_to_children=*/true,
-      /*enable_proto_log_new_header_format=*/true);
+      /*enable_proto_log_new_header_format=*/true,
+      /*enable_embedding_iterator_v2=*/true,
+      /*enable_reusable_decompression_buffer=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5840,7 +5844,9 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true),
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -5853,7 +5859,9 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true)));
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

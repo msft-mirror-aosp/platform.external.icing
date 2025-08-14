@@ -739,7 +739,6 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
-  @Ignore // b/350530146
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
@@ -752,7 +751,7 @@ public final class IcingSearchEngineTest {
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
-    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] data = generateRandomBytes(100); // 100 Bytes
     byte[] digest = calculateDigest(data);
     PropertyProto.BlobHandleProto blobHandle =
         PropertyProto.BlobHandleProto.newBuilder()
@@ -794,7 +793,6 @@ public final class IcingSearchEngineTest {
     assertThat(output).isEqualTo(data);
   }
 
-  @Ignore // b/350530146
   @Test
   public void removeBlob() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
@@ -807,7 +805,7 @@ public final class IcingSearchEngineTest {
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
-    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] data = generateRandomBytes(100); // 100 Bytes
     byte[] digest = calculateDigest(data);
     PropertyProto.BlobHandleProto blobHandle =
         PropertyProto.BlobHandleProto.newBuilder()
@@ -838,6 +836,74 @@ public final class IcingSearchEngineTest {
     // Commit will not found.
     BlobProto commitBlobProto = icing.commitBlob(blobHandle);
     assertThat(commitBlobProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
+  @Test
+  @Ignore // b/434206770
+  public void getAndPutBlobInfo() throws Exception {
+    // 1 Arrange: set up IcingSearchEngine with and blob data
+    File tempDir = temporaryFolder.newFolder();
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    byte[] data = generateRandomBytes(100); // 100 Bytes
+    byte[] digest = calculateDigest(data);
+    PropertyProto.BlobHandleProto blobHandle =
+        PropertyProto.BlobHandleProto.newBuilder()
+            .setNamespace("ns")
+            .setDigest(ByteString.copyFrom(digest))
+            .build();
+
+    // 2 Act: write the blob
+    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    assertStatusOk(openWriteBlobProto.getStatus());
+    Field field = FileDescriptor.class.getDeclaredField("fd");
+    field.setAccessible(true); // Make the field accessible
+
+    // Create a new FileDescriptor object
+    FileDescriptor writeFd = new FileDescriptor();
+
+    // Set the file descriptor value using reflection
+    field.setInt(writeFd, openWriteBlobProto.getFileDescriptor());
+
+    try (FileOutputStream outputStream = new FileOutputStream(writeFd)) {
+      outputStream.write(data);
+    }
+
+    // Commit and read the blob.
+    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    assertStatusOk(commitBlobProto.getStatus());
+
+    // Get the blob info.
+    BlobProto allBlobInfoProto = icing.getAllBlobInfos();
+    assertStatusOk(allBlobInfoProto.getStatus());
+    assertThat(allBlobInfoProto.getBlobInfoProtosCount()).isEqualTo(1);
+
+    // create a new IcingSearchEngine instance.
+    IcingSearchEngineOptions options2 =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .setManageBlobFiles(false)
+            .build();
+    IcingSearchEngine icing2 = new IcingSearchEngine(options2);
+    assertStatusOk(icing2.initialize().getStatus());
+
+    // Put the blob info.
+    BlobProto putBlobInfosProto = icing2.putBlobInfos(allBlobInfoProto);
+    assertStatusOk(putBlobInfosProto.getStatus());
+
+    // 3: Verify the blob info.
+    BlobProto allBlobInfoProto2 = icing2.getAllBlobInfos();
+    assertStatusOk(allBlobInfoProto2.getStatus());
+    assertThat(allBlobInfoProto2.getBlobInfoProtosCount()).isEqualTo(1);
+    assertThat(allBlobInfoProto2.getBlobInfoProtos(0))
+        .isEqualTo(allBlobInfoProto2.getBlobInfoProtos(0));
   }
 
   @Test
