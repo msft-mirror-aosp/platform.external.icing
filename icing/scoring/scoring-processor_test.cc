@@ -33,6 +33,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -49,6 +50,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/document-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -82,14 +84,18 @@ class ScoringProcessorTest
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -158,6 +164,12 @@ DocumentProto CreateDocument(const std::string& name_space,
       .Build();
 }
 
+DocumentWrapper CreateDocumentWrapper(DocumentProto document,
+                                      int32_t num_string_tokens) {
+  document.mutable_internal_fields()->set_length_in_tokens(num_string_tokens);
+  return document_util::CreateDocumentWrapper(std::move(document));
+}
+
 libtextclassifier3::StatusOr<
     std::pair<std::vector<DocHitInfo>, std::vector<ScoredDocumentHit>>>
 CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
@@ -165,10 +177,11 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
   std::vector<DocHitInfo> doc_hit_infos;
   std::vector<ScoredDocumentHit> scored_document_hits;
   for (int i = 0; i < scores.size(); i++) {
-    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
-                           document_store->Put(CreateDocument(
-                               "icing", "email/" + std::to_string(i),
-                               scores.at(i), kDefaultCreationTimestampMs)));
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::PutResult put_result,
+        document_store->Put(document_util::CreateDocumentWrapper(
+            CreateDocument("icing", "email/" + std::to_string(i), scores.at(i),
+                           kDefaultCreationTimestampMs))));
     DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
     scored_document_hits.emplace_back(document_id, kSectionIdMaskNone,
@@ -268,8 +281,8 @@ TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Sets up documents
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store()->Put(CreateDocument("icing", "email/1", /*score=*/1,
-                                           kDefaultCreationTimestampMs)));
+      document_store()->Put(document_util::CreateDocumentWrapper(CreateDocument(
+          "icing", "email/1", /*score=*/1, kDefaultCreationTimestampMs))));
   DocumentId document_id1 = put_result1.new_document_id;
   DocHitInfo doc_hit_info1(document_id1);
 
@@ -379,17 +392,17 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/10)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/100));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/100)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result3,
-      document_store()->Put(document3, /*num_tokens=*/50));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document3, /*num_string_tokens=*/50)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
@@ -455,17 +468,17 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/10)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/10)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result3,
-      document_store()->Put(document3, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document3, /*num_string_tokens=*/10)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
@@ -530,17 +543,17 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/10)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/10)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result3,
-      document_store()->Put(document3, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document3, /*num_string_tokens=*/10)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
@@ -609,17 +622,17 @@ TEST_P(ScoringProcessorTest, ShouldScoreByRelevanceScore_MultipleQueryTerms) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/20));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/20)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/20));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/20)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result3,
-      document_store()->Put(document3, /*num_tokens=*/20));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document3, /*num_string_tokens=*/20)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   // Index 5 terms with total frequencies:
@@ -830,9 +843,9 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/1", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/10)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   // Document 1 contains the term "foo" 0 times in the "subject" property
@@ -883,13 +896,13 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/2", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/1)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
@@ -961,13 +974,13 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/2", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/1)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
@@ -1039,9 +1052,9 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/2", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/1)));
   DocumentId document_id1 = put_result1.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
@@ -1135,13 +1148,13 @@ TEST_P(ScoringProcessorTest,
       CreateDocument("icing", "email/2", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store()->Put(document1, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document1, /*num_string_tokens=*/1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store()->Put(document2, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
+                             document_store()->Put(CreateDocumentWrapper(
+                                 document2, /*num_string_tokens=*/1)));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Document 1 contains the term "foo" 1 time in the "body" property
@@ -1215,14 +1228,17 @@ TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/1571100003333);
   // Intentionally inserts documents in a different order
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store()->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store()->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store()->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store()->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
   DocHitInfo doc_hit_info1(document_id1);
   DocHitInfo doc_hit_info2(document_id2);
@@ -1270,14 +1286,17 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store()->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store()->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store()->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store()->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   // Report usage for doc1 once and doc2 twice.
@@ -1337,14 +1356,17 @@ TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
       CreateDocument("icing", "email/3", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store()->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store()->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store()->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store()->Put(document_util::CreateDocumentWrapper(document3)));
   DocumentId document_id3 = put_result3.new_document_id;
 
   // Report usage for doc1 and doc2.
@@ -1442,13 +1464,16 @@ TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
                                            kDefaultCreationTimestampMs);
 
   // Intentionally inserts documents in a different order
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store()->Put(document_util::CreateDocumentWrapper(document1)));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result3,
-                             document_store()->Put(document3));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store()->Put(document_util::CreateDocumentWrapper(document3)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store()->Put(document_util::CreateDocumentWrapper(document2)));
   DocumentId document_id2 = put_result2.new_document_id;
   DocumentId document_id3 = put_result3.new_document_id;
   DocHitInfo doc_hit_info1(document_id1);
