@@ -71,6 +71,66 @@ TEST(ScoredDocumentHitTest,
               EqualsJoinedScoredDocumentHit(joined_scored_document_hit));
 }
 
+TEST(ScoredDocumentHitTest, Copyable) {
+  ScoredDocumentHit hit1(/*document_id=*/5,
+                         /*section_id_mask=*/49,
+                         /*score=*/1.0, /*additional_scores=*/{0, 1, 2});
+
+  ScoredDocumentHit hit2(/*document_id=*/6,
+                         /*section_id_mask=*/50,
+                         /*score=*/2.0, /*additional_scores=*/{3, 4, 5});
+
+  // Copy constructor
+  ScoredDocumentHit copy = hit1;
+  EXPECT_THAT(copy, EqualsScoredDocumentHit(ScoredDocumentHit(
+                        /*document_id=*/5,
+                        /*section_id_mask=*/49,
+                        /*score=*/1.0, /*additional_scores=*/{0, 1, 2})));
+
+  // Copy assignment
+  copy = hit2;
+  EXPECT_THAT(copy, EqualsScoredDocumentHit(ScoredDocumentHit(
+                        /*document_id=*/6,
+                        /*section_id_mask=*/50,
+                        /*score=*/2.0, /*additional_scores=*/{3, 4, 5})));
+}
+
+TEST(ScoredDocumentHitTest, Movable) {
+  ScoredDocumentHit hit1(/*document_id=*/5,
+                         /*section_id_mask=*/49,
+                         /*score=*/1.0, /*additional_scores=*/{0, 1, 2});
+  ScoredDocumentHit hit1_copy = hit1;
+
+  ScoredDocumentHit hit2(/*document_id=*/6,
+                         /*section_id_mask=*/50,
+                         /*score=*/2.0, /*additional_scores=*/{3, 4, 5});
+  ScoredDocumentHit hit2_copy = hit2;
+
+  // Move constructor
+  ScoredDocumentHit moved = std::move(hit1);
+  EXPECT_THAT(moved, EqualsScoredDocumentHit(hit1_copy));
+
+  // Move assignment
+  moved = std::move(hit2);
+  EXPECT_THAT(moved, EqualsScoredDocumentHit(hit2_copy));
+}
+
+TEST(ScoredDocumentHitTest, Swapable) {
+  ScoredDocumentHit hit1(/*document_id=*/5,
+                         /*section_id_mask=*/49,
+                         /*score=*/1.0, /*additional_scores=*/{0, 1, 2});
+  ScoredDocumentHit hit1_copy = hit1;
+
+  ScoredDocumentHit hit2(/*document_id=*/6,
+                         /*section_id_mask=*/50,
+                         /*score=*/2.0, /*additional_scores=*/{3, 4, 5});
+  ScoredDocumentHit hit2_copy = hit2;
+
+  std::swap(hit1, hit2);
+  EXPECT_THAT(hit1, EqualsScoredDocumentHit(hit2_copy));
+  EXPECT_THAT(hit2, EqualsScoredDocumentHit(hit1_copy));
+}
+
 }  // namespace
 
 }  // namespace lib

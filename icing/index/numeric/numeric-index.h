@@ -28,6 +28,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -182,17 +183,20 @@ class NumericIndex : public PersistentStorage {
       : PersistentStorage(filesystem, std::move(working_path),
                           working_path_type) {}
 
-  virtual libtextclassifier3::Status PersistStoragesToDisk(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status PersistStoragesToDisk() override = 0;
 
-  virtual libtextclassifier3::Status PersistMetadataToDisk(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status PersistMetadataToDisk() override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status WriteMetadata() override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum()
+      override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> GetInfoChecksum()
+      const override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum()
+      const override = 0;
 
   virtual Crcs& crcs() override = 0;
   virtual const Crcs& crcs() const override = 0;
