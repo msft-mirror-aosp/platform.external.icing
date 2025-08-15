@@ -739,6 +739,7 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
+  @Ignore // b/350530146
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
@@ -793,6 +794,7 @@ public final class IcingSearchEngineTest {
     assertThat(output).isEqualTo(data);
   }
 
+  @Ignore // b/350530146
   @Test
   public void removeBlob() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data

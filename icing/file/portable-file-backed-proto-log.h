@@ -1728,7 +1728,7 @@ void PortableFileBackedProtoLog<ProtoT>::ReturnBuffer(
 }
 
 template <typename ProtoT>
-PortableFileBackedProtoLog<ProtoT>::BufferHolder
+typename PortableFileBackedProtoLog<ProtoT>::BufferHolder
 PortableFileBackedProtoLog<ProtoT>::PossiblyBorrowBuffer(size_t size) const {
   if (!enable_reusable_decompression_buffer_) {
     return BufferHolder(this, std::make_unique<uint8_t[]>(size), size);

@@ -448,7 +448,12 @@ bool IcingFilesystem::GrowUsingPWrite(int fd, uint64_t new_size) const {
 bool IcingFilesystem::Write(int fd, const void *data, size_t data_size) const {
   size_t write_len = data_size;
   do {
+#ifdef __APPLE__
+    // TEMP_FAILURE_RETRY is not defined in unistd.h on iOS.
     ssize_t wrote = write(fd, data, write_len);
+#else  // __APPLE__
+    ssize_t wrote = TEMP_FAILURE_RETRY(write(fd, data, write_len));
+#endif // __APPLE__
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
       return false;
@@ -463,8 +468,12 @@ bool IcingFilesystem::PWrite(int fd, off_t offset, const void *data,
                              size_t data_size) const {
   size_t write_len = data_size;
   do {
-    // Don't try to write too much at once.
+#ifdef __APPLE__
+    // TEMP_FAILURE_RETRY is not defined in unistd.h on iOS.
     ssize_t wrote = pwrite(fd, data, write_len, offset);
+#else  // __APPLE__
+    ssize_t wrote = TEMP_FAILURE_RETRY(pwrite(fd, data, write_len, offset));
+#endif // __APPLE__
     if (wrote < 0) {
       ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
       return false;
