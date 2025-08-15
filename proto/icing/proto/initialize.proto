@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 42
+// Next tag: 43
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -407,6 +407,11 @@ message IcingSearchEngineOptions {
   // DocHitInfo retrieval. If set to true, filter predicates may be passed to
   // children for optimized retrieval.
   optional bool enable_passing_filter_to_children = 41;
+
+  // Whether to enable the new header format (refactor legacy format and
+  // introduce unsynced tail checksum) related changes in
+  // PortableFileBackedProtoLog.
+  optional bool enable_proto_log_new_header_format = 42;
 
   reserved 2, 20;
 }

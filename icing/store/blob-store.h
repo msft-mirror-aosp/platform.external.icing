@@ -142,6 +142,21 @@ class BlobStore {
   //   NotFoundError if the blob is not found
   BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
+  // Gets all the blob info from the blob store.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto GetAllBlobInfo();
+
+  // Puts the blob info protos from the blob proto to the blob info proto log
+  // file.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto PutBlobInfos(BlobProto&& blob_proto);
+
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
 
