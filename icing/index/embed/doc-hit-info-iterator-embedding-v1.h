@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
-#define ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
+#ifndef ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V1_H_
+#define ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V1_H_
 
 #include <cstdint>
 #include <memory>
@@ -41,7 +41,7 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorEmbedding
+class DocHitInfoIteratorEmbeddingV1
     : public DocHitInfoIteratorHandlingSectionRestrict,
       public DocHitInfoIteratorHandlingFilter {
  public:
@@ -56,10 +56,10 @@ class DocHitInfoIteratorEmbedding
   // help of DocHitInfoIteratorHandlingSectionRestrict.
   //
   // Returns:
-  //   - a DocHitInfoIteratorEmbedding instance on success.
+  //   - a DocHitInfoIteratorEmbeddingV1 instance on success.
   //   - Any error from posting lists.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<DocHitInfoIteratorEmbedding>>
+      std::unique_ptr<DocHitInfoIteratorEmbeddingV1>>
   Create(const PropertyProto::VectorProto* query,
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
          double score_low, double score_high,
@@ -99,7 +99,7 @@ class DocHitInfoIteratorEmbedding
       SectionIdMask filtering_section_mask) const override {}
 
  private:
-  explicit DocHitInfoIteratorEmbedding(
+  explicit DocHitInfoIteratorEmbeddingV1(
       const PropertyProto::VectorProto* query,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
@@ -192,4 +192,4 @@ class DocHitInfoIteratorEmbedding
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
+#endif  // ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V1_H_

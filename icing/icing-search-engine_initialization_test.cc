@@ -1574,7 +1574,7 @@ TEST_F(IcingSearchEngineInitializationTest,
             /*orphan_blob_time_to_live_ms=*/0,
             PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
             protobuf_ports::kDefaultMemLevel,
-            /*manage_blob_files=*/true));
+            /*manage_blob_files=*/true, feature_flags_.get()));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -6336,7 +6336,7 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             /*orphan_blob_time_to_live_ms=*/0,
             PortableFileBackedProtoLog<BlobInfoProto>::kDefaultCompressionLevel,
             protobuf_ports::kDefaultMemLevel,
-            /*manage_blob_files=*/true));
+            /*manage_blob_files=*/true, feature_flags_.get()));
 
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
