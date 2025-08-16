@@ -539,7 +539,7 @@ class IcingSearchEngine {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto GetAllBlobInfo() ICING_LOCKS_EXCLUDED(mutex_);
+  BlobProto GetAllBlobInfos() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Puts the blob info protos from the blob proto to the blob info proto log
   // file.
@@ -547,7 +547,7 @@ class IcingSearchEngine {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto PutBlobInfos(BlobProto&& blob_info_protos)
+  BlobProto PutBlobInfos(const BlobProto& blob_info_protos)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Makes sure that every update/delete received till this point is flushed

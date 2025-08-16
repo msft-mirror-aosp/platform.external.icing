@@ -201,18 +201,35 @@ enum class QueryType {
 struct QueryVisitorTestParams {
   QueryType query_type;
   bool get_embedding_match_info;
+  bool enable_embedding_iterator_v2;
 
   explicit QueryVisitorTestParams(QueryType query_type,
-                                  bool get_embedding_match_info)
+                                  bool get_embedding_match_info,
+                                  bool enable_embedding_iterator_v2)
       : query_type(query_type),
-        get_embedding_match_info(get_embedding_match_info) {}
+        get_embedding_match_info(get_embedding_match_info),
+        enable_embedding_iterator_v2(enable_embedding_iterator_v2) {}
 };
 
 class QueryVisitorTest
     : public ::testing::TestWithParam<QueryVisitorTestParams> {
  protected:
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        FeatureFlags(/*enable_circular_schema_definitions=*/true,
+                     /*enable_scorable_properties=*/true,
+                     /*enable_embedding_quantization=*/true,
+                     /*enable_repeated_field_joins=*/true,
+                     /*enable_embedding_backup_generation=*/true,
+                     /*enable_schema_database=*/true,
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size_limit=*/true,
+                     /*enable_smaller_decompression_buffer_size=*/true,
+                     /*enable_eigen_embedding_scoring=*/true,
+                     /*enable_passing_filter_to_children=*/true,
+                     /*enable_proto_log_new_header_format=*/true,
+                     GetParam().enable_embedding_iterator_v2,
+                    /*enable_reusable_decompression_buffer=*/true));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
@@ -5492,10 +5509,31 @@ TEST_P(QueryVisitorTest, MatchScoreExpressionFunctionWithEvaluationErrors) {
 
 INSTANTIATE_TEST_SUITE_P(
     QueryVisitorTest, QueryVisitorTest,
-    testing::Values(QueryVisitorTestParams(QueryType::kSearch, true),
-                    QueryVisitorTestParams(QueryType::kSearch, false),
-                    QueryVisitorTestParams(QueryType::kPlain, true),
-                    QueryVisitorTestParams(QueryType::kPlain, false)));
+    testing::Values(
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false)));
 
 }  // namespace
 
