@@ -24,11 +24,13 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "unicode/umachine.h"
 #include "unicode/unorm2.h"
+#include "unicode/ustring.h"
 #include "unicode/utrans.h"
 
 namespace icing {
@@ -49,6 +51,7 @@ constexpr UChar kTransformRulesUtf16[] =
     "Latin-ASCII; "                 // Map Latin characters to ASCII characters
     "Hiragana-Katakana; "           // Map hiragana to katakana
     "[:Latin:] NFD; "               // Decompose Latin letters
+    "[:Greek:] NFD; "               // Decompose Greek letters
     "[:Nonspacing Mark:] Remove; "  // Remove accent / diacritic marks
     "NFKC";                         // Decompose and compose everything
 
@@ -119,8 +122,9 @@ IcuNormalizer::IcuNormalizer(
     : term_transformer_(std::move(term_transformer)),
       max_term_byte_size_(max_term_byte_size) {}
 
-std::string IcuNormalizer::NormalizeTerm(const std::string_view term) const {
-  std::string normalized_text;
+Normalizer::NormalizedTerm IcuNormalizer::NormalizeTerm(
+    const std::string_view term) const {
+  NormalizedTerm normalized_text = {""};
 
   if (term.empty()) {
     return normalized_text;
@@ -133,55 +137,53 @@ std::string IcuNormalizer::NormalizeTerm(const std::string_view term) const {
     ICING_LOG(WARNING) << "Failed to create a UNormalizer2 instance";
   }
 
-  // Checks if the first character is within ASCII range or can be transformed
-  // into an ASCII char. Since the term is tokenized, we know that the whole
-  // term can be transformed into ASCII if the first character can.
-  UChar32 first_uchar32 =
-      i18n_utils::GetUChar32At(term.data(), term.length(), 0);
-  if (normalizer2 != nullptr && first_uchar32 != i18n_utils::kInvalidUChar32 &&
-      DiacriticCharToAscii(normalizer2, first_uchar32, nullptr)) {
-    // This is a faster method to normalize Latin terms.
-    normalized_text = NormalizeLatin(normalizer2, term);
-  } else {
-    normalized_text = term_transformer_->Transform(term);
+  // Normalize the prefix that can be transformed into ASCII.
+  // This is a faster method to normalize Latin terms.
+  NormalizeLatinResult result = NormalizeLatin(normalizer2, term);
+  normalized_text.text = std::move(result.text);
+  if (result.end_pos < term.length()) {
+    // Some portion of term couldn't be normalized via NormalizeLatin. Use
+    // term_transformer to handle this portion.
+    std::string_view rest_term = term.substr(result.end_pos);
+    TermTransformer::TransformResult transform_result =
+        term_transformer_->Transform(rest_term);
+    absl_ports::StrAppend(&normalized_text.text,
+                          transform_result.transformed_term);
   }
 
-  if (normalized_text.length() > max_term_byte_size_) {
-    i18n_utils::SafeTruncateUtf8(&normalized_text, max_term_byte_size_);
+  if (normalized_text.text.length() > max_term_byte_size_) {
+    i18n_utils::SafeTruncateUtf8(&normalized_text.text, max_term_byte_size_);
   }
 
   return normalized_text;
 }
 
-std::string IcuNormalizer::NormalizeLatin(const UNormalizer2* normalizer2,
-                                          const std::string_view term) const {
-  std::string result;
-  result.reserve(term.length());
-  for (int i = 0; i < term.length(); i++) {
-    if (i18n_utils::IsAscii(term[i])) {
-      result.push_back(std::tolower(term[i]));
-    } else if (i18n_utils::IsLeadUtf8Byte(term[i])) {
-      UChar32 uchar32 = i18n_utils::GetUChar32At(term.data(), term.length(), i);
-      if (uchar32 == i18n_utils::kInvalidUChar32) {
-        ICING_LOG(WARNING) << "Unable to get uchar32 from " << term
-                           << " at position" << i;
-        continue;
-      }
-      char ascii_char;
-      if (DiacriticCharToAscii(normalizer2, uchar32, &ascii_char)) {
-        result.push_back(std::tolower(ascii_char));
-      } else {
-        // We don't know how to transform / decompose this Unicode character, it
-        // probably means that some other Unicode characters are mixed with
-        // Latin characters. This shouldn't happen if input term is properly
-        // tokenized. We handle it here in case there're something wrong with
-        // the tokenizers.
-        int utf8_length = i18n_utils::GetUtf8Length(uchar32);
-        absl_ports::StrAppend(&result, term.substr(i, utf8_length));
-      }
-    }
+IcuNormalizer::NormalizeLatinResult IcuNormalizer::NormalizeLatin(
+    const UNormalizer2* normalizer2, const std::string_view term) const {
+  NormalizeLatinResult result = {};
+  if (normalizer2 == nullptr) {
+    return result;
   }
-
+  CharacterIterator char_itr(term);
+  result.text.reserve(term.length());
+  char ascii_char;
+  while (char_itr.utf8_index() < term.length()) {
+    UChar32 c = char_itr.GetCurrentChar();
+    if (i18n_utils::IsAscii(c)) {
+      result.text.push_back(std::tolower(c));
+    } else if (DiacriticCharToAscii(normalizer2, c, &ascii_char)) {
+      result.text.push_back(std::tolower(ascii_char));
+    } else {
+      // We don't know how to transform / decompose this Unicode character, it
+      // probably means that some other Unicode characters are mixed with Latin
+      // characters. We return the partial result here and let the caller handle
+      // the rest.
+      result.end_pos = char_itr.utf8_index();
+      return result;
+    }
+    char_itr.AdvanceToUtf32(char_itr.utf32_index() + 1);
+  }
+  result.end_pos = term.length();
   return result;
 }
 
@@ -210,12 +212,12 @@ IcuNormalizer::TermTransformer::~TermTransformer() {
   }
 }
 
-std::string IcuNormalizer::TermTransformer::Transform(
-    const std::string_view term) const {
+IcuNormalizer::TermTransformer::TransformResult
+IcuNormalizer::TermTransformer::Transform(const std::string_view term) const {
   auto utf16_term_or = i18n_utils::Utf8ToUtf16(term);
   if (!utf16_term_or.ok()) {
     ICING_VLOG(0) << "Failed to convert UTF8 term '" << term << "' to UTF16";
-    return std::string(term);
+    return {std::string(term)};
   }
   std::u16string utf16_term = std::move(utf16_term_or).ValueOrDie();
   UErrorCode status = U_ZERO_ERROR;
@@ -250,15 +252,127 @@ std::string IcuNormalizer::TermTransformer::Transform(
   if (U_FAILURE(status)) {
     // Failed to transform, return its original form.
     ICING_LOG(WARNING) << "Failed to normalize UTF8 term: " << term;
-    return std::string(term);
+    return {std::string(term)};
   }
+  // Resize the buffer to the desired length returned by utrans_transUChars().
+  utf16_term.resize(utf16_term_desired_length);
 
   auto utf8_term_or = i18n_utils::Utf16ToUtf8(utf16_term);
   if (!utf8_term_or.ok()) {
     ICING_VLOG(0) << "Failed to convert UTF16 term '" << term << "' to UTF8";
-    return std::string(term);
+    return {std::string(term)};
   }
-  return std::move(utf8_term_or).ValueOrDie();
+  std::string utf8_term = std::move(utf8_term_or).ValueOrDie();
+  return {std::move(utf8_term)};
+}
+
+bool IcuNormalizer::FindNormalizedLatinMatchEndPosition(
+    const UNormalizer2* normalizer2, std::string_view term,
+    CharacterIterator& char_itr, std::string_view normalized_term,
+    CharacterIterator& normalized_char_itr) const {
+  if (normalizer2 == nullptr) {
+    return false;
+  }
+  char ascii_char;
+  while (char_itr.utf8_index() < term.length() &&
+         normalized_char_itr.utf8_index() < normalized_term.length()) {
+    UChar32 c = char_itr.GetCurrentChar();
+    if (i18n_utils::IsAscii(c)) {
+      c = std::tolower(c);
+    } else if (DiacriticCharToAscii(normalizer2, c, &ascii_char)) {
+      c = std::tolower(ascii_char);
+    } else {
+      return false;
+    }
+    UChar32 normalized_c = normalized_char_itr.GetCurrentChar();
+    if (c != normalized_c) {
+      return true;
+    }
+    char_itr.AdvanceToUtf32(char_itr.utf32_index() + 1);
+    normalized_char_itr.AdvanceToUtf32(normalized_char_itr.utf32_index() + 1);
+  }
+  return true;
+}
+
+CharacterIterator
+IcuNormalizer::TermTransformer::FindNormalizedNonLatinMatchEndPosition(
+    std::string_view term, CharacterIterator char_itr,
+    std::string_view normalized_term) const {
+  CharacterIterator normalized_char_itr(normalized_term);
+  UErrorCode status = U_ZERO_ERROR;
+
+  constexpr int kUtf16CharBufferLength = 6;
+  UChar c16[kUtf16CharBufferLength];
+  int32_t c16_length;
+  int32_t limit;
+
+  constexpr int kCharBufferLength = 3 * 4;
+  char normalized_buffer[kCharBufferLength];
+  int32_t c8_length;
+  while (char_itr.utf8_index() < term.length() &&
+         normalized_char_itr.utf8_index() < normalized_term.length()) {
+    UChar32 c = char_itr.GetCurrentChar();
+    int c_lenth = i18n_utils::GetUtf8Length(c);
+    u_strFromUTF8(c16, kUtf16CharBufferLength, &c16_length,
+                  term.data() + char_itr.utf8_index(),
+                  /*srcLength=*/c_lenth, &status);
+    if (U_FAILURE(status)) {
+      break;
+    }
+
+    limit = c16_length;
+    utrans_transUChars(u_transliterator_, c16, &c16_length,
+                       kUtf16CharBufferLength,
+                       /*start=*/0, &limit, &status);
+    if (U_FAILURE(status)) {
+      break;
+    }
+
+    u_strToUTF8(normalized_buffer, kCharBufferLength, &c8_length, c16,
+                c16_length, &status);
+    if (U_FAILURE(status)) {
+      break;
+    }
+
+    for (int i = 0; i < c8_length; ++i) {
+      if (normalized_buffer[i] !=
+          normalized_term[normalized_char_itr.utf8_index() + i]) {
+        return char_itr;
+      }
+    }
+    normalized_char_itr.AdvanceToUtf8(normalized_char_itr.utf8_index() +
+                                      c8_length);
+    char_itr.AdvanceToUtf32(char_itr.utf32_index() + 1);
+  }
+  if (U_FAILURE(status)) {
+    // Failed to transform, return its original form.
+    ICING_LOG(WARNING) << "Failed to normalize UTF8 term: " << term;
+  }
+  return char_itr;
+}
+
+CharacterIterator IcuNormalizer::FindNormalizedMatchEndPosition(
+    std::string_view term, std::string_view normalized_term) const {
+  UErrorCode status = U_ZERO_ERROR;
+  // ICU manages the singleton instance
+  const UNormalizer2* normalizer2 = unorm2_getNFCInstance(&status);
+  if (U_FAILURE(status)) {
+    ICING_LOG(WARNING) << "Failed to create a UNormalizer2 instance";
+  }
+
+  CharacterIterator char_itr(term);
+  CharacterIterator normalized_char_itr(normalized_term);
+  if (FindNormalizedLatinMatchEndPosition(
+          normalizer2, term, char_itr, normalized_term, normalized_char_itr)) {
+    return char_itr;
+  }
+  // Some portion of term couldn't be normalized via
+  // FindNormalizedLatinMatchEndPosition. Use term_transformer to handle this
+  // portion.
+  std::string_view rest_normalized_term =
+      normalized_term.substr(normalized_char_itr.utf8_index());
+  return term_transformer_->FindNormalizedNonLatinMatchEndPosition(
+      term, char_itr, rest_normalized_term);
 }
 
 }  // namespace lib

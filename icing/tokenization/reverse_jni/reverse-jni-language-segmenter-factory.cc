@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/jni/jni-cache.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/jni/jni-cache.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/reverse_jni/reverse-jni-language-segmenter.h"
 #include "icing/util/logging.h"
@@ -32,7 +32,7 @@ constexpr std::string_view kLocaleAmericanEnglishComputer = "en_US_POSIX";
 //
 // Returns:
 //   A LanguageSegmenter on success
-//   INVALID_ARGUMENT if locale string is invalid
+//   INVALID_ARGUMENT_ERROR if locale string is invalid
 //
 // TODO(b/156383798): Figure out if we want to verify locale strings and notify
 // users. Right now illegal locale strings will be ignored by ICU. ICU

@@ -14,6 +14,8 @@
 
 #include "icing/jni/jni-cache.h"
 
+#ifdef ICING_REVERSE_JNI_SEGMENTATION
+
 #include "icing/text_classifier/lib3/utils/java/jni-base.h"
 #include "icing/text_classifier/lib3/utils/java/jni-helper.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -157,8 +159,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<JniCache>> JniCache::Create(
 
   // BreakIteratorBatcher
   ICING_GET_CLASS_OR_RETURN_NULL(
-      breakiterator,
-      "com/google/android/icing/BreakIteratorBatcher");
+      breakiterator, "com/google/android/icing/BreakIteratorBatcher");
   ICING_GET_METHOD(breakiterator, constructor, "<init>",
                    "(Ljava/util/Locale;)V");
   ICING_GET_METHOD(breakiterator, settext, "setText", "(Ljava/lang/String;)V");
@@ -214,3 +215,5 @@ JniCache::ConvertToJavaString(const char* utf8_text,
 
 }  // namespace lib
 }  // namespace icing
+
+#endif  // ICING_REVERSE_JNI_SEGMENTATION

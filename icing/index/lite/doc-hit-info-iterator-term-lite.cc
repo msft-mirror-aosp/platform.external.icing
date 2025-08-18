@@ -14,14 +14,24 @@
 
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <numeric>
+#include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/lite-index.h"
+#include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
 #include "icing/util/logging.h"
+#include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -30,9 +40,9 @@ namespace lib {
 namespace {
 
 std::string SectionIdMaskToString(SectionIdMask section_id_mask) {
-  std::string mask(kMaxSectionId + 1, '0');
+  std::string mask(kTotalNumSections, '0');
   for (SectionId i = kMaxSectionId; i >= 0; --i) {
-    if (section_id_mask & (1U << i)) {
+    if (section_id_mask & (UINT64_C(1) << i)) {
       mask[kMaxSectionId - i] = '1';
     }
   }
@@ -45,8 +55,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
   if (cached_hits_idx_ == -1) {
     libtextclassifier3::Status status = RetrieveMoreHits();
     if (!status.ok()) {
-      ICING_LOG(ERROR) << "Failed to retrieve more hits "
-                       << status.error_message();
+      if (!absl_ports::IsNotFound(status)) {
+        // NOT_FOUND is expected to happen (not every term will be in the main
+        // index!). Other errors are worth logging.
+        ICING_LOG(ERROR)
+            << "Encountered unexpected failure while retrieving  hits "
+            << status.error_message();
+      }
       return absl_ports::ResourceExhaustedError(
           "No more DocHitInfos in iterator");
     }
@@ -57,13 +72,20 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
+  ++num_advance_calls_;
   doc_hit_info_ = cached_hits_.at(cached_hits_idx_);
-  hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorTermLite::TrimRightMostNode() && {
+  // Leaf iterator should trim itself.
+  DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
+                                          unnormalized_term_length_};
+  return node;
 }
 
 libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
@@ -71,8 +93,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->GetTermId(term_));
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  lite_index_->AppendHits(term_id, section_restrict_mask_,
-                          /*only_from_prefix_sections=*/false, &cached_hits_);
+  lite_index_->FetchHits(
+      term_id, section_restrict_mask_,
+      /*only_from_prefix_sections=*/false,
+      /*score_by=*/
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE,
+      /*namespace_checker=*/nullptr, &cached_hits_,
+      need_hit_term_frequency_ ? &cached_hit_term_frequency_ : nullptr);
   cached_hits_idx_ = 0;
   return libtextclassifier3::Status::OK;
 }
@@ -89,13 +116,17 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
   int terms_matched = 0;
   for (LiteIndex::PrefixIterator it = lite_index_->FindTermPrefixes(term_);
        it.IsValid(); it.Advance()) {
-    bool exact_match = strlen(it.GetKey()) == term_len;
+    bool exact_match = it.GetKey().size() == term_len;
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
-    lite_index_->AppendHits(term_id, section_restrict_mask_,
-                            /*only_from_prefix_sections=*/!exact_match,
-                            &cached_hits_);
+    lite_index_->FetchHits(
+        term_id, section_restrict_mask_,
+        /*only_from_prefix_sections=*/!exact_match,
+        /*score_by=*/
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE,
+        /*namespace_checker=*/nullptr, &cached_hits_,
+        need_hit_term_frequency_ ? &cached_hit_term_frequency_ : nullptr);
     ++terms_matched;
   }
   if (terms_matched > 1) {
@@ -105,23 +136,66 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
   return libtextclassifier3::Status::OK;
 }
 
-void DocHitInfoIteratorTermLitePrefix::SortAndDedupeDocumentIds() {
+void DocHitInfoIteratorTermLitePrefix::SortDocumentIds() {
   // Re-sort cached document_ids and merge sections.
-  sort(cached_hits_.begin(), cached_hits_.end());
+  if (!need_hit_term_frequency_) {
+    // If we don't need to also sort cached_hit_term_frequency_ along with
+    // cached_hits_, then just simply sort cached_hits_.
+    sort(cached_hits_.begin(), cached_hits_.end());
+  } else {
+    // Sort cached_hit_term_frequency_ along with cached_hits_.
+    std::vector<int> indices(cached_hits_.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(indices.begin(), indices.end(), [this](int i, int j) {
+      return cached_hits_[i] < cached_hits_[j];
+    });
+    // Now indices is a map from sorted index to current index. In other words,
+    // the sorted cached_hits_[i] should be the current cached_hits_[indices[i]]
+    // for every valid i.
 
+    math_util::ApplyPermutation(indices, cached_hits_,
+                                cached_hit_term_frequency_);
+  }
+}
+
+void DocHitInfoIteratorTermLitePrefix::SortAndDedupeDocumentIds() {
+  SortDocumentIds();
   int idx = 0;
   for (int i = 1; i < cached_hits_.size(); ++i) {
-    const DocHitInfo& hit_info = cached_hits_.at(i);
-    DocHitInfo& collapsed_hit_info = cached_hits_.at(idx);
+    const DocHitInfo& hit_info = cached_hits_[i];
+    DocHitInfo& collapsed_hit_info = cached_hits_[idx];
     if (collapsed_hit_info.document_id() == hit_info.document_id()) {
-      collapsed_hit_info.MergeSectionsFrom(hit_info);
+      SectionIdMask curr_mask = hit_info.hit_section_ids_mask();
+      collapsed_hit_info.MergeSectionsFrom(curr_mask);
+      if (need_hit_term_frequency_) {
+        Hit::TermFrequencyArray& collapsed_term_frequency =
+            cached_hit_term_frequency_[idx];
+        while (curr_mask) {
+          SectionId section_id = __builtin_ctzll(curr_mask);
+          // We add the new term-frequency to the existing term-frequency we've
+          // recorded for the current section-id in case there are multiple hits
+          // matching the query for this section.
+          // - This is the case for a prefix query where there are multiple
+          //   terms matching the prefix from the same sectionId + docId.
+          collapsed_term_frequency[section_id] +=
+              cached_hit_term_frequency_[i][section_id];
+          curr_mask &= ~(UINT64_C(1) << section_id);
+        }
+      }
     } else {
       // New document_id.
-      cached_hits_.at(++idx) = hit_info;
+      ++idx;
+      cached_hits_[idx] = hit_info;
+      if (need_hit_term_frequency_) {
+        cached_hit_term_frequency_[idx] = cached_hit_term_frequency_[i];
+      }
     }
   }
   // idx points to last doc hit info.
   cached_hits_.resize(idx + 1);
+  if (need_hit_term_frequency_) {
+    cached_hit_term_frequency_.resize(idx + 1);
+  }
 }
 
 std::string DocHitInfoIteratorTermLitePrefix::ToString() const {
