@@ -14,9 +14,6 @@
 
 package com.google.android.icing;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.RestrictTo;
-
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,20 +35,17 @@ import java.util.Locale;
  * utf16Boundaries = brkItrBatcher.next(5);
  * assertThat(utf16Boundaries).asList().containsExactly(9);
  * }</pre>
- *
- * @hide
  */
-@RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
 public class BreakIteratorBatcher {
 
   private final BreakIterator iterator;
 
-  public BreakIteratorBatcher(@NonNull Locale locale) {
+  public BreakIteratorBatcher(Locale locale) {
     this.iterator = BreakIterator.getWordInstance(locale);
   }
 
   /* Direct calls to BreakIterator */
-  public void setText(@NonNull String text) {
+  public void setText(String text) {
     iterator.setText(text);
   }
 
@@ -73,7 +67,6 @@ public class BreakIteratorBatcher {
    * the end of the text (returns BreakIterator#DONE), then only the results of the previous calls
    * in that batch will be returned.
    */
-  @NonNull
   public int[] next(int batchSize) {
     List<Integer> breakIndices = new ArrayList<>(batchSize);
     for (int i = 0; i < batchSize; ++i) {

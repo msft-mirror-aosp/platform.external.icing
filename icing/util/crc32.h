@@ -35,8 +35,14 @@ class Crc32 {
 
   explicit Crc32(uint32_t init_crc) : crc_(init_crc) {}
 
+  explicit Crc32(std::string_view str) : crc_(0) { Append(str); }
+
   inline bool operator==(const Crc32& other) const {
     return crc_ == other.Get();
+  }
+
+  inline bool operator!=(const Crc32& other) const {
+    return crc_ != other.Get();
   }
 
   // Returns the checksum of all the data that has been processed till now.
@@ -55,6 +61,16 @@ class Crc32 {
   // NOTE: While this class internally uses zlib's crc32(),
   // Crc32(base_crc).Append(str) is not the same as zlib::crc32(base_crc, str);
   uint32_t Append(std::string_view str);
+
+  // Combines other_crc to the current crc for bytes concatenation. The caller
+  // must provide the raw data (byte) size of other_crc.
+  //
+  // NOTE: all the following are equivalent:
+  // 1) crc32.Append(str_a + str_b);
+  // 2) crc32.Append(str_a); crc32.Append(str_b);
+  // 3) crc32.Append(str_a); crc32_b.Append(str_b);
+  //    crc32.Combine(crc32_b, str_b.size());
+  uint32_t Combine(const Crc32& other_crc, int other_data_size);
 
   // Update a string's rolling crc when some content is modified in the middle
   // at an offset. We need the xored_str, which is the new value xored with the

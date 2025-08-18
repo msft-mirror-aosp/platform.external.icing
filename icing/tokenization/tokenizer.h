@@ -18,9 +18,12 @@
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/tokenization/token.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -38,20 +41,13 @@ class Tokenizer {
  public:
   virtual ~Tokenizer() = default;
 
-  enum Type {
-    // Index tokenizers
-    PLAIN,  // Used to tokenize plain text input
-
-    // Query tokenizers
-    RAW_QUERY,  // Used to tokenize raw queries
-  };
-
   // An iterator helping to get tokens.
   // Example usage:
   //
+  // std::vector<Token> tokens;
   // while (iterator.Advance()) {
-  //   const Token& token = iterator.GetToken();
-  //   // Do something
+  //   iterator.GetTokens(&tokens);
+  //   // Do something for each Token
   // }
   class Iterator {
    public:
@@ -60,31 +56,59 @@ class Tokenizer {
     // Advances to the next token. Returns false if it has reached the end.
     virtual bool Advance() = 0;
 
-    // Returns the current token. It can be called only when Advance() returns
-    // true, otherwise an invalid token could be returned.
-    virtual Token GetToken() const = 0;
+    // Populates `out_tokens` with the current token, maybe with compound tokens
+    // as well. It can be called only when Advance() returns true. The vector is
+    // cleared before being populated.
+    virtual void GetTokens(std::vector<Token>* out_tokens) const = 0;
+
+    // Make it faster to write/refactor tests.
+    std::vector<Token> GetTokensForTest() const {
+      std::vector<Token> result;
+      this->GetTokens(&result);
+      return result;
+    }
+
+    virtual libtextclassifier3::StatusOr<CharacterIterator>
+    CalculateTokenStart() {
+      return absl_ports::UnimplementedError(
+          "CalculateTokenStart is not implemented!");
+    }
+
+    virtual libtextclassifier3::StatusOr<CharacterIterator>
+    CalculateTokenEndExclusive() {
+      return absl_ports::UnimplementedError(
+          "CalculateTokenEndExclusive is not implemented!");
+    }
 
     // Sets the tokenizer to point at the first token that *starts* *after*
     // offset. Returns false if there are no valid tokens starting after
     // offset.
     // Ex.
     // auto iterator = tokenizer.Tokenize("foo bar baz").ValueOrDie();
-    // iterator.ResetToTokenAfter(4);
+    // iterator.ResetToTokenStartingAfter(4);
     // // The first full token starting after position 4 (the 'b' in "bar") is
     // // "baz".
-    // PrintToken(iterator.GetToken());  // prints "baz"
-    virtual bool ResetToTokenAfter(int32_t offset) { return false; }
+    // std::vector<Token> tokens;
+    // iterator.GetTokens(&tokens);
+    // PrintToken(tokens[0]);  // prints "baz"
+    virtual bool ResetToTokenStartingAfter(int32_t utf32_offset) {
+      return false;
+    }
 
     // Sets the tokenizer to point at the first token that *ends* *before*
     // offset. Returns false if there are no valid tokens ending
     // before offset.
     // Ex.
     // auto iterator = tokenizer.Tokenize("foo bar baz").ValueOrDie();
-    // iterator.ResetToTokenBefore(4);
+    // iterator.ResetToTokenEndingBefore(4);
     // // The first full token ending before position 4 (the 'b' in "bar") is
     // // "foo".
-    // PrintToken(iterator.GetToken());  // prints "foo"
-    virtual bool ResetToTokenBefore(int32_t offset) { return false; }
+    // std::vector<Token> tokens;
+    // iterator.GetTokens(&tokens);
+    // PrintToken(tokens[0]);  // prints "baz"
+    virtual bool ResetToTokenEndingBefore(int32_t utf32_offset) {
+      return false;
+    }
 
     virtual bool ResetToStart() { return false; }
   };

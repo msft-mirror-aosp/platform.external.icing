@@ -24,19 +24,18 @@ namespace bit_util {
 
 // Manipulating bit fields.
 //
-// x       value containing the bit field(s)
-// offset  offset of bit field in x
-// len     len of bit field in x
+// value       value containing the bit field(s)
+// lsb_offset  offset of bit field in value, starting from the least significant
+//             bit. for example, the '1' in '0100' has a lsb_offset of 2
+// len         len of bit field in value
 //
 // REQUIREMENTS
 //
-// - x an unsigned integer <= 64 bits
-// - offset + len <= sizeof(x) * 8
+// - value is an unsigned integer <= 64 bits
+// - lsb_offset + len <= sizeof(value) * 8
 //
 // There is no error checking so you will get garbage if you don't
 // ensure the above.
-//
-// To set a value, use BITFIELD_CLEAR then BITFIELD_OR.
 
 // Shifting by more than the word length is undefined (on ARM it has the
 // intended effect, but on Intel it shifts by % word length), so check the
@@ -44,20 +43,65 @@ namespace bit_util {
 inline uint64_t BitfieldMask(uint32_t len) {
   return ((len == 0) ? 0U : ((~uint64_t{0}) >> (64 - (len))));
 }
-inline uint64_t BitfieldGet(uint64_t mask, uint32_t lsb_offset, uint32_t len) {
-  return ((mask) >> (lsb_offset)) & BitfieldMask(len);
+
+inline void BitfieldClear(uint32_t lsb_offset, uint32_t len,
+                          uint8_t* value_out) {
+  *value_out &= ~(BitfieldMask(len) << lsb_offset);
 }
-inline void BitfieldSet(uint32_t value, uint32_t lsb_offset, uint32_t len,
-                        uint32_t* mask) {
-  // We conservatively mask val at len so x won't be corrupted if val >=
-  // 1 << len.
-  *mask |= (uint64_t{value} & BitfieldMask(len)) << (lsb_offset);
+
+inline void BitfieldClear(uint32_t lsb_offset, uint32_t len,
+                          uint16_t* value_out) {
+  *value_out &= ~(BitfieldMask(len) << lsb_offset);
 }
-inline void BitfieldSet(uint64_t value, uint32_t lsb_offset, uint32_t len,
-                        uint64_t* mask) {
-  // We conservatively mask val at len so x won't be corrupted if val >=
-  // 1 << len.
-  *mask |= (value & BitfieldMask(len)) << (lsb_offset);
+
+inline void BitfieldClear(uint32_t lsb_offset, uint32_t len,
+                          uint32_t* value_out) {
+  *value_out &= ~(BitfieldMask(len) << lsb_offset);
+}
+
+inline void BitfieldClear(uint32_t lsb_offset, uint32_t len,
+                          uint64_t* value_out) {
+  *value_out &= ~(BitfieldMask(len) << lsb_offset);
+}
+
+inline uint64_t BitfieldGet(uint64_t value, uint32_t lsb_offset, uint32_t len) {
+  return ((value) >> (lsb_offset)) & BitfieldMask(len);
+}
+
+inline void BitfieldSet(uint8_t new_value, uint32_t lsb_offset, uint32_t len,
+                        uint8_t* value_out) {
+  BitfieldClear(lsb_offset, len, value_out);
+
+  // We conservatively mask new_value at len so value won't be corrupted if
+  // new_value >= (1 << len).
+  *value_out |= (new_value & BitfieldMask(len)) << (lsb_offset);
+}
+
+inline void BitfieldSet(uint16_t new_value, uint32_t lsb_offset, uint32_t len,
+                        uint16_t* value_out) {
+  BitfieldClear(lsb_offset, len, value_out);
+
+  // We conservatively mask new_value at len so value won't be corrupted if
+  // new_value >= (1 << len).
+  *value_out |= (new_value & BitfieldMask(len)) << (lsb_offset);
+}
+
+inline void BitfieldSet(uint32_t new_value, uint32_t lsb_offset, uint32_t len,
+                        uint32_t* value_out) {
+  BitfieldClear(lsb_offset, len, value_out);
+
+  // We conservatively mask new_value at len so value won't be corrupted if
+  // new_value >= (1 << len).
+  *value_out |= (new_value & BitfieldMask(len)) << (lsb_offset);
+}
+
+inline void BitfieldSet(uint64_t new_value, uint32_t lsb_offset, uint32_t len,
+                        uint64_t* value_out) {
+  BitfieldClear(lsb_offset, len, value_out);
+
+  // We conservatively mask new_value at len so value won't be corrupted if
+  // new_value >= (1 << len).
+  *value_out |= (new_value & BitfieldMask(len)) << (lsb_offset);
 }
 
 }  // namespace bit_util

@@ -18,8 +18,8 @@
 #include <random>
 #include <string>
 
-#include "icing/proto/schema.proto.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
 
 namespace icing {
 namespace lib {

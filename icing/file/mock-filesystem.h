@@ -44,6 +44,17 @@ class MockFilesystem : public Filesystem {
           return real_filesystem_.DeleteDirectoryRecursively(dir_name);
         });
 
+    ON_CALL(*this, CopyFile)
+        .WillByDefault([this](const char* src, const char* dst) {
+          return real_filesystem_.CopyFile(src, dst);
+        });
+
+    ON_CALL(*this, CopyDirectory)
+        .WillByDefault(
+            [this](const char* src, const char* dst, bool recursive) {
+              return real_filesystem_.CopyDirectory(src, dst, recursive);
+            });
+
     ON_CALL(*this, FileExists).WillByDefault([this](const char* file_name) {
       return real_filesystem_.FileExists(file_name);
     });
@@ -227,6 +238,9 @@ class MockFilesystem : public Filesystem {
 
   MOCK_METHOD(bool, CopyFile, (const char* src, const char* dst), (const));
 
+  MOCK_METHOD(bool, CopyDirectory,
+              (const char* src, const char* dst, bool recursive), (const));
+
   MOCK_METHOD(bool, FileExists, (const char* file_name), (const));
 
   MOCK_METHOD(bool, DirectoryExists, (const char* dir_name), (const));
@@ -285,15 +299,15 @@ class MockFilesystem : public Filesystem {
                size_t data_size),
               (const));
 
-  MOCK_METHOD(bool, Read, (int fd, void* buf, size_t buf_size), (const));
+  MOCK_METHOD(ssize_t, Read, (int fd, void* buf, size_t buf_size), (const));
 
-  MOCK_METHOD(bool, Read, (const char* filename, void* buf, size_t buf_size),
+  MOCK_METHOD(ssize_t, Read, (const char* filename, void* buf, size_t buf_size),
               (const));
 
-  MOCK_METHOD(bool, PRead, (int fd, void* buf, size_t buf_size, off_t offset),
-              (const));
+  MOCK_METHOD(ssize_t, PRead,
+              (int fd, void* buf, size_t buf_size, off_t offset), (const));
 
-  MOCK_METHOD(bool, PRead,
+  MOCK_METHOD(ssize_t, PRead,
               (const char* filename, void* buf, size_t buf_size, off_t offset),
               (const));
 
