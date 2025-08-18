@@ -22,7 +22,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
-#include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
@@ -30,61 +29,54 @@
 namespace icing {
 namespace lib {
 
-inline constexpr std::string_view kPropertySeparator = ".";
-inline constexpr std::string_view kLBracket = "[";
-inline constexpr std::string_view kRBracket = "]";
-
 // This class provides section-related operations. It assigns sections according
 // to type configs and extracts section / sections from documents.
+// The actual instance is created together with JoinablePropertyManager and both
+// of them are wrapped into SchemaTypeManager.
+//
+// Note: SectionManager assumes schema type ids are consecutive integers
+// starting from 0, so it maintains a vector with size
+// schema_type_mapper_->num_keys() that maps schema type id to a list (2nd level
+// vector) of SectionMetadatas. Therefore, all schema type ids stored in
+// schema_type_mapper_ must be in range [0, schema_type_mapper_->num_keys() - 1]
+// and unique.
 class SectionManager {
  public:
+  // Builder class to create a SectionManager which does not take ownership of
+  // any input components, and all pointers must refer to valid objects that
+  // outlive the created SectionManager instance.
+  class Builder {
+   public:
+    explicit Builder(const KeyMapper<SchemaTypeId>& schema_type_mapper)
+        : schema_type_mapper_(schema_type_mapper),
+          section_metadata_cache_(schema_type_mapper.num_keys()) {}
+
+    // Checks and appends a new SectionMetadata for the schema type id if the
+    // given property config is indexable.
+    //
+    // Returns:
+    //   - OK on success
+    //   - INVALID_ARGUMENT_ERROR if schema type id is invalid (not in range [0,
+    //     schema_type_mapper_.num_keys() - 1])
+    //   - OUT_OF_RANGE_ERROR if # of indexable properties in a single Schema
+    //     exceeds the threshold (kTotalNumSections)
+    libtextclassifier3::Status ProcessSchemaTypePropertyConfig(
+        SchemaTypeId schema_type_id, const PropertyConfigProto& property_config,
+        std::string&& property_path);
+
+    // Builds and returns a SectionManager instance.
+    std::unique_ptr<SectionManager> Build() && {
+      return std::unique_ptr<SectionManager>(new SectionManager(
+          schema_type_mapper_, std::move(section_metadata_cache_)));
+    }
+
+   private:
+    const KeyMapper<SchemaTypeId>& schema_type_mapper_;  // Does not own.
+    std::vector<std::vector<SectionMetadata>> section_metadata_cache_;
+  };
+
   SectionManager(const SectionManager&) = delete;
   SectionManager& operator=(const SectionManager&) = delete;
-
-  // Factory function to create a SectionManager which does not take ownership
-  // of any input components, and all pointers must refer to valid objects that
-  // outlive the created SectionManager instance.
-  //
-  // Returns:
-  //   A SectionManager on success
-  //   FAILED_PRECONDITION on any null pointer input
-  //   INVALID_ARGUMENT if infinite loop detected in the type configs
-  //   OUT_OF_RANGE if number of properties need indexing exceeds the max number
-  //   NOT_FOUND if any type config name not found in the map
-  static libtextclassifier3::StatusOr<std::unique_ptr<SectionManager>> Create(
-      const SchemaUtil::TypeConfigMap& type_config_map,
-      const KeyMapper<SchemaTypeId>* schema_type_mapper);
-
-  // Finds contents of a section by section path (e.g. property1.property2)
-  // according to the template type T.
-  //
-  // Types of supported T:
-  // - std::string, std::string_view: return property.string_values()
-  // - int64_t                      : return property.int64_values()
-  //
-  // Returns:
-  //   A vector of contents with the specified type on success
-  //   NOT_FOUND if:
-  //     1. Property is optional and not found in the document
-  //     2. section_path is invalid
-  //     3. Content is empty (could be caused by incorrect type T)
-  template <typename T>
-  libtextclassifier3::StatusOr<std::vector<T>> GetSectionContent(
-      const DocumentProto& document, std::string_view section_path) const;
-
-  // Finds contents of a section by id according to the template type T.
-  //
-  // Types of supported T:
-  // - std::string, std::string_view: return property.string_values()
-  // - int64_t                      : return property.int64_values()
-  //
-  // Returns:
-  //   A vector of contents on success
-  //   INVALID_ARGUMENT if section id is invalid
-  //   NOT_FOUND if type config name of document not found
-  template <typename T>
-  libtextclassifier3::StatusOr<std::vector<T>> GetSectionContent(
-      const DocumentProto& document, SectionId section_id) const;
 
   // Returns the SectionMetadata associated with the SectionId that's in the
   // SchemaTypeId.
@@ -103,24 +95,26 @@ class SectionManager {
   //
   // Returns:
   //   A SectionGroup instance on success
-  //   NOT_FOUND if type config name of document not found
+  //   NOT_FOUND if the type config name of document is not present in
+  //     schema_type_mapper_
   libtextclassifier3::StatusOr<SectionGroup> ExtractSections(
       const DocumentProto& document) const;
 
   // Returns:
   //   - On success, the section metadatas for the specified type
-  //   - NOT_FOUND if the type config name is not present in the schema
+  //   - NOT_FOUND if the type config name is not present in schema_type_mapper_
   libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
   GetMetadataList(const std::string& type_config_name) const;
 
  private:
-  // Use SectionManager::Create() to instantiate
   explicit SectionManager(
-      const KeyMapper<SchemaTypeId>* schema_type_mapper,
-      std::vector<std::vector<SectionMetadata>>&& section_metadata_cache);
+      const KeyMapper<SchemaTypeId>& schema_type_mapper,
+      std::vector<std::vector<SectionMetadata>>&& section_metadata_cache)
+      : schema_type_mapper_(schema_type_mapper),
+        section_metadata_cache_(std::move(section_metadata_cache)) {}
 
   // Maps schema types to a densely-assigned unique id.
-  const KeyMapper<SchemaTypeId>& schema_type_mapper_;
+  const KeyMapper<SchemaTypeId>& schema_type_mapper_;  // Does not own
 
   // The index of section_metadata_cache_ corresponds to a schema type's
   // SchemaTypeId. At that SchemaTypeId index, we store an inner vector. The

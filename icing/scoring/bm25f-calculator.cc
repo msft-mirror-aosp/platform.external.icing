@@ -14,19 +14,26 @@
 
 #include "icing/scoring/bm25f-calculator.h"
 
+#include <cmath>
 #include <cstdint>
-#include <cstdlib>
+#include <memory>
 #include <string>
-#include <unordered_set>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/scoring/section-weights.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -42,11 +49,12 @@ constexpr float k1_ = 1.2f;
 constexpr float b_ = 0.7f;
 
 // TODO(b/158603900): add tests for Bm25fCalculator
-Bm25fCalculator::Bm25fCalculator(
-    const DocumentStore* document_store,
-    std::unique_ptr<SectionWeights> section_weights)
+Bm25fCalculator::Bm25fCalculator(const DocumentStore* document_store,
+                                 SectionWeights* section_weights,
+                                 int64_t current_time_ms)
     : document_store_(document_store),
-      section_weights_(std::move(section_weights)) {}
+      section_weights_(*section_weights),
+      current_time_ms_(current_time_ms) {}
 
 // During initialization, Bm25fCalculator iterates through
 // hit-iterators for each query term to pre-compute n(q_i) for each corpus under
@@ -149,6 +157,11 @@ float Bm25fCalculator::GetCorpusIdfWeightForTerm(std::string_view term,
 
   uint32_t num_docs = csdata.num_docs();
   uint32_t nqi = corpus_nqi_map_[corpus_term_info.value];
+  if (nqi > num_docs) {
+    ICING_LOG(ERROR) << "nqi > num_docs when calculating idf for corpus "
+                     << corpus_id << " term " << term;
+    return 0;
+  }
   float idf =
       nqi != 0 ? log(1.0f + (num_docs - nqi + 0.5f) / (nqi + 0.5f)) : 0.0f;
   corpus_idf_map_.insert({corpus_term_info.value, idf});
@@ -219,7 +232,7 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
     sections &= ~(UINT64_C(1) << section_id);
 
     Hit::TermFrequency tf = term_match_info.term_frequencies[section_id];
-    double weighted_tf = tf * section_weights_->GetNormalizedSectionWeight(
+    double weighted_tf = tf * section_weights_.GetNormalizedSectionWeight(
                                   schema_type_id, section_id);
     if (tf != Hit::kNoTermFrequency) {
       sum += weighted_tf;
@@ -229,13 +242,13 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
 }
 
 SchemaTypeId Bm25fCalculator::GetSchemaTypeId(DocumentId document_id) const {
-  auto filter_data_optional =
-      document_store_->GetAliveDocumentFilterData(document_id);
+  auto filter_data_optional = document_store_->GetAliveDocumentFilterData(
+      document_id, current_time_ms_);
   if (!filter_data_optional) {
     // This should never happen. The only failure case for
-    // GetDocumentFilterData is if the document_id is outside of the range of
-    // allocated document_ids, which shouldn't be possible since we're getting
-    // this document_id from the posting lists.
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
     ICING_LOG(WARNING) << "No document filter data for document ["
                        << document_id << "]";
     return kInvalidSchemaTypeId;

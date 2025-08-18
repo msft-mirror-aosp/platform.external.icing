@@ -26,11 +26,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <memory>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
 
 using std::vector;
@@ -72,7 +75,7 @@ void LogOpenFileDescriptors() {
         << ") too large.";
     fd_lim = kMaxFileDescriptorsToStat;
   }
-  ICING_LOG(ERROR) << "Listing up to " << fd_lim << " file descriptors.";
+  ICING_LOG(INFO) << "Listing up to " << fd_lim << " file descriptors.";
 
   // Verify that /proc/self/fd is a directory. If not, procfs is not mounted or
   // inaccessible for some other reason. In that case, there's no point trying
@@ -94,12 +97,12 @@ void LogOpenFileDescriptors() {
     if (len >= 0) {
       // Zero-terminate the buffer, because readlink() won't.
       target[len < target_size ? len : target_size - 1] = '\0';
-      ICING_LOG(ERROR) << "fd " << fd << " -> \"" << target << "\"";
+      ICING_LOG(INFO) << "fd " << fd << " -> \"" << target << "\"";
     } else if (errno != ENOENT) {
       ICING_LOG(ERROR) << "fd " << fd << " -> ? (errno=" << errno << ")";
     }
   }
-  ICING_LOG(ERROR) << "File descriptor list complete.";
+  ICING_LOG(INFO) << "File descriptor list complete.";
 }
 
 // Logs an error formatted as: desc1 + file_name + desc2 + strerror(errnum).
@@ -108,7 +111,11 @@ void LogOpenFileDescriptors() {
 // file descriptors (see LogOpenFileDescriptors() above).
 void LogOpenError(const char* desc1, const char* file_name, const char* desc2,
                   int errnum) {
-  ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);
+  if (errnum == ENOENT) {
+    ICING_VLOG(1) << desc1 << file_name << desc2 << strerror(errnum);
+  } else {
+    ICING_LOG(ERROR) << desc1 << file_name << desc2 << strerror(errnum);  
+  }
   if (errnum == EMFILE) {
     LogOpenFileDescriptors();
   }
@@ -121,15 +128,24 @@ bool ListDirectoryInternal(const char* dir_name,
                            const std::unordered_set<std::string>& exclude,
                            bool recursive, const char* prefix,
                            std::vector<std::string>* entries) {
-  DIR* dir = opendir(dir_name);
-  if (!dir) {
+  auto closer = [](DIR* dir) {
+    if (closedir(dir) != 0) {
+      ICING_LOG(ERROR) << "Error closing dir (" << errno << ") "
+                       << strerror(errno);
+    }
+  };
+  std::unique_ptr<DIR, decltype(closer)> dir(opendir(dir_name), closer);
+  if (dir == nullptr) {
     LogOpenError("Unable to open directory ", dir_name, ": ", errno);
     return false;
   }
 
+  // According to linux man page
+  // (https://man7.org/linux/man-pages/man3/readdir.3.html#RETURN_VALUE), dirent
+  // may be statically allocated, so don't free it.
   dirent* p;
   // readdir's implementation seems to be thread safe.
-  while ((p = readdir(dir)) != nullptr) {
+  while ((p = readdir(dir.get())) != nullptr) {
     std::string file_name(p->d_name);
     if (file_name == "." || file_name == ".." ||
         exclude.find(file_name) != exclude.end()) {
@@ -147,9 +163,6 @@ bool ListDirectoryInternal(const char* dir_name,
         return false;
       }
     }
-  }
-  if (closedir(dir) != 0) {
-    ICING_LOG(ERROR) << "Error closing " << dir_name << " " << strerror(errno);
   }
   return true;
 }
@@ -175,7 +188,8 @@ bool Filesystem::DeleteFile(const char* file_name) const {
   ICING_VLOG(1) << "Deleting file " << file_name;
   int ret = unlink(file_name);
   if (ret != 0 && errno != ENOENT) {
-    ICING_LOG(ERROR) << "Deleting file " << file_name << " failed: " << strerror(errno);
+    ICING_LOG(ERROR) << "Deleting file " << file_name << " failed: (" << errno
+                     << ") " << strerror(errno);
     return false;
   }
   return true;
@@ -184,7 +198,8 @@ bool Filesystem::DeleteFile(const char* file_name) const {
 bool Filesystem::DeleteDirectory(const char* dir_name) const {
   int ret = rmdir(dir_name);
   if (ret != 0 && errno != ENOENT) {
-    ICING_LOG(ERROR) << "Deleting directory " << dir_name << " failed: " << strerror(errno);
+    ICING_LOG(ERROR) << "Deleting directory " << dir_name << " failed: ("
+                     << errno << ") " << strerror(errno);
     return false;
   }
   return true;
@@ -197,7 +212,8 @@ bool Filesystem::DeleteDirectoryRecursively(const char* dir_name) const {
     if (errno == ENOENT) {
       return true;  // If directory didn't exist, this was successful.
     }
-    ICING_LOG(ERROR) << "Stat " << dir_name << " failed: " << strerror(errno);
+    ICING_LOG(ERROR) << "Stat " << dir_name << " failed: (" << errno << ") "
+                     << strerror(errno);
     return false;
   }
   vector<std::string> entries;
@@ -210,7 +226,8 @@ bool Filesystem::DeleteDirectoryRecursively(const char* dir_name) const {
        ++i) {
     std::string filename = std::string(dir_name) + '/' + *i;
     if (stat(filename.c_str(), &st) < 0) {
-      ICING_LOG(ERROR) << "Stat " << filename << " failed: " << strerror(errno);
+      ICING_LOG(ERROR) << "Stat " << filename << " failed: (" << errno << ") "
+                       << strerror(errno);
       success = false;
     } else if (S_ISDIR(st.st_mode)) {
       success = DeleteDirectoryRecursively(filename.c_str()) && success;
@@ -233,7 +250,8 @@ bool Filesystem::FileExists(const char* file_name) const {
     exists = S_ISREG(st.st_mode) != 0;
   } else {
     if (errno != ENOENT) {
-      ICING_LOG(ERROR) << "Unable to stat file " << file_name << ": " << strerror(errno);
+      ICING_LOG(ERROR) << "Unable to stat file " << file_name << ": (" << errno
+                       << ") " << strerror(errno);
     }
     exists = false;
   }
@@ -247,7 +265,8 @@ bool Filesystem::DirectoryExists(const char* dir_name) const {
     exists = S_ISDIR(st.st_mode) != 0;
   } else {
     if (errno != ENOENT) {
-      ICING_LOG(ERROR) << "Unable to stat directory " << dir_name << ": " << strerror(errno);
+      ICING_LOG(ERROR) << "Unable to stat directory " << dir_name << ": ("
+                       << errno << ") " << strerror(errno);
     }
     exists = false;
   }
@@ -358,7 +377,8 @@ int Filesystem::OpenForRead(const char* file_name) const {
 int64_t Filesystem::GetFileSize(int fd) const {
   struct stat st;
   if (fstat(fd, &st) < 0) {
-    ICING_LOG(ERROR) << "Unable to stat file: " << strerror(errno);
+      ICING_LOG(WARNING) << "Unable to stat file: (" << errno << ") "
+                         << strerror(errno);
     return kBadFileSize;
   }
   return st.st_size;
@@ -368,9 +388,11 @@ int64_t Filesystem::GetFileSize(const char* filename) const {
   struct stat st;
   if (stat(filename, &st) < 0) {
     if (errno == ENOENT) {
-      ICING_VLOG(1) << "Unable to stat file " << filename << ": " << strerror(errno);
+      ICING_VLOG(1) << "Unable to stat file " << filename << ": "
+          << strerror(errno);
     } else {
-      ICING_LOG(WARNING) << "Unable to stat file " << filename << ": " << strerror(errno);
+      ICING_LOG(WARNING) << "Unable to stat file " << filename << ": (" << errno
+                         << ") " << strerror(errno);
     }
     return kBadFileSize;
   }
@@ -379,7 +401,8 @@ int64_t Filesystem::GetFileSize(const char* filename) const {
 
 bool Filesystem::Truncate(int fd, int64_t new_size) const {
   if (ftruncate(fd, new_size) != 0) {
-    ICING_LOG(ERROR) << "Unable to truncate file: " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to truncate file: (" << errno << ") "
+                     << strerror(errno);
     return false;
   }
   lseek(fd, new_size, SEEK_SET);
@@ -398,7 +421,8 @@ bool Filesystem::Truncate(const char* filename, int64_t new_size) const {
 
 bool Filesystem::Grow(int fd, int64_t new_size) const {
   if (ftruncate(fd, new_size) != 0) {
-    ICING_LOG(ERROR) << "Unable to grow file: " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to grow file: (" << errno << ") "
+                     << strerror(errno);
     return false;
   }
 
@@ -420,10 +444,14 @@ bool Filesystem::Write(int fd, const void* data, size_t data_size) const {
   size_t write_len = data_size;
   do {
     // Don't try to write too much at once.
-    size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
-    ssize_t wrote = write(fd, data, chunk_size);
+#ifdef __APPLE__
+    // TEMP_FAILURE_RETRY is not defined in unistd.h on iOS.
+    ssize_t wrote = write(fd, data, write_len);
+#else  // __APPLE__
+    ssize_t wrote = TEMP_FAILURE_RETRY(write(fd, data, write_len));
+#endif // __APPLE__
     if (wrote < 0) {
-      ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
+      ICING_LOG(ERROR) << "Bad write: (" << errno << ") " << strerror(errno);
       return false;
     }
     data = static_cast<const uint8_t*>(data) + wrote;
@@ -458,7 +486,7 @@ bool Filesystem::CopyFile(const char* src, const char* dst) const {
   }
   uint64_t size = GetFileSize(*src_fd);
   std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
-  if (!Read(*src_fd, buf.get(), size)) {
+  if (Read(*src_fd, buf.get(), size) != size) {
     return false;
   }
   return Write(*dst_fd, buf.get(), size);
@@ -466,15 +494,21 @@ bool Filesystem::CopyFile(const char* src, const char* dst) const {
 
 bool Filesystem::CopyDirectory(const char* src_dir, const char* dst_dir,
                                bool recursive) const {
-  DIR* dir = opendir(src_dir);
-  if (!dir) {
+  auto closer = [](DIR* dir) {
+    if (closedir(dir) != 0) {
+      ICING_LOG(ERROR) << "Error closing dir (" << errno << ") "
+                       << strerror(errno);
+    }
+  };
+  std::unique_ptr<DIR, decltype(closer)> dir(opendir(src_dir), closer);
+  if (dir == nullptr) {
     LogOpenError("Unable to open directory ", src_dir, ": ", errno);
     return false;
   }
 
   dirent* p;
   // readdir's implementation seems to be thread safe.
-  while ((p = readdir(dir)) != nullptr) {
+  while ((p = readdir(dir.get())) != nullptr) {
     std::string file_name(p->d_name);
     if (file_name == "." || file_name == "..") {
       continue;
@@ -500,9 +534,6 @@ bool Filesystem::CopyDirectory(const char* src_dir, const char* dst_dir,
       }
     }
   }
-  if (closedir(dir) != 0) {
-    ICING_LOG(ERROR) << "Error closing " << src_dir << ": " << strerror(errno);
-  }
   return true;
 }
 
@@ -510,11 +541,14 @@ bool Filesystem::PWrite(int fd, off_t offset, const void* data,
                         size_t data_size) const {
   size_t write_len = data_size;
   do {
-    // Don't try to write too much at once.
-    size_t chunk_size = std::min<size_t>(write_len, 64u * 1024);
-    ssize_t wrote = pwrite(fd, data, chunk_size, offset);
+#ifdef __APPLE__
+    // TEMP_FAILURE_RETRY is not defined in unistd.h on iOS.
+    ssize_t wrote = pwrite(fd, data, write_len, offset);
+#else  // __APPLE__
+    ssize_t wrote = TEMP_FAILURE_RETRY(pwrite(fd, data, write_len, offset));
+#endif // __APPLE__
     if (wrote < 0) {
-      ICING_LOG(ERROR) << "Bad write: " << strerror(errno);
+      ICING_LOG(ERROR) << "Bad write: (" << errno << ") " << strerror(errno);
       return false;
     }
     data = static_cast<const uint8_t*>(data) + wrote;
@@ -536,45 +570,78 @@ bool Filesystem::PWrite(const char* filename, off_t offset, const void* data,
   return success;
 }
 
-bool Filesystem::Read(int fd, void* buf, size_t buf_size) const {
-  ssize_t read_status = read(fd, buf, buf_size);
-  if (read_status < 0) {
-    ICING_LOG(ERROR) << "Bad read: " << strerror(errno);
-    return false;
+ssize_t Filesystem::Read(int fd, void* buf, size_t buf_size) const {
+  // convenience for pointer arithmetic below.
+  char* buf_ptr = static_cast<char*>(buf);
+  ssize_t processed_size = 0;
+  while (processed_size < buf_size) {
+    ssize_t read_status =
+        read(fd, buf_ptr + processed_size, buf_size - processed_size);
+    if (read_status < 0) {
+      ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
+      return read_status;
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: " << read_status << " < "
+                       << buf_size - processed_size;
+    }
+    if (read_status == 0) {
+      // EOF. Finish reading.
+      return processed_size;
+    }
+    processed_size += read_status;
   }
-  return true;
+  return processed_size;
 }
 
-bool Filesystem::Read(const char* filename, void* buf, size_t buf_size) const {
+ssize_t Filesystem::Read(const char* filename, void* buf,
+                         size_t buf_size) const {
   int fd = OpenForRead(filename);
   if (fd == -1) {
-    return false;
+    return -1;
   }
 
-  bool success = Read(fd, buf, buf_size);
+  ssize_t bytes_read = Read(fd, buf, buf_size);
   close(fd);
-  return success;
+  return bytes_read;
 }
 
-bool Filesystem::PRead(int fd, void* buf, size_t buf_size, off_t offset) const {
-  ssize_t read_status = pread(fd, buf, buf_size, offset);
-  if (read_status < 0) {
-    ICING_LOG(ERROR) << "Bad read: " << strerror(errno);
-    return false;
+ssize_t Filesystem::PRead(int fd, void* buf, size_t buf_size,
+                          off_t offset) const {
+  // convenience for pointer arithmetic below.
+  char* buf_ptr = static_cast<char*>(buf);
+  size_t processed_size = 0;
+  while (processed_size < buf_size) {
+    ssize_t read_status =
+        pread(fd, buf_ptr + processed_size, buf_size - processed_size,
+              offset + processed_size);
+    if (read_status < 0) {
+      ICING_LOG(ERROR) << "Bad read: (" << errno << ") " << strerror(errno);
+      return read_status;
+    }
+    if (read_status < buf_size - processed_size) {
+      ICING_LOG(ERROR) << "Read less than requested: " << read_status << " < "
+                       << buf_size - processed_size;
+    }
+    if (read_status == 0) {
+      // EOF. Finish reading.
+      return processed_size;
+    }
+    processed_size += read_status;
   }
-  return true;
+  return processed_size;
 }
 
-bool Filesystem::PRead(const char* filename, void* buf, size_t buf_size,
-                       off_t offset) const {
+ssize_t Filesystem::PRead(const char* filename, void* buf, size_t buf_size,
+                          off_t offset) const {
   int fd = OpenForRead(filename);
   if (fd == -1) {
-    return false;
+    return -1;
   }
 
-  bool success = PRead(fd, buf, buf_size, offset);
+  ssize_t bytes_read = PRead(fd, buf, buf_size, offset);
   close(fd);
-  return success;
+  return bytes_read;
 }
 
 bool Filesystem::DataSync(int fd) const {
@@ -585,7 +652,8 @@ bool Filesystem::DataSync(int fd) const {
 #endif
 
   if (result < 0) {
-    ICING_LOG(ERROR) << "Unable to sync data: " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to sync data: (" << errno << ") "
+                     << strerror(errno);
     return false;
   }
   return true;
@@ -593,7 +661,8 @@ bool Filesystem::DataSync(int fd) const {
 
 bool Filesystem::RenameFile(const char* old_name, const char* new_name) const {
   if (rename(old_name, new_name) < 0) {
-    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to " << new_name << ": " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to "
+                     << new_name << ": (" << errno << ") " << strerror(errno);
     return false;
   }
   return true;
@@ -631,7 +700,8 @@ bool Filesystem::CreateDirectory(const char* dir_name) const {
     if (mkdir(dir_name, S_IRUSR | S_IWUSR | S_IXUSR) == 0) {
       success = true;
     } else {
-      ICING_LOG(ERROR) << "Creating directory " << dir_name << " failed: " << strerror(errno);
+      ICING_LOG(ERROR) << "Creating directory " << dir_name << " failed: ("
+                       << errno << ") " << strerror(errno);
     }
   }
   return success;
@@ -651,7 +721,8 @@ bool Filesystem::CreateDirectoryRecursively(const char* dir_name) const {
 int64_t Filesystem::GetDiskUsage(int fd) const {
   struct stat st;
   if (fstat(fd, &st) < 0) {
-    ICING_LOG(ERROR) << "Unable to stat file: " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to stat file: (" << errno << ") "
+                     << strerror(errno);
     return kBadFileSize;
   }
   return st.st_blocks * kStatBlockSize;
@@ -660,7 +731,8 @@ int64_t Filesystem::GetDiskUsage(int fd) const {
 int64_t Filesystem::GetFileDiskUsage(const char* path) const {
   struct stat st;
   if (stat(path, &st) != 0) {
-    ICING_LOG(ERROR) << "Unable to stat " << path << ": " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to stat " << path << ": (" << errno << ") "
+                     << strerror(errno);
     return kBadFileSize;
   }
   return st.st_blocks * kStatBlockSize;
@@ -669,7 +741,8 @@ int64_t Filesystem::GetFileDiskUsage(const char* path) const {
 int64_t Filesystem::GetDiskUsage(const char* path) const {
   struct stat st;
   if (stat(path, &st) != 0) {
-    ICING_LOG(ERROR) << "Unable to stat " << path << ": " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to stat " << path << ": (" << errno << ") "
+                     << strerror(errno);
     return kBadFileSize;
   }
   int64_t result = st.st_blocks * kStatBlockSize;

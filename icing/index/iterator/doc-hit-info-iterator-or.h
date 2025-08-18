@@ -15,10 +15,16 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_OR_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_OR_H_
 
-#include <cstdint>
+#include <cstddef>
+#include <memory>
 #include <string>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -29,18 +35,25 @@ std::unique_ptr<DocHitInfoIterator> CreateOrIterator(
     std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
 // Iterate over a logical OR of two child iterators.
-class DocHitInfoIteratorOr : public DocHitInfoIterator {
+class DocHitInfoIteratorOr
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorOr(std::unique_ptr<DocHitInfoIterator> left_it,
                                 std::unique_ptr<DocHitInfoIterator> right_it);
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
-
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override {
+    return left_->GetCallStats() + right_->GetCallStats();
+  }
 
   std::string ToString() const override;
+
+  std::vector<std::unique_ptr<DocHitInfoIterator> *> GetChildren() override {
+    return {&left_, &right_};
+  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo> *matched_terms_stats,
@@ -72,18 +85,28 @@ class DocHitInfoIteratorOr : public DocHitInfoIterator {
 // Iterate over a logical OR of multiple child iterators.
 //
 // NOTE: DocHitInfoIteratorOr is a faster alternative to OR exactly 2 iterators.
-class DocHitInfoIteratorOrNary : public DocHitInfoIterator {
+class DocHitInfoIteratorOrNary
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorOrNary(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
-
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override;
 
   std::string ToString() const override;
+
+  std::vector<std::unique_ptr<DocHitInfoIterator> *> GetChildren() override {
+    std::vector<std::unique_ptr<DocHitInfoIterator> *> children;
+    children.reserve(iterators_.size());
+    for (int i = 0; i < iterators_.size(); ++i) {
+      children.push_back(&iterators_[i]);
+    }
+    return children;
+  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo> *matched_terms_stats,

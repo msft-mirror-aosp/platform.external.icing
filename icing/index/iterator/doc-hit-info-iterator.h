@@ -17,18 +17,26 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
+
+class SectionRestrictData;
+class DocumentFilterPredicate;
 
 // Data structure that maps a single matched query term to its section mask
 // and the list of term frequencies.
@@ -52,8 +60,7 @@ struct TermMatchInfo {
 
 // Iterator over DocHitInfos (collapsed Hits) in REVERSE document_id order.
 //
-// NOTE: You must call Advance() before calling hit_info() or
-// hit_intersect_section_ids_mask().
+// NOTE: You must call Advance() before calling hit_info().
 //
 // Example:
 // DocHitInfoIterator itr = GetIterator(...);
@@ -62,6 +69,226 @@ struct TermMatchInfo {
 // }
 class DocHitInfoIterator {
  public:
+  using ChildrenMapper = std::function<std::unique_ptr<DocHitInfoIterator>(
+      std::unique_ptr<DocHitInfoIterator>)>;
+
+  // CallStats is a wrapper class of all stats to collect among all levels of
+  // the DocHitInfoIterator tree. Mostly the internal nodes will aggregate the
+  // number of all leaf nodes, while the leaf nodes will return the actual
+  // numbers.
+  struct CallStats {
+    // The number of times Advance() was called on the leaf node for term lite
+    // index.
+    // - Leaf nodes:
+    //   - DocHitInfoIteratorTermLite should maintain and set it correctly.
+    //   - Others should set it 0.
+    // - Internal nodes: should aggregate values from all children.
+    int32_t num_leaf_advance_calls_lite_index;
+
+    // The number of times Advance() was called on the leaf node for term main
+    // index.
+    // - Leaf nodes:
+    //   - DocHitInfoIteratorTermMain should maintain and set it correctly.
+    //   - Others should set it 0.
+    // - Internal nodes: should aggregate values from all children.
+    int32_t num_leaf_advance_calls_main_index;
+
+    // The number of times Advance() was called on the leaf node for integer
+    // index.
+    // - Leaf nodes:
+    //   - DocHitInfoIteratorNumeric should maintain and set it correctly.
+    //   - Others should set it 0.
+    // - Internal nodes: should aggregate values from all children.
+    int32_t num_leaf_advance_calls_integer_index;
+
+    // The number of times Advance() was called on the leaf node without reading
+    // any hits from index. Usually it is a special field for
+    // DocHitInfoIteratorAllDocumentId.
+    // - Leaf nodes:
+    //   - DocHitInfoIteratorAllDocumentId should maintain and set it correctly.
+    //   - Others should set it 0.
+    // - Internal nodes: should aggregate values from all children.
+    int32_t num_leaf_advance_calls_no_index;
+
+    // The number of flash index blocks that have been read as a result of
+    // operations on this object.
+    // - Leaf nodes: should maintain and set it correctly for all child classes
+    //   involving flash index block access.
+    // - Internal nodes: should aggregate values from all children.
+    int32_t num_blocks_inspected;
+
+    explicit CallStats()
+        : CallStats(/*num_leaf_advance_calls_lite_index_in=*/0,
+                    /*num_leaf_advance_calls_main_index_in=*/0,
+                    /*num_leaf_advance_calls_integer_index_in=*/0,
+                    /*num_leaf_advance_calls_no_index_in=*/0,
+                    /*num_blocks_inspected_in=*/0) {}
+
+    explicit CallStats(int32_t num_leaf_advance_calls_lite_index_in,
+                       int32_t num_leaf_advance_calls_main_index_in,
+                       int32_t num_leaf_advance_calls_integer_index_in,
+                       int32_t num_leaf_advance_calls_no_index_in,
+                       int32_t num_blocks_inspected_in)
+        : num_leaf_advance_calls_lite_index(
+              num_leaf_advance_calls_lite_index_in),
+          num_leaf_advance_calls_main_index(
+              num_leaf_advance_calls_main_index_in),
+          num_leaf_advance_calls_integer_index(
+              num_leaf_advance_calls_integer_index_in),
+          num_leaf_advance_calls_no_index(num_leaf_advance_calls_no_index_in),
+          num_blocks_inspected(num_blocks_inspected_in) {}
+
+    int32_t num_leaf_advance_calls() const {
+      return num_leaf_advance_calls_lite_index +
+             num_leaf_advance_calls_main_index +
+             num_leaf_advance_calls_integer_index +
+             num_leaf_advance_calls_no_index;
+    }
+
+    bool operator==(const CallStats& other) const {
+      return num_leaf_advance_calls_lite_index ==
+                 other.num_leaf_advance_calls_lite_index &&
+             num_leaf_advance_calls_main_index ==
+                 other.num_leaf_advance_calls_main_index &&
+             num_leaf_advance_calls_integer_index ==
+                 other.num_leaf_advance_calls_integer_index &&
+             num_leaf_advance_calls_no_index ==
+                 other.num_leaf_advance_calls_no_index &&
+             num_blocks_inspected == other.num_blocks_inspected;
+    }
+
+    CallStats operator+(const CallStats& other) const {
+      return CallStats(num_leaf_advance_calls_lite_index +
+                           other.num_leaf_advance_calls_lite_index,
+                       num_leaf_advance_calls_main_index +
+                           other.num_leaf_advance_calls_main_index,
+                       num_leaf_advance_calls_integer_index +
+                           other.num_leaf_advance_calls_integer_index,
+                       num_leaf_advance_calls_no_index +
+                           other.num_leaf_advance_calls_no_index,
+                       num_blocks_inspected + other.num_blocks_inspected);
+    }
+
+    CallStats& operator+=(const CallStats& other) {
+      *this = *this + other;
+      return *this;
+    }
+  };
+
+  struct TrimmedNode {
+    // the query results which we should only search for suggestion in these
+    // documents.
+    std::unique_ptr<DocHitInfoIterator> iterator_;
+    // term of the trimmed node which we need to generate suggested strings.
+    std::string term_;
+    // the string in the query which indicates the target section we should
+    // search for suggestions.
+    std::string target_section_;
+    // the start index of the current term in the given search query.
+    int term_start_index_;
+    // The length of the given unnormalized term in the search query
+    int unnormalized_term_length_;
+
+    TrimmedNode(std::unique_ptr<DocHitInfoIterator> iterator, std::string term,
+                int term_start_index, int unnormalized_term_length)
+        : iterator_(std::move(iterator)),
+          term_(term),
+          target_section_(""),
+          term_start_index_(term_start_index),
+          unnormalized_term_length_(unnormalized_term_length) {}
+  };
+
+  // Trim the rightmost iterator of the iterator tree.
+  // This is to support search suggestions for the last term which is the
+  // right-most node of the root iterator tree. Only support trim the right-most
+  // node on the AND, AND_NARY, OR, OR_NARY, OR_LEAF, Filter, and the
+  // property-in-schema-check iterator.
+  //
+  // After calling this method, this iterator is no longer usable. Please use
+  // the returned iterator.
+  // Returns:
+  //   the new iterator without the right-most child, if was able to trim the
+  //   right-most node.
+  //   nullptr if the current iterator should be trimmed.
+  //   INVALID_ARGUMENT if the right-most node is not suppose to be trimmed.
+  virtual libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && = 0;
+
+  // Returns raw pointers to the direct children of this iterator. Empty if this
+  // iterator has no children.
+  //
+  // This allows modifying the iterator tree structure, for example, by
+  // modifying the child iterators directly or even replacing them with new
+  // ones. The lifetime of the returned raw pointers is tied to this iterator
+  // object.
+  virtual std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() = 0;
+
+  // Returns true if section restrictions are not applicable to this iterator.
+  //
+  // Several iterators do **not** need to respect section restrictions, since it
+  // does not have any section information. For example:
+  // - DocHitInfoIteratorAllDocumentId
+  // - DocHitInfoIteratorByUri
+  // - DocHitInfoIteratorMatchScoreExpression
+  // - DocHitInfoIteratorPropertyInSchema
+  // - DocHitInfoIteratorPropertyInDocument
+  //
+  // Unless DocHitInfoIteratorSectionRestrictionNotApplicable is extended, let's
+  // assume the iterator should respect section restrictions.
+  virtual bool SectionRestrictionNotApplicable() const { return false; }
+
+  // If not SectionRestrictionNotApplicable(), whether section restrictions
+  // should be passed down to the children iterators.
+  //
+  // Several iterators need to pass down section restrictions to their
+  // children to maintain the correct semantics of section restrictions. Check
+  // go/icing-section-restrict-fix for more details. For example:
+  // - DocHitInfoIteratorAnd
+  // - DocHitInfoIteratorOr
+  // - DocHitInfoIteratorFilter
+  //
+  // However, several iterators do respect section restrictions, but do not need
+  // to or cannot pass down section restrictions to their children. For example:
+  // - DocHitInfoIteratorSectionRestrict, since it's a section restriction
+  //   iterator itself. A new section restriction should be chained, instead of
+  //   passing down.
+  // - DocHitInfoIteratorTermLite, since it does not have any children. Section
+  //   restriction should be applied at the top of this iterator directly.
+  // - DocHitInfoIteratorEmbedding, since it does not have any children, and
+  //   in addition, it can internally handle the section restriction logic.
+  //
+  // Unless DocHitInfoIteratorSectionRestrictionApplyToChildren is extended,
+  // let's assume this is false, which means section restrictions should be
+  // applied at the top of this iterator directly or handled internally.
+  virtual bool SectionRestrictionShouldApplyToChildren() const { return false; }
+
+  // Try to internally handle the provided section restriction in the iterator.
+  //
+  // Returns:
+  //   - false if the iterator does not support handling section restriction.
+  //   - true if the iterator supports handling section restriction, and the
+  //     section restriction has been applied. For example,
+  //     DocHitInfoIteratorEmbedding can internally handle the section
+  //     restriction logic.
+  virtual bool HandleSectionRestriction(SectionRestrictData* other_data) {
+    return false;
+  }
+
+  // Whether a filter predicate can be passed through this iterator.
+  //
+  // Currently all iterators except for DocHitInfoIteratorNot are able to pass
+  // filter predicates through, while maintaining the same semantics.
+  virtual bool CanPassFilterPredicateThrough() const { return true; }
+
+  // Try to internally handle the provided filter in the iterator.
+  //
+  // Returns:
+  //   - false if the iterator does not support handling filter.
+  //   - true if the iterator supports handling filter, and the filter has been
+  //     applied.
+  virtual bool HandleFilter(const DocumentFilterPredicate* predicate) {
+    return false;
+  }
+
   virtual ~DocHitInfoIterator() = default;
 
   // Returns:
@@ -76,20 +303,8 @@ class DocHitInfoIterator {
   // construction or if Advance returned an error.
   const DocHitInfo& doc_hit_info() const { return doc_hit_info_; }
 
-  // SectionIdMask representing which sections (if any) have matched *ALL* query
-  // terms for the current document_id.
-  SectionIdMask hit_intersect_section_ids_mask() const {
-    return hit_intersect_section_ids_mask_;
-  }
-
-  // Gets the number of flash index blocks that have been read as a
-  // result of operations on this object.
-  virtual int32_t GetNumBlocksInspected() const = 0;
-
-  // HitIterators may be constructed into trees. Internal nodes will return the
-  // sum of the number of Advance() calls to all leaf nodes. Leaf nodes will
-  // return the number of times Advance() was called on it.
-  virtual int32_t GetNumLeafAdvanceCalls() const = 0;
+  // Returns CallStats of the DocHitInfoIterator tree.
+  virtual CallStats GetCallStats() const = 0;
 
   // A string representing the iterator.
   virtual std::string ToString() const = 0;
@@ -107,7 +322,6 @@ class DocHitInfoIterator {
 
  protected:
   DocHitInfo doc_hit_info_;
-  SectionIdMask hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
 
   // Helper function to advance the given iterator to at most the given
   // document_id.
@@ -122,11 +336,22 @@ class DocHitInfoIterator {
     // Didn't find anything for the other iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
-};  // namespace DocHitInfoIterator
+};
+
+class DocHitInfoIteratorSectionRestrictionNotApplicable
+    : public DocHitInfoIterator {
+ public:
+  bool SectionRestrictionNotApplicable() const override { return true; }
+};
+
+class DocHitInfoIteratorSectionRestrictionApplyToChildren
+    : public DocHitInfoIterator {
+ public:
+  bool SectionRestrictionShouldApplyToChildren() const override { return true; }
+};
 
 }  // namespace lib
 }  // namespace icing

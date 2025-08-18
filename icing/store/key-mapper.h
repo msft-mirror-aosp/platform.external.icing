@@ -80,8 +80,8 @@ class KeyMapper {
   // Returns any encountered IO errors.
   virtual libtextclassifier3::StatusOr<T> Get(std::string_view key) const = 0;
 
-  // Deletes data related to the given key. Returns true on success.
-  virtual bool Delete(std::string_view key) = 0;
+  // Deletes data related to the given key. Returns OK on success.
+  virtual libtextclassifier3::Status Delete(std::string_view key) = 0;
 
   // Returns an iterator of the key mapper.
   //
@@ -124,8 +124,11 @@ class KeyMapper {
   //   INTERNAL_ERROR on IO error
   virtual libtextclassifier3::StatusOr<int64_t> GetElementsSize() const = 0;
 
-  // Computes and returns the checksum of the header and contents.
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeChecksum() = 0;
+  // Computes the checksum of the key mapper and updates the header.
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateChecksum() = 0;
+
+  // Returns the checksum of the key mapper. Does NOT update the header.
+  virtual libtextclassifier3::StatusOr<Crc32> GetChecksum() const = 0;
 
  private:
   static_assert(std::is_trivially_copyable<T>::value,
