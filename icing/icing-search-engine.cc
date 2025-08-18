@@ -515,7 +515,9 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_smaller_decompression_buffer_size(),
                      options_.enable_eigen_embedding_scoring(),
                      options_.enable_passing_filter_to_children(),
-                     options_.enable_proto_log_new_header_format()),
+                     options_.enable_proto_log_new_header_format(),
+                     options_.enable_embedding_iterator_v2(),
+                     options_.enable_reusable_decompression_buffer()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1102,10 +1104,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
 
   ICING_ASSIGN_OR_RETURN(
       auto blob_store_or,
-      BlobStore::Create(
-          filesystem_.get(), blob_dir, clock_.get(),
-          orphan_blob_time_to_live_ms, blob_store_compression_level,
-          blob_store_compression_mem_level, options_.manage_blob_files()));
+      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get(),
+                        orphan_blob_time_to_live_ms,
+                        blob_store_compression_level,
+                        blob_store_compression_mem_level,
+                        options_.manage_blob_files(), &feature_flags_));
   blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
   return libtextclassifier3::Status::OK;
 }
@@ -2490,7 +2493,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     // optimize blob store
     libtextclassifier3::StatusOr<std::vector<std::string>>
         blob_file_names_to_remove_or = blob_store_->Optimize(
-            optimize_result_or.ValueOrDie().dead_blob_handles);
+            optimize_result_or.ValueOrDie().dead_blob_handles, &feature_flags_);
     if (!blob_file_names_to_remove_or.ok()) {
       TransformStatus(blob_file_names_to_remove_or.status(), result_status);
       return result_proto;
@@ -3488,7 +3491,7 @@ BlobProto IcingSearchEngine::CommitBlob(
   return blob_store_->CommitBlob(blob_handle);
 }
 
-BlobProto IcingSearchEngine::GetAllBlobInfo() {
+BlobProto IcingSearchEngine::GetAllBlobInfos() {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);
@@ -3505,10 +3508,10 @@ BlobProto IcingSearchEngine::GetAllBlobInfo() {
     ICING_LOG(ERROR) << status->message();
     return blob_proto;
   }
-  return blob_store_->GetAllBlobInfo();
+  return blob_store_->GetAllBlobInfos();
 }
 
-BlobProto IcingSearchEngine::PutBlobInfos(BlobProto&& blob_info_protos) {
+BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
   BlobProto result_blob_proto;
   StatusProto* status = result_blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);

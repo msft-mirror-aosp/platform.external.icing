@@ -262,7 +262,7 @@ TEST_P(IcingSearchEngineBlobTest, GetAllBlobInfo) {
   BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
-  BlobProto blob_proto = icing.GetAllBlobInfo();
+  BlobProto blob_proto = icing.GetAllBlobInfos();
   EXPECT_THAT(blob_proto.status(), ProtoIsOk());
   EXPECT_THAT(blob_proto.blob_info_protos_size(), Eq(1));
   EXPECT_THAT(blob_proto.blob_info_protos(0).blob_handle().namespace_(),
@@ -291,7 +291,7 @@ TEST_P(IcingSearchEngineBlobTest, PutBlobInfos) {
   BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
   ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
 
-  BlobProto blob_proto = icing.GetAllBlobInfo();
+  BlobProto blob_proto = icing.GetAllBlobInfos();
   EXPECT_THAT(blob_proto.status(), ProtoIsOk());
   EXPECT_THAT(blob_proto.blob_info_protos_size(), Eq(1));
   EXPECT_THAT(blob_proto.blob_info_protos(0).blob_handle().namespace_(),
