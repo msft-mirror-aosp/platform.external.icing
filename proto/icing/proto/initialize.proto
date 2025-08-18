@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 43
+// Next tag: 45
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -412,6 +412,15 @@ message IcingSearchEngineOptions {
   // introduce unsynced tail checksum) related changes in
   // PortableFileBackedProtoLog.
   optional bool enable_proto_log_new_header_format = 42;
+
+  // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
+  // This new iterator optimizes the access order of the embedding data for
+  // sequential reads.
+  optional bool enable_embedding_iterator_v2 = 43;
+
+  // Whether PortableFileBackedProtoLog should retain a decompression buffer
+  // that reads can reuse rather than allocating a new one for each read.
+  optional bool enable_reusable_decompression_buffer = 44;
 
   reserved 2, 20;
 }

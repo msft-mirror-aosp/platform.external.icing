@@ -33,7 +33,8 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v1.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -466,16 +467,30 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
       embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
                                                        metric_type));
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      DocHitInfoIteratorEmbedding::Create(
-          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, info_map, embedding_query_results_.global_scores.get(),
-          get_embedding_match_info_
-              ? embedding_query_results_.global_section_infos.get()
-              : nullptr,
-          &embedding_index_, &document_store_, &schema_store_,
-          current_time_ms_));
+  std::unique_ptr<DocHitInfoIterator> iterator;
+  if (feature_flags_.enable_embedding_iterator_v2()) {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV2::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV1::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  }
   return PendingValue(std::move(iterator));
 }
 
