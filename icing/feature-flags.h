@@ -31,7 +31,9 @@ class FeatureFlags {
                         bool enable_smaller_decompression_buffer_size,
                         bool enable_eigen_embedding_scoring,
                         bool enable_passing_filter_to_children,
-                        bool enable_proto_log_new_header_format)
+                        bool enable_proto_log_new_header_format,
+                        bool enable_embedding_iterator_v2,
+                        bool enable_reusable_decompression_buffer)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -45,8 +47,10 @@ class FeatureFlags {
             enable_smaller_decompression_buffer_size),
         enable_eigen_embedding_scoring_(enable_eigen_embedding_scoring),
         enable_passing_filter_to_children_(enable_passing_filter_to_children),
-        enable_proto_log_new_header_format_(
-            enable_proto_log_new_header_format) {}
+        enable_proto_log_new_header_format_(enable_proto_log_new_header_format),
+        enable_embedding_iterator_v2_(enable_embedding_iterator_v2),
+        enable_reusable_decompression_buffer_(
+            enable_reusable_decompression_buffer) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -94,6 +98,14 @@ class FeatureFlags {
     return enable_proto_log_new_header_format_;
   }
 
+  bool enable_embedding_iterator_v2() const {
+    return enable_embedding_iterator_v2_;
+  }
+
+  bool enable_reusable_decompression_buffer() const {
+    return enable_reusable_decompression_buffer_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -133,6 +145,12 @@ class FeatureFlags {
   // introduce unsynced tail checksum) related changes in
   // PortableFileBackedProtoLog.
   bool enable_proto_log_new_header_format_;
+
+  bool enable_embedding_iterator_v2_;
+
+  // Whether PortableFileBackedProtoLog should retain a decompression buffer
+  // that reads can reuse rather than allocating a new one for each read.
+  bool enable_reusable_decompression_buffer_;
 };
 
 }  // namespace lib
