@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -272,9 +273,24 @@ class IcingConnectionImpl
       // is called more than one time.
       IcingSearchEngineOptions options;
       DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
+
+      // Need to sanitize provided base directory. Valid filenames should only
+      // contain letters and numbers. Reject any provided base directories that
+      // do not meet this criteria.
+      const std::regex pattern("^[a-zA-Z0-9]+$");
+      if (options.base_dir().empty() || !std::regex_match(options.base_dir(), pattern)) {
+        // return failed init proto to called
+        ICING_LOG(ERROR) << "Invalid base_dir " << options.base_dir();
+
+        InitializeResultProto result;
+        StatusProto* result_status = result.mutable_status();
+        result_status->set_code(StatusProto::INTERNAL);
+        result_status->set_message("Invalid base_dir");
+        SERIALIZE_AND_RETURN_ASTATUS(result, initialize_result_proto);
+      }
+
       options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
-                           "/" + std::to_string(user_id_) + "/" +
-                           options.base_dir());
+                           "/" + std::to_string(user_id_) + "/" + options.base_dir());
       icing_ = std::make_unique<IcingSearchEngine>(options);
     }
 
