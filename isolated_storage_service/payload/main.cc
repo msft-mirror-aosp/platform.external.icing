@@ -289,6 +289,16 @@ class IcingConnectionImpl
         SERIALIZE_AND_RETURN_ASTATUS(result, initialize_result_proto);
       }
 
+      if (gVmPayloadLazy.AVmPayload_getEncryptedStoragePath() == nullptr) {
+        ICING_LOG(ERROR) << "Invalid encrypted storage path";
+
+        InitializeResultProto result;
+        StatusProto* result_status = result.mutable_status();
+        result_status->set_code(StatusProto::INTERNAL);
+        result_status->set_message("Invalid encrypted storage path");
+        SERIALIZE_AND_RETURN_ASTATUS(result, initialize_result_proto);
+      }
+
       options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
                            "/" + std::to_string(user_id_) + "/" + options.base_dir());
       icing_ = std::make_unique<IcingSearchEngine>(options);
