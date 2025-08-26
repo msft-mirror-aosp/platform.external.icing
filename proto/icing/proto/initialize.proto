@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 45
+// Next tag: 46
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -421,6 +421,11 @@ message IcingSearchEngineOptions {
   // Whether PortableFileBackedProtoLog should retain a decompression buffer
   // that reads can reuse rather than allocating a new one for each read.
   optional bool enable_reusable_decompression_buffer = 44;
+
+  // Whether to enable schema-type id optimization for setSchema. When enabled,
+  // the type-ids of existing types will be preserved when possible, and there
+  // will be no schema type-id reassignment for adding new types.
+  optional bool enable_schema_type_id_optimization = 45;
 
   reserved 2, 20;
 }
