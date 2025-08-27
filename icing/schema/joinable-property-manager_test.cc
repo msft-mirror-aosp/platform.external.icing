@@ -72,7 +72,8 @@ PropertyConfigProto CreateSenderQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertySenderQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_OPTIONAL)
       .Build();
 }
@@ -81,7 +82,8 @@ PropertyConfigProto CreateReceiverQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyReceiverQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_OPTIONAL)
       .Build();
 }
@@ -90,7 +92,8 @@ PropertyConfigProto CreateGroupQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyGroupQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/false)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_NONE)
       .SetCardinality(CARDINALITY_OPTIONAL)
       .Build();
 }

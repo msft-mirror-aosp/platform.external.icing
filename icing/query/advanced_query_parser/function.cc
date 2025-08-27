@@ -13,8 +13,15 @@
 // limitations under the License.
 #include "icing/query/advanced_query_parser/function.h"
 
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/query/advanced_query_parser/param.h"
+#include "icing/query/advanced_query_parser/pending-value.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -71,6 +78,21 @@ libtextclassifier3::StatusOr<PendingValue> Function::Eval(
     }
   }
   return eval_(std::move(args));
+}
+
+libtextclassifier3::StatusOr<DataType> Function::get_param_type(int i) const {
+  if (i < 0 || params_.empty()) {
+    return absl_ports::OutOfRangeError("Invalid argument index.");
+  }
+  const Param* parm;
+  if (i < params_.size()) {
+    parm = &params_.at(i);
+  } else if (params_.back().cardinality == Cardinality::kVariable) {
+    parm = &params_.back();
+  } else {
+    return absl_ports::OutOfRangeError("Invalid argument index.");
+  }
+  return parm->data_type;
 }
 
 }  // namespace lib
