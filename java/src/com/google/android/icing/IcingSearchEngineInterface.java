@@ -159,6 +159,12 @@ public interface IcingSearchEngineInterface extends Closeable {
   /** Marks the blob is committed. */
   BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle);
 
+  /** Gets all the blob info from the blob store. */
+  BlobProto getAllBlobInfos();
+
+  /** Puts the blob info protos from the blob proto to the blob info proto log file. */
+  BlobProto putBlobInfos(BlobProto blobProto);
+
   /**
    * Deletes the document.
    *

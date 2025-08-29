@@ -33,7 +33,8 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v1.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -466,16 +467,30 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
       embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
                                                        metric_type));
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      DocHitInfoIteratorEmbedding::Create(
-          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, info_map, embedding_query_results_.global_scores.get(),
-          get_embedding_match_info_
-              ? embedding_query_results_.global_section_infos.get()
-              : nullptr,
-          &embedding_index_, &document_store_, &schema_store_,
-          current_time_ms_));
+  std::unique_ptr<DocHitInfoIterator> iterator;
+  if (feature_flags_.enable_embedding_iterator_v2()) {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV2::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV1::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  }
   return PendingValue(std::move(iterator));
 }
 
@@ -571,15 +586,16 @@ QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   // raw_text is the portion of text_value.raw_term that hasn't yet been
   // matched to any of the tokens that we've processed. escaped_token will
-  // hold the portion of raw_text that corresponds to the current token that
+  // holds the portion of raw_text that corresponds to the current token that
   // is being processed.
   std::string_view raw_text = text_value.raw_term;
+  std::vector<Token> tokens;
   std::string_view raw_token;
   bool reached_final_token = !token_itr->Advance();
   // If the term is different then the raw_term, then there must have been some
   // escaped characters that we will need to handle.
   while (!reached_final_token) {
-    std::vector<Token> tokens = token_itr->GetTokens();
+    token_itr->GetTokens(&tokens);
     if (tokens.size() > 1) {
       // The tokenizer iterator iterates between token groups. In practice,
       // the tokenizer used with QueryVisitor (PlainTokenizer) will always
