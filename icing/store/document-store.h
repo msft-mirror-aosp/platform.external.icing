@@ -513,7 +513,9 @@ class DocumentStore {
   // Returns:
   //   OK on success
   //   INTERNAL on I/O error
-  libtextclassifier3::Status PersistToDisk(PersistType::Code persist_type);
+  libtextclassifier3::Status PersistToDisk(
+      PersistType::Code persist_type,
+      PersistToDiskStatsProto* persist_stats = nullptr);
 
   // Calculates the StorageInfo for the Document Store.
   //

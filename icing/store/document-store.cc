@@ -1861,14 +1861,25 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 }
 
 libtextclassifier3::Status DocumentStore::PersistToDisk(
-    PersistType::Code persist_type) {
-  ICING_RETURN_IF_ERROR(document_log_->PersistToDisk());
+    PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats) {
+  ICING_RETURN_IF_ERROR(document_log_->PersistToDisk(persist_stats, &clock_));
   if (persist_type == PersistType::LITE) {
     // only persist the document log.
     return libtextclassifier3::Status::OK;
   }
+
+  std::unique_ptr<Timer> overall_timer;
+
+  if (persist_stats) {
+    overall_timer = clock_.GetNewTimer();
+  }
   if (persist_type == PersistType::RECOVERY_PROOF) {
-    return UpdateChecksum().status();
+    libtextclassifier3::Status status = UpdateChecksum().status();
+    if (persist_stats) {
+      persist_stats->set_document_store_checksum_update_latency_ms(
+          overall_timer->GetElapsedMilliseconds());
+    }
+    return status;
   }
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
@@ -1880,8 +1891,18 @@ libtextclassifier3::Status DocumentStore::PersistToDisk(
   ICING_RETURN_IF_ERROR(corpus_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(corpus_score_cache_->PersistToDisk());
 
+  if (persist_stats) {
+    persist_stats->set_document_store_components_persist_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+    overall_timer = clock_.GetNewTimer();
+  }
+
   // Update the combined checksum and write to header file.
   ICING_RETURN_IF_ERROR(UpdateChecksum());
+  if (persist_stats) {
+    persist_stats->set_document_store_checksum_update_latency_ms(
+        overall_timer->GetElapsedMilliseconds());
+  }
   return libtextclassifier3::Status::OK;
 }
 

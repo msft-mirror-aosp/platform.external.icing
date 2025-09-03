@@ -139,11 +139,7 @@ EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
   return index;
 }
 
-libtextclassifier3::Status EmbeddingIndex::CreateStorageDataIfNonEmpty() {
-  if (is_empty()) {
-    return libtextclassifier3::Status::OK;
-  }
-
+libtextclassifier3::Status EmbeddingIndex::CreateStorageData() {
   ICING_ASSIGN_OR_RETURN(FlashIndexStorage flash_index_storage,
                          FlashIndexStorage::Create(
                              GetFlashIndexStorageFilePath(working_path_),
@@ -176,8 +172,9 @@ libtextclassifier3::Status EmbeddingIndex::MarkIndexNonEmpty() {
   if (!is_empty()) {
     return libtextclassifier3::Status::OK;
   }
+  ICING_RETURN_IF_ERROR(CreateStorageData());
   info().is_empty = false;
-  return CreateStorageDataIfNonEmpty();
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status EmbeddingIndex::Initialize() {
@@ -221,7 +218,9 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
       return absl_ports::FailedPreconditionError(absl_ports::StrCat(
           "Invalid header magic for EmbeddingIndex: ", working_path_));
     }
-    ICING_RETURN_IF_ERROR(CreateStorageDataIfNonEmpty());
+    if (!info().is_empty) {
+      ICING_RETURN_IF_ERROR(CreateStorageData());
+    }
     ICING_RETURN_IF_ERROR(InitializeExistingStorage());
   }
   return libtextclassifier3::Status::OK;
