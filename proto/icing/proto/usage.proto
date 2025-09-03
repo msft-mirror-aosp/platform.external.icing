@@ -57,7 +57,7 @@ message UsageReport {
 }
 
 // Result of a call to IcingSearchEngine.ReportUsage
-// Next tag: 2
+// Next tag: 3
 message ReportUsageResultProto {
   // Status code can be one of:
   //   OK
@@ -66,4 +66,7 @@ message ReportUsageResultProto {
   //
   // See status.proto for more details.
   optional StatusProto status = 1;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 2;
 }
