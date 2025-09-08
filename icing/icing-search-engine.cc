@@ -517,7 +517,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_passing_filter_to_children(),
                      options_.enable_proto_log_new_header_format(),
                      options_.enable_embedding_iterator_v2(),
-                     options_.enable_reusable_decompression_buffer()),
+                     options_.enable_reusable_decompression_buffer(),
+                     options_.enable_schema_type_id_optimization()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1667,12 +1668,11 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
     PersistToDiskStatsProto* persist_stats =
         batch_put_result_proto.mutable_persist_to_disk_result_proto()
             ->mutable_persist_stats();
-    auto status = PersistToDiskLocked(put_document_request.persist_type(),
-                                        persist_stats);
+    auto status =
+        PersistToDiskLocked(put_document_request.persist_type(), persist_stats);
     TransformStatus(
-        status,
-        batch_put_result_proto.mutable_persist_to_disk_result_proto()
-            ->mutable_status());
+        status, batch_put_result_proto.mutable_persist_to_disk_result_proto()
+                    ->mutable_status());
     persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
   }
 
@@ -1801,8 +1801,8 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
 
 // GetLocked to be called when mutex_ is already held.
 GetResultProto IcingSearchEngine::GetLocked(
-  const std::string_view name_space, const std::string_view uri,
-  const GetResultSpecProto& result_spec) {
+    const std::string_view name_space, const std::string_view uri,
+    const GetResultSpecProto& result_spec) {
   GetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
@@ -1864,7 +1864,7 @@ BatchGetResultProto IcingSearchEngine::BatchGet(
     // Handle not initialized case for all documents
     for (const std::string& id : get_result_spec.ids()) {
       GetResultProto* result_proto =
-        batch_get_result_proto.mutable_get_result_protos()->Add();
+          batch_get_result_proto.mutable_get_result_protos()->Add();
       result_proto->set_uri(id);
       result_proto->mutable_status()->set_code(
           StatusProto::FAILED_PRECONDITION);
@@ -2636,8 +2636,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   PersistToDiskStatsProto* after_optimize_persist_stats =
       optimize_stats->mutable_after_optimize_persist_stats();
   persist_timer = clock_->GetNewTimer();
-  status =
-      PersistToDiskLocked(PersistType::FULL, after_optimize_persist_stats);
+  status = PersistToDiskLocked(PersistType::FULL, after_optimize_persist_stats);
   after_optimize_persist_stats->set_latency_ms(
       persist_timer->GetElapsedMilliseconds());
   if (!status.ok()) {
