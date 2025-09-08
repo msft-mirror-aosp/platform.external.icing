@@ -229,8 +229,7 @@ class QueryVisitorTest
                      /*enable_passing_filter_to_children=*/true,
                      /*enable_proto_log_new_header_format=*/true,
                      GetParam().enable_embedding_iterator_v2,
-                     /*enable_reusable_decompression_buffer=*/true,
-                     /*enable_schema_type_id_optimization=*/true));
+                    /*enable_reusable_decompression_buffer=*/true));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
