@@ -88,6 +88,12 @@ interface IIcingSearchEngine {
   /*BlobProto*/ byte[] commitBlob(in byte[] blobHandleProto);
 
   @nullable
+  /*BlobProto*/ byte[] getAllBlobInfos();
+
+  @nullable
+  /*BlobProto*/ byte[] putBlobInfos(in byte[] blobProto);
+
+  @nullable
   /*DeleteResultProto*/ byte[] deleteDoc(String name_space, String uri);
 
   @nullable

@@ -583,6 +583,28 @@ class IcingConnectionImpl
     SERIALIZE_AND_RETURN_ASTATUS(commit_blob_result, blob_proto);
   }
 
+  ScopedAStatus getAllBlobInfos(
+      std::optional<std::vector<uint8_t>>* blob_proto) {
+    CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
+    BlobProto get_all_blob_infos_result = icing_->GetAllBlobInfos();
+    SERIALIZE_AND_RETURN_ASTATUS(get_all_blob_infos_result, blob_proto);
+  }
+
+  ScopedAStatus putBlobInfos(
+      const std::vector<uint8_t>& blob_info_protos_proto,
+      std::optional<std::vector<uint8_t>>* result_blob_proto) {
+    CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
+    BlobProto blob_info_protos;
+    DESERIALIZE_OR_RETURN(blob_info_protos_proto, blob_info_protos);
+
+    BlobProto result = icing_->PutBlobInfos(blob_info_protos);
+    SERIALIZE_AND_RETURN_ASTATUS(result, result_blob_proto);
+  }
+
   ScopedAStatus deleteDoc(
       const std::string& name_space, const std::string& uri,
       std::optional<std::vector<uint8_t>>* delete_result_proto) {
