@@ -2688,6 +2688,12 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
           current_time_ms - optimize_status_or.ValueOrDie()
                                 ->last_successful_optimize_run_time_ms();
     }
+    if (time_since_last_optimize_ms < 0) {
+      ICING_LOG(WARNING) << "Time since last optimize is negative: "
+                         << time_since_last_optimize_ms
+                         << ". Setting no_previous_optimize_info to true.";
+      result_proto.set_no_previous_optimize_info(true);
+    }
     result_proto.set_time_since_last_optimize_ms(time_since_last_optimize_ms);
   }
 
