@@ -59,9 +59,9 @@ namespace {
 // The maximum size of the embedding hit list mmapper.
 // We use 64MiB for 32-bit platforms and 128MiB for 64-bit platforms.
 #ifdef ICING_ARCH_BIT_64
-  constexpr uint32_t kEmbeddingHitListMapperMaxSize = 128 * 1024 * 1024;
+constexpr uint32_t kEmbeddingHitListMapperMaxSize = 128 * 1024 * 1024;
 #else
-  constexpr uint32_t kEmbeddingHitListMapperMaxSize = 64 * 1024 * 1024;
+constexpr uint32_t kEmbeddingHitListMapperMaxSize = 64 * 1024 * 1024;
 #endif
 
 // The maximum length returned by encode_util::EncodeIntToCString is 5 for
@@ -139,11 +139,7 @@ EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
   return index;
 }
 
-libtextclassifier3::Status EmbeddingIndex::CreateStorageDataIfNonEmpty() {
-  if (is_empty()) {
-    return libtextclassifier3::Status::OK;
-  }
-
+libtextclassifier3::Status EmbeddingIndex::CreateStorageData() {
   ICING_ASSIGN_OR_RETURN(FlashIndexStorage flash_index_storage,
                          FlashIndexStorage::Create(
                              GetFlashIndexStorageFilePath(working_path_),
@@ -176,8 +172,9 @@ libtextclassifier3::Status EmbeddingIndex::MarkIndexNonEmpty() {
   if (!is_empty()) {
     return libtextclassifier3::Status::OK;
   }
+  ICING_RETURN_IF_ERROR(CreateStorageData());
   info().is_empty = false;
-  return CreateStorageDataIfNonEmpty();
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status EmbeddingIndex::Initialize() {
@@ -215,9 +212,15 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
           "Incorrect metadata file size");
     }
     if (info().magic != Info::kMagic) {
-      return absl_ports::FailedPreconditionError("Incorrect magic value");
+      ICING_LOG(ERROR) << "Invalid header magic for EmbeddingIndex "
+                       << working_path_ << ". Expected: " << Info::kMagic
+                       << ", actual: " << info().magic;
+      return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+          "Invalid header magic for EmbeddingIndex: ", working_path_));
     }
-    ICING_RETURN_IF_ERROR(CreateStorageDataIfNonEmpty());
+    if (!info().is_empty) {
+      ICING_RETURN_IF_ERROR(CreateStorageData());
+    }
     ICING_RETURN_IF_ERROR(InitializeExistingStorage());
   }
   return libtextclassifier3::Status::OK;
@@ -576,18 +579,30 @@ libtextclassifier3::StatusOr<float> EmbeddingIndex::ScoreEmbeddingHit(
       quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
     ICING_ASSIGN_OR_RETURN(const float* vector,
                            GetEmbeddingVector(hit, dimension));
-    semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query.values().data(),
-                                  /*v2=*/vector);
+    if (feature_flags_->enable_eigen_embedding_scoring()) {
+      semantic_score = scorer.EigenScore(dimension,
+                                         /*v1=*/query.values().data(),
+                                         /*v2=*/vector);
+    } else {
+      semantic_score = scorer.Score(dimension,
+                                    /*v1=*/query.values().data(),
+                                    /*v2=*/vector);
+    }
   } else {
     ICING_ASSIGN_OR_RETURN(const char* data,
                            GetQuantizedEmbeddingVector(hit, dimension));
     Quantizer quantizer(data);
     const uint8_t* quantized_vector =
         reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
-    semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query.values().data(),
-                                  /*v2=*/quantized_vector, quantizer);
+    if (feature_flags_->enable_eigen_embedding_scoring()) {
+      semantic_score = scorer.EigenScore(dimension,
+                                         /*v1=*/query.values().data(),
+                                         /*v2=*/quantized_vector, quantizer);
+    } else {
+      semantic_score = scorer.Score(dimension,
+                                    /*v1=*/query.values().data(),
+                                    /*v2=*/quantized_vector, quantizer);
+    }
   }
   return semantic_score;
 }

@@ -23,10 +23,10 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Defines the blob operation result proto that user try to read/write/commit a
-// blob to Icing.
+// Defines the blob operation result proto that user try to
+// read/write/commit/remove a blob to Icing.
 //
-// Next tag: 3
+// Next tag: 6
 message BlobProto {
   // Status code can be one of:
   //   OK
@@ -36,8 +36,21 @@ message BlobProto {
   //
   optional StatusProto status = 1;
 
-  // The file decriptor of the blob file from Icing.
+  // If Icing manages blob files, this is the file decriptor of the blob file
+  // from Icing returned by OpenWriteBlob and OpenReadBlob.
   optional int32 file_descriptor = 2;
+
+  // If Icing does not manage blob files, this is the file name of the blob file
+  // from Icing returned by OpenWriteBlob, OpenReadBlob and RemoveBlob.
+  optional string file_name = 3;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 4;
+
+  // The blob info protos that are stored in the blob info proto log file. This
+  // is used migrate the blob info proto log file to another Icing instance.
+  // This field will only be set via GetAllBlobInfo call,
+  repeated BlobInfoProto blob_info_protos = 5;
 }
 
 // BlobInfo holds information about a blob. It is used to store in the blob
