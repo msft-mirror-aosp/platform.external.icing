@@ -183,7 +183,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(
@@ -323,7 +324,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(
@@ -481,7 +483,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(
@@ -624,7 +627,8 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(

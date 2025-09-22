@@ -394,6 +394,10 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
         // version 7 -> version 8 upgrade, no need to rebuild
         break;
       }
+      case 8: {
+        // version 8 -> version 9 upgrade, no need to rebuild
+        break;
+      }
       default:
         // This should not happen. Rebuild anyway if unsure.
         should_rebuild |= true;
