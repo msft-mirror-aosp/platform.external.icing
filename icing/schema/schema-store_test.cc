@@ -5614,6 +5614,22 @@ TEST_F(SchemaStoreTest, ScorablePropertyManagerUpdatesUponSchemaChange) {
                   EqualsScorablePropertyInfo("scoreInt", TYPE_INT64)))));
 }
 
+TEST_F(SchemaStoreTest, GetSchemaNameHash) {
+  // Hardcode some inputs to the GetSchemaNameHash function, so that we can be
+  // aware of any changes to the hashing function.
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("schema1"), 2607648336);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("schema2"), 40165354);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("schema3"), 1969483644);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("aa"), 1179847464);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("bb"), 4101441873);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("abc"), 3395655888);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("cba"), 669986194);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("aab"), 2521824133);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("bba"), 640501669);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("1234"), 3131523007);
+  EXPECT_EQ(SchemaStore::GetSchemaNameHash("4321"), 3855245428);
+}
+
 class SchemaStoreTestWithParam
     : public SchemaStoreTest,
       public testing::WithParamInterface<version_util::StateChange> {};

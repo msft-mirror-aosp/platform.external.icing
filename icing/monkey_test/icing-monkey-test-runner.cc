@@ -579,6 +579,9 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_passing_filter_to_children(
       GetRandomBoolean(&random_));
   icing_options.set_enable_embedding_iterator_v2(GetRandomBoolean(&random_));
+  // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
+  uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
+  icing_options.set_embedding_index_num_shards(num_shards);
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
