@@ -52,14 +52,15 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
                           uint32_t dimension, std::string_view model_signature);
 
 std::vector<float> GetRawEmbeddingDataFromIndex(
-    const EmbeddingIndex* embedding_index);
+    const EmbeddingIndex* embedding_index, uint32_t shard_id);
 
 // Gets the quantized embedding vector from the index based on the given hit,
 // and returns the dequantized version of the vector.
 libtextclassifier3::StatusOr<std::vector<float>>
 GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
-    uint32_t dimension);
+    uint32_t dimension, std::string_view model_signature,
+    std::string_view schema_name);
 
 // Gets or creates the EmbeddingMatchInfos in embedding_query_results for the
 // given query_vector_index, metric_type, and document.
