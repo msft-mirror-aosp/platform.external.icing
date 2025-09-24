@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 46
+// Next tag: 47
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -426,6 +426,9 @@ message IcingSearchEngineOptions {
   // the type-ids of existing types will be preserved when possible, and there
   // will be no schema type-id reassignment for adding new types.
   optional bool enable_schema_type_id_optimization = 45;
+
+  // The number of shards to use for the embedding index. 1 means no sharding.
+  optional uint32 embedding_index_num_shards = 46 [default = 1];
 
   reserved 2, 20;
 }
