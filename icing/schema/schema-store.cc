@@ -710,6 +710,7 @@ libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
       SchemaUtil::BuildTransitiveInheritanceGraph(*schema_proto));
 
   reverse_schema_type_mapper_.clear();
+  reverse_schema_type_mapper_hash_.clear();
   database_type_map_.clear();
   type_config_map_.clear();
   schema_subtype_id_map_.clear();
@@ -721,6 +722,8 @@ libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
 
     // Build reverse_schema_type_mapper_
     reverse_schema_type_mapper_.insert({type_id, type_name});
+    reverse_schema_type_mapper_hash_.insert(
+        {type_id, GetSchemaNameHash(type_name)});
 
     // Build database_type_map_
     database_type_map_[database].push_back(type_name);

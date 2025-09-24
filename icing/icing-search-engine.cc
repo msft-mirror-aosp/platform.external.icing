@@ -1276,7 +1276,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeEmbeddingIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause embedding_index_recovery_cause;
   auto embedding_index_or = EmbeddingIndex::Create(
-      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_,
+      options_.embedding_index_num_shards());
   if (!embedding_index_or.ok()) {
     auto discard_status = EmbeddingIndex::Discard(*filesystem_, embedding_dir);
     if (!discard_status.ok()) {
@@ -1289,7 +1290,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
 
     // Try recreating it from scratch and re-indexing everything.
     embedding_index_or = EmbeddingIndex::Create(
-        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_,
+        options_.embedding_index_num_shards());
     if (!embedding_index_or.ok()) {
       initialize_stats->set_failure_stage(
           InitializeStatsProto::FailureStage::EMBEDDING_INDEX_INSTANTIATION);
@@ -2689,6 +2691,12 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
       time_since_last_optimize_ms =
           current_time_ms - optimize_status_or.ValueOrDie()
                                 ->last_successful_optimize_run_time_ms();
+    }
+    if (time_since_last_optimize_ms < 0) {
+      ICING_LOG(WARNING) << "Time since last optimize is negative: "
+                         << time_since_last_optimize_ms
+                         << ". Setting no_previous_optimize_info to true.";
+      result_proto.set_no_previous_optimize_info(true);
     }
     result_proto.set_time_since_last_optimize_ms(time_since_last_optimize_ms);
   }

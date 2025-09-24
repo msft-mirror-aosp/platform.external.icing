@@ -25,7 +25,6 @@
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/proto/document.pb.h"
 #include "icing/store/document-id.h"
@@ -40,18 +39,20 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
                           std::string_view model_signature) {
   std::vector<EmbeddingHit> hits;
 
-  libtextclassifier3::StatusOr<std::unique_ptr<PostingListEmbeddingHitAccessor>>
-      pl_accessor_or = embedding_index->GetAccessor(dimension, model_signature);
-  if (absl_ports::IsNotFound(pl_accessor_or.status())) {
+  libtextclassifier3::StatusOr<
+      std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>>
+      embedding_hit_accessor_or =
+          embedding_index->GetAccessor(dimension, model_signature);
+  if (absl_ports::IsNotFound(embedding_hit_accessor_or.status())) {
     return hits;
   }
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor,
-      std::move(pl_accessor_or));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>
+                             embedding_hit_accessor,
+                         std::move(embedding_hit_accessor_or));
 
   while (true) {
     ICING_ASSIGN_OR_RETURN(std::vector<EmbeddingHit> batch,
-                           pl_accessor->GetNextHitsBatch());
+                           embedding_hit_accessor->GetNextHitsBatch());
     if (batch.empty()) {
       return hits;
     }
@@ -60,20 +61,24 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
 }
 
 std::vector<float> GetRawEmbeddingDataFromIndex(
-    const EmbeddingIndex* embedding_index) {
+    const EmbeddingIndex* embedding_index, uint32_t shard_id) {
   ICING_ASSIGN_OR_RETURN(const float* data,
-                         embedding_index->GetRawEmbeddingData(),
+                         embedding_index->GetRawEmbeddingData(shard_id),
                          std::vector<float>());
-  return std::vector<float>(data, data + embedding_index->GetTotalVectorSize());
+  return std::vector<float>(
+      data, data + embedding_index->GetTotalVectorSize(shard_id));
 }
 
 libtextclassifier3::StatusOr<std::vector<float>>
 GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
-    uint32_t dimension) {
+    uint32_t dimension, std::string_view model_signature,
+    std::string_view schema_name) {
+  uint32_t shard_id =
+      embedding_index->GetShardId(dimension, model_signature, schema_name);
   ICING_ASSIGN_OR_RETURN(
       const char* data,
-      embedding_index->GetQuantizedEmbeddingVector(hit, dimension));
+      embedding_index->GetQuantizedEmbeddingVector(hit, dimension, shard_id));
   Quantizer quantizer(data);
   const uint8_t* quantized_vector =
       reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
