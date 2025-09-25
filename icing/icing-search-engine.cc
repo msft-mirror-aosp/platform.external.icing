@@ -1276,7 +1276,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeEmbeddingIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause embedding_index_recovery_cause;
   auto embedding_index_or = EmbeddingIndex::Create(
-      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_,
+      options_.embedding_index_num_shards());
   if (!embedding_index_or.ok()) {
     auto discard_status = EmbeddingIndex::Discard(*filesystem_, embedding_dir);
     if (!discard_status.ok()) {
@@ -1289,7 +1290,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
 
     // Try recreating it from scratch and re-indexing everything.
     embedding_index_or = EmbeddingIndex::Create(
-        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_,
+        options_.embedding_index_num_shards());
     if (!embedding_index_or.ok()) {
       initialize_stats->set_failure_stage(
           InitializeStatsProto::FailureStage::EMBEDDING_INDEX_INSTANTIATION);
