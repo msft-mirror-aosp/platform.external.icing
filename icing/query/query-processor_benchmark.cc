@@ -30,6 +30,7 @@
 #include "icing/index/index.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
@@ -49,6 +50,7 @@
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
 #include "unicode/uloc.h"
@@ -119,6 +121,9 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
       /*force_recovery_and_revalidate_documents=*/false,
       /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
       PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
@@ -178,13 +183,15 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -209,6 +216,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -316,13 +324,15 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -365,6 +375,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -472,13 +483,15 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -506,6 +519,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
@@ -613,13 +627,15 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
-                               ->Put(DocumentBuilder()
-                                         .SetKey("icing", "type1")
-                                         .SetSchema("type1")
-                                         .Build())
+                               ->Put(document_util::CreateDocumentWrapper(
+                                   DocumentBuilder()
+                                       .SetKey("icing", "type1")
+                                       .SetSchema("type1")
+                                       .Build()))
                                .ValueOrDie()
                                .new_document_id;
 
@@ -647,6 +663,7 @@ void BM_QueryHiragana(benchmark::State& state) {
         query_processor
             ->ParseSearch(search_spec,
                           ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          /*get_embedding_match_info=*/false,
                           clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {

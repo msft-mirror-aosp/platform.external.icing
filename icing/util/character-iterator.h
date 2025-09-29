@@ -28,18 +28,25 @@ namespace lib {
 class CharacterIterator {
  public:
   explicit CharacterIterator(std::string_view text)
-      : CharacterIterator(text, 0, 0, 0) {}
-
-  CharacterIterator(std::string_view text, int utf8_index, int utf16_index,
-                    int utf32_index)
       : text_(text),
         cached_current_char_(i18n_utils::kInvalidUChar32),
-        utf8_index_(utf8_index),
-        utf16_index_(utf16_index),
-        utf32_index_(utf32_index) {}
+        utf8_index_(0),
+        utf16_index_(0),
+        utf32_index_(0) {}
+
+  CharacterIterator() : utf8_index_(-1), utf16_index_(-1), utf32_index_(-1) {}
 
   // Returns the character that the iterator currently points to.
   // i18n_utils::kInvalidUChar32 if unable to read that character.
+  //
+  // REQUIRES: the instance is not in an undefined state (i.e. all previous
+  //   calls succeeded).
+  //
+  // RETURNS:
+  //   - Null character if the iterator is at the end of the text.
+  //   - The character that the iterator currently points to, if the iterator is
+  //     within the text.
+  //   - i18n_utils::kInvalidUChar32, if unable to decode the character.
   UChar32 GetCurrentChar() const;
 
   // Moves current position to desired_utf8_index.
@@ -48,9 +55,20 @@ class CharacterIterator {
 
   // Advances from current position to the character that includes the specified
   // UTF-8 index.
-  // REQUIRES: desired_utf8_index <= text_.length()
-  // desired_utf8_index is allowed to point one index past the end, but no
-  // further.
+  //
+  // desired_utf8_index should be in range [0, text_.length()]. Note that it is
+  // allowed to point one index past the end (i.e. equals text_.length()), but
+  // no further.
+  //
+  // REQUIRES:
+  //   - The instance is not in an undefined state (i.e. all previous calls
+  //     succeeded).
+  //   - The current position is not ahead of desired_utf8_index, i.e.
+  //     utf8_index() <= desired_utf8_index.
+  //
+  // RETURNS:
+  //   - True if successfully advanced.
+  //   - False otherwise. Also the iterator will be in an undefined state.
   bool AdvanceToUtf8(int desired_utf8_index);
 
   // Rewinds from current position to the character that includes the specified
@@ -86,6 +104,12 @@ class CharacterIterator {
   // REQUIRES: 0 <= desired_utf32_index
   bool RewindToUtf32(int desired_utf32_index);
 
+  bool is_valid() const {
+    return text_.data() != nullptr && utf8_index_ >= 0 && utf16_index_ >= 0 &&
+           utf32_index_ >= 0;
+  }
+
+  std::string_view text() const { return text_; }
   int utf8_index() const { return utf8_index_; }
   int utf16_index() const { return utf16_index_; }
   int utf32_index() const { return utf32_index_; }

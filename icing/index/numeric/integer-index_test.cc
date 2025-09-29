@@ -20,15 +20,20 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -36,6 +41,7 @@
 #include "icing/index/numeric/integer-index-storage.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
@@ -46,6 +52,10 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
+#include "icing/util/crc32.h"
+#include "icing/util/document-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -92,14 +102,18 @@ class NumericIndexIntegerTest : public ::testing::Test {
         filesystem_.CreateDirectoryRecursively(document_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -167,14 +181,18 @@ class NumericIndexIntegerTest : public ::testing::Test {
 
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/true,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return std::move(doc_store_optimize_result.document_id_old_to_new);
   }
@@ -413,49 +431,51 @@ TYPED_TEST(NumericIndexIntegerTest, WildcardStorageQuery) {
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
       DocumentBuilder().SetKey("ns1", "uri0").SetSchema("TypeA").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri8").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri9").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri10").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri1").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri2").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri3").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri4").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri5").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri6").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri7").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri8").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri9").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri10").Build())));
 
   // Put 5 docs of "TypeB" into the document store.
   doc = DocumentBuilder(doc).SetUri("uri11").SetSchema("TypeB").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri12").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri13").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri14").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri15").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri16").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri17").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri18").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri19").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri20").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri12").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri13").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri14").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri15").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri16").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri17").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri18").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri19").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri20").Build())));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -1033,21 +1053,16 @@ TYPED_TEST(NumericIndexIntegerTest, OptimizeOutOfRangeDocumentId) {
   Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
         kDefaultSectionId, /*keys=*/{3});
 
-  // Create document_id_old_to_new with size = 2. Optimize should handle out of
-  // range DocumentId properly.
+  // Create document_id_old_to_new with size = 2. Optimize should return
+  // internal error for out of range document id.
   std::vector<DocumentId> document_id_old_to_new(2, kInvalidDocumentId);
 
   EXPECT_THAT(integer_index->Optimize(
                   document_id_old_to_new,
                   /*new_last_added_document_id=*/kInvalidDocumentId),
-              IsOk());
-  EXPECT_THAT(integer_index->last_added_document_id(), Eq(kInvalidDocumentId));
-
-  // Verify all data are discarded after Optimize().
-  EXPECT_THAT(this->Query(integer_index.get(), kDefaultTestPropertyPath,
-                          /*key_lower=*/std::numeric_limits<int64_t>::min(),
-                          /*key_upper=*/std::numeric_limits<int64_t>::max()),
-              IsOkAndHolds(IsEmpty()));
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+                       HasSubstr("document id is out of range. The index may "
+                                 "have been corrupted.")));
 }
 
 TYPED_TEST(NumericIndexIntegerTest, OptimizeDeleteAll) {
@@ -1185,8 +1200,9 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndex::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndex::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.last_added_document_id, Eq(kInvalidDocumentId));
   EXPECT_THAT(info.num_data_threshold_for_bucket_split,
@@ -1194,8 +1210,9 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndex::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndex::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
   // There are no storages initially, so storages_crc should be 0.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Eq(0));
   EXPECT_THAT(crcs.component_crcs.info_crc,
@@ -1381,8 +1398,9 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndex::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndex::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -1430,8 +1448,9 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndex::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndex::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
@@ -1661,49 +1680,51 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
       DocumentBuilder().SetKey("ns1", "uri0").SetSchema("TypeA").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri8").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri9").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri10").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri1").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri2").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri3").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri4").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri5").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri6").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri7").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri8").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri9").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri10").Build())));
 
   // Put 10 docs of "TypeB" into the document store.
   doc = DocumentBuilder(doc).SetUri("uri11").SetSchema("TypeB").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri12").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri13").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri14").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri15").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri16").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri17").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri18").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri19").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri20").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri12").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri13").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri14").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri15").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri16").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri17").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri18").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri19").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri20").Build())));
 
   {
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -2045,49 +2066,51 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
       DocumentBuilder().SetKey("ns1", "uri0").SetSchema("TypeA").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri8").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri9").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri10").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri1").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri2").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri3").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri4").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri5").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri6").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri7").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri8").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri9").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri10").Build())));
 
   // Put 10 docs of "TypeB" into the document store.
   doc = DocumentBuilder(doc).SetUri("uri11").SetSchema("TypeB").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri12").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri13").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri14").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri15").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri16").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri17").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri18").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri19").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri20").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri12").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri13").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri14").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri15").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri16").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri17").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri18").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri19").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri20").Build())));
 
   {
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -2335,27 +2358,28 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
       DocumentBuilder().SetKey("ns1", "uri0").SetSchema("TypeA").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
   ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri8").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri9").Build()));
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri10").Build()));
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri1").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri2").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri3").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri4").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri5").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri6").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri7").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri8").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri9").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri10").Build())));
 
   {
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -2451,7 +2475,8 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
   // Add a new doc (docid==5) and a hit for desiredProperty. This should still
   // be placed into the wildcard integer storage.
   doc = DocumentBuilder().SetKey("ns1", "uri11").SetSchema("TypeA").Build();
-  ICING_ASSERT_OK(this->doc_store_->Put(doc));
+  ICING_ASSERT_OK(
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
   Index(integer_index.get(), desired_property, /*document_id=*/5,
         typea_desired_prop_id, /*keys=*/{12});
   EXPECT_THAT(integer_index->num_property_indices(), Eq(1));
@@ -2463,8 +2488,8 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
 
   // Add a new doc (docid==6) and a hit for undesiredProperty. This should still
   // be placed into the wildcard integer storage.
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri12").Build()));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri12").Build())));
   Index(integer_index.get(), undesired_property, /*document_id=*/6,
         typea_undesired_prop_id, /*keys=*/{3});
   EXPECT_THAT(integer_index->num_property_indices(), Eq(1));
@@ -2477,8 +2502,8 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
 
   // Add a new doc (docid==7) and a hit for otherProperty1. This should be given
   // its own individual storage.
-  ICING_ASSERT_OK(
-      this->doc_store_->Put(DocumentBuilder(doc).SetUri("uri13").Build()));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri13").Build())));
   Index(integer_index.get(), other_property_1, /*document_id=*/7,
         typea_other1_prop_id, /*keys=*/{3});
   EXPECT_THAT(integer_index->num_property_indices(), Eq(2));
