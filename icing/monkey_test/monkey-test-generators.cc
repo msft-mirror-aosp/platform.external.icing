@@ -14,6 +14,7 @@
 
 #include "icing/monkey_test/monkey-test-generators.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <random>
@@ -92,6 +93,10 @@ void SetEmbeddingIndexingConfig(MonkeyTestRandomEngine* random,
     property.mutable_embedding_indexing_config()->set_embedding_indexing_type(
         EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH);
   }
+  if (GetRandomBoolean(random)) {
+    property.mutable_embedding_indexing_config()->set_quantization_type(
+        EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT);
+  }
 }
 
 }  // namespace
@@ -142,12 +147,34 @@ MonkeySchemaGenerator::UpdateSchemaResult MonkeySchemaGenerator::UpdateSchema(
   return result;
 }
 
+void MonkeySchemaGenerator::ReloadPreviousStatus(const SchemaProto& schema) {
+  int max_schema_id = 0;
+  for (const SchemaTypeConfigProto& type_config : schema.types()) {
+    max_schema_id =
+        std::max(max_schema_id, std::stoi(type_config.schema_type().substr(
+                                    kSchemaTypeNamePrefix.size())));
+
+    // To reset num_properties_generated_ according to the previous run, we use
+    // the maximum property_id + 1 as an estimate.
+    int max_property_id = 0;
+    for (const PropertyConfigProto& property : type_config.properties()) {
+      max_property_id =
+          std::max(max_property_id, std::stoi(property.property_name().substr(
+                                        kSchemaPropertyNamePrefix.size())));
+    }
+    num_properties_generated_[type_config.schema_type()] = max_property_id + 1;
+  }
+  // To reset num_types_generated_ according to the previous run, we use the
+  // maximum schema_id + 1 as an estimate.
+  num_types_generated_ = max_schema_id + 1;
+}
+
 PropertyConfigProto MonkeySchemaGenerator::GenerateProperty(
     const SchemaTypeConfigProto& type_config,
     PropertyConfigProto::Cardinality::Code cardinality, bool indexable) {
   PropertyConfigProto prop;
   prop.set_property_name(
-      "MonkeyTestProp" +
+      std::string(kSchemaPropertyNamePrefix) +
       std::to_string(num_properties_generated_[type_config.schema_type()]++));
   // TODO: Perhaps in future iterations we will want to generate more types of
   // properties.
@@ -201,7 +228,14 @@ void MonkeySchemaGenerator::UpdateProperty(
       index_incompatible = true;
     }
   } else if (property.data_type() == PropertyConfigProto::DataType::VECTOR) {
+    EmbeddingIndexingConfig::QuantizationType::Code old_quantization_type =
+        property.embedding_indexing_config().quantization_type();
     SetEmbeddingIndexingConfig(random_, property, new_indexable);
+    EmbeddingIndexingConfig::QuantizationType::Code new_quantization_type =
+        property.embedding_indexing_config().quantization_type();
+    if (old_quantization_type != new_quantization_type) {
+      index_incompatible = true;
+    }
   }
   if (index_incompatible) {
     result.schema_types_index_incompatible.insert(type_config.schema_type());
@@ -210,7 +244,7 @@ void MonkeySchemaGenerator::UpdateProperty(
 
 SchemaTypeConfigProto MonkeySchemaGenerator::GenerateType() {
   SchemaTypeConfigProto type_config;
-  type_config.set_schema_type("MonkeyTestType" +
+  type_config.set_schema_type(std::string(kSchemaTypeNamePrefix) +
                               std::to_string(num_types_generated_++));
   std::uniform_int_distribution<> possible_num_properties_dist(
       0, config_->possible_num_properties.size() - 1);
@@ -325,7 +359,7 @@ std::string MonkeyDocumentGenerator::GetUri() const {
     std::uniform_int_distribution<> dist(0, config_->num_uris - 1);
     uri = dist(*random_);
   }
-  return absl_ports::StrCat("uri", std::to_string(uri));
+  return absl_ports::StrCat(kDocumentUriPrefix, std::to_string(uri));
 }
 
 int MonkeyDocumentGenerator::GetNumTokens() const {

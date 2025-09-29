@@ -15,6 +15,7 @@
 #ifndef ICING_FILE_MEMORY_MAPPED_FILE_BACKED_PROTO_LOG_H_
 #define ICING_FILE_MEMORY_MAPPED_FILE_BACKED_PROTO_LOG_H_
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -30,6 +31,7 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -83,6 +85,22 @@ class MemoryMappedFileBackedProtoLog {
   //   Checksum on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<Crc32> UpdateChecksum();
+
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
+  //
+  // Returns:
+  //   Disk usage on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the file size of the all the elements held in the log. File size
+  // is in bytes. This excludes the size of the header of the log file.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
   // Reads the proto at the given index.
   //
@@ -142,6 +160,9 @@ MemoryMappedFileBackedProtoLog<ProtoT>::ValidateAndGetProtoSize(
     ProtoMetadata proto_metadata) {
   uint8_t magic_number = proto_metadata >> 24;
   if (magic_number != kProtoMagic) {
+    ICING_LOG(ERROR)
+        << "Invalid header magic for MemoryMappedFileBackedProtoLog. Expected: "
+        << kProtoMagic << ", actual: " << magic_number;
     return absl_ports::InvalidArgumentError(
         "Proto metadata has invalid magic number");
   }
@@ -157,6 +178,18 @@ template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
 MemoryMappedFileBackedProtoLog<ProtoT>::UpdateChecksum() {
   return proto_fbv_->UpdateChecksum();
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+MemoryMappedFileBackedProtoLog<ProtoT>::GetDiskUsage() const {
+  return proto_fbv_->GetDiskUsage();
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+MemoryMappedFileBackedProtoLog<ProtoT>::GetElementsFileSize() const {
+  return proto_fbv_->GetElementsFileSize();
 }
 
 template <typename ProtoT>
@@ -187,9 +220,10 @@ MemoryMappedFileBackedProtoLog<ProtoT>::Read(int32_t index) const {
         IcingStringUtil::StringPrintf("Index, %d, is less than 0", index));
   }
   if (index + sizeof(ProtoMetadata) >= proto_fbv_->num_elements()) {
+    uint64_t upper_index = proto_fbv_->num_elements() - sizeof(ProtoMetadata);
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-        "Index, %d, is greater/equal than the upper bound, %d", index,
-        proto_fbv_->num_elements() - sizeof(ProtoMetadata)));
+        "Index, %" PRId32 ", is greater/equal than the upper bound, %" PRIu64,
+        index,  upper_index));
   }
 
   ProtoMetadata proto_metadata;

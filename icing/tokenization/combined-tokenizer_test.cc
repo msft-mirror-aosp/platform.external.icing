@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -24,6 +25,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-index.h"
@@ -32,6 +34,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/query/query-processor.h"
@@ -41,9 +44,9 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -51,7 +54,9 @@
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
 
@@ -76,6 +81,7 @@ class CombinedTokenizerTest : public ::testing::Test {
         embedding_index_dir_(test_dir_ + "/embedding_index") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
@@ -83,24 +89,28 @@ class CombinedTokenizerTest : public ::testing::Test {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
     jni_cache_ = GetTestJniCache();
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
             &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/false,
             PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
@@ -116,7 +126,9 @@ class CombinedTokenizerTest : public ::testing::Test {
         DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -124,14 +136,18 @@ class CombinedTokenizerTest : public ::testing::Test {
         lang_segmenter_,
         language_segmenter_factory::Create(std::move(segmenter_options)));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/1000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
+
     ICING_ASSERT_OK_AND_ASSIGN(
         query_processor_,
-        QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                               embedding_index_.get(), lang_segmenter_.get(),
-                               normalizer_.get(), document_store_.get(),
-                               schema_store_.get(), &fake_clock_));
+        QueryProcessor::Create(
+            index_.get(), numeric_index_.get(), embedding_index_.get(),
+            lang_segmenter_.get(), normalizer_.get(), document_store_.get(),
+            schema_store_.get(), /*join_children_fetcher=*/nullptr,
+            &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::StatusOr<std::vector<std::string>> GetQueryTerms(
@@ -143,6 +159,7 @@ class CombinedTokenizerTest : public ::testing::Test {
         QueryResults parsed_query,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::NONE,
+            /*get_embedding_match_info=*/false,
             /*current_time_ms=*/0, /*search_stats=*/nullptr));
 
     std::vector<std::string> query_terms;
@@ -154,6 +171,7 @@ class CombinedTokenizerTest : public ::testing::Test {
     return query_terms;
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
   const std::string store_dir_;
@@ -241,8 +259,7 @@ TEST_F(CombinedTokenizerTest, Negation) {
   const std::string_view kQueryText = "\\-foo \\-bar \\-baz";
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<std::string> query_terms,
                              GetQueryTerms(kQueryText));
-  EXPECT_THAT(query_terms,
-              UnorderedElementsAre("foo", "bar", "baz"));
+  EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar", "baz"));
 }
 
 // TODO(b/254874614): Handle colon word breaks in ICU 72+
@@ -271,8 +288,9 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
       tokenizer_factory::CreateIndexingTokenizer(
           StringIndexingConfig::TokenizerType::PLAIN, lang_segmenter_.get()));
 
-  if (GetIcuTokenizationVersion() >= 72) {
-    // In ICU 72+ and above, ':' are no longer considered word connectors.
+  int icu_version = GetIcuTokenizationVersion();
+  if (icu_version >= 72 && icu_version < 77) {
+    // In ICU 72+ and before 77, ':' are not considered word connectors.
     constexpr std::string_view kText = "foo:bar";
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<Token> indexing_tokens,
                                indexing_tokenizer->TokenizeAll(kText));
@@ -281,7 +299,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
 
     const std::string_view kQueryText = "foo\\:bar";
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<std::string> query_terms,
-                              GetQueryTerms(kQueryText));
+                               GetQueryTerms(kQueryText));
     EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar"));
 
     constexpr std::string_view kText2 = "foo:bar:baz";
@@ -291,8 +309,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
     EXPECT_THAT(indexing_terms, ElementsAre("foo", "bar", "baz"));
 
     const std::string_view kQueryText2 = "foo\\:bar\\:baz";
-    ICING_ASSERT_OK_AND_ASSIGN(query_terms,
-                              GetQueryTerms(kQueryText2));
+    ICING_ASSERT_OK_AND_ASSIGN(query_terms, GetQueryTerms(kQueryText2));
     EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar", "baz"));
   } else {
     constexpr std::string_view kText = "foo:bar";

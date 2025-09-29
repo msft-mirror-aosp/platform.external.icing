@@ -106,18 +106,31 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
   } else if (function_name ==
              RelevanceScoreFunctionScoreExpression::kFunctionName) {
     // relevanceScore function
-    expression = RelevanceScoreFunctionScoreExpression::Create(
-        std::move(args), &bm25f_calculator_, default_score_);
+    if (bm25f_calculator_ != nullptr) {
+      expression = RelevanceScoreFunctionScoreExpression::Create(
+          std::move(args), bm25f_calculator_, default_score_);
+    } else {
+      expression = absl_ports::InvalidArgumentError(
+          "relevanceScore function is not available in this context.");
+    }
+
   } else if (function_name ==
              ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
     // childrenRankingSignals function
     expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
-        std::move(args), join_children_fetcher_);
+        std::move(args), document_store_, join_children_fetcher_,
+        current_time_ms_);
   } else if (function_name ==
              PropertyWeightsFunctionScoreExpression::kFunctionName) {
     // propertyWeights function
-    expression = PropertyWeightsFunctionScoreExpression::Create(
-        std::move(args), &document_store_, &section_weights_, current_time_ms_);
+    if (section_weights_ != nullptr) {
+      expression = PropertyWeightsFunctionScoreExpression::Create(
+          std::move(args), &document_store_, section_weights_,
+          current_time_ms_);
+    } else {
+      expression = absl_ports::InvalidArgumentError(
+          "propertyWeights function is not available in this context.");
+    }
   } else if (MathFunctionScoreExpression::kFunctionNames.find(function_name) !=
              MathFunctionScoreExpression::kFunctionNames.end()) {
     // Math functions
@@ -132,16 +145,40 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
         ListOperationFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(args));
   } else if (function_name ==
-                 GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
+             GetEmbeddingParameterFunctionScoreExpression::kFunctionName) {
     // getEmbeddingParameter function
     expression =
         GetEmbeddingParameterFunctionScoreExpression::Create(std::move(args));
   } else if (function_name ==
              MatchedSemanticScoresFunctionScoreExpression::kFunctionName) {
     // matchedSemanticScores function
-    expression = MatchedSemanticScoresFunctionScoreExpression::Create(
-        std::move(args), default_semantic_metric_type_,
-        &embedding_query_results_);
+    if (embedding_query_results_ != nullptr) {
+      expression = MatchedSemanticScoresFunctionScoreExpression::Create(
+          std::move(args), default_semantic_metric_type_,
+          embedding_query_results_);
+    } else {
+      expression = absl_ports::InvalidArgumentError(
+          "matchedSemanticScores function is not available in this context.");
+    }
+  } else if (function_name ==
+             GetScorablePropertyFunctionScoreExpression::kFunctionName) {
+    if (!feature_flags_.enable_scorable_properties()) {
+      expression = absl_ports::InvalidArgumentError(
+          "getScorableProperty function is not enabled.");
+    } else if (scoring_feature_types_enabled_.find(
+                   ScoringFeatureType::SCORABLE_PROPERTY_RANKING) ==
+               scoring_feature_types_enabled_.end()) {
+      expression = absl_ports::InvalidArgumentError(
+          "SCORABLE_PROPERTY_RANKING feature is not enabled.");
+    } else if (schema_type_alias_map_ == nullptr) {
+      expression = absl_ports::InvalidArgumentError(
+          "getScorableProperty function is not available in this context.");
+    } else {
+      // getScorableProperty function
+      expression = GetScorablePropertyFunctionScoreExpression::Create(
+          std::move(args), &document_store_, &schema_store_,
+          *schema_type_alias_map_, current_time_ms_);
+    }
   }
 
   if (!expression.ok()) {
