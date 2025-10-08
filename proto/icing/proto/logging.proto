@@ -346,7 +346,7 @@ message QueryStatsProto {
   optional bool is_join_query = 23;
 
   // Stats of the search. Only valid for first page.
-  // Next tag: 16
+  // Next tag: 20
   message SearchStats {
     // The UTF-8 length of the query string
     optional int32 query_length = 1;
@@ -393,6 +393,18 @@ message QueryStatsProto {
 
     // Time used in QueryVisitor to visit and build (nested) DocHitInfoIterator.
     optional int32 query_processor_query_visitor_latency_ms = 15;
+
+    // Number of unquantized embeddings scored.
+    optional int32 num_unquantized_embeddings_scored = 16;
+
+    // Number of quantized embeddings scored.
+    optional int32 num_quantized_embeddings_scored = 17;
+
+    // Number of shards read from the embedding index.
+    optional int32 num_embedding_shards_read = 18;
+
+    // Number of raw embedding bytes read from the embedding index.
+    optional int64 num_embedding_bytes_read = 19;
   }
 
   // Search stats for parent. Only valid for first page.

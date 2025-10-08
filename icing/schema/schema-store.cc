@@ -1528,8 +1528,9 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     //   database_to_update, added input types are appended to the end of the
     //   full_schema.
     // - If there are fewer input types than existing types for
-    //   database_to_update, we shift forward all existing types that appear
-    //   after the last input type (i.e. a type is deleted).
+    //   database_to_update, we use the last few input types to replace the
+    //   deleted existing types, so as to preserve as many old type-ids as
+    //   possible.
     // - For existing types from other databases, we preserve the existing order
     //   after adding to full_schema. Note that the type-ids of existing types
     //   might still change if some types are deleted in the database_to_update
@@ -1537,10 +1538,8 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     // - This means that:
     //   - When adding types to a database, the type-ids of existing types will
     //     not change.
-    //   - When there are fewer input types compared to the existing database
-    //     (i.e. some types are deleted), the type-ids of existing types
-    //     will shift forward depending on the position of the deleted existing
-    //     type in the existing schema proto.
+    //   - When types are deleted, we fill their original slots with the last
+    //     valid types in the schema to preserve as many type-ids as possible.
     //
     // Step 1: Do some pre-processing to build maps of existing and input
     // types, as well as a list of newly added types.
@@ -1565,40 +1564,77 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     // Step 2: Iterate through existing schema and add them to the full schema,
     // replacing existing types with the input types if the database is the one
     // being updated by the input schema.
-    for (const SchemaTypeConfigProto& existing_type_config :
-         existing_schema->types()) {
+    std::vector<SchemaTypeConfigProto> full_schema_types;
+    full_schema_types.reserve(existing_schema->types().size() +
+                              new_input_types.size());
+    std::vector<int> unfilled_type_ids;
+    for (int i = 0; i < existing_schema->types().size(); ++i) {
+      const SchemaTypeConfigProto& existing_type_config =
+          existing_schema->types().at(i);
       if (existing_type_config.database() == database_to_update) {
         auto itr = input_type_map.find(existing_type_config.schema_type());
         if (itr != input_type_map.end()) {
           // Existing type is still present in the input types. Add the input
           // type to the full schema.
-          *full_schema.add_types() = std::move(*itr->second);
+          full_schema_types.push_back(std::move(*itr->second));
         } else {
           // Existing type is no longer present in input types. Add a new type
           // to replace the existing type if the new types are not exhausted.
           // This is to try to preserve the type-ids of subsequent existing
           // types that are still present.
           if (new_input_types_index < new_input_types.size()) {
-            *full_schema.add_types() =
-                std::move(*new_input_types[new_input_types_index++]);
+            full_schema_types.push_back(
+                std::move(*new_input_types[new_input_types_index++]));
+          } else {
+            // No more input types to replace the existing type. Add a dummy
+            // type instead. This will be replaced with valid type from the end
+            // of the schema later.
+            full_schema_types.push_back(SchemaTypeConfigProto());
+            unfilled_type_ids.push_back(i);
           }
         }
       } else {
         // Existing type is from a different database. Add it to the full schema
         // without any changes.
-        *full_schema.add_types() = existing_type_config;
+        full_schema_types.push_back(existing_type_config);
       }
     }
 
-    // Step 3: Append remaining new input types to the end of the SchemaProto.
-    // This happens when more types are added in input_database_schema than
-    // what's in the existing schema. In this case, we've used up the space for
-    // the database in the existing schema, so we can just append the rest of
-    // the types to the end.
+    // Step 3a: If there are remaining new input types, append them to the end
+    // of the SchemaProto. This happens when there are more input types than
+    // existing types for database_to_update.
     for (; new_input_types_index < new_input_types.size();
          ++new_input_types_index) {
-      *full_schema.add_types() =
-          std::move(*new_input_types[new_input_types_index]);
+      full_schema_types.push_back(
+          std::move(*new_input_types[new_input_types_index]));
+    }
+
+    // Step 3b: Iterate from the end of the full schema types and fill the
+    // unfilled type ids with the last few types in the schema. This happens
+    // when there are fewer input types than existing types for
+    // database_to_update.
+    if (!unfilled_type_ids.empty()) {
+      int num_unfilled_types = static_cast<int>(unfilled_type_ids.size());
+
+      // Find non-dummy types at the end of the schema.
+      int unfilled_index = 0;
+      for (int i = 0; i < num_unfilled_types; ++i) {
+        int idx =
+            static_cast<int>(full_schema_types.size()) - num_unfilled_types + i;
+        if (!full_schema_types[idx].schema_type().empty()) {
+          // Backfill idx to unfilled_type_ids[unfilled_index].
+          full_schema_types[unfilled_type_ids[unfilled_index++]] =
+              std::move(full_schema_types[idx]);
+        }
+      }
+
+      // Resize the vector to remove the types that were moved.
+      full_schema_types.resize(full_schema_types.size() - num_unfilled_types);
+    }
+    full_schema.mutable_types()->Reserve(
+        static_cast<int>(full_schema_types.size()));
+    for (SchemaTypeConfigProto& type_config : full_schema_types) {
+      *full_schema.add_types() = std::move(type_config);
     }
   } else {
     // This old rewrite does not preserve the type-ids of existing types, but
