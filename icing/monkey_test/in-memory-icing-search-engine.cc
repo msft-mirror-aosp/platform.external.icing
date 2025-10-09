@@ -30,6 +30,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/embed/embedding-scorer.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -77,16 +78,37 @@ libtextclassifier3::StatusOr<std::pair<double, double>> GetEmbeddingSearchRange(
   return std::make_pair(values[0], values[1]);
 }
 
-bool DoesVectorsMatch(const EmbeddingScorer *scorer,
-                      std::pair<double, double> embedding_search_range,
-                      const PropertyProto::VectorProto &vector1,
-                      const PropertyProto::VectorProto &vector2) {
-  if (vector1.model_signature() != vector2.model_signature() ||
-      vector1.values_size() != vector2.values_size()) {
+bool DoesVectorsMatch(
+    const EmbeddingScorer* scorer,
+    std::pair<double, double> embedding_search_range,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    const PropertyProto::VectorProto& query,
+    const PropertyProto::VectorProto& candidate) {
+  if (query.model_signature() != candidate.model_signature() ||
+      query.values_size() != candidate.values_size()) {
     return false;
   }
-  float score = scorer->Score(vector1.values_size(), vector1.values().data(),
-                              vector2.values().data());
+
+  const int dimension = query.values_size();
+  float score;
+  if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    score = scorer->Score(dimension, query.values().data(),
+                          candidate.values().data());
+  } else {
+    // Quantize the candidate vector.
+    auto minmax_pair = std::minmax_element(candidate.values().begin(),
+                                           candidate.values().end());
+    Quantizer quantizer =
+        Quantizer::Create(*minmax_pair.first, *minmax_pair.second).ValueOrDie();
+    std::vector<uint8_t> quantized_candidate;
+    quantized_candidate.reserve(dimension);
+    for (float value : candidate.values()) {
+      quantized_candidate.push_back(quantizer.Quantize(value));
+    }
+    // Score the quantized candidate against the original query.
+    score = scorer->Score(dimension, query.values().data(),
+                          quantized_candidate.data(), quantizer);
+  }
   return embedding_search_range.first <= score &&
          score <= embedding_search_range.second;
 }
@@ -137,7 +159,10 @@ InMemoryIcingSearchEngine::GetPropertyIndexInfo(
       bool indexable =
           prop->embedding_indexing_config().embedding_indexing_type() !=
           EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
-      return PropertyIndexInfo{indexable};
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+          prop->embedding_indexing_config().quantization_type();
+      return PropertyIndexInfo{indexable, TermMatchType::UNKNOWN,
+                               quantization_type};
     }
 
     if (prop->data_type() != PropertyConfigProto::DataType::DOCUMENT) {
@@ -218,6 +243,7 @@ InMemoryIcingSearchEngine::DoesDocumentMatchQuery(
            section.embedding_vectors) {
         if (DoesVectorsMatch(embedding_scorer.get(),
                              embedding_search_range_or.ValueOrDie(),
+                             property_index_info.quantization_type,
                              search_spec.embedding_query_vectors(0), vector)) {
           return true;
         }
