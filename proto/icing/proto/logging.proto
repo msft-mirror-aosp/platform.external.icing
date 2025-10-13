@@ -24,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 18
+// Next tag: 20
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -208,6 +208,18 @@ message InitializeStatsProto {
     }
   }
   optional FailureStage.Code failure_stage = 17;
+
+  // Status of the attempt to create the IcuLanguageSegmenter.
+  // This is only set if the ICU segmenter is enabled. Possible status codes:
+  // - OK: IcuLanguageSegmenter created successfully.
+  // - ABORTED: Failed to create the ICU break iterator.
+  optional StatusProto icu_segmenter_creation_status = 18;
+
+  // Status of the attempt to create the IcuNormalizer.
+  // This is only set if the ICU normalizer is enabled. Possible status codes:
+  // - OK: IcuNormalizer created successfully.
+  // - INTERNAL: Failed to create the ICU Transliterator.
+  optional StatusProto icu_normalizer_creation_status = 19;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().

@@ -841,8 +841,13 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
       ULOC_US, jni_cache_.get(), enable_icu);
-  auto language_segmenter_or =
-      language_segmenter_factory::Create(std::move(segmenter_options));
+  StatusProto* icu_segmenter_creation_status = nullptr;
+  if (enable_icu) {
+    icu_segmenter_creation_status =
+        initialize_stats->mutable_icu_segmenter_creation_status();
+  }
+  auto language_segmenter_or = language_segmenter_factory::Create(
+      std::move(segmenter_options), icu_segmenter_creation_status);
   if (!language_segmenter_or.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::LANGUAGE_SEGMENTER_CREATION);
@@ -852,7 +857,13 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   NormalizerOptions normalizer_options(
       /*max_term_byte_size=*/options_.max_token_length(), enable_icu);
-  auto normalizer_or = normalizer_factory::Create(normalizer_options);
+  StatusProto* icu_normalizer_creation_status = nullptr;
+  if (enable_icu) {
+    icu_normalizer_creation_status =
+        initialize_stats->mutable_icu_normalizer_creation_status();
+  }
+  auto normalizer_or = normalizer_factory::Create(
+      normalizer_options, icu_normalizer_creation_status);
   if (!normalizer_or.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::NORMALIZER_CREATION);
