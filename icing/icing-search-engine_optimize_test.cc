@@ -364,10 +364,17 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
           .AddStringProperty("body", "message body one")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
-  DocumentProto document2 = DocumentBuilder()
-                                .SetKey("namespace", "uri2")
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body two")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace", "uri3")
                                 .SetSchema("Message")
-                                .AddStringProperty("body", "message body two")
+                                .AddStringProperty("body", "message body three")
                                 .SetCreationTimestampMs(100)
                                 .SetTtlMs(500)
                                 .Build();
@@ -389,9 +396,12 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
+    // Set schema and add 2 documents.
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
     // Only have active documents, nothing is optimizable yet.
     optimize_info = icing.GetOptimizeInfo();
@@ -400,34 +410,63 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
-    // Deletes document1
-    ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+    // Send a search request to create a result state.
+    SearchSpecProto search_spec;
+    search_spec.set_query("body:message");
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    ResultSpecProto result_spec;
+    result_spec.set_num_per_page(1);
+    SearchResultProto search_result =
+        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+    ASSERT_THAT(search_result.status(), ProtoIsOk());
+    ASSERT_THAT(search_result.results_size(), Eq(1));
+    ASSERT_THAT(search_result.next_page_token(), Ne(kInvalidNextPageToken));
 
     optimize_info = icing.GetOptimizeInfo();
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
-    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(1));
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(1));
+
+    // Deletes document1 and document2.
+    ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+    ASSERT_THAT(icing.Delete("namespace", "uri2").status(), ProtoIsOk());
+
+    optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Gt(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
     int64_t first_estimated_optimizable_bytes =
         optimize_info.estimated_optimizable_bytes();
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(1));
 
-    // Add a second document, but it'll be expired since the time (1000) is
+    // Add third document, but it'll be expired since the time (1000) is
     // greater than the document's creation timestamp (100) + the document's ttl
     // (500)
-    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
 
     optimize_info = icing.GetOptimizeInfo();
     EXPECT_THAT(optimize_info.status(), ProtoIsOk());
-    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(3));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(),
                 Gt(first_estimated_optimizable_bytes));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(1));
 
     // Optimize
     ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+    // Result state manager is reset after optimize.
+    optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
   }
 
   {
@@ -448,6 +487,124 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(4000));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       NegativeTimeSinceLastOptimizeResetsToZero) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body one")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "uri2")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", "message body two")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(500)
+                                .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_calculate_time_since_last_attempted_optimize(true);
+  {
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(1000);
+    TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Just initialized, nothing is optimizable yet.
+    GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+
+    // Call some APIs
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+    // Add a second document, but it'll be expired since the time (1000) is
+    // greater than the document's creation timestamp (100) + the document's ttl
+    // (500)
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+    optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+
+    // Optimize
+    OptimizeResultProto optimize_result = icing.Optimize();
+    EXPECT_THAT(optimize_result.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_result.optimize_stats().time_since_last_optimize_ms(),
+                Eq(0));
+    EXPECT_THAT(optimize_result.optimize_stats()
+                    .time_since_last_successful_optimize_ms(),
+                Eq(0));
+  }
+
+  {
+    // Recreate with new time that's earlier than the last successful optimize
+    // run time. no_previous_optimize_info should be true and time since last
+    // optimize values should be negative.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(500);
+    TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(-500));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+
+    // Optimize.
+    OptimizeResultProto optimize_result = icing.Optimize();
+    EXPECT_THAT(optimize_result.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_result.optimize_stats().time_since_last_optimize_ms(),
+                Eq(-500));
+    EXPECT_THAT(optimize_result.optimize_stats()
+                    .time_since_last_successful_optimize_ms(),
+                Eq(-500));
+  }
+
+  {
+    // Recreate with new timer and check that time_since_last_optimize_ms is
+    // populated correctly.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(800);
+    TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(300));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
   }
 }
 
@@ -496,6 +653,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Call some APIs
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -511,6 +669,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -547,6 +706,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(500));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -579,6 +739,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(1300));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem, but
     // the time since last optimize should be populated.
@@ -611,6 +772,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(2700));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -669,6 +831,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Call some APIs
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -684,6 +847,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
     EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -720,6 +884,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(500));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -757,6 +922,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(1300));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
 
     // Optimize again -- this should fail because of the mock filesystem.
     OptimizeResultProto optimize_result = icing.Optimize();
@@ -1957,6 +2123,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
               Ge(result.optimize_stats().storage_size_after() - page_size));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
+  result.mutable_optimize_stats()->clear_before_optimize_persist_stats();
+  result.mutable_optimize_stats()->clear_after_optimize_persist_stats();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 
   fake_clock = std::make_unique<FakeClock>();
@@ -1987,6 +2155,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
               Eq(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
+  result.mutable_optimize_stats()->clear_before_optimize_persist_stats();
+  result.mutable_optimize_stats()->clear_after_optimize_persist_stats();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 
   // Delete the last document.
@@ -2013,6 +2183,8 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeThresholdTest) {
               Ge(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
+  result.mutable_optimize_stats()->clear_before_optimize_persist_stats();
+  result.mutable_optimize_stats()->clear_after_optimize_persist_stats();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 }
 
@@ -2077,18 +2249,76 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   // Delete the first document.
   ASSERT_THAT(icing->Delete(document1.namespace_(), document1.uri()).status(),
               ProtoIsOk());
-  ASSERT_THAT(icing->PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  PersistToDiskResultProto persist_result =
+      icing->PersistToDisk(PersistType::FULL);
+  ASSERT_THAT(persist_result.status(), ProtoIsOk());
 
-  OptimizeStatsProto expected;
-  expected.set_latency_ms(5);
-  expected.set_document_store_optimize_latency_ms(5);
-  expected.set_index_restoration_latency_ms(5);
-  expected.set_num_original_documents(3);
-  expected.set_num_deleted_documents(1);
-  expected.set_num_expired_documents(1);
-  expected.set_num_original_namespaces(1);
-  expected.set_num_deleted_namespaces(0);
-  expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
+  PersistToDiskStatsProto expected_persist_stats;
+  expected_persist_stats.set_persist_type(PersistType::FULL);
+  expected_persist_stats.set_latency_ms(5);
+  expected_persist_stats.set_schema_store_persist_latency_ms(5);
+  expected_persist_stats.set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats.set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats.set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats.set_document_log_checksum_update_latency_ms(5);
+  expected_persist_stats.set_document_log_data_sync_latency_ms(5);
+  expected_persist_stats.set_index_persist_latency_ms(5);
+  expected_persist_stats.set_integer_index_persist_latency_ms(5);
+  expected_persist_stats.set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats.set_embedding_index_persist_latency_ms(5);
+  EXPECT_THAT(persist_result.persist_stats(),
+              EqualsProto(expected_persist_stats));
+
+  OptimizeStatsProto expected_optimize_stats;
+  expected_optimize_stats.set_latency_ms(5);
+  expected_optimize_stats.set_document_store_optimize_latency_ms(5);
+  expected_optimize_stats.set_index_restoration_latency_ms(5);
+  expected_optimize_stats.set_num_original_documents(3);
+  expected_optimize_stats.set_num_deleted_documents(1);
+  expected_optimize_stats.set_num_expired_documents(1);
+  expected_optimize_stats.set_num_original_namespaces(1);
+  expected_optimize_stats.set_num_deleted_namespaces(0);
+  expected_optimize_stats.set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+
+  PersistToDiskStatsProto* expected_persist_stats_before_optimize =
+      expected_optimize_stats.mutable_before_optimize_persist_stats();
+  expected_persist_stats_before_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_before_optimize->set_latency_ms(5);
+  expected_persist_stats_before_optimize->set_schema_store_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_embedding_index_persist_latency_ms(5);
+
+  PersistToDiskStatsProto* expected_persist_stats_after_optimize =
+      expected_optimize_stats.mutable_after_optimize_persist_stats();
+  expected_persist_stats_after_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_after_optimize->set_latency_ms(5);
+  expected_persist_stats_after_optimize->set_schema_store_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_after_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_embedding_index_persist_latency_ms(
+      5);
 
   // Run Optimize
   OptimizeResultProto result = icing->Optimize();
@@ -2102,7 +2332,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
               Ge(result.optimize_stats().storage_size_after() - page_size));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
-  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected_optimize_stats));
 
   fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(5);
@@ -2115,18 +2345,58 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       GetTestJniCache());
   ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
 
-  expected = OptimizeStatsProto();
-  expected.set_latency_ms(5);
-  expected.set_document_store_optimize_latency_ms(5);
-  expected.set_index_restoration_latency_ms(5);
-  expected.set_num_original_documents(1);
-  expected.set_num_deleted_documents(0);
-  expected.set_num_expired_documents(0);
-  expected.set_num_original_namespaces(1);
-  expected.set_num_deleted_namespaces(0);
-  expected.set_time_since_last_optimize_ms(10000);
-  expected.set_time_since_last_successful_optimize_ms(10000);
-  expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
+  expected_optimize_stats = OptimizeStatsProto();
+  expected_optimize_stats.set_latency_ms(5);
+  expected_optimize_stats.set_document_store_optimize_latency_ms(5);
+  expected_optimize_stats.set_index_restoration_latency_ms(5);
+  expected_optimize_stats.set_num_original_documents(1);
+  expected_optimize_stats.set_num_deleted_documents(0);
+  expected_optimize_stats.set_num_expired_documents(0);
+  expected_optimize_stats.set_num_original_namespaces(1);
+  expected_optimize_stats.set_num_deleted_namespaces(0);
+  expected_optimize_stats.set_time_since_last_optimize_ms(10000);
+  expected_optimize_stats.set_time_since_last_successful_optimize_ms(10000);
+  expected_optimize_stats.set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+
+  expected_persist_stats_before_optimize =
+      expected_optimize_stats.mutable_before_optimize_persist_stats();
+  expected_persist_stats_before_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_before_optimize->set_latency_ms(5);
+  expected_persist_stats_before_optimize->set_schema_store_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_embedding_index_persist_latency_ms(5);
+
+  expected_persist_stats_after_optimize =
+      expected_optimize_stats.mutable_after_optimize_persist_stats();
+  expected_persist_stats_after_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_after_optimize->set_latency_ms(5);
+  expected_persist_stats_after_optimize->set_schema_store_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_after_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_embedding_index_persist_latency_ms(
+      5);
 
   // Run Optimize
   result = icing->Optimize();
@@ -2134,24 +2404,65 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
               Eq(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
-  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected_optimize_stats));
 
   // Delete the last document.
   ASSERT_THAT(icing->Delete(document3.namespace_(), document3.uri()).status(),
               ProtoIsOk());
 
-  expected = OptimizeStatsProto();
-  expected.set_latency_ms(5);
-  expected.set_document_store_optimize_latency_ms(5);
-  expected.set_index_restoration_latency_ms(5);
-  expected.set_num_original_documents(1);
-  expected.set_num_deleted_documents(1);
-  expected.set_num_expired_documents(0);
-  expected.set_num_original_namespaces(1);
-  expected.set_num_deleted_namespaces(1);
-  expected.set_time_since_last_optimize_ms(0);
-  expected.set_time_since_last_successful_optimize_ms(0);
-  expected.set_index_restoration_mode(OptimizeStatsProto::FULL_INDEX_REBUILD);
+  expected_optimize_stats = OptimizeStatsProto();
+  expected_optimize_stats.set_latency_ms(5);
+  expected_optimize_stats.set_document_store_optimize_latency_ms(5);
+  expected_optimize_stats.set_index_restoration_latency_ms(5);
+  expected_optimize_stats.set_num_original_documents(1);
+  expected_optimize_stats.set_num_deleted_documents(1);
+  expected_optimize_stats.set_num_expired_documents(0);
+  expected_optimize_stats.set_num_original_namespaces(1);
+  expected_optimize_stats.set_num_deleted_namespaces(1);
+  expected_optimize_stats.set_time_since_last_optimize_ms(0);
+  expected_optimize_stats.set_time_since_last_successful_optimize_ms(0);
+  expected_optimize_stats.set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+
+  expected_persist_stats_before_optimize =
+      expected_optimize_stats.mutable_before_optimize_persist_stats();
+  expected_persist_stats_before_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_before_optimize->set_latency_ms(5);
+  expected_persist_stats_before_optimize->set_schema_store_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+
+  expected_persist_stats_before_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_before_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_before_optimize
+      ->set_embedding_index_persist_latency_ms(5);
+
+  expected_persist_stats_after_optimize =
+      expected_optimize_stats.mutable_after_optimize_persist_stats();
+  expected_persist_stats_after_optimize->set_persist_type(PersistType::FULL);
+  expected_persist_stats_after_optimize->set_latency_ms(5);
+  expected_persist_stats_after_optimize->set_schema_store_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_total_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_components_persist_latency_ms(5);
+  expected_persist_stats_after_optimize
+      ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
+      5);
+  expected_persist_stats_after_optimize
+      ->set_qualified_id_join_index_persist_latency_ms(5);
+  expected_persist_stats_after_optimize->set_embedding_index_persist_latency_ms(
+      5);
 
   // Run Optimize
   result = icing->Optimize();
@@ -2159,7 +2470,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
               Ge(result.optimize_stats().storage_size_after()));
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
-  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+  EXPECT_THAT(result.optimize_stats(), EqualsProto(expected_optimize_stats));
 }
 
 TEST_F(IcingSearchEngineOptimizeTest,

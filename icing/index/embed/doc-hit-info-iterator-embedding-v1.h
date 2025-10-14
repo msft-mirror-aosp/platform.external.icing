@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
-#define ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
+#ifndef ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V1_H_
+#define ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V1_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,8 +28,8 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/embedding-scorer.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/iterator/section-restrict-data.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
@@ -41,8 +40,9 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorEmbedding
-    : public DocHitInfoIteratorHandlingSectionRestrict {
+class DocHitInfoIteratorEmbeddingV1
+    : public DocHitInfoIteratorHandlingSectionRestrict,
+      public DocHitInfoIteratorHandlingFilter {
  public:
   // Create a DocHitInfoIterator for iterating through all docs which have an
   // embedding matched with the provided query with a score in the range of
@@ -55,14 +55,17 @@ class DocHitInfoIteratorEmbedding
   // help of DocHitInfoIteratorHandlingSectionRestrict.
   //
   // Returns:
-  //   - a DocHitInfoIteratorEmbedding instance on success.
+  //   - a DocHitInfoIteratorEmbeddingV1 instance on success.
   //   - Any error from posting lists.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<DocHitInfoIteratorEmbedding>>
+      std::unique_ptr<DocHitInfoIteratorEmbeddingV1>>
   Create(const PropertyProto::VectorProto* query,
          SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
-         double score_low, double score_high, bool get_embedding_match_info,
+         double score_low, double score_high,
          EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
+         std::vector<double>* global_scores,
+         std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
+             global_section_infos,
          const EmbeddingIndex* embedding_index,
          const DocumentStore* document_store, const SchemaStore* schema_store,
          int64_t current_time_ms);
@@ -72,6 +75,10 @@ class DocHitInfoIteratorEmbedding
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
     return absl_ports::InvalidArgumentError(
         "Query suggestions for the semanticSearch function are not supported");
+  }
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
   }
 
   CallStats GetCallStats() const override {
@@ -91,14 +98,18 @@ class DocHitInfoIteratorEmbedding
       SectionIdMask filtering_section_mask) const override {}
 
  private:
-  explicit DocHitInfoIteratorEmbedding(
+  explicit DocHitInfoIteratorEmbeddingV1(
       const PropertyProto::VectorProto* query,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
-      double score_high, bool get_embedding_match_info,
+      double score_high,
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map,
+      std::vector<double>* global_scores,
+      std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
+          global_section_infos,
       const EmbeddingIndex* embedding_index,
-      std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor,
+      std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>
+          embedding_hit_accessor,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       int64_t current_time_ms)
       : query_(*query),
@@ -106,14 +117,16 @@ class DocHitInfoIteratorEmbedding
         embedding_scorer_(std::move(embedding_scorer)),
         score_low_(score_low),
         score_high_(score_high),
-        get_embedding_match_info_(get_embedding_match_info),
         info_map_(*info_map),
+        global_scores_(*global_scores),
+        global_section_infos_(global_section_infos),
         embedding_index_(*embedding_index),
-        posting_list_accessor_(std::move(posting_list_accessor)),
+        embedding_hit_accessor_(std::move(embedding_hit_accessor)),
         cached_embedding_hits_idx_(0),
         current_allowed_sections_mask_(kSectionIdMaskAll),
         no_more_hit_(false),
         schema_type_id_(kInvalidSchemaTypeId),
+        schema_name_hash_(0),
         document_store_(*document_store),
         schema_store_(*schema_store),
         current_time_ms_(current_time_ms),
@@ -153,15 +166,16 @@ class DocHitInfoIteratorEmbedding
   double score_low_;
   double score_high_;
 
-  // Snippet arguments
-  bool get_embedding_match_info_;
-
   // MatchInfo map
   EmbeddingQueryResults::EmbeddingQueryMatchInfoMap& info_map_;  // Does not own
+  std::vector<double>& global_scores_;                           // Does not own
+  // Nullable, and does not own. If null, section info will not be populated.
+  std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
+      global_section_infos_;
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;
-  std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor_;
+  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor_;
 
   // Cached data from the embeddings index
   std::vector<EmbeddingHit> cached_embedding_hits_;
@@ -169,6 +183,10 @@ class DocHitInfoIteratorEmbedding
   SectionIdMask current_allowed_sections_mask_;
   bool no_more_hit_;
   SchemaTypeId schema_type_id_;  // The schema type id for the current document.
+  // The schema name hash for the current document, which will be updated
+  // together with schema_type_id_ when advancing to the next document. This
+  // value is valid only if schema_type_id_ is valid.
+  uint32_t schema_name_hash_;
 
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
@@ -179,4 +197,4 @@ class DocHitInfoIteratorEmbedding
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_H_
+#endif  // ICING_INDEX_EMBED_DOC_HIT_INFO_ITERATOR_EMBEDDING_V1_H_

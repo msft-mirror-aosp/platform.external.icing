@@ -29,13 +29,6 @@
 #define FARMHASH_ASSUME_AESNI 1
 #endif
 
-#if !defined(FARMHASH_CAN_USE_CXX11) && defined(LANG_CXX11)
-#define FARMHASH_CAN_USE_CXX11 1
-#else
-#undef FARMHASH_CAN_USE_CXX11
-#define FARMHASH_CAN_USE_CXX11 0
-#endif
-
 // FARMHASH PORTABILITY LAYER: Runtime error if misconfigured
 
 #ifndef FARMHASH_DIE_IF_MISCONFIGURED
@@ -283,11 +276,6 @@ STATIC_INLINE __m128i Load128(const char* s) {
 }
 #endif
 // Building blocks for hash functions
-
-// std::swap() was in <algorithm> but is in <utility> from C++11 on.
-#if !FARMHASH_CAN_USE_CXX11
-#include <algorithm>
-#endif
 
 #undef PERMUTE3
 #define PERMUTE3(a, b, c) do { std::swap(a, b); std::swap(a, c); } while (0)

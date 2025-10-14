@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -59,14 +60,16 @@ namespace {
 // The maximum size of the embedding hit list mmapper.
 // We use 64MiB for 32-bit platforms and 128MiB for 64-bit platforms.
 #ifdef ICING_ARCH_BIT_64
-  constexpr uint32_t kEmbeddingHitListMapperMaxSize = 128 * 1024 * 1024;
+constexpr uint32_t kEmbeddingHitListMapperMaxSize = 128 * 1024 * 1024;
 #else
-  constexpr uint32_t kEmbeddingHitListMapperMaxSize = 64 * 1024 * 1024;
+constexpr uint32_t kEmbeddingHitListMapperMaxSize = 64 * 1024 * 1024;
 #endif
 
 // The maximum length returned by encode_util::EncodeIntToCString is 5 for
 // uint32_t.
 constexpr uint32_t kEncodedDimensionLength = 5;
+
+constexpr uint32_t kInvalidShardId = std::numeric_limits<uint32_t>::max();
 
 std::string GetMetadataFilePath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/metadata");
@@ -80,13 +83,28 @@ std::string GetEmbeddingHitListMapperPath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/embedding_hit_list_mapper");
 }
 
-std::string GetEmbeddingVectorsFilePath(std::string_view working_path) {
-  return absl_ports::StrCat(working_path, "/embedding_vectors");
+std::string AppendShardId(std::string&& file_path, uint32_t shard_id,
+                          uint32_t num_shards) {
+  if (num_shards > 1) {
+    return absl_ports::StrCat(std::move(file_path), "_",
+                              std::to_string(shard_id));
+  }
+  return file_path;
 }
 
-std::string GetQuantizedEmbeddingVectorsFilePath(
-    std::string_view working_path) {
-  return absl_ports::StrCat(working_path, "/quantized_embedding_vectors");
+std::string GetEmbeddingVectorsFilePath(std::string_view working_path,
+                                        uint32_t shard_id,
+                                        uint32_t num_shards) {
+  return AppendShardId(absl_ports::StrCat(working_path, "/embedding_vectors"),
+                       shard_id, num_shards);
+}
+
+std::string GetQuantizedEmbeddingVectorsFilePath(std::string_view working_path,
+                                                 uint32_t shard_id,
+                                                 uint32_t num_shards) {
+  return AppendShardId(
+      absl_ports::StrCat(working_path, "/quantized_embedding_vectors"),
+      shard_id, num_shards);
 }
 
 // An injective function that maps the ordered pair (dimension, model_signature)
@@ -126,24 +144,33 @@ libtextclassifier3::StatusOr<Quantizer> CreateQuantizer(
 
 }  // namespace
 
+uint32_t EmbeddingIndex::GetShardId(uint32_t dimension,
+                                    std::string_view model_signature,
+                                    std::string_view schema_name) const {
+  return GetShardId(
+      GetPostingListKeyHash(GetPostingListKey(dimension, model_signature)),
+      SchemaStore::GetSchemaNameHash(schema_name));
+}
+
 libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>>
 EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
-                       const Clock* clock, const FeatureFlags* feature_flags) {
+                       const Clock* clock, const FeatureFlags* feature_flags,
+                       uint32_t num_shards) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
 
-  std::unique_ptr<EmbeddingIndex> index =
-      std::unique_ptr<EmbeddingIndex>(new EmbeddingIndex(
-          *filesystem, std::move(working_path), clock, feature_flags));
+  if (num_shards == 0) {
+    return absl_ports::InvalidArgumentError("Number of shards cannot be 0");
+  }
+
+  std::unique_ptr<EmbeddingIndex> index = std::unique_ptr<EmbeddingIndex>(
+      new EmbeddingIndex(*filesystem, std::move(working_path), clock,
+                         feature_flags, num_shards));
   ICING_RETURN_IF_ERROR(index->Initialize());
   return index;
 }
 
-libtextclassifier3::Status EmbeddingIndex::CreateStorageDataIfNonEmpty() {
-  if (is_empty()) {
-    return libtextclassifier3::Status::OK;
-  }
-
+libtextclassifier3::Status EmbeddingIndex::CreateStorageData() {
   ICING_ASSIGN_OR_RETURN(FlashIndexStorage flash_index_storage,
                          FlashIndexStorage::Create(
                              GetFlashIndexStorageFilePath(working_path_),
@@ -157,17 +184,21 @@ libtextclassifier3::Status EmbeddingIndex::CreateStorageDataIfNonEmpty() {
           filesystem_, GetEmbeddingHitListMapperPath(working_path_),
           kEmbeddingHitListMapperMaxSize));
 
-  ICING_ASSIGN_OR_RETURN(
-      embedding_vectors_,
-      FileBackedVector<float>::Create(
-          filesystem_, GetEmbeddingVectorsFilePath(working_path_),
-          MemoryMappedFile::READ_WRITE_AUTO_SYNC));
-
-  ICING_ASSIGN_OR_RETURN(
-      quantized_embedding_vectors_,
-      FileBackedVector<char>::Create(
-          filesystem_, GetQuantizedEmbeddingVectorsFilePath(working_path_),
-          MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+  // Scan for existing sharded vector files and load them.
+  for (int i = 0; i < num_shards_; ++i) {
+    // Non-quantized vectors
+    if (filesystem_.FileExists(
+            GetEmbeddingVectorsFilePath(working_path_, i, num_shards_)
+                .c_str())) {
+      ICING_RETURN_IF_ERROR(GetOrCreateEmbeddingVector(i));
+    }
+    // Quantized vectors
+    if (filesystem_.FileExists(
+            GetQuantizedEmbeddingVectorsFilePath(working_path_, i, num_shards_)
+                .c_str())) {
+      ICING_RETURN_IF_ERROR(GetOrCreateQuantizedEmbeddingVector(i));
+    }
+  }
 
   return libtextclassifier3::Status::OK;
 }
@@ -176,8 +207,43 @@ libtextclassifier3::Status EmbeddingIndex::MarkIndexNonEmpty() {
   if (!is_empty()) {
     return libtextclassifier3::Status::OK;
   }
+  ICING_RETURN_IF_ERROR(CreateStorageData());
   info().is_empty = false;
-  return CreateStorageDataIfNonEmpty();
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<FileBackedVector<float>*>
+EmbeddingIndex::GetOrCreateEmbeddingVector(uint32_t shard_id) {
+  if (shard_id >= num_shards_) {
+    return absl_ports::InvalidArgumentError("Shard id is out of range.");
+  }
+  auto& fbv_ptr = embedding_vectors_[shard_id];
+  if (fbv_ptr == nullptr) {
+    ICING_ASSIGN_OR_RETURN(
+        fbv_ptr,
+        FileBackedVector<float>::Create(
+            filesystem_,
+            GetEmbeddingVectorsFilePath(working_path_, shard_id, num_shards_),
+            MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+  }
+  return fbv_ptr.get();
+}
+
+libtextclassifier3::StatusOr<FileBackedVector<char>*>
+EmbeddingIndex::GetOrCreateQuantizedEmbeddingVector(uint32_t shard_id) {
+  if (shard_id >= num_shards_) {
+    return absl_ports::InvalidArgumentError("Shard id is out of range.");
+  }
+  auto& fbv_ptr = quantized_embedding_vectors_[shard_id];
+  if (fbv_ptr == nullptr) {
+    ICING_ASSIGN_OR_RETURN(fbv_ptr,
+                           FileBackedVector<char>::Create(
+                               filesystem_,
+                               GetQuantizedEmbeddingVectorsFilePath(
+                                   working_path_, shard_id, num_shards_),
+                               MemoryMappedFile::READ_WRITE_AUTO_SYNC));
+  }
+  return fbv_ptr.get();
 }
 
 libtextclassifier3::Status EmbeddingIndex::Initialize() {
@@ -207,7 +273,8 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
     info().magic = Info::kMagic;
     info().last_added_document_id = kInvalidDocumentId;
     info().is_empty = true;
-    memset(Info().padding_, 0, Info::kPaddingSize);
+    info().num_shards = num_shards_;
+    memset(info().padding_, 0, Info::kPaddingSize);
     ICING_RETURN_IF_ERROR(InitializeNewStorage());
   } else {
     if (metadata_mmapped_file_->available_size() != kMetadataFileSize) {
@@ -215,10 +282,39 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
           "Incorrect metadata file size");
     }
     if (info().magic != Info::kMagic) {
-      return absl_ports::FailedPreconditionError("Incorrect magic value");
+      ICING_LOG(ERROR) << "Invalid header magic for EmbeddingIndex "
+                       << working_path_ << ". Expected: " << Info::kMagic
+                       << ", actual: " << info().magic;
+      return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+          "Invalid header magic for EmbeddingIndex: ", working_path_));
     }
-    ICING_RETURN_IF_ERROR(CreateStorageDataIfNonEmpty());
+    uint32_t num_shards_read = info().num_shards;
+    // This happens for old versions of embedding index that did not have
+    // num_shards set. Just treat it as 1.
+    if (num_shards_read == 0) {
+      ICING_LOG(INFO)
+          << "Number of shards not set in metadata. Defaulting to 1.";
+      num_shards_read = 1;
+    }
+    // If num_shards doesn't match, the index need to be rebuilt.
+    if (num_shards_read != num_shards_) {
+      ICING_LOG(ERROR) << "Mismatched number of shards. Expected "
+                       << num_shards_ << ", actual " << num_shards_read;
+      return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+          "Mismatched number of shards in metadata for EmbeddingIndex: ",
+          working_path_));
+    }
+    if (!info().is_empty) {
+      ICING_RETURN_IF_ERROR(CreateStorageData());
+    }
     ICING_RETURN_IF_ERROR(InitializeExistingStorage());
+    if (info().num_shards == 0) {
+      // This means that num_shards isn't set in the header, but we are still
+      // considering it a match for num_shards_. The only possibility is that
+      // num_shards_ == 1 and we have treated info().num_shards as 1.
+      // Now, update the header to record the correct num_shards_.
+      info().num_shards = num_shards_;
+    }
   }
   return libtextclassifier3::Status::OK;
 }
@@ -228,8 +324,10 @@ libtextclassifier3::Status EmbeddingIndex::Clear() {
   metadata_mmapped_file_.reset();
   flash_index_storage_.reset();
   embedding_posting_list_mapper_.reset();
-  embedding_vectors_.reset();
-  quantized_embedding_vectors_.reset();
+  for (int i = 0; i < num_shards_; ++i) {
+    embedding_vectors_[i].reset();
+    quantized_embedding_vectors_[i].reset();
+  }
   if (filesystem_.DirectoryExists(working_path_.c_str())) {
     ICING_RETURN_IF_ERROR(Discard(filesystem_, working_path_));
   }
@@ -237,7 +335,8 @@ libtextclassifier3::Status EmbeddingIndex::Clear() {
   return Initialize();
 }
 
-libtextclassifier3::StatusOr<std::unique_ptr<PostingListEmbeddingHitAccessor>>
+libtextclassifier3::StatusOr<
+    std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>>
 EmbeddingIndex::GetAccessor(uint32_t dimension,
                             std::string_view model_signature) const {
   if (dimension == 0) {
@@ -250,24 +349,33 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
   std::string key = GetPostingListKey(dimension, model_signature);
   ICING_ASSIGN_OR_RETURN(PostingListIdentifier posting_list_id,
                          embedding_posting_list_mapper_->Get(key));
-  return PostingListEmbeddingHitAccessor::CreateFromExisting(
-      flash_index_storage_.get(), posting_list_hit_serializer_.get(),
-      posting_list_id);
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor,
+      PostingListEmbeddingHitAccessor::CreateFromExisting(
+          flash_index_storage_.get(), posting_list_hit_serializer_.get(),
+          posting_list_id));
+  return std::make_unique<EmbeddingHitAccessor>(this, std::move(pl_accessor),
+                                                key);
 }
 
 libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::AppendEmbeddingVector(
     const PropertyProto::VectorProto& vector,
-    EmbeddingIndexingConfig::QuantizationType::Code quantization_type) {
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    uint32_t shard_id) {
   uint32_t dimension = vector.values().size();
   uint32_t location;
   if (!feature_flags_->enable_embedding_quantization() ||
       quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
-    location = embedding_vectors_->num_elements();
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<float> * fbv_ptr,
+                           GetOrCreateEmbeddingVector(shard_id));
+    location = fbv_ptr->num_elements();
     ICING_ASSIGN_OR_RETURN(
         FileBackedVector<float>::MutableArrayView mutable_arr,
-        embedding_vectors_->Allocate(dimension));
+        fbv_ptr->Allocate(dimension));
     mutable_arr.SetArray(/*idx=*/0, vector.values().data(), dimension);
   } else {
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<char> * fbv_ptr,
+                           GetOrCreateQuantizedEmbeddingVector(shard_id));
     ICING_ASSIGN_OR_RETURN(Quantizer quantizer, CreateQuantizer(vector));
     // Quantize the vector
     std::vector<uint8_t> quantized_values;
@@ -277,10 +385,9 @@ libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::AppendEmbeddingVector(
     }
 
     // Store the quantizer and the quantized vector
-    location = quantized_embedding_vectors_->num_elements();
-    ICING_ASSIGN_OR_RETURN(
-        FileBackedVector<char>::MutableArrayView mutable_arr,
-        quantized_embedding_vectors_->Allocate(sizeof(Quantizer) + dimension));
+    location = fbv_ptr->num_elements();
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<char>::MutableArrayView mutable_arr,
+                           fbv_ptr->Allocate(sizeof(Quantizer) + dimension));
     mutable_arr.SetArray(/*idx=*/0, reinterpret_cast<char*>(&quantizer),
                          sizeof(Quantizer));
     mutable_arr.SetArray(/*idx=*/sizeof(Quantizer),
@@ -292,15 +399,19 @@ libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::AppendEmbeddingVector(
 
 libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
     const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
-    EmbeddingIndexingConfig::QuantizationType::Code quantization_type) {
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    std::string_view schema_name) {
   if (vector.values().empty()) {
     return absl_ports::InvalidArgumentError("Vector dimension is 0");
   }
   ICING_RETURN_IF_ERROR(MarkIndexNonEmpty());
 
   std::string key = GetPostingListKey(vector);
-  ICING_ASSIGN_OR_RETURN(uint32_t location,
-                         AppendEmbeddingVector(vector, quantization_type));
+  uint32_t shard_id = GetShardId(GetPostingListKeyHash(key),
+                                 SchemaStore::GetSchemaNameHash(schema_name));
+  ICING_ASSIGN_OR_RETURN(
+      uint32_t location,
+      AppendEmbeddingVector(vector, quantization_type, shard_id));
 
   // Buffer the embedding hit.
   pending_embedding_hits_.push_back(
@@ -373,28 +484,33 @@ libtextclassifier3::Status EmbeddingIndex::CommitBufferToIndex() {
 libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::TransferEmbeddingVector(
     const EmbeddingHit& old_hit, uint32_t dimension,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-    EmbeddingIndex* new_index) const {
+    uint32_t shard_id, EmbeddingIndex* new_index) const {
   uint32_t new_location;
   if (!feature_flags_->enable_embedding_quantization() ||
       quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
     ICING_ASSIGN_OR_RETURN(const float* old_vector,
-                           GetEmbeddingVector(old_hit, dimension));
-    new_location = new_index->embedding_vectors_->num_elements();
+                           GetEmbeddingVector(old_hit, dimension, shard_id));
+
+    // Copy the embedding vector of the hit to the new index.
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<float> * fbv_ptr,
+                           new_index->GetOrCreateEmbeddingVector(shard_id));
+    new_location = fbv_ptr->num_elements();
+    ICING_ASSIGN_OR_RETURN(
+        FileBackedVector<float>::MutableArrayView mutable_arr,
+        fbv_ptr->Allocate(dimension));
+    mutable_arr.SetArray(/*idx=*/0, old_vector, dimension);
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        const char* old_data,
+        GetQuantizedEmbeddingVector(old_hit, dimension, shard_id));
 
     // Copy the embedding vector of the hit to the new index.
     ICING_ASSIGN_OR_RETURN(
-        FileBackedVector<float>::MutableArrayView mutable_arr,
-        new_index->embedding_vectors_->Allocate(dimension));
-    mutable_arr.SetArray(/*idx=*/0, old_vector, dimension);
-  } else {
-    ICING_ASSIGN_OR_RETURN(const char* old_data,
-                           GetQuantizedEmbeddingVector(old_hit, dimension));
-    new_location = new_index->quantized_embedding_vectors_->num_elements();
-
-    // Copy the embedding vector of the hit to the new index.
+        FileBackedVector<char> * fbv_ptr,
+        new_index->GetOrCreateQuantizedEmbeddingVector(shard_id));
+    new_location = fbv_ptr->num_elements();
     ICING_ASSIGN_OR_RETURN(FileBackedVector<char>::MutableArrayView mutable_arr,
-                           new_index->quantized_embedding_vectors_->Allocate(
-                               sizeof(Quantizer) + dimension));
+                           fbv_ptr->Allocate(sizeof(Quantizer) + dimension));
     mutable_arr.SetArray(/*idx=*/0, old_data, sizeof(Quantizer) + dimension);
   }
   return new_location;
@@ -431,6 +547,7 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
             /*existing_posting_list_id=*/itr->GetValue()));
     DocumentId last_new_document_id = kInvalidDocumentId;
     SchemaTypeId schema_type_id = kInvalidSchemaTypeId;
+    uint32_t shard_id = kInvalidShardId;
     while (true) {
       ICING_ASSIGN_OR_RETURN(std::vector<EmbeddingHit> batch,
                              old_pl_accessor->GetNextHitsBatch());
@@ -459,9 +576,22 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
         if (new_document_id != last_new_document_id) {
           schema_type_id =
               document_store.GetSchemaTypeId(new_document_id, current_time_ms);
+          libtextclassifier3::StatusOr<uint32_t> schema_name_hash_or =
+              schema_store.GetSchemaNameHash(schema_type_id);
+          // Shard id only depends on posting list key and schema name hash.
+          // Posting list key will not change in this scope, so we only update
+          // the shard id here for a new document, since it can have a
+          // different schema type.
+          if (schema_name_hash_or.ok()) {
+            shard_id = GetShardId(GetPostingListKeyHash(key),
+                                  schema_name_hash_or.ValueOrDie());
+          } else {
+            shard_id = kInvalidShardId;
+          }
         }
         last_new_document_id = new_document_id;
-        if (schema_type_id == kInvalidSchemaTypeId) {
+        if (schema_type_id == kInvalidSchemaTypeId ||
+            shard_id == kInvalidShardId) {
           // This should not happen, since document store is optimized first,
           // so that new_document_id here should be alive.
           continue;
@@ -475,7 +605,7 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
         ICING_ASSIGN_OR_RETURN(
             uint32_t new_location,
             TransferEmbeddingVector(old_hit, dimension, quantization_type,
-                                    new_index));
+                                    shard_id, new_index));
         new_hits.push_back(EmbeddingHit(
             BasicHit(old_hit.basic_hit().section_id(), new_document_id),
             new_location));
@@ -540,7 +670,7 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<EmbeddingIndex> new_index,
         EmbeddingIndex::Create(&filesystem_, temporary_index_dir.dir(), &clock_,
-                               feature_flags_));
+                               feature_flags_, num_shards_));
     ICING_RETURN_IF_ERROR(TransferIndex(*document_store, *schema_store,
                                         document_id_old_to_new,
                                         new_index.get()));
@@ -552,8 +682,10 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   metadata_mmapped_file_.reset();
   flash_index_storage_.reset();
   embedding_posting_list_mapper_.reset();
-  embedding_vectors_.reset();
-  quantized_embedding_vectors_.reset();
+  for (int i = 0; i < num_shards_; ++i) {
+    embedding_vectors_[i].reset();
+    quantized_embedding_vectors_[i].reset();
+  }
 
   if (!filesystem_.SwapFiles(temporary_index_dir.dir().c_str(),
                              working_path_.c_str())) {
@@ -566,28 +698,46 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   return Initialize();
 }
 
-libtextclassifier3::StatusOr<float> EmbeddingIndex::ScoreEmbeddingHit(
+libtextclassifier3::StatusOr<float>
+EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
     const EmbeddingScorer& scorer, const PropertyProto::VectorProto& query,
     const EmbeddingHit& hit,
-    EmbeddingIndexingConfig::QuantizationType::Code quantization_type) const {
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    uint32_t schema_name_hash) {
+  uint32_t shard_id =
+      embedding_index_.GetShardId(posting_list_key_hash_, schema_name_hash);
   int dimension = query.values().size();
   float semantic_score;
-  if (!feature_flags_->enable_embedding_quantization() ||
+  if (!embedding_index_.feature_flags_->enable_embedding_quantization() ||
       quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
-    ICING_ASSIGN_OR_RETURN(const float* vector,
-                           GetEmbeddingVector(hit, dimension));
-    semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query.values().data(),
-                                  /*v2=*/vector);
+    ICING_ASSIGN_OR_RETURN(
+        const float* vector,
+        embedding_index_.GetEmbeddingVector(hit, dimension, shard_id));
+    if (embedding_index_.feature_flags_->enable_eigen_embedding_scoring()) {
+      semantic_score = scorer.EigenScore(dimension,
+                                         /*v1=*/query.values().data(),
+                                         /*v2=*/vector);
+    } else {
+      semantic_score = scorer.Score(dimension,
+                                    /*v1=*/query.values().data(),
+                                    /*v2=*/vector);
+    }
   } else {
-    ICING_ASSIGN_OR_RETURN(const char* data,
-                           GetQuantizedEmbeddingVector(hit, dimension));
+    ICING_ASSIGN_OR_RETURN(
+        const char* data,
+        embedding_index_.GetQuantizedEmbeddingVector(hit, dimension, shard_id));
     Quantizer quantizer(data);
     const uint8_t* quantized_vector =
         reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
-    semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query.values().data(),
-                                  /*v2=*/quantized_vector, quantizer);
+    if (embedding_index_.feature_flags_->enable_eigen_embedding_scoring()) {
+      semantic_score = scorer.EigenScore(dimension,
+                                         /*v1=*/query.values().data(),
+                                         /*v2=*/quantized_vector, quantizer);
+    } else {
+      semantic_score = scorer.Score(dimension,
+                                    /*v1=*/query.values().data(),
+                                    /*v2=*/quantized_vector, quantizer);
+    }
   }
   return semantic_score;
 }
@@ -604,8 +754,14 @@ libtextclassifier3::Status EmbeddingIndex::PersistStoragesToDisk() {
     return absl_ports::InternalError("Fail to persist flash index to disk");
   }
   ICING_RETURN_IF_ERROR(embedding_posting_list_mapper_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(embedding_vectors_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(quantized_embedding_vectors_->PersistToDisk());
+  for (int i = 0; i < num_shards_; ++i) {
+    if (embedding_vectors_[i] != nullptr) {
+      ICING_RETURN_IF_ERROR(embedding_vectors_[i]->PersistToDisk());
+    }
+    if (quantized_embedding_vectors_[i] != nullptr) {
+      ICING_RETURN_IF_ERROR(quantized_embedding_vectors_[i]->PersistToDisk());
+    }
+  }
   return libtextclassifier3::Status::OK;
 }
 
@@ -615,13 +771,21 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::UpdateStoragesChecksum() {
   }
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
                          embedding_posting_list_mapper_->UpdateChecksum());
-  ICING_ASSIGN_OR_RETURN(Crc32 embedding_vectors_crc,
-                         embedding_vectors_->UpdateChecksum());
-  ICING_ASSIGN_OR_RETURN(Crc32 quantized_embedding_vectors_crc,
-                         quantized_embedding_vectors_->UpdateChecksum());
-  return Crc32(embedding_posting_list_mapper_crc.Get() ^
-               embedding_vectors_crc.Get() ^
-               quantized_embedding_vectors_crc.Get());
+  uint32_t checksum = embedding_posting_list_mapper_crc.Get();
+
+  for (int i = 0; i < num_shards_; ++i) {
+    if (embedding_vectors_[i] != nullptr) {
+      ICING_ASSIGN_OR_RETURN(Crc32 crc,
+                             embedding_vectors_[i]->UpdateChecksum());
+      checksum ^= crc.Get();
+    }
+    if (quantized_embedding_vectors_[i] != nullptr) {
+      ICING_ASSIGN_OR_RETURN(Crc32 crc,
+                             quantized_embedding_vectors_[i]->UpdateChecksum());
+      checksum ^= crc.Get();
+    }
+  }
+  return Crc32(checksum);
 }
 
 libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetStoragesChecksum()
@@ -631,12 +795,17 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetStoragesChecksum()
   }
   ICING_ASSIGN_OR_RETURN(Crc32 embedding_posting_list_mapper_crc,
                          embedding_posting_list_mapper_->GetChecksum());
-  Crc32 embedding_vectors_crc = embedding_vectors_->GetChecksum();
-  Crc32 quantized_embedding_vectors_crc =
-      quantized_embedding_vectors_->GetChecksum();
-  return Crc32(embedding_posting_list_mapper_crc.Get() ^
-               embedding_vectors_crc.Get() ^
-               quantized_embedding_vectors_crc.Get());
+  uint32_t checksum = embedding_posting_list_mapper_crc.Get();
+
+  for (int i = 0; i < num_shards_; ++i) {
+    if (embedding_vectors_[i] != nullptr) {
+      checksum ^= embedding_vectors_[i]->GetChecksum().Get();
+    }
+    if (quantized_embedding_vectors_[i] != nullptr) {
+      checksum ^= quantized_embedding_vectors_[i]->GetChecksum().Get();
+    }
+  }
+  return Crc32(checksum);
 }
 
 }  // namespace lib

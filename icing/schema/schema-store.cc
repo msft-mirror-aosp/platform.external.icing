@@ -141,7 +141,7 @@ std::string GetDatabaseFromSchemaType(const std::string& schema_type,
   size_t db_index = schema_type.find(database_delimeter);
   std::string database;
   if (db_index != std::string::npos) {
-    database = schema_type.substr(0, db_index);
+    database = schema_type.substr(0, db_index + 1);
   }
   return database;
 }
@@ -222,24 +222,32 @@ SchemaStore::Header::Read(const Filesystem* filesystem, std::string path) {
   int64_t file_size = filesystem->GetFileSize(sfd.get());
   if (file_size == sizeof(LegacyHeader)) {
     LegacyHeader legacy_header;
-    if (!filesystem->Read(sfd.get(), &legacy_header, sizeof(legacy_header))) {
+    if (filesystem->Read(sfd.get(), &legacy_header, sizeof(legacy_header)) !=
+        sizeof(legacy_header)) {
       return absl_ports::InternalError(
           absl_ports::StrCat("Couldn't read: ", path));
     }
     if (legacy_header.magic != Header::kMagic) {
+      ICING_LOG(ERROR)
+          << "Invalid legacy header magic for SchemaStore. Expected: "
+          << Header::kMagic << ", actual: " << legacy_header.magic;
       return absl_ports::InternalError(
-          absl_ports::StrCat("Invalid header kMagic for file: ", path));
+          "Invalid legacy header magic for SchemaStore");
     }
     serialized_header.checksum = legacy_header.checksum;
   } else if (file_size == sizeof(SerializedHeader)) {
-    if (!filesystem->Read(sfd.get(), &serialized_header,
-                          sizeof(serialized_header))) {
+    if (filesystem->Read(sfd.get(), &serialized_header,
+                         sizeof(serialized_header)) !=
+        sizeof(serialized_header)) {
       return absl_ports::InternalError(
           absl_ports::StrCat("Couldn't read: ", path));
     }
     if (serialized_header.magic != Header::kMagic) {
+      ICING_LOG(ERROR)
+          << "Invalid serialized header magic for SchemaStore. Expected: "
+          << Header::kMagic << ", actual: " << serialized_header.magic;
       return absl_ports::InternalError(
-          absl_ports::StrCat("Invalid header kMagic for file: ", path));
+          "Invalid serialized header magic for SchemaStore");
     }
   } else if (file_size != 0) {
     // file is neither the legacy header, the new header nor empty. Something is
@@ -558,9 +566,10 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   bool overlay_schema_file_exists =
       filesystem_->FileExists(overlay_schema_filename.c_str());
 
+  // The base schema file will be released at a later point (if necessary),
+  // after InitializeInternal is done.
   libtextclassifier3::Status base_schema_state = schema_file_.Read().status();
   if (!base_schema_state.ok() && !absl_ports::IsNotFound(base_schema_state)) {
-    ResetSchemaFileIfNeeded();
     return base_schema_state;
   }
 
@@ -568,7 +577,6 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   // 1. Everything is missing. This is an empty schema store.
   if (!base_schema_state.ok() && !overlay_schema_file_exists &&
       !header_exists) {
-    ResetSchemaFileIfNeeded();
     return libtextclassifier3::Status::OK;
   }
 
@@ -577,7 +585,6 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   if (base_schema_state.ok() && !overlay_schema_file_exists && header_exists &&
       !header_->overlay_created()) {
     // Nothing else to do. Just return safely.
-    ResetSchemaFileIfNeeded();
     return libtextclassifier3::Status::OK;
   }
 
@@ -587,7 +594,6 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
       header_->overlay_created()) {
     overlay_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
         *filesystem_, MakeOverlaySchemaFilename(base_dir_));
-    ResetSchemaFileIfNeeded();
     return libtextclassifier3::Status::OK;
   }
 
@@ -595,7 +601,6 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
   // Return an error.
   bool overlay_created = header_->overlay_created();
   bool base_schema_exists = base_schema_state.ok();
-  ResetSchemaFileIfNeeded();
   return absl_ports::InternalError(IcingStringUtil::StringPrintf(
       "Unable to properly load schema. Header {exists:%d, overlay_created:%d}, "
       "base schema exists: %d, overlay_schema_exists: %d",
@@ -625,6 +630,7 @@ libtextclassifier3::Status SchemaStore::InitializeInternal(
     initialize_stats->set_num_schema_types(type_config_map_.size());
   }
   has_schema_successfully_set_ = true;
+  ResetSchemaFileIfNeeded();
 
   return libtextclassifier3::Status::OK;
 }
@@ -694,7 +700,6 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
 
   // Write the header
   ICING_RETURN_IF_ERROR(UpdateChecksum());
-  ResetSchemaFileIfNeeded();
   return libtextclassifier3::Status::OK;
 }
 
@@ -705,6 +710,7 @@ libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
       SchemaUtil::BuildTransitiveInheritanceGraph(*schema_proto));
 
   reverse_schema_type_mapper_.clear();
+  reverse_schema_type_mapper_hash_.clear();
   database_type_map_.clear();
   type_config_map_.clear();
   schema_subtype_id_map_.clear();
@@ -716,6 +722,8 @@ libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
 
     // Build reverse_schema_type_mapper_
     reverse_schema_type_mapper_.insert({type_id, type_name});
+    reverse_schema_type_mapper_hash_.insert(
+        {type_id, GetSchemaNameHash(type_name)});
 
     // Build database_type_map_
     database_type_map_[database].push_back(type_name);
@@ -780,7 +788,8 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::GetChecksum() const {
   // schema (both of which will have a checksum of 0). For existing, but empty
   // schemas, we need to continue with the checksum calculation of the other
   // components.
-  if (schema_checksum == Crc32() && !has_schema_successfully_set_) {
+  if (schema_checksum == Crc32() &&
+      absl_ports::IsNotFound(schema_file_.Read().status())) {
     return schema_checksum;
   }
 
@@ -805,7 +814,8 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::UpdateChecksum() {
   // schema (both of which will have a checksum of 0). For existing, but empty
   // schemas, we need to continue with the checksum calculation of the other
   // components.
-  if (schema_checksum == Crc32() && !has_schema_successfully_set_) {
+  if (schema_checksum == Crc32() &&
+      absl_ports::IsNotFound(schema_file_.Read().status())) {
     return schema_checksum;
   }
   Crc32 total_checksum;
@@ -875,7 +885,8 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
   bool ignore_errors_and_delete_documents =
       set_schema_request.ignore_errors_and_delete_documents();
 
-  if (feature_flags_->enable_schema_database()) {
+  if (feature_flags_->enable_schema_database() &&
+      !set_schema_request.database().empty()) {
     // Step 1: (Only required if schema database is enabled)
     // Do some preliminary checks on the new schema before formal validation and
     // delta computation. This checks that:
@@ -951,6 +962,7 @@ SchemaStore::SetInitialSchemaForDatabase(
       GetFullSchemaProtoWithUpdatedDb(std::move(new_schema), database));
   ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
   has_schema_successfully_set_ = true;
+  ResetSchemaFileIfNeeded();
 
   return result;
 }
@@ -1059,6 +1071,7 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   if (result.success) {
     ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
     has_schema_successfully_set_ = true;
+    ResetSchemaFileIfNeeded();
   }
 
   // Convert schema types to SchemaTypeIds after the new schema is applied.
@@ -1111,6 +1124,12 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
       SchemaStore::Create(filesystem_, temp_schema_store_dir.dir(), clock_,
                           feature_flags_, std::move(new_schema)));
 
+  // Call PersistToDisk() to write the new schema file to disk. This is needed
+  // to ensure that all subcomponents of the new schema store (header file,
+  // derived files, etc) are written to disk before we swap the files in the
+  // next step.
+  ICING_RETURN_IF_ERROR(new_schema_store->PersistToDisk());
+
   // Then we swap the new schema file + new derived files with the old files.
   if (!filesystem_->SwapFiles(base_dir_.c_str(),
                               temp_schema_store_dir.dir().c_str())) {
@@ -1121,12 +1140,13 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
   std::string old_base_dir = std::move(base_dir_);
   *this = std::move(*new_schema_store);
 
-  // After the std::move, the filepaths saved in this instance and in the
-  // schema_file_ instance will still be the one from temp_schema_store_dir
-  // even though they now point to files that are within old_base_dir.
-  // Manually set them to the correct paths.
+  // After the std::move, the filepaths saved in this instance, the header_ and
+  // in the schema_file_ instance will still be the one from
+  // temp_schema_store_dir even though they now point to files that are within
+  // old_base_dir. Manually set them to the correct paths.
   base_dir_ = std::move(old_base_dir);
   schema_file_.SetSwappedFilepath(MakeSchemaFilename(base_dir_));
+  header_->SetSwappedFilepath(MakeHeaderFilename(base_dir_));
   if (overlay_schema_file_ != nullptr) {
     overlay_schema_file_->SetSwappedFilepath(
         MakeOverlaySchemaFilename(base_dir_));
@@ -1417,7 +1437,8 @@ SchemaStore::ConstructBlobPropertyMap() const {
 
 libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
     const SchemaProto& new_schema, const std::string& database) const {
-  if (!feature_flags_->enable_schema_database() || new_schema.types().empty()) {
+  if (!feature_flags_->enable_schema_database() || new_schema.types().empty() ||
+      database.empty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -1443,9 +1464,11 @@ libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
       auto iter = type_config_map_.find(type_config.schema_type());
       if (iter != type_config_map_.end() &&
           database != iter->second.database()) {
-        return absl_ports::AlreadyExistsError(
-            absl_ports::StrCat("schema_type name: '", type_config.schema_type(),
-                               "' is already in use by a different database."));
+        return absl_ports::AlreadyExistsError(absl_ports::StrCat(
+            "schema_type name: '", type_config.schema_type(),
+            "' is already in use by a different database. Request database: '",
+            database, "' vs. existing database: '", iter->second.database(),
+            "'."));
       }
     }
   }
@@ -1456,9 +1479,10 @@ libtextclassifier3::StatusOr<SchemaProto>
 SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     SchemaProto input_database_schema,
     const std::string& database_to_update) const {
-  if (!feature_flags_->enable_schema_database()) {
-    // If the schema database is not enabled, the input schema is already the
-    // full schema, so we don't need to do any merges.
+  if (!feature_flags_->enable_schema_database() || database_to_update.empty()) {
+    // The schema database is not enabled, or we're updating using the empty
+    // schema database. This means that the input schema is already the full
+    // schema, so we don't need to do any merges.
     return input_database_schema;
   }
 
@@ -1491,59 +1515,136 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
   const SchemaProto* existing_schema = schema_proto.ValueOrDie();
   SchemaProto full_schema;
 
-  // 1. Add types from the existing schema, replacing existing types with the
-  // input types if the database is the one being updated by the input schema.
-  // - For database_to_update, we replace the existing types with the input
-  //   types. Any existing type not included in input_database_schema is
-  //   deleted.
-  // - If there are more input types than existing types for database_to_update,
-  //   the rest of the input types are appended to the end of the full_schema.
-  // - If there are fewer input types than existing types for
-  //   database_to_update, we shift forward all existing types that appear after
-  //   the last input type.
-  // - For existing types from other databases, we preserve the existing order
-  //   after adding to full_schema. Note that the type-ids of existing types
-  //   might still change if some types are deleted in the database_to_update as
-  //   this will cause all subsequent types ids to shift forward.
-  int input_schema_index = 0, existing_schema_index = 0;
-  while (input_schema_index < input_database_schema.types().size() &&
-         existing_schema_index < existing_schema->types().size()) {
-    const SchemaTypeConfigProto& existing_type_config =
-        existing_schema->types(existing_schema_index);
-    SchemaTypeConfigProto& input_type_config =
-        *input_database_schema.mutable_types(input_schema_index);
-
-    if (existing_type_config.database() == database_to_update) {
-      // If the database is the one being updated by the input schema, replace
-      // the existing type with a type from the input schema.
-      *full_schema.add_types() = std::move(input_type_config);
-      ++input_schema_index;
-    } else {
-      *full_schema.add_types() = existing_type_config;
+  if (feature_flags_->enable_schema_type_id_optimization()) {
+    // 1. Add types from the existing schema, replacing existing types with the
+    // input types if the database is the one being updated by the input schema.
+    // - For database_to_update, we replace the existing types with the input
+    //   types. Any existing type not included in input_database_schema is
+    //   deleted.
+    // - When possible, existing types are added in the position in which they
+    //   appear in the existing schema so as to preserve the type-ids of
+    //   existing types.
+    // - If there are more input types than existing types for
+    //   database_to_update, added input types are appended to the end of the
+    //   full_schema.
+    // - If there are fewer input types than existing types for
+    //   database_to_update, we shift forward all existing types that appear
+    //   after the last input type (i.e. a type is deleted).
+    // - For existing types from other databases, we preserve the existing order
+    //   after adding to full_schema. Note that the type-ids of existing types
+    //   might still change if some types are deleted in the database_to_update
+    //   as this will cause all subsequent types ids to shift forward.
+    // - This means that:
+    //   - When adding types to a database, the type-ids of existing types will
+    //     not change.
+    //   - When there are fewer input types compared to the existing database
+    //     (i.e. some types are deleted), the type-ids of existing types
+    //     will shift forward depending on the position of the deleted existing
+    //     type in the existing schema proto.
+    //
+    // Step 1: Do some pre-processing to build maps of existing and input
+    // types, as well as a list of newly added types.
+    std::unordered_set<std::string> existing_type_names;
+    for (const SchemaTypeConfigProto& type_config : existing_schema->types()) {
+      if (type_config.database() == database_to_update) {
+        existing_type_names.insert(type_config.schema_type());
+      }
     }
-    ++existing_schema_index;
-  }
+    std::unordered_map<std::string, SchemaTypeConfigProto*> input_type_map;
+    std::vector<SchemaTypeConfigProto*> new_input_types;
+    for (SchemaTypeConfigProto& type_config :
+         *input_database_schema.mutable_types()) {
+      input_type_map.insert({type_config.schema_type(), &type_config});
+      if (existing_type_names.find(type_config.schema_type()) ==
+          existing_type_names.end()) {
+        new_input_types.push_back(&type_config);
+      }
+    }
 
-  // 2. Append remaining types to the end of the SchemaProto.
-  for (; input_schema_index < input_database_schema.types().size();
-       ++input_schema_index) {
-    // Case 1: Append all remaining types from the input schema. This happens
-    // when more types are added in input_database_schema than what's in the
-    // existing schema. In this case, we've used up the space for the database
-    // in the existing schema, so we can just append the rest of the types to
-    // the end.
-    SchemaTypeConfigProto& input_type_config =
-        *input_database_schema.mutable_types(input_schema_index);
-    *full_schema.add_types() = std::move(input_type_config);
-  }
-  for (; existing_schema_index < existing_schema->types().size();
-       ++existing_schema_index) {
-    // Case 2: Add remaining types from the existing schema, but skip the ones
-    // that are from input_database, since existing types from input_database
-    // are replaced with input_database_schema.
-    if (existing_schema->types(existing_schema_index).database() !=
-        database_to_update) {
-      *full_schema.add_types() = existing_schema->types(existing_schema_index);
+    int new_input_types_index = 0;
+    // Step 2: Iterate through existing schema and add them to the full schema,
+    // replacing existing types with the input types if the database is the one
+    // being updated by the input schema.
+    for (const SchemaTypeConfigProto& existing_type_config :
+         existing_schema->types()) {
+      if (existing_type_config.database() == database_to_update) {
+        auto itr = input_type_map.find(existing_type_config.schema_type());
+        if (itr != input_type_map.end()) {
+          // Existing type is still present in the input types. Add the input
+          // type to the full schema.
+          *full_schema.add_types() = std::move(*itr->second);
+        } else {
+          // Existing type is no longer present in input types. Add a new type
+          // to replace the existing type if the new types are not exhausted.
+          // This is to try to preserve the type-ids of subsequent existing
+          // types that are still present.
+          if (new_input_types_index < new_input_types.size()) {
+            *full_schema.add_types() =
+                std::move(*new_input_types[new_input_types_index++]);
+          }
+        }
+      } else {
+        // Existing type is from a different database. Add it to the full schema
+        // without any changes.
+        *full_schema.add_types() = existing_type_config;
+      }
+    }
+
+    // Step 3: Append remaining new input types to the end of the SchemaProto.
+    // This happens when more types are added in input_database_schema than
+    // what's in the existing schema. In this case, we've used up the space for
+    // the database in the existing schema, so we can just append the rest of
+    // the types to the end.
+    for (; new_input_types_index < new_input_types.size();
+         ++new_input_types_index) {
+      *full_schema.add_types() =
+          std::move(*new_input_types[new_input_types_index]);
+    }
+  } else {
+    // This old rewrite does not preserve the type-ids of existing types, but
+    // rather inserts the input types for the database in the order in which
+    // they appear in the input proto.
+    int input_schema_index = 0, existing_schema_index = 0;
+    while (input_schema_index < input_database_schema.types().size() &&
+           existing_schema_index < existing_schema->types().size()) {
+      const SchemaTypeConfigProto& existing_type_config =
+          existing_schema->types(existing_schema_index);
+      SchemaTypeConfigProto& input_type_config =
+          *input_database_schema.mutable_types(input_schema_index);
+
+      if (existing_type_config.database() == database_to_update) {
+        // If the database is the one being updated by the input schema, replace
+        // the existing type with a type from the input schema.
+        *full_schema.add_types() = std::move(input_type_config);
+        ++input_schema_index;
+      } else {
+        *full_schema.add_types() = existing_type_config;
+      }
+      ++existing_schema_index;
+    }
+
+    // 2. Append remaining types to the end of the SchemaProto.
+    for (; input_schema_index < input_database_schema.types().size();
+         ++input_schema_index) {
+      // Case 1: Append all remaining types from the input schema. This happens
+      // when more types are added in input_database_schema than what's in the
+      // existing schema. In this case, we've used up the space for the database
+      // in the existing schema, so we can just append the rest of the types to
+      // the end.
+      SchemaTypeConfigProto& input_type_config =
+          *input_database_schema.mutable_types(input_schema_index);
+      *full_schema.add_types() = std::move(input_type_config);
+    }
+    for (; existing_schema_index < existing_schema->types().size();
+         ++existing_schema_index) {
+      // Case 2: Add remaining types from the existing schema, but skip the ones
+      // that are from input_database, since existing types from input_database
+      // are replaced with input_database_schema.
+      if (existing_schema->types(existing_schema_index).database() !=
+          database_to_update) {
+        *full_schema.add_types() =
+            existing_schema->types(existing_schema_index);
+      }
     }
   }
 

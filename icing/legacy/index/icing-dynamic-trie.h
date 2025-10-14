@@ -35,23 +35,20 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/legacy/core/icing-compat.h"
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
 #include "icing/util/crc32.h"
-#include "icing/util/i18n-utils.h"
 #include "unicode/utf8.h"
 
 namespace icing {
@@ -299,15 +296,15 @@ class IcingDynamicTrie : public IIcingStorage {
   // Empty out the trie without closing or removing.
   void Clear();
 
-  // Clears the suffix and value at the given index. Returns true on success.
-  bool ClearSuffixAndValue(uint32_t suffix_value_index);
+  // Clears the suffix and value at the given index. Returns OK on success.
+  libtextclassifier3::Status ClearSuffixAndValue(uint32_t suffix_value_index);
 
   // Resets the next at the given index so that it points to no node.
-  // Returns true on success.
-  bool ResetNext(uint32_t next_index);
+  // Returns OK on success.
+  libtextclassifier3::Status ResetNext(uint32_t next_index);
 
-  // Sorts the next array of the node. Returns true on success.
-  bool SortNextArray(const Node *node);
+  // Sorts the next array of the node. Returns OK on success.
+  libtextclassifier3::Status SortNextArray(const Node *node);
 
   // Sync to disk.
   bool Sync() override;
@@ -348,7 +345,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // value.
   //
   // REQUIRES: value a buffer of size value_size()
-  void SetValueAtIndex(uint32_t value_index, const void *value);
+  libtextclassifier3::Status SetValueAtIndex(uint32_t value_index,
+                                             const void *value);
 
   // Returns true if key is found and sets value. If value_index is
   // not NULL, returns value_index (see Insert discussion above).
@@ -431,8 +429,8 @@ class IcingDynamicTrie : public IIcingStorage {
   bool ClearDeleted(uint32_t value_index);
 
   // Deletes the entry associated with the key. Data can not be recovered after
-  // the deletion. Returns true on success.
-  bool Delete(std::string_view key);
+  // the deletion. Returns OK on success.
+  libtextclassifier3::Status Delete(std::string_view key);
 
   // Clear a specific property id from all values.  For each value that has this
   // property cleared, also check to see if it was the only property set;  if

@@ -445,6 +445,11 @@ class IcingSearchEngine {
   //   ABORTED if failed to get results but existing data is not affected
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
+  SearchResultProto GetNextPage(GetNextPageRequestProto&& get_next_page_request)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // TODO: b/417644758 - Remove this method once all old callers are migrated to
+  // the new GetNextPage API. Internally, this should just be used in tests.
   SearchResultProto GetNextPage(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -527,6 +532,22 @@ class IcingSearchEngine {
   //     with file content
   //   NotFoundError if the blob is not found
   BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Gets all the blob info from the blob store.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto GetAllBlobInfos() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Puts the blob info protos from the blob proto to the blob info proto log
+  // file.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto PutBlobInfos(const BlobProto& blob_info_protos)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Makes sure that every update/delete received till this point is flushed
@@ -693,11 +714,20 @@ class IcingSearchEngine {
 
   // Resets all members that are created during Initialize, deletes all
   // underlying files and initializes a fresh index.
-  ResetResultProto ResetInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  ResetResultProto ResetLocked() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Resets all members and clears all data from Icing.
-  ResetResultProto ClearAndDestroyInternal()
+  ResetResultProto ClearAndDestroyLocked()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Assumes mutex_ is already held.
+  PutResultProto PutLocked(DocumentProto&& document)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Assumes mutex_ is already held.
+  GetResultProto GetLocked(std::string_view name_space, std::string_view uri,
+    const GetResultSpecProto& result_spec)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Checks for the existence of the init marker file. If the failed init count
   // exceeds kMaxUnsuccessfulInitAttempts, all data is deleted and the index is
@@ -715,13 +745,18 @@ class IcingSearchEngine {
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
-  libtextclassifier3::Status InternalPersistToDisk(
-      PersistType::Code persist_type) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  //
+  // @param persist_type: The type of persistence guarantee that PersistToDisk
+  // should provide.
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
+  libtextclassifier3::Status PersistToDiskLocked(
+      PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public
   // methods calling each other may cause deadlock issues.
-  InitializeResultProto InternalInitialize()
+  InitializeResultProto InitializeLocked()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to initialize member variables.
@@ -808,7 +843,7 @@ class IcingSearchEngine {
 
   // Helper method for the actual work to Search. We need this separate
   // method to manage locking for Search.
-  SearchResultProto InternalSearch(const SearchSpecProto& search_spec,
+  SearchResultProto SearchLocked(const SearchSpecProto& search_spec,
                                    const ScoringSpecProto& scoring_spec,
                                    const ResultSpecProto& result_spec)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);

@@ -137,7 +137,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 39
+// Next tag: 47
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -394,11 +394,47 @@ message IcingSearchEngineOptions {
   // compression_level. 0 means always compress.
   optional uint32 compression_threshold_bytes = 36;
 
+  // Whether to enable using smaller input buffer size for decompression
+  // If set to false, the default buffer size of 64kb will be used.
+  optional bool enable_smaller_decompression_buffer_size = 39;
+
+  // Whether to enable the Eigen library for embedding scoring.
+  // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
+  // not defined), Eigen will be used for embedding scoring.
+  optional bool enable_eigen_embedding_scoring = 40;
+
+  // Whether to enable passing down filter predicates to child iterators during
+  // DocHitInfo retrieval. If set to true, filter predicates may be passed to
+  // children for optimized retrieval.
+  optional bool enable_passing_filter_to_children = 41;
+
+  // Whether to enable the new header format (refactor legacy format and
+  // introduce unsynced tail checksum) related changes in
+  // PortableFileBackedProtoLog.
+  optional bool enable_proto_log_new_header_format = 42;
+
+  // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
+  // This new iterator optimizes the access order of the embedding data for
+  // sequential reads.
+  optional bool enable_embedding_iterator_v2 = 43;
+
+  // Whether PortableFileBackedProtoLog should retain a decompression buffer
+  // that reads can reuse rather than allocating a new one for each read.
+  optional bool enable_reusable_decompression_buffer = 44;
+
+  // Whether to enable schema-type id optimization for setSchema. When enabled,
+  // the type-ids of existing types will be preserved when possible, and there
+  // will be no schema type-id reassignment for adding new types.
+  optional bool enable_schema_type_id_optimization = 45;
+
+  // The number of shards to use for the embedding index. 1 means no sharding.
+  optional uint32 embedding_index_num_shards = 46 [default = 1];
+
   reserved 2, 20;
 }
 
 // Result of a call to IcingSearchEngine.Initialize
-// Next tag: 3
+// Next tag: 4
 message InitializeResultProto {
   // Status code can be one of:
   //   OK
@@ -418,6 +454,9 @@ message InitializeResultProto {
   // accurate only when the status above is OK or WARNING_DATA_LOSS. See
   // logging.proto for details.
   optional InitializeStatsProto initialize_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.
