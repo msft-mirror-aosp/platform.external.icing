@@ -87,7 +87,8 @@ class DocHitInfoIteratorEmbeddingV1
         /*num_leaf_advance_calls_main_index_in=*/0,
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/0,
-        /*num_blocks_inspected_in=*/0);
+        /*num_blocks_inspected_in=*/0,
+        /*embedding_stats_in=*/{});
   }
 
   std::string ToString() const override { return "embedding_iterator"; }

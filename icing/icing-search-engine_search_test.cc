@@ -4797,6 +4797,10 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_parent_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_embedding_shards_read(0);
+  exp_parent_search_stats->set_num_embedding_bytes_read(0);
 
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
@@ -5149,6 +5153,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_parent_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_embedding_shards_read(0);
+  exp_parent_search_stats->set_num_embedding_bytes_read(0);
 
   QueryStatsProto::SearchStats* exp_child_search_stats =
       exp_stats.mutable_child_search_stats();
@@ -5168,6 +5176,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_child_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_child_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_child_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_child_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_child_search_stats->set_num_embedding_shards_read(0);
+  exp_child_search_stats->set_num_embedding_bytes_read(0);
 
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
@@ -7412,6 +7424,10 @@ TEST_F(IcingSearchEngineSearchTest, NumericFilterQueryStatsProtoTest) {
   exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_parent_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_embedding_shards_read(0);
+  exp_parent_search_stats->set_num_embedding_bytes_read(0);
 
   EXPECT_THAT(results.query_stats(), EqualsProto(exp_stats));
 }
@@ -8690,6 +8706,176 @@ TEST_F(IcingSearchEngineSearchTest,
   SearchResultProto results = icing.Search(search_spec, scoring_spec,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchStats) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embeddingQuantized")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email2")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embeddingQuantized")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  // Unquantized size: 12 bytes
+  // Quantized size: 3 + sizeof(Quantizer) = 11 bytes.
+  PropertyProto::VectorProto model1_vector =
+      CreateVector("my_model1", {-1, -1, -1});
+  PropertyProto::VectorProto model2_vector =
+      CreateVector("my_model2", {-1, -1, -1});
+  DocumentProto email1_document =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email1")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding", model1_vector, model2_vector)
+          .AddVectorProperty("embeddingQuantized", model1_vector, model2_vector)
+          .Build();
+  DocumentProto email2_document =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email2")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding", model1_vector, model2_vector)
+          .AddVectorProperty("embeddingQuantized", model1_vector, model2_vector)
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  // Set the number of shards to a large number to avoid hash collisions.
+  icing_options.set_embedding_index_num_shards(8192);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1_document).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2_document).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() = model1_vector;
+  *search_spec.add_embedding_query_vectors() = model2_vector;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Perform an embedding query that matches all embeddings.
+  search_spec.set_query(
+      "semanticSearch(getEmbeddingParameter(0)) OR "
+      "semanticSearch(getEmbeddingParameter(1))");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email2_document));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  QueryStatsProto::SearchStats search_stats =
+      results.query_stats().parent_search_stats();
+  // We have 8 embeddings in total in the two documents. 4 of them are
+  // unquantized and 4 of them are quantized.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(4));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(4));
+  // We have 2 types and 2 models, which corresponds to 4 shards for unquantized
+  // embeddings and 4 shards for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(8));
+  // 4 unquantized embeddings * 12 bytes + 4 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(92));
+
+  // Perform an embedding query that only matches model1 embeddings.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email2_document));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  search_stats = results.query_stats().parent_search_stats();
+  // We have 4 embeddings in total in the two documents. 2 of them are
+  // unquantized and 2 of them are quantized.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(2));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(2));
+  // We have 2 types and 1 models matched, which corresponds to 2 shards for
+  // unquantized embeddings and 2 shards for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(4));
+  // 2 unquantized embeddings * 12 bytes + 2 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(46));
+
+  // Perform an embedding query that only matches model1 embeddings and filter
+  // on Email1.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  search_spec.add_schema_type_filters("Email1");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  search_stats = results.query_stats().parent_search_stats();
+  // We have 2 embeddings in total in the Email1 document. 1 of them are
+  // unquantized and 1 of them are quantized.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(1));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(1));
+  // We have 1 types and 1 models matched, which corresponds to 1 shards for
+  // unquantized embeddings and 1 shards for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(2));
+  // 1 unquantized embeddings * 12 bytes + 1 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(23));
+
+  // Now add a property filter on Email1.embeddingQuantized, which will only
+  // score quantized embeddings in Email1.
+  TypePropertyMask* property_filters = search_spec.add_type_property_filters();
+  property_filters->set_schema_type("Email1");
+  property_filters->add_paths("embeddingQuantized");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  search_stats = results.query_stats().parent_search_stats();
+  // We have 1 quantized embeddings in the Email1 document.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(0));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(1));
+  // We have 1 types and 1 models matched, which corresponds to 0 shard for
+  // unquantized embeddings and 1 shard for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(1));
+  // 1 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(11));
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -10051,6 +10237,10 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   actual_search_result_proto = icing.Search(
@@ -10134,6 +10324,10 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchResultProto search_result_proto = icing.Search(
@@ -10234,6 +10428,10 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchSpecProto search_spec;
@@ -10336,6 +10534,9 @@ TEST_F(IcingSearchEngineSearchTest,
   EXPECT_THAT(
       set_schema_result.scorable_property_incompatible_changed_schema_types(),
       IsEmpty());
+  // Flush is not needed since the schema change is (scorable property)
+  // compatible.
+  EXPECT_THAT(set_schema_result.needs_persist_type(), PersistType::UNKNOWN);
 
   SearchSpecProto search_spec;
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
@@ -10476,6 +10677,10 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchSpecProto search_spec;
