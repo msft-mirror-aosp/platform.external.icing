@@ -27,7 +27,6 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/embedding-scorer.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/iterator/document-filter-predicate.h"
@@ -87,7 +86,8 @@ class DocHitInfoIteratorEmbeddingV2
         /*num_leaf_advance_calls_main_index_in=*/0,
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/0,
-        /*num_blocks_inspected_in=*/0);
+        /*num_blocks_inspected_in=*/0,
+        embedding_hit_accessor_->GetEmbeddingStats());
   }
 
   std::string ToString() const override { return "embedding_iterator"; }
@@ -113,7 +113,8 @@ class DocHitInfoIteratorEmbeddingV2
       std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
           global_section_infos,
       const EmbeddingIndex* embedding_index,
-      std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor,
+      std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>
+          embedding_hit_accessor,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       int64_t current_time_ms)
       : query_(*query),
@@ -125,7 +126,7 @@ class DocHitInfoIteratorEmbeddingV2
         global_scores_(*global_scores),
         global_section_infos_(global_section_infos),
         embedding_index_(*embedding_index),
-        posting_list_accessor_(std::move(posting_list_accessor)),
+        embedding_hit_accessor_(std::move(embedding_hit_accessor)),
         cached_hit_scores_idx_(0),
         no_more_hit_(false),
         document_store_(*document_store),
@@ -187,7 +188,7 @@ class DocHitInfoIteratorEmbeddingV2
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;
-  std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor_;
+  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor_;
 
   // Cached data from the embeddings index
   std::vector<HitWithScore> cached_hit_scores_;

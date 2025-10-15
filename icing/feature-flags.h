@@ -33,7 +33,9 @@ class FeatureFlags {
                         bool enable_passing_filter_to_children,
                         bool enable_proto_log_new_header_format,
                         bool enable_embedding_iterator_v2,
-                        bool enable_reusable_decompression_buffer)
+                        bool enable_reusable_decompression_buffer,
+                        bool enable_schema_type_id_optimization,
+                        bool enable_optimize_improvements)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -50,7 +52,9 @@ class FeatureFlags {
         enable_proto_log_new_header_format_(enable_proto_log_new_header_format),
         enable_embedding_iterator_v2_(enable_embedding_iterator_v2),
         enable_reusable_decompression_buffer_(
-            enable_reusable_decompression_buffer) {}
+            enable_reusable_decompression_buffer),
+        enable_schema_type_id_optimization_(enable_schema_type_id_optimization),
+        enable_optimize_improvements_(enable_optimize_improvements) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -106,6 +110,14 @@ class FeatureFlags {
     return enable_reusable_decompression_buffer_;
   }
 
+  bool enable_schema_type_id_optimization() const {
+    return enable_schema_type_id_optimization_;
+  }
+
+  bool enable_optimize_improvements() const {
+    return enable_optimize_improvements_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -151,6 +163,13 @@ class FeatureFlags {
   // Whether PortableFileBackedProtoLog should retain a decompression buffer
   // that reads can reuse rather than allocating a new one for each read.
   bool enable_reusable_decompression_buffer_;
+
+  bool enable_schema_type_id_optimization_;
+
+  // Whether to enable a few minor improvements to Optimize:
+  // 1. Avoid unnecessary Status allocs for deleted/expired docs
+  // 2. Remove an unnecessary persist to disk call
+  bool enable_optimize_improvements_;
 };
 
 }  // namespace lib

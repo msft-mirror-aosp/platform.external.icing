@@ -28,7 +28,6 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/embedding-scorer.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/iterator/section-restrict-data.h"
@@ -88,7 +87,8 @@ class DocHitInfoIteratorEmbeddingV1
         /*num_leaf_advance_calls_main_index_in=*/0,
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/0,
-        /*num_blocks_inspected_in=*/0);
+        /*num_blocks_inspected_in=*/0,
+        /*embedding_stats_in=*/{});
   }
 
   std::string ToString() const override { return "embedding_iterator"; }
@@ -109,7 +109,8 @@ class DocHitInfoIteratorEmbeddingV1
       std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
           global_section_infos,
       const EmbeddingIndex* embedding_index,
-      std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor,
+      std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>
+          embedding_hit_accessor,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       int64_t current_time_ms)
       : query_(*query),
@@ -121,11 +122,12 @@ class DocHitInfoIteratorEmbeddingV1
         global_scores_(*global_scores),
         global_section_infos_(global_section_infos),
         embedding_index_(*embedding_index),
-        posting_list_accessor_(std::move(posting_list_accessor)),
+        embedding_hit_accessor_(std::move(embedding_hit_accessor)),
         cached_embedding_hits_idx_(0),
         current_allowed_sections_mask_(kSectionIdMaskAll),
         no_more_hit_(false),
         schema_type_id_(kInvalidSchemaTypeId),
+        schema_name_hash_(0),
         document_store_(*document_store),
         schema_store_(*schema_store),
         current_time_ms_(current_time_ms),
@@ -174,7 +176,7 @@ class DocHitInfoIteratorEmbeddingV1
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;
-  std::unique_ptr<PostingListEmbeddingHitAccessor> posting_list_accessor_;
+  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor_;
 
   // Cached data from the embeddings index
   std::vector<EmbeddingHit> cached_embedding_hits_;
@@ -182,6 +184,10 @@ class DocHitInfoIteratorEmbeddingV1
   SectionIdMask current_allowed_sections_mask_;
   bool no_more_hit_;
   SchemaTypeId schema_type_id_;  // The schema type id for the current document.
+  // The schema name hash for the current document, which will be updated
+  // together with schema_type_id_ when advancing to the next document. This
+  // value is valid only if schema_type_id_ is valid.
+  uint32_t schema_name_hash_;
 
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;

@@ -265,6 +265,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_delete_propagation_from(false);
   icing_options.set_enable_marker_file_for_optimize(true);
   icing_options.set_enable_proto_log_new_header_format(true);
+  icing_options.set_embedding_index_num_shards(32);
   return icing_options;
 }
 
@@ -1030,6 +1031,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(
       initialize_result.initialize_stats().embedding_index_restoration_cause(),
       Eq(InitializeStatsProto::NONE));
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 
   // ("namespace", "uri1") should be found.
   GetResultProto expected_get_result_proto;
@@ -1360,7 +1364,8 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentOptimize) {
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
-        Index::Create(options, filesystem(), icing_filesystem()));
+        Index::Create(options, filesystem(), icing_filesystem(),
+                      feature_flags_.get()));
     ICING_ASSERT_OK(index->Merge());
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -1895,6 +1900,9 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptedDocumentStore) {
   EXPECT_THAT(initialize_result.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(InitializeStatsProto::NONE));
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 
   // Verify join search: join a query for `name:person` with a child query for
   // `body:message` based on the child's `senderQualifiedId` field. message2
@@ -2591,7 +2599,7 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
                                      /*index_merge_size=*/100,
                                      /*lite_index_sort_at_indexing=*/true,
                                      /*lite_index_sort_size=*/50),
-                      filesystem(), icing_filesystem()));
+                      filesystem(), icing_filesystem(), feature_flags_.get()));
     ICING_ASSERT_OK(index->PersistToDisk());
   }
 
@@ -3197,7 +3205,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                            /*index_merge_size=*/message.ByteSizeLong(),
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/8),
-            filesystem(), icing_filesystem()));
+            filesystem(), icing_filesystem(), feature_flags_.get()));
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
@@ -3329,7 +3337,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                            /*index_merge_size=*/message.ByteSizeLong(),
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/8),
-            filesystem(), icing_filesystem()));
+            filesystem(), icing_filesystem(), feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -3443,7 +3451,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                            /*index_merge_size=*/message.ByteSizeLong(),
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/8),
-            filesystem(), icing_filesystem()));
+            filesystem(), icing_filesystem(), feature_flags_.get()));
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
@@ -3580,7 +3588,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                            /*index_merge_size=*/message.ByteSizeLong(),
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/8),
-            filesystem(), icing_filesystem()));
+            filesystem(), icing_filesystem(), feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -3642,7 +3650,7 @@ TEST_F(IcingSearchEngineInitializationTest,
             Index::Options(GetIndexDir(), /*index_merge_size=*/100,
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/50),
-            filesystem(), icing_filesystem()));
+            filesystem(), icing_filesystem(), feature_flags_.get()));
     // Add hits for document 0 and merge.
     ASSERT_THAT(index->last_added_document_id(), kInvalidDocumentId);
     index->set_last_added_document_id(0);
@@ -3719,7 +3727,7 @@ TEST_F(IcingSearchEngineInitializationTest,
         Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100,
                                      /*lite_index_sort_at_indexing=*/true,
                                      /*lite_index_sort_size=*/50),
-                      filesystem(), icing_filesystem()));
+                      filesystem(), icing_filesystem(), feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -3837,7 +3845,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                            /*index_merge_size=*/message.ByteSizeLong(),
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/8),
-            filesystem(), icing_filesystem()));
+            filesystem(), icing_filesystem(), feature_flags_.get()));
     // Add hits for document 4 and merge.
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
@@ -3980,7 +3988,7 @@ TEST_F(IcingSearchEngineInitializationTest,
         Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100,
                                      /*lite_index_sort_at_indexing=*/true,
                                      /*lite_index_sort_size=*/50),
-                      filesystem(), icing_filesystem()));
+                      filesystem(), icing_filesystem(), feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -4776,6 +4784,11 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(init_result.initialize_stats()
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        init_result.initialize_stats().embedding_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    // PersistToDisk is not needed.
+    EXPECT_THAT(init_result.needs_persist_type(), Eq(PersistType::UNKNOWN));
   }
 }
 
@@ -4842,6 +4855,11 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(init_result.initialize_stats()
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        init_result.initialize_stats().embedding_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    // PersistToDisk is not needed.
+    EXPECT_THAT(init_result.needs_persist_type(), Eq(PersistType::UNKNOWN));
   }
 }
 
@@ -4917,6 +4935,12 @@ TEST_F(IcingSearchEngineInitializationTest,
                               std::move(fake_clock), GetTestJniCache());
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().schema_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .schema_store_recovery_latency_ms(),
+              Eq(0));
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .document_store_recovery_cause(),
               Eq(InitializeStatsProto::NONE));
@@ -4935,15 +4959,59 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(0));
+  // PersistToDisk is not needed.
+  EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));
+
+  // Initialize another Icing instance with the "existing empty database". Even
+  // though we never call PersistToDisk(), there should be no recovery.
+  auto fake_clock2 = std::make_unique<FakeClock>();
+  fake_clock2->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine another_icing(
+      GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+      std::make_unique<IcingFilesystem>(), std::move(fake_clock2),
+      GetTestJniCache());
+  InitializeResultProto initialize_result_google::protobuf = another_icing.Initialize();
+  EXPECT_THAT(initialize_result_google::protobuf.status(), ProtoIsOk());
   EXPECT_THAT(
-      initialize_result_proto.initialize_stats().schema_store_recovery_cause(),
+      initialize_result_google::protobuf.initialize_stats().schema_store_recovery_cause(),
       Eq(InitializeStatsProto::NONE));
-  EXPECT_THAT(initialize_result_proto.initialize_stats()
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
                   .schema_store_recovery_latency_ms(),
               Eq(0));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .document_store_recovery_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().document_store_data_status(),
+      Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .index_restoration_latency_ms(),
+              Eq(0));
+  // PersistToDisk is not needed.
+  EXPECT_THAT(initialize_result_google::protobuf.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -5010,6 +5078,9 @@ TEST_F(IcingSearchEngineInitializationTest,
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -5018,6 +5089,10 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 }
 
@@ -5104,6 +5179,9 @@ TEST_F(IcingSearchEngineInitializationTest,
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -5112,6 +5190,10 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 }
 
@@ -5142,7 +5224,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                      /*index_merge_size=*/100,
                                      /*lite_index_sort_at_indexing=*/true,
                                      /*lite_index_sort_size=*/50),
-                      filesystem(), icing_filesystem()));
+                      filesystem(), icing_filesystem(), feature_flags_.get()));
     ICING_ASSERT_OK(index->PersistToDisk());
   }
 
@@ -5167,6 +5249,9 @@ TEST_F(IcingSearchEngineInitializationTest,
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(10));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -5184,6 +5269,10 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 }
 
@@ -5231,6 +5320,9 @@ TEST_F(
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(10));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -5248,6 +5340,10 @@ TEST_F(
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 }
 
@@ -5333,6 +5429,9 @@ TEST_F(
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(10));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -5350,6 +5449,10 @@ TEST_F(
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_latency_ms(),
                 Eq(0));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 }
 
@@ -5403,7 +5506,7 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 
   {
-    // Both document store and index should be recovered from checksum mismatch.
+    // All derived files should be rebuilt.
     auto fake_clock = std::make_unique<FakeClock>();
     fake_clock->SetTimerElapsedMilliseconds(10);
     TestIcingSearchEngine icing(GetDefaultIcingOptions(),
@@ -5454,10 +5557,14 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .embedding_index_restoration_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 
   {
-    // No recovery should be needed.
+    // Initialize again. No recovery should be needed.
     auto fake_clock = std::make_unique<FakeClock>();
     fake_clock->SetTimerElapsedMilliseconds(10);
     TestIcingSearchEngine icing(GetDefaultIcingOptions(),
@@ -5508,6 +5615,10 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .embedding_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+
+    // PersistToDisk is not needed.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::UNKNOWN));
   }
 }
 
@@ -5640,6 +5751,10 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .embedding_index_restoration_cause(),
                 Eq(InitializeStatsProto::OPTIMIZE_OUT_OF_SYNC));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 
   {
@@ -5694,6 +5809,10 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .embedding_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+
+    // PersistToDisk is not needed.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::UNKNOWN));
   }
 }
 
@@ -5742,6 +5861,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(10));
@@ -5760,6 +5882,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .schema_store_recovery_latency_ms(),
               Eq(0));
+
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -5805,6 +5931,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(10));
@@ -5823,6 +5952,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .schema_store_recovery_latency_ms(),
               Eq(0));
+
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -5908,6 +6041,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(10));
@@ -5926,6 +6062,103 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .schema_store_recovery_latency_ms(),
               Eq(0));
+
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       InitializeShouldLogRecoveryCauseEmbeddingIndexIOError) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject")
+          .AddVectorProperty(
+              "embedding",
+              CreateVector("my_model_v1", {0.1, 0.2, 0.3, 0.4, 0.5}),
+              CreateVector("my_model_v1", {1, 2, 3, 4, 5}),
+              CreateVector("my_model_v1", {0.6, 0.7, 0.8, 0.9, -1}))
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {
+    // Initialize and put documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  }
+
+  std::string embedding_index_metadata_file =
+      absl_ports::StrCat(GetEmbeddingIndexDir(), "/metadata");
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, OpenForWrite(_)).WillRepeatedly(DoDefault());
+  // This fails EmbeddingIndex::Create() once.
+  EXPECT_CALL(*mock_filesystem, OpenForWrite(Eq(embedding_index_metadata_file)))
+      .WillOnce(Return(-1))
+      .WillRepeatedly(DoDefault());
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
+      Eq(10));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .document_store_recovery_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().document_store_data_status(),
+      Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().schema_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .schema_store_recovery_latency_ms(),
+              Eq(0));
+
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -5983,6 +6216,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .qualified_id_join_index_restoration_cause(),
               Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(0));
@@ -5992,6 +6228,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(initialize_result_proto.initialize_stats()
                   .schema_store_recovery_latency_ms(),
               Eq(0));
+
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -6044,8 +6284,15 @@ TEST_F(IcingSearchEngineInitializationTest,
                     .qualified_id_join_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
+
+    // needs_persist_type should be set to RECOVERY_PROOF.
+    EXPECT_THAT(initialize_result_proto.needs_persist_type(),
+                Eq(PersistType::RECOVERY_PROOF));
   }
 }
 
@@ -6366,7 +6613,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
-        Index::Create(options, filesystem(), icing_filesystem()));
+        Index::Create(options, filesystem(), icing_filesystem(),
+                      feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
@@ -6382,7 +6630,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<EmbeddingIndex> embedding_index,
         EmbeddingIndex::Create(filesystem(), GetEmbeddingIndexDir(),
-                               &fake_clock, feature_flags_.get()));
+                               &fake_clock, feature_flags_.get(),
+                               /*num_shards=*/32));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<TermIndexingHandler> term_indexing_handler,
@@ -6496,6 +6745,10 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
   EXPECT_THAT(
       initialize_result.initialize_stats().embedding_index_restoration_cause(),
       Eq(expected_recovery_cause));
+
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
 
   // Manually check version file
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -7065,6 +7318,146 @@ INSTANTIATE_TEST_SUITE_P(
                     std::vector<bool>{true, true, true, true},
                     std::vector<bool>{false, false, false, false}));
 
+class IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<std::vector<uint32_t>> {};
+
+TEST_P(IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest,
+       ChangeEmbeddingIndexNumShardsTest) {
+  constexpr float eps = 0.0001f;
+  std::vector<uint32_t> num_shards = GetParam();
+
+  // Create icing and add 128 documents in different schemas, so that the
+  // embeddings will be stored in different shards.
+  SchemaBuilder schema = SchemaBuilder();
+  std::vector<DocumentProto> documents;
+  documents.reserve(128);
+  for (int i = 0; i < 128; ++i) {
+    schema.AddType(
+        SchemaTypeConfigBuilder()
+            .SetType("Type" + std::to_string(i))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("embeddingUnquantized")
+                    .SetDataTypeVector(
+                        EMBEDDING_INDEXING_LINEAR_SEARCH,
+                        EmbeddingIndexingConfig::QuantizationType::NONE)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("embeddingQuantized")
+                    .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                       EmbeddingIndexingConfig::
+                                           QuantizationType::QUANTIZE_8_BIT)
+                    .SetCardinality(CARDINALITY_OPTIONAL)));
+    PropertyProto::VectorProto vector =
+        CreateVector("my_model", {0., 0., (float)i});
+    documents.push_back(DocumentBuilder()
+                            .SetKey("icing", "uri" + std::to_string(i))
+                            .SetSchema("Type" + std::to_string(i))
+                            .SetCreationTimestampMs(1)
+                            .AddVectorProperty("embeddingQuantized", vector)
+                            .AddVectorProperty("embeddingUnquantized", vector)
+                            .Build());
+  }
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(true);
+    options.set_enable_embedding_quantization(true);
+    options.set_embedding_index_num_shards(num_shards[0]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema.Build()).status(), ProtoIsOk());
+    for (const auto& document : documents) {
+      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    }
+  }
+
+  // Create icing multiple times with different num_shards.
+  for (int i = 1; i < num_shards.size(); ++i) {
+    bool num_shards_changed = num_shards[i] != num_shards[i - 1];
+
+    // Ensure that the embedding index is rebuilt if num_shards is changed.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/embedding_index_dir")))
+        .Times(num_shards_changed ? 1 : 0);
+
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_embedding_index(true);
+    options.set_enable_embedding_quantization(true);
+    options.set_embedding_index_num_shards(num_shards[i]);
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Ensure that the embedding index is rebuilt if num_shards is changed.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(num_shards_changed ? InitializeStatsProto::IO_ERROR
+                                      : InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Write an embedding query that always matches all the documents.
+    SearchSpecProto search_spec;
+    search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+    *search_spec.add_embedding_query_vectors() =
+        CreateVector("my_model", {1, 1, 1});
+    search_spec.set_embedding_query_metric_type(
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+    ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+    scoring_spec.set_rank_by(
+        ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+    // Set the advanced scoring expression to a constant so that the documents
+    // will be returned according to their order they were added.
+    scoring_spec.set_advanced_scoring_expression("0");
+    // Set the additional advanced scoring expression to check the embedding
+    // scores.
+    // Each embedding in document[i] should have a score of i, and every
+    // document has two embeddings, one quantized and one unquantized. So
+    // document[i] should have a total score of i * 2.
+    scoring_spec.add_additional_advanced_scoring_expressions(
+        "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+    ResultSpecProto result_spec;
+    result_spec.set_num_per_page(10000);
+    SearchResultProto results =
+        icing.Search(search_spec, scoring_spec, result_spec);
+    ASSERT_THAT(results.status(), ProtoIsOk());
+    ASSERT_THAT(results.results(), SizeIs(128));
+    for (int i = 0; i < 128; ++i) {
+      EXPECT_THAT(results.results(127 - i).document(),
+                  EqualsProto(documents[i]));
+      EXPECT_NEAR(results.results(127 - i).additional_scores(0), i * 2.0f, eps);
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest,
+    IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest,
+    testing::Values(std::vector<uint32_t>{1, 32, 1, 32, 32, 32, 1, 1, 32},
+                    std::vector<uint32_t>{32, 1, 32, 1, 1, 1, 32, 32, 1},
+                    std::vector<uint32_t>{1, 2, 4, 8, 16, 32, 1, 1, 32},
+                    std::vector<uint32_t>{32, 16, 8, 4, 2, 1, 32, 32, 1},
+                    std::vector<uint32_t>{1, 1, 1, 1},
+                    std::vector<uint32_t>{32, 32, 32, 32}));
+
 class IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest
     : public IcingSearchEngineInitializationTest,
       public ::testing::WithParamInterface<std::vector<bool>> {};
@@ -7136,6 +7529,9 @@ TEST_P(IcingSearchEngineInitializationChangeEnableScorablePropertiesFlagTest,
         initialize_result.initialize_stats().document_store_recovery_cause(),
         Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
                         : InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.needs_persist_type(),
+        Eq(flag_changed ? PersistType::RECOVERY_PROOF : PersistType::UNKNOWN));
 
     // Schema store and all indices should be unaffected.
     EXPECT_THAT(
@@ -7582,6 +7978,9 @@ TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
                     .qualified_id_join_index_restoration_cause(),
                 Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
                                 : InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.needs_persist_type(),
+        Eq(flag_changed ? PersistType::RECOVERY_PROOF : PersistType::UNKNOWN));
 
     // Schema store, document store and all other indices should be unaffected.
     EXPECT_THAT(
@@ -7725,6 +8124,10 @@ TEST_P(
     EXPECT_THAT(initialize_result.initialize_stats()
                     .embedding_index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+
+    // PersistToDisk is not needed.
+    EXPECT_THAT(initialize_result.needs_persist_type(),
+                Eq(PersistType::UNKNOWN));
 
     // Verify that the persisted document can be retrieved.
     GetResultProto expected_get_result_proto;
