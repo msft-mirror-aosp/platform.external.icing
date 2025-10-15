@@ -39,6 +39,7 @@
 #include "icing/index/embed/posting-list-embedding-hit-serializer.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
@@ -163,10 +164,16 @@ class EmbeddingIndex : public PersistentStorage {
         EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
         uint32_t schema_name_hash);
 
+    const DocHitInfoIterator::CallStats::EmbeddingStats& GetEmbeddingStats()
+        const {
+      return embedding_stats_;
+    }
+
    private:
     const EmbeddingIndex& embedding_index_;
     std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor_;
     const uint32_t posting_list_key_hash_;
+    DocHitInfoIterator::CallStats::EmbeddingStats embedding_stats_;
   };
 
   // Returns a EmbeddingHitAccessor for all embedding hits that match
