@@ -957,7 +957,11 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true),
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true,
+                        /*enable_schema_type_id_optimization=*/true
+                      ),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -970,7 +974,10 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
-                        /*enable_proto_log_new_header_format=*/true)));
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true,
+                        /*enable_schema_type_id_optimization=*/true)));
 
 }  // namespace
 

@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -272,9 +273,34 @@ class IcingConnectionImpl
       // is called more than one time.
       IcingSearchEngineOptions options;
       DESERIALIZE_OR_RETURN(icing_search_engine_options_proto, options);
+
+      // Need to sanitize provided base directory. Valid filenames should only
+      // contain letters and numbers. Reject any provided base directories that
+      // do not meet this criteria.
+      const std::regex pattern("^[a-zA-Z0-9]+$");
+      if (options.base_dir().empty() || !std::regex_match(options.base_dir(), pattern)) {
+        // return failed init proto to called
+        ICING_LOG(ERROR) << "Invalid base_dir " << options.base_dir();
+
+        InitializeResultProto result;
+        StatusProto* result_status = result.mutable_status();
+        result_status->set_code(StatusProto::INTERNAL);
+        result_status->set_message("Invalid base_dir");
+        SERIALIZE_AND_RETURN_ASTATUS(result, initialize_result_proto);
+      }
+
+      if (gVmPayloadLazy.AVmPayload_getEncryptedStoragePath() == nullptr) {
+        ICING_LOG(ERROR) << "Invalid encrypted storage path";
+
+        InitializeResultProto result;
+        StatusProto* result_status = result.mutable_status();
+        result_status->set_code(StatusProto::INTERNAL);
+        result_status->set_message("Invalid encrypted storage path");
+        SERIALIZE_AND_RETURN_ASTATUS(result, initialize_result_proto);
+      }
+
       options.set_base_dir(std::string(gVmPayloadLazy.AVmPayload_getEncryptedStoragePath()) +
-                           "/" + std::to_string(user_id_) + "/" +
-                           options.base_dir());
+                           "/" + std::to_string(user_id_) + "/" + options.base_dir());
       icing_ = std::make_unique<IcingSearchEngine>(options);
     }
 
@@ -555,6 +581,28 @@ class IcingConnectionImpl
 
     BlobProto commit_blob_result = icing_->CommitBlob(blob_handle);
     SERIALIZE_AND_RETURN_ASTATUS(commit_blob_result, blob_proto);
+  }
+
+  ScopedAStatus getAllBlobInfos(
+      std::optional<std::vector<uint8_t>>* blob_proto) {
+    CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
+    BlobProto get_all_blob_infos_result = icing_->GetAllBlobInfos();
+    SERIALIZE_AND_RETURN_ASTATUS(get_all_blob_infos_result, blob_proto);
+  }
+
+  ScopedAStatus putBlobInfos(
+      const std::vector<uint8_t>& blob_info_protos_proto,
+      std::optional<std::vector<uint8_t>>* result_blob_proto) {
+    CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
+    BlobProto blob_info_protos;
+    DESERIALIZE_OR_RETURN(blob_info_protos_proto, blob_info_protos);
+
+    BlobProto result = icing_->PutBlobInfos(blob_info_protos);
+    SERIALIZE_AND_RETURN_ASTATUS(result, result_blob_proto);
   }
 
   ScopedAStatus deleteDoc(

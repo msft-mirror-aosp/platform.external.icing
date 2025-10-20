@@ -123,10 +123,14 @@ SearchSpecProto GenerateRandomSearchSpecProto(
           query);
     }
   }
-  // %50 chance of getting a type filter.
-  if (GetRandomBoolean(random)) {
-    search_spec.add_schema_type_filters(
-        document_generator->GetType().schema_type());
+  // %50 chance of getting one type filter
+  // %25 chance of getting two type filters
+  // %25 chance of getting no type filters
+  for (int i = 0; i < 2; ++i) {
+    if (GetRandomBoolean(random)) {
+      search_spec.add_schema_type_filters(
+          document_generator->GetType().schema_type());
+    }
   }
   search_spec.set_query(query);
   return search_spec;
@@ -568,12 +572,16 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_document_store_namespace_id_fingerprint(
       GetRandomBoolean(&random_));
   icing_options.set_enable_embedding_index(true);
-  icing_options.set_enable_embedding_quantization(GetRandomBoolean(&random_));
+  icing_options.set_enable_embedding_quantization(true);
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
   icing_options.set_enable_eigen_embedding_scoring(GetRandomBoolean(&random_));
   icing_options.set_enable_passing_filter_to_children(
       GetRandomBoolean(&random_));
+  icing_options.set_enable_embedding_iterator_v2(GetRandomBoolean(&random_));
+  // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
+  uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
+  icing_options.set_embedding_index_num_shards(num_shards);
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

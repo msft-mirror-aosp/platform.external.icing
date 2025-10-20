@@ -515,7 +515,10 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_smaller_decompression_buffer_size(),
                      options_.enable_eigen_embedding_scoring(),
                      options_.enable_passing_filter_to_children(),
-                     options_.enable_proto_log_new_header_format()),
+                     options_.enable_proto_log_new_header_format(),
+                     options_.enable_embedding_iterator_v2(),
+                     options_.enable_reusable_decompression_buffer(),
+                     options_.enable_schema_type_id_optimization()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1102,10 +1105,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
 
   ICING_ASSIGN_OR_RETURN(
       auto blob_store_or,
-      BlobStore::Create(
-          filesystem_.get(), blob_dir, clock_.get(),
-          orphan_blob_time_to_live_ms, blob_store_compression_level,
-          blob_store_compression_mem_level, options_.manage_blob_files()));
+      BlobStore::Create(filesystem_.get(), blob_dir, clock_.get(),
+                        orphan_blob_time_to_live_ms,
+                        blob_store_compression_level,
+                        blob_store_compression_mem_level,
+                        options_.manage_blob_files(), &feature_flags_));
   blob_store_ = std::make_unique<BlobStore>(std::move(blob_store_or));
   return libtextclassifier3::Status::OK;
 }
@@ -1272,7 +1276,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeEmbeddingIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause embedding_index_recovery_cause;
   auto embedding_index_or = EmbeddingIndex::Create(
-      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+      filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_,
+      options_.embedding_index_num_shards());
   if (!embedding_index_or.ok()) {
     auto discard_status = EmbeddingIndex::Discard(*filesystem_, embedding_dir);
     if (!discard_status.ok()) {
@@ -1285,7 +1290,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
 
     // Try recreating it from scratch and re-indexing everything.
     embedding_index_or = EmbeddingIndex::Create(
-        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_);
+        filesystem_.get(), embedding_dir, clock_.get(), &feature_flags_,
+        options_.embedding_index_num_shards());
     if (!embedding_index_or.ok()) {
       initialize_stats->set_failure_stage(
           InitializeStatsProto::FailureStage::EMBEDDING_INDEX_INSTANTIATION);
@@ -1664,12 +1670,11 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
     PersistToDiskStatsProto* persist_stats =
         batch_put_result_proto.mutable_persist_to_disk_result_proto()
             ->mutable_persist_stats();
-    auto status = PersistToDiskLocked(put_document_request.persist_type(),
-                                        persist_stats);
+    auto status =
+        PersistToDiskLocked(put_document_request.persist_type(), persist_stats);
     TransformStatus(
-        status,
-        batch_put_result_proto.mutable_persist_to_disk_result_proto()
-            ->mutable_status());
+        status, batch_put_result_proto.mutable_persist_to_disk_result_proto()
+                    ->mutable_status());
     persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
   }
 
@@ -1798,8 +1803,8 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
 
 // GetLocked to be called when mutex_ is already held.
 GetResultProto IcingSearchEngine::GetLocked(
-  const std::string_view name_space, const std::string_view uri,
-  const GetResultSpecProto& result_spec) {
+    const std::string_view name_space, const std::string_view uri,
+    const GetResultSpecProto& result_spec) {
   GetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
@@ -1861,7 +1866,7 @@ BatchGetResultProto IcingSearchEngine::BatchGet(
     // Handle not initialized case for all documents
     for (const std::string& id : get_result_spec.ids()) {
       GetResultProto* result_proto =
-        batch_get_result_proto.mutable_get_result_protos()->Add();
+          batch_get_result_proto.mutable_get_result_protos()->Add();
       result_proto->set_uri(id);
       result_proto->mutable_status()->set_code(
           StatusProto::FAILED_PRECONDITION);
@@ -2490,7 +2495,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     // optimize blob store
     libtextclassifier3::StatusOr<std::vector<std::string>>
         blob_file_names_to_remove_or = blob_store_->Optimize(
-            optimize_result_or.ValueOrDie().dead_blob_handles);
+            optimize_result_or.ValueOrDie().dead_blob_handles, &feature_flags_);
     if (!blob_file_names_to_remove_or.ok()) {
       TransformStatus(blob_file_names_to_remove_or.status(), result_status);
       return result_proto;
@@ -2633,8 +2638,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   PersistToDiskStatsProto* after_optimize_persist_stats =
       optimize_stats->mutable_after_optimize_persist_stats();
   persist_timer = clock_->GetNewTimer();
-  status =
-      PersistToDiskLocked(PersistType::FULL, after_optimize_persist_stats);
+  status = PersistToDiskLocked(PersistType::FULL, after_optimize_persist_stats);
   after_optimize_persist_stats->set_latency_ms(
       persist_timer->GetElapsedMilliseconds());
   if (!status.ok()) {
@@ -2685,6 +2689,12 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
       time_since_last_optimize_ms =
           current_time_ms - optimize_status_or.ValueOrDie()
                                 ->last_successful_optimize_run_time_ms();
+    }
+    if (time_since_last_optimize_ms < 0) {
+      ICING_LOG(WARNING) << "Time since last optimize is negative: "
+                         << time_since_last_optimize_ms
+                         << ". Setting no_previous_optimize_info to true.";
+      result_proto.set_no_previous_optimize_info(true);
     }
     result_proto.set_time_since_last_optimize_ms(time_since_last_optimize_ms);
   }
@@ -3488,7 +3498,7 @@ BlobProto IcingSearchEngine::CommitBlob(
   return blob_store_->CommitBlob(blob_handle);
 }
 
-BlobProto IcingSearchEngine::GetAllBlobInfo() {
+BlobProto IcingSearchEngine::GetAllBlobInfos() {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);
@@ -3505,10 +3515,10 @@ BlobProto IcingSearchEngine::GetAllBlobInfo() {
     ICING_LOG(ERROR) << status->message();
     return blob_proto;
   }
-  return blob_store_->GetAllBlobInfo();
+  return blob_store_->GetAllBlobInfos();
 }
 
-BlobProto IcingSearchEngine::PutBlobInfos(BlobProto&& blob_info_protos) {
+BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
   BlobProto result_blob_proto;
   StatusProto* status = result_blob_proto.mutable_status();
   absl_ports::unique_lock l(&mutex_);

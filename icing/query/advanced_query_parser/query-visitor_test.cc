@@ -201,18 +201,36 @@ enum class QueryType {
 struct QueryVisitorTestParams {
   QueryType query_type;
   bool get_embedding_match_info;
+  bool enable_embedding_iterator_v2;
 
   explicit QueryVisitorTestParams(QueryType query_type,
-                                  bool get_embedding_match_info)
+                                  bool get_embedding_match_info,
+                                  bool enable_embedding_iterator_v2)
       : query_type(query_type),
-        get_embedding_match_info(get_embedding_match_info) {}
+        get_embedding_match_info(get_embedding_match_info),
+        enable_embedding_iterator_v2(enable_embedding_iterator_v2) {}
 };
 
 class QueryVisitorTest
     : public ::testing::TestWithParam<QueryVisitorTestParams> {
  protected:
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        FeatureFlags(/*enable_circular_schema_definitions=*/true,
+                     /*enable_scorable_properties=*/true,
+                     /*enable_embedding_quantization=*/true,
+                     /*enable_repeated_field_joins=*/true,
+                     /*enable_embedding_backup_generation=*/true,
+                     /*enable_schema_database=*/true,
+                     /*release_backup_schema_file_if_overlay_present=*/true,
+                     /*enable_strict_page_byte_size_limit=*/true,
+                     /*enable_smaller_decompression_buffer_size=*/true,
+                     /*enable_eigen_embedding_scoring=*/true,
+                     /*enable_passing_filter_to_children=*/true,
+                     /*enable_proto_log_new_header_format=*/true,
+                     GetParam().enable_embedding_iterator_v2,
+                     /*enable_reusable_decompression_buffer=*/true,
+                     /*enable_schema_type_id_optimization=*/true));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
@@ -272,7 +290,8 @@ class QueryVisitorTest
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
-                               feature_flags_.get()));
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     NormalizerOptions normalizer_options(
         /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
@@ -4043,9 +4062,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleLowerBound) {
   PropertyProto::VectorProto vector1 =
       CreateVector("my_model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query that has a semantic score of 1 with vector0 and
@@ -4170,9 +4191,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSimpleUpperBound) {
   PropertyProto::VectorProto vector1 =
       CreateVector("my_model", {-0.1, -0.2, -0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query that has a semantic score of 1 with vector0 and
@@ -4293,7 +4316,8 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMetricOverride) {
   // Index a embedding vector.
   PropertyProto::VectorProto vector = CreateVector("my_model", {0.1, 0.2, 0.3});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId0), vector, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query that has:
@@ -4427,37 +4451,47 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionRepeatedProperty) {
   // Section 0
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model2", {1, -2, 3, -4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model2", {1, -2, 3, -4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, -4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   // Section 1
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, 2, 4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, 2, 4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
 
   // Index embedding vectors for document 1.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {1, -2, 6}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, 6}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model2", {1, -2, 3, 4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model2", {1, -2, 3, 4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, -6}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, -6}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model2", {-1, -2, -3, -4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model2", {-1, -2, -3, -4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
 
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
@@ -4648,20 +4682,25 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMultipleQueries) {
   // Index 3 embedding vectors for document 0.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId2, kDocumentId0),
-      CreateVector("my_model2", {-1, 2, 3, -4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model2", {-1, 2, 3, -4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   // Index 2 embedding vectors for document 1.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId1),
-      CreateVector("my_model2", {1, -2, 3, -4}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model2", {1, -2, 3, -4}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create two embedding queries.
@@ -4851,14 +4890,17 @@ TEST_P(QueryVisitorTest,
   // Index 3 embedding vectors for document 0.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   // Index 2 embedding vectors for document 1.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create two embedding queries.
@@ -5015,10 +5057,12 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
   // Index embedding vectors
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query with semantic scores:
@@ -5168,16 +5212,20 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionSectionRestriction) {
   // Add embedding vectors into different sections for the two documents.
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId0),
-      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId0),
-      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId0, kDocumentId1),
-      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionId1, kDocumentId1),
-      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE));
+      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Create an embedding query with semantic scores:
@@ -5246,9 +5294,11 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionDeletedDocument) {
   PropertyProto::VectorProto vector1 =
       CreateVector("my_model", {0.4, 0.5, 0.6});
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
-      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE));
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
 
   // Delete kDocumentId0
@@ -5492,10 +5542,31 @@ TEST_P(QueryVisitorTest, MatchScoreExpressionFunctionWithEvaluationErrors) {
 
 INSTANTIATE_TEST_SUITE_P(
     QueryVisitorTest, QueryVisitorTest,
-    testing::Values(QueryVisitorTestParams(QueryType::kSearch, true),
-                    QueryVisitorTestParams(QueryType::kSearch, false),
-                    QueryVisitorTestParams(QueryType::kPlain, true),
-                    QueryVisitorTestParams(QueryType::kPlain, false)));
+    testing::Values(
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false)));
 
 }  // namespace
 
