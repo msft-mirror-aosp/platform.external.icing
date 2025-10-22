@@ -110,6 +110,15 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
         iterator_call_stats.num_leaf_advance_calls_main_index);
     search_stats->set_num_fetched_hits_integer_index(
         iterator_call_stats.num_leaf_advance_calls_integer_index);
+    search_stats->set_num_unquantized_embeddings_scored(
+        iterator_call_stats.embedding_stats.num_unquantized_embeddings_scored);
+    search_stats->set_num_quantized_embeddings_scored(
+        iterator_call_stats.embedding_stats.num_quantized_embeddings_scored);
+    search_stats->set_num_embedding_shards_read(static_cast<int32_t>(
+        iterator_call_stats.embedding_stats.unquantized_shards_read.size() +
+        iterator_call_stats.embedding_stats.quantized_shards_read.size()));
+    search_stats->set_num_embedding_bytes_read(
+        iterator_call_stats.embedding_stats.num_embedding_bytes_read);
   }
 
   return scored_document_hits;

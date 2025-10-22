@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 import "icing/proto/term.proto";
 
@@ -455,7 +456,7 @@ message SetSchemaRequestProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 17
+// Next tag: 18
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -533,6 +534,10 @@ message SetSchemaResultProto {
   // Whether the qualified id join index was restored as a result of the set
   // schema call.
   optional bool has_qualified_id_join_index_restored = 16;
+
+  // Persist type needed after setting the new schema. If UNKNOWN, then
+  // everything is clean and no need to call persistToDisk.
+  optional PersistType.Code needs_persist_type = 17;
 }
 
 // Stats and latencies for IcingSearchEngine::SetSchema.
