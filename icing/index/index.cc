@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
@@ -148,9 +149,11 @@ std::vector<TermMetadata> MergeAndRankTermMetadatas(
 
 libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
     const Options& options, const Filesystem* filesystem,
-    const IcingFilesystem* icing_filesystem) {
+    const IcingFilesystem* icing_filesystem,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(icing_filesystem);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   ICING_ASSIGN_OR_RETURN(LiteIndex::Options lite_index_options,
                          CreateLiteIndexOptions(options));
@@ -175,9 +178,9 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,
                         icing_filesystem));
-  return std::unique_ptr<Index>(new Index(options, std::move(term_id_codec),
-                                          std::move(lite_index),
-                                          std::move(main_index), filesystem));
+  return std::unique_ptr<Index>(
+      new Index(options, std::move(term_id_codec), std::move(lite_index),
+                std::move(main_index), filesystem, feature_flags));
 }
 
 /* static */ libtextclassifier3::StatusOr<int> Index::ReadFlashIndexMagic(

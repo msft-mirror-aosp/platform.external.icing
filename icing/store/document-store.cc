@@ -2044,8 +2044,10 @@ DocumentStorageInfoProto DocumentStore::GetStorageInfo() const {
   return CalculateDocumentStatusCounts(std::move(storage_info));
 }
 
-libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
-    const SchemaStore* schema_store) {
+libtextclassifier3::StatusOr<DocumentStore::UpdateSchemaStoreResult>
+DocumentStore::UpdateSchemaStore(const SchemaStore* schema_store) {
+  UpdateSchemaStoreResult update_result;
+
   // Update all references to the SchemaStore
   schema_store_ = schema_store;
   document_validator_.UpdateSchemaStore(schema_store);
@@ -2066,7 +2068,7 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
     }
 
     // Guaranteed to have a document now.
-    DocumentProto document = document_or.ValueOrDie();
+    DocumentProto document = std::move(document_or).ValueOrDie();
 
     // Revalidate that this document is still compatible
     if (document_validator_.Validate(document).ok()) {
@@ -2077,7 +2079,10 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
           typename FileBackedVector<DocumentFilterData>::MutableView
               doc_filter_data_view,
           filter_cache_->GetMutable(document_id));
-      doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
+      if (doc_filter_data_view.Get().schema_type_id() != schema_type_id) {
+        doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
+        update_result.derived_files_changed = true;
+      }
     } else {
       // Document is no longer valid with the new SchemaStore. Mark as
       // deleted
@@ -2087,15 +2092,21 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
         // Real error, pass up
         return delete_status;
       }
+
+      ++update_result.deleted_document_count;
+      update_result.derived_files_changed = true;
     }
   }
 
-  return libtextclassifier3::Status::OK;
+  return update_result;
 }
 
-libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
+libtextclassifier3::StatusOr<DocumentStore::UpdateSchemaStoreResult>
+DocumentStore::OptimizedUpdateSchemaStore(
     const SchemaStore* schema_store,
     const SchemaStore::SetSchemaResult& set_schema_result) {
+  UpdateSchemaStoreResult update_result;
+
   if (!set_schema_result.success) {
     // No new schema was set, no work to be done
     return libtextclassifier3::Status::OK;
@@ -2106,7 +2117,6 @@ libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
-  int deleted_document_count = 0;
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
@@ -2144,7 +2154,12 @@ libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
             typename FileBackedVector<DocumentFilterData>::MutableView
                 doc_filter_data_view,
             filter_cache_->GetMutable(document_id));
+
+        // Since the old schema type id is present in
+        // old_schema_type_ids_changed, we know that (new) schema_type_id is
+        // different, so update it directly without checking.
         doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
+        update_result.derived_files_changed = true;
       }
       if (revalidate_document) {
         delete_document = !document_validator_.Validate(document).ok();
@@ -2155,7 +2170,8 @@ libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
       // Document is no longer valid with the new SchemaStore. Mark as deleted
       auto delete_status = Delete(document_id, current_time_ms);
       if (delete_status.ok()) {
-        ++deleted_document_count;
+        ++update_result.deleted_document_count;
+        update_result.derived_files_changed = true;
       } else if (!absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
@@ -2163,7 +2179,7 @@ libtextclassifier3::StatusOr<int> DocumentStore::OptimizedUpdateSchemaStore(
     }
   }
 
-  return deleted_document_count;
+  return update_result;
 }
 
 libtextclassifier3::Status DocumentStore::RegenerateScorablePropertyCache(
@@ -2201,11 +2217,6 @@ libtextclassifier3::Status DocumentStore::RegenerateScorablePropertyCache(
         scorable_property_cache_index);
   }
 
-  return libtextclassifier3::Status::OK;
-}
-
-// TODO(b/121227117): Implement Optimize()
-libtextclassifier3::Status DocumentStore::Optimize() {
   return libtextclassifier3::Status::OK;
 }
 
@@ -2258,17 +2269,33 @@ DocumentStore::OptimizeInto(
 
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < document_cnt; document_id++) {
-    auto document_or = Get(document_id, /*clear_internal_fields=*/false);
-    if (absl_ports::IsNotFound(document_or.status())) {
+    libtextclassifier3::StatusOr<DocumentProto> document_or;
+    if (feature_flags_.enable_optimize_improvements()) {
       if (IsDeleted(document_id)) {
         ++num_deleted_documents;
+        continue;
       } else if (!GetNonExpiredDocumentFilterData(document_id,
                                                   current_time_ms)) {
         ++num_expired_documents;
+        continue;
       }
-      continue;
-    } else if (!document_or.ok()) {
-      // Real error, pass up
+      // The only expected errors for Get are for deleted
+      // or expired documents.
+      document_or = Get(document_id, /*clear_internal_fields=*/false);
+    } else {
+      document_or = Get(document_id, /*clear_internal_fields=*/false);
+      if (absl_ports::IsNotFound(document_or.status())) {
+        if (IsDeleted(document_id)) {
+          ++num_deleted_documents;
+        } else if (!GetNonExpiredDocumentFilterData(document_id,
+                                                    current_time_ms)) {
+          ++num_expired_documents;
+        }
+        continue;
+      }
+    }
+    if (!document_or.ok()) {
+      // Real error, pass up.
       return absl_ports::Annotate(
           document_or.status(),
           IcingStringUtil::StringPrintf(

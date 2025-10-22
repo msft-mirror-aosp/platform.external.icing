@@ -722,6 +722,10 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
                                     /*v1=*/query.values().data(),
                                     /*v2=*/vector);
     }
+    ++embedding_stats_.num_unquantized_embeddings_scored;
+    embedding_stats_.unquantized_shards_read.insert(shard_id);
+    embedding_stats_.num_embedding_bytes_read +=
+        static_cast<int64_t>(sizeof(float)) * dimension;
   } else {
     ICING_ASSIGN_OR_RETURN(
         const char* data,
@@ -738,6 +742,11 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
                                     /*v1=*/query.values().data(),
                                     /*v2=*/quantized_vector, quantizer);
     }
+    ++embedding_stats_.num_quantized_embeddings_scored;
+    embedding_stats_.quantized_shards_read.insert(shard_id);
+    embedding_stats_.num_embedding_bytes_read +=
+        static_cast<int64_t>(sizeof(Quantizer)) +
+        static_cast<int64_t>(sizeof(uint8_t)) * dimension;
   }
   return semantic_score;
 }

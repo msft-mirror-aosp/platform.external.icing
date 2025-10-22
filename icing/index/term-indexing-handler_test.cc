@@ -254,7 +254,8 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document =
       DocumentBuilder()
@@ -321,7 +322,8 @@ TEST_F(TermIndexingHandlerTest,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document =
       DocumentBuilder()
@@ -387,7 +389,8 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document0 =
       DocumentBuilder()
@@ -541,7 +544,8 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document0 =
       DocumentBuilder()
@@ -633,7 +637,8 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
-      index, Index::Create(options, &filesystem_, &icing_filesystem_));
+      index, Index::Create(options, &filesystem_, &icing_filesystem_,
+                           feature_flags_.get()));
 
   // Verify that the HitBuffer has been sorted after initializing with
   // sort_at_indexing enabled.

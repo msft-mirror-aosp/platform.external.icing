@@ -21,6 +21,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/proto/status.pb.h"
 #include "icing/tokenization/language-segmenter.h"
 
 namespace icing {
@@ -53,13 +54,19 @@ struct SegmenterOptions {
   bool enable_icu_segmenter;
 };
 
-// Creates a language segmenter with the given locale.
+// Creates a language segmenter based on the provided options.
+//
+// @param options: The options for creating the language segmenter.
+// @param icu_segmenter_creation_status: Optional output parameter that will be
+//        populated with the status of IcuLanguageSegmenter if it's creation is
+//        attempted.
 //
 // Returns:
 //   A LanguageSegmenter on success
 //   INVALID_ARGUMENT_ERROR if locale string is invalid
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(
-    SegmenterOptions options);
+    SegmenterOptions options,
+    StatusProto* icu_segmenter_creation_status = nullptr);
 
 }  // namespace language_segmenter_factory
 
