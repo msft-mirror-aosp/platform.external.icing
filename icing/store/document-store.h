@@ -523,6 +523,10 @@ class DocumentStore {
   // that field will be set to -1.
   DocumentStorageInfoProto GetStorageInfo() const;
 
+  struct UpdateSchemaStoreResult {
+    int deleted_document_count = 0;
+    bool derived_files_changed = false;
+  };
   // Update any derived data off of the SchemaStore with the new SchemaStore.
   // This may include pointers, SchemaTypeIds, etc.
   //
@@ -536,18 +540,24 @@ class DocumentStore {
   // OptimizedUpdateSchemaStore.
   //
   // Returns;
-  //   OK on success
+  //   UpdateSchemaStoreResult on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status UpdateSchemaStore(const SchemaStore* schema_store);
+  libtextclassifier3::StatusOr<UpdateSchemaStoreResult> UpdateSchemaStore(
+      const SchemaStore* schema_store);
 
-  // Performs the same funtionality as UpdateSchemaStore, but this can be more
+  // Performs the same functionality as UpdateSchemaStore, but this can be more
   // optimized in terms of less disk reads and less work if we know exactly
   // what's changed between the old and new SchemaStore.
   //
+  // NOTE: This function may delete documents. A document may be invalidated by
+  // the new SchemaStore, such as failing validation or having its schema type
+  // deleted from the schema.
+  //
   // Returns;
-  //   number of documents deleted on success
+  //   UpdateSchemaStoreResult on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<int> OptimizedUpdateSchemaStore(
+  libtextclassifier3::StatusOr<UpdateSchemaStoreResult>
+  OptimizedUpdateSchemaStore(
       const SchemaStore* schema_store,
       const SchemaStore::SetSchemaResult& set_schema_result);
 

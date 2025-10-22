@@ -417,6 +417,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+    expected_set_schema_result.set_needs_persist_type(
+        PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
     EXPECT_THAT(icing.GetSchema().schema().types(0).version(), Eq(1));
@@ -448,6 +450,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_fully_compatible_changed_schema_types()
         ->Add("Email");
+    expected_set_schema_result.set_needs_persist_type(
+        PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
     EXPECT_THAT(icing.GetSchema().schema().types(0).version(), Eq(2));
@@ -678,6 +682,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
   EXPECT_THAT(
       set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
       Eq(1000));
+  EXPECT_THAT(set_schema_result.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));  // Flush is not needed for the first
+                                          // SetSchema.
   EXPECT_THAT(icing.Put(message_document).status(), ProtoIsOk());
 
   // Schema with Email doesn't have Message, so would result incompatible
@@ -691,8 +698,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
       set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
       Eq(1000));
 
-  // Can expand the set of schema types and add an document of a new
-  // schema type
+  // Can expand the set of schema types and add an document of a new schema
+  // type.
   set_schema_result = icing.SetSchema(schema_with_email_and_message);
   EXPECT_THAT(set_schema_result.status(), ProtoStatusIs(StatusProto::OK));
   EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
@@ -758,6 +765,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   EXPECT_THAT(set_schema_result1.set_schema_stats()
                   .schema_store_set_schema_latency_ms(),
               Eq(1000));
+  EXPECT_THAT(set_schema_result1.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));  // Flush is not needed for the first
+                                          // SetSchema.
 
   // Put a person document and an email document.
   DocumentProto person_document = DocumentBuilder()
@@ -778,22 +788,23 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
 
-  // SetSchema again with the schema types reordered. Schema type id will
-  // change. This should succeed and all search features should still work after
-  // schema id changed.
+  // SetSchema again with the schema types reordered.
+  // - If we only reorder the existing types "Person" and "Email", schema store
+  //   will detect the new schema set is identical to the old one and skip the
+  //   entire SetSchema process. This will cause the schema type id not changed.
+  // - Therefore, to create a scenario that changes ids for the existing schema
+  //   types, we must add "newType".
+  //
+  // This should succeed and all search features should still work after schema
+  // id changed.
   SchemaProto schema_two =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")  // schema type id 0
+                       .SetType("newType")  // schema type id 0
                        .AddProperty(PropertyConfigBuilder()
-                                        .SetName("subject")
+                                        .SetName("test")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("sender")
-                                        .SetDataTypeJoinableString(
-                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Person")  // schema type id 1
@@ -806,6 +817,18 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetName("age")
                                         .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")  // schema type id 2
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
 
           .Build();
   SetSchemaResultProto set_schema_result2 = icing.SetSchema(schema_two);
@@ -815,6 +838,10 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   EXPECT_THAT(set_schema_result2.set_schema_stats()
                   .schema_store_set_schema_latency_ms(),
               Eq(1000));
+  // Since the schema types have been changed, derived files were changed. So
+  // we need to do a recovery proof flush.
+  EXPECT_THAT(set_schema_result2.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
   // This will trigger join index restoration for JoinIndex V1 and V2.
   if (options.enable_qualified_id_join_index_v3()) {
     EXPECT_FALSE(set_schema_result2.has_qualified_id_join_index_restored());
@@ -915,6 +942,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto db1_document =
@@ -979,6 +1008,10 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto db2_document =
@@ -1070,6 +1103,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto db1_document =
@@ -1153,6 +1188,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type_2");
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto db2_document =
@@ -1244,6 +1283,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add a schema for db2:
@@ -1271,6 +1312,10 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add documents
@@ -1353,6 +1398,10 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add new document
@@ -1464,6 +1513,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add a schema for db2:
@@ -1491,6 +1542,10 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add documents
@@ -1560,6 +1615,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_deleted_schema_types()->Add("db1/type");
   expected_set_schema_result.set_deleted_document_count(1);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   // Deleting db1_schema results in a schema type id reassignment, which would
   // trigger join index restoration if using join index v1 and v2.
   if (!options.enable_qualified_id_join_index_v3()) {
@@ -1664,6 +1722,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -1732,6 +1792,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search: will get document now.
@@ -1777,6 +1841,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -1841,6 +1907,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search: will still get document.
@@ -2076,6 +2146,10 @@ TEST_F(
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search:
@@ -2160,6 +2234,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -2266,6 +2342,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -2384,6 +2464,8 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -2560,6 +2642,10 @@ TEST_F(
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -2623,6 +2709,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Message");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto person1 =
@@ -2743,6 +2831,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -2904,6 +2996,8 @@ TEST_F(
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Create a document with only subject and timestamp2 property.
@@ -2986,6 +3080,10 @@ TEST_F(
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -3051,6 +3149,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto person = DocumentBuilder()
@@ -3157,6 +3257,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -3205,6 +3309,8 @@ TEST_F(
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Create a document with only subject and timestamp property.
@@ -3293,6 +3399,10 @@ TEST_F(
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -3359,6 +3469,8 @@ TEST_F(
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto person = DocumentBuilder()
@@ -3467,6 +3579,10 @@ TEST_F(
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -3522,6 +3638,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Create two documents - a person document and an email document - both docs
@@ -3588,6 +3706,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
   expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Both documents should be deleted now.
@@ -3666,6 +3788,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   expected_set_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result_proto.mutable_status()->clear_message();
   expected_set_schema_result_proto.set_deleted_document_count(1);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_set_schema_result_proto.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
 
   GetResultProto expected_get_result_proto;
@@ -3742,6 +3867,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {
   expected_result.mutable_status()->set_code(StatusProto::OK);
   expected_result.mutable_status()->clear_message();
   expected_result.set_deleted_document_count(1);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_result.set_needs_persist_type(PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_result));
 
   // "email" document is still there
@@ -3812,6 +3939,8 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add a schema for db2:
@@ -3838,6 +3967,11 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // No need to flush since:
+  // - Schema type id is not changed.
+  // - No document is deleted.
+  // - Only a new schema type is added and indices are not rebuilt.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // GetSchema per database
@@ -3899,6 +4033,8 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   get_schema_result_proto = icing.GetSchema("nonexistent_db");
@@ -4058,7 +4194,6 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCanDetectPreviousSchemaWasLost) {
   // Setting the new, different schema will remove incompatible documents
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(incompatible_schema).status(), ProtoIsOk());
 
   // Can't retrieve by namespace/uri
   GetResultProto expected_get_result_proto;

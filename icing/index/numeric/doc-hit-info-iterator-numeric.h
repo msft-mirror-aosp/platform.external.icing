@@ -70,7 +70,8 @@ class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
                      numeric_index_iter_->GetNumAdvanceCalls(),
                      /*num_leaf_advance_calls_no_index_in=*/0,
                      /*num_blocks_inspected_in=*/
-                     numeric_index_iter_->GetNumBlocksInspected());
+                     numeric_index_iter_->GetNumBlocksInspected(),
+                     /*embedding_stats_in=*/{});
   }
 
   std::string ToString() const override { return "test"; }
