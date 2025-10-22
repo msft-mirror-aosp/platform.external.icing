@@ -960,8 +960,8 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_embedding_iterator_v2=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
-                        /*enable_schema_type_id_optimization=*/true
-                      ),
+                        /*enable_schema_type_id_optimization=*/true,
+                        /*enable_optimize_improvements=*/true),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -977,7 +977,8 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_embedding_iterator_v2=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
-                        /*enable_schema_type_id_optimization=*/true)));
+                        /*enable_schema_type_id_optimization=*/true,
+                        /*enable_optimize_improvements=*/true)));
 
 }  // namespace
 
