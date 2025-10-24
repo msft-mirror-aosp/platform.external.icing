@@ -14,17 +14,24 @@
 
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
-#include <array>
-#include <cstddef>
+#include <algorithm>
 #include <cstdint>
 #include <numeric>
+#include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/lite-index.h"
+#include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
 #include "icing/util/logging.h"
+#include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -109,7 +116,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
   int terms_matched = 0;
   for (LiteIndex::PrefixIterator it = lite_index_->FindTermPrefixes(term_);
        it.IsValid(); it.Advance()) {
-    bool exact_match = strlen(it.GetKey()) == term_len;
+    bool exact_match = it.GetKey().size() == term_len;
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
@@ -145,31 +152,9 @@ void DocHitInfoIteratorTermLitePrefix::SortDocumentIds() {
     // Now indices is a map from sorted index to current index. In other words,
     // the sorted cached_hits_[i] should be the current cached_hits_[indices[i]]
     // for every valid i.
-    std::vector<bool> done(indices.size());
-    // Apply permutation
-    for (int i = 0; i < indices.size(); ++i) {
-      if (done[i]) {
-        continue;
-      }
-      done[i] = true;
-      int curr = i;
-      int next = indices[i];
-      // Since every finite permutation is formed by disjoint cycles, we can
-      // start with the current element, at index i, and swap the element at
-      // this position with whatever element that *should* be here. Then,
-      // continue to swap the original element, at its updated positions, with
-      // the element that should be occupying that position until the original
-      // element has reached *its* correct position. This completes applying the
-      // single cycle in the permutation.
-      while (next != i) {
-        std::swap(cached_hits_[curr], cached_hits_[next]);
-        std::swap(cached_hit_term_frequency_[curr],
-                  cached_hit_term_frequency_[next]);
-        done[next] = true;
-        curr = next;
-        next = indices[next];
-      }
-    }
+
+    math_util::ApplyPermutation(indices, cached_hits_,
+                                cached_hit_term_frequency_);
   }
 }
 
@@ -187,7 +172,12 @@ void DocHitInfoIteratorTermLitePrefix::SortAndDedupeDocumentIds() {
             cached_hit_term_frequency_[idx];
         while (curr_mask) {
           SectionId section_id = __builtin_ctzll(curr_mask);
-          collapsed_term_frequency[section_id] =
+          // We add the new term-frequency to the existing term-frequency we've
+          // recorded for the current section-id in case there are multiple hits
+          // matching the query for this section.
+          // - This is the case for a prefix query where there are multiple
+          //   terms matching the prefix from the same sectionId + docId.
+          collapsed_term_frequency[section_id] +=
               cached_hit_term_frequency_[i][section_id];
           curr_mask &= ~(UINT64_C(1) << section_id);
         }

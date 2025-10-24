@@ -23,6 +23,8 @@
 #include <cstdint>
 #include <string>
 
+#include "icing/util/crc32.h"
+
 namespace icing {
 namespace lib {
 
@@ -70,10 +72,9 @@ class IIcingStorage {
   // Returns kBadFileSize on error.
   virtual uint64_t GetDiskUsage() const = 0;
 
-  // Optional handler for when our process is entering a vulnerable
-  // state (highly likely to get killed). Default implementation does
-  // nothing.
-  virtual void OnSleep() {}
+  // Updates any checksums that this storage maintains.
+  // By default, does nothing.
+  virtual Crc32 UpdateCrc() { return Crc32(); }
 
   virtual void GetDebugInfo(int verbosity, std::string* out) const = 0;
 

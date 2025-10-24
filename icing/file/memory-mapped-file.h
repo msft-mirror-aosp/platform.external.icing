@@ -79,7 +79,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <string_view>
 
@@ -314,7 +313,7 @@ class MemoryMappedFile {
   // Cached constructor params.
   const Filesystem* filesystem_;
   std::string file_path_;
-  Strategy strategy_;
+  Strategy strategy_ = Strategy::READ_WRITE_AUTO_SYNC;
 
   // Raw file related fields:
   // - max_file_size_
@@ -327,7 +326,7 @@ class MemoryMappedFile {
   //
   // Note: max_file_size_ will be specified in runtime and the caller should
   // make sure its value is correct and reasonable.
-  int64_t max_file_size_;
+  int64_t max_file_size_ = 0;
 
   // Cached file size to avoid calling system call too frequently. It is only
   // used in GrowAndRemapIfNecessary(), the new API that handles underlying file
@@ -336,7 +335,7 @@ class MemoryMappedFile {
   // Note: it is guaranteed that file_size_ is smaller or equal to the actual
   // file size as long as the underlying file hasn't been truncated or deleted
   // externally. See GrowFileSize() for more details.
-  int64_t file_size_;
+  int64_t file_size_ = 0;
 
   // Memory mapped related fields:
   // - mmap_result_
@@ -345,22 +344,22 @@ class MemoryMappedFile {
   // - mmap_size_
 
   // Raw pointer (or error) returned by calls to mmap().
-  void* mmap_result_;
+  void* mmap_result_ = nullptr;
 
   // Offset within the file at which the current memory-mapped region starts.
-  int64_t file_offset_;
+  int64_t file_offset_ = 0;
 
   // Size that is currently memory-mapped.
   // Note that the mmapped size can be larger than the underlying file size. We
   // can reduce remapping by pre-mmapping a large memory and grow the file size
   // later. See GrowAndRemapIfNecessary().
-  int64_t mmap_size_;
+  int64_t mmap_size_ = 0;
 
   // The difference between file_offset_ and the actual adjusted (aligned)
   // offset.
   // Since mmap requires the offset to be a multiple of system page size, we
   // have to align file_offset_ to the last multiple of system page size.
-  int64_t alignment_adjustment_;
+  int64_t alignment_adjustment_ = 0;
 
   // E.g. system_page_size = 5, RemapImpl(/*new_file_offset=*/8, mmap_size)
   //

@@ -17,7 +17,8 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <string>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "icing/proto/search.pb.h"
@@ -50,15 +51,12 @@ ResultStateV2::ResultStateV2(
     group_result_limits.push_back(result_grouping.max_results());
     for (const ResultSpecProto::ResultGrouping::Entry& entry :
          result_grouping.entry_groupings()) {
-      const std::string& name_space = entry.namespace_();
-      const std::string& schema = entry.schema();
-      auto entry_id_or = document_store.GetResultGroupingEntryId(
-          result_group_type_, name_space, schema);
-      if (!entry_id_or.ok()) {
+      std::optional<int32_t> entry_id = document_store.GetResultGroupingEntryId(
+          result_group_type_, entry.namespace_(), entry.schema());
+      if (!entry_id.has_value()) {
         continue;
       }
-      int32_t entry_id = entry_id_or.ValueOrDie();
-      entry_id_group_id_map_.insert({entry_id, group_id});
+      entry_id_group_id_map_.insert({*entry_id, group_id});
     }
   }
 }
