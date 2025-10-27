@@ -518,7 +518,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_proto_log_new_header_format(),
                      options_.enable_embedding_iterator_v2(),
                      options_.enable_reusable_decompression_buffer(),
-                     options_.enable_schema_type_id_optimization()),
+                     options_.enable_schema_type_id_optimization(),
+                     options_.enable_optimize_improvements()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -689,6 +690,24 @@ InitializeResultProto IcingSearchEngine::InitializeLocked() {
       status = absl_ports::InternalError("Failed to delete init marker file!");
     } else {
       initialized_ = true;
+
+      // Set needs_persist_type if anything was rebuilt.
+      if (initialize_stats->schema_store_recovery_cause() !=
+              InitializeStatsProto::NONE ||
+          initialize_stats->document_store_data_status() !=
+              InitializeStatsProto::NO_DATA_LOSS ||
+          initialize_stats->document_store_recovery_cause() !=
+              InitializeStatsProto::NONE ||
+          initialize_stats->index_restoration_cause() !=
+              InitializeStatsProto::NONE ||
+          initialize_stats->integer_index_restoration_cause() !=
+              InitializeStatsProto::NONE ||
+          initialize_stats->qualified_id_join_index_restoration_cause() !=
+              InitializeStatsProto::NONE ||
+          initialize_stats->embedding_index_restoration_cause() !=
+              InitializeStatsProto::NONE) {
+        result_proto.set_needs_persist_type(PersistType::RECOVERY_PROOF);
+      }
     }
   }
   TransformStatus(status, result_status);
@@ -822,8 +841,13 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
       ULOC_US, jni_cache_.get(), enable_icu);
-  auto language_segmenter_or =
-      language_segmenter_factory::Create(std::move(segmenter_options));
+  StatusProto* icu_segmenter_creation_status = nullptr;
+  if (enable_icu) {
+    icu_segmenter_creation_status =
+        initialize_stats->mutable_icu_segmenter_creation_status();
+  }
+  auto language_segmenter_or = language_segmenter_factory::Create(
+      std::move(segmenter_options), icu_segmenter_creation_status);
   if (!language_segmenter_or.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::LANGUAGE_SEGMENTER_CREATION);
@@ -833,7 +857,13 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   NormalizerOptions normalizer_options(
       /*max_term_byte_size=*/options_.max_token_length(), enable_icu);
-  auto normalizer_or = normalizer_factory::Create(normalizer_options);
+  StatusProto* icu_normalizer_creation_status = nullptr;
+  if (enable_icu) {
+    icu_normalizer_creation_status =
+        initialize_stats->mutable_icu_normalizer_creation_status();
+  }
+  auto normalizer_or = normalizer_factory::Create(
+      normalizer_options, icu_normalizer_creation_status);
   if (!normalizer_or.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::NORMALIZER_CREATION);
@@ -1133,8 +1163,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
 
   // Term index
   InitializeStatsProto::RecoveryCause index_recovery_cause;
-  auto index_or =
-      Index::Create(index_options, filesystem_.get(), icing_filesystem_.get());
+  auto index_or = Index::Create(index_options, filesystem_.get(),
+                                icing_filesystem_.get(), &feature_flags_);
   if (!index_or.ok()) {
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -1148,7 +1178,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
 
     // Try recreating it from scratch and re-indexing everything.
     index_or = Index::Create(index_options, filesystem_.get(),
-                             icing_filesystem_.get());
+                             icing_filesystem_.get(), &feature_flags_);
     if (!index_or.ok()) {
       initialize_stats->set_failure_stage(
           InitializeStatsProto::FailureStage::TERM_INDEX_INSTANTIATION);
@@ -1459,8 +1489,19 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
 
   set_schema_stats->set_schema_store_set_schema_latency_ms(
       overall_timer.timer().GetElapsedMilliseconds());
+
   libtextclassifier3::Status status;
   if (set_schema_result.success) {
+    // - No need to manually persist the schema file since
+    //   SchemaStore::SetSchema already handles schema store file persistence
+    //   internally.
+    // - We just need to detect ground truth and derived files changes from the
+    //   document store and indices.
+    bool needs_flush_ground_truth = false;
+    bool needs_flush_derived_files = false;
+
+    // Update document store if necessary.
+    std::optional<DocumentStore::UpdateSchemaStoreResult> update_result;
     if (lost_previous_schema) {
       ScopedTimer update_schema_store_timer(
           clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
@@ -1468,11 +1509,14 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
           });
       // No previous schema to calculate a diff against. We have to go through
       // and revalidate all the Documents in the DocumentStore
-      status = document_store_->UpdateSchemaStore(schema_store_.get());
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
+      auto update_result_or =
+          document_store_->UpdateSchemaStore(schema_store_.get());
+      if (!update_result_or.ok()) {
+        TransformStatus(update_result_or.status(), result_status);
         return result_proto;
       }
+      update_result =
+          std::make_optional(std::move(update_result_or).ValueOrDie());
     } else if (!set_schema_result.old_schema_type_ids_changed.empty() ||
                !set_schema_result.schema_types_incompatible_by_id.empty() ||
                !set_schema_result.schema_types_deleted_by_id.empty()) {
@@ -1481,13 +1525,20 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
             set_schema_stats
                 ->set_document_store_optimized_update_schema_latency_ms(t);
           });
-      auto update_status_or = document_store_->OptimizedUpdateSchemaStore(
+      auto update_result_or = document_store_->OptimizedUpdateSchemaStore(
           schema_store_.get(), set_schema_result);
-      if (!update_status_or.ok()) {
-        TransformStatus(update_status_or.status(), result_status);
+      if (!update_result_or.ok()) {
+        TransformStatus(update_result_or.status(), result_status);
         return result_proto;
       }
-      result_proto.set_deleted_document_count(update_status_or.ValueOrDie());
+      update_result =
+          std::make_optional(std::move(update_result_or).ValueOrDie());
+    }
+    if (update_result.has_value()) {
+      result_proto.set_deleted_document_count(
+          update_result->deleted_document_count);
+      needs_flush_ground_truth |= (update_result->deleted_document_count > 0);
+      needs_flush_derived_files |= update_result->derived_files_changed;
     }
 
     {
@@ -1516,6 +1567,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       }
 
       if (lost_previous_schema || index_incompatible || join_incompatible) {
+        needs_flush_derived_files = true;
+
         IndexRestorationResult restore_result = RestoreIndexIfNeeded();
         result_proto.set_has_term_index_restored(
             restore_result.has_index_restored);
@@ -1539,6 +1592,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     if (feature_flags_.enable_scorable_properties()) {
       if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
                .empty()) {
+        needs_flush_derived_files = true;
+
         ScopedTimer scorable_property_cache_regeneration_timer(
             clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
               set_schema_stats
@@ -1560,6 +1615,27 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       }
     }
     result_status->set_code(StatusProto::OK);
+    if (needs_flush_derived_files) {
+      // If derived files need to be flushed, then we need RECOVERY_PROOF which:
+      // - Updates all checksums of derived files.
+      // - Flushes ground truth data.
+      //
+      // Here, it is ok to use RECOVERY_PROOF even if ground truth does not need
+      // to be flushed.
+      result_proto.set_needs_persist_type(PersistType::RECOVERY_PROOF);
+    } else if (needs_flush_ground_truth) {
+      // If derived files are unchanged but ground truth needs to be flushed,
+      // then we need LITE which only flushes ground truth data.
+      //
+      // Theoretically, it is impossible to have this case since:
+      // - The only possibility of ground truth change is incompatible document
+      //   deletion.
+      // - When deleting incompatible documents, derived files are always
+      //   changed, so it should belong to the RECOVERY_PROOF case.
+      result_proto.set_needs_persist_type(PersistType::LITE);
+    } else {
+      result_proto.set_needs_persist_type(PersistType::UNKNOWN);
+    }
   } else {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("Schema is incompatible.");
@@ -2422,18 +2498,24 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     }
   }
 
-  // Flushes data to disk before doing optimization
-  PersistToDiskStatsProto* before_optimize_persist_stats =
-      optimize_stats->mutable_before_optimize_persist_stats();
+  libtextclassifier3::Status status;
+  std::unique_ptr<Timer> persist_timer;
+  if (!feature_flags_.enable_optimize_improvements()) {
+    // Flushes data to disk before doing optimization.
+    // This really is not necessary. Therefore, if the improvements flag is
+    // enabled, just skip this step.
+    PersistToDiskStatsProto* before_optimize_persist_stats =
+        optimize_stats->mutable_before_optimize_persist_stats();
 
-  std::unique_ptr<Timer> persist_timer = clock_->GetNewTimer();
-  auto status =
-      PersistToDiskLocked(PersistType::FULL, before_optimize_persist_stats);
-  before_optimize_persist_stats->set_latency_ms(
-      persist_timer->GetElapsedMilliseconds());
-  if (!status.ok()) {
-    TransformStatus(status, result_status);
-    return result_proto;
+    persist_timer = clock_->GetNewTimer();
+    status =
+        PersistToDiskLocked(PersistType::FULL, before_optimize_persist_stats);
+    before_optimize_persist_stats->set_latency_ms(
+        persist_timer->GetElapsedMilliseconds());
+    if (!status.ok()) {
+      TransformStatus(status, result_status);
+      return result_proto;
+    }
   }
 
   // Get all expired blob handles. This can be done before the marker file since

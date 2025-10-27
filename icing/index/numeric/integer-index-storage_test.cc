@@ -1517,13 +1517,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsMultipleBuckets) {
   while (iter1->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(
-      iter1->GetCallStats(),
-      EqualsDocHitInfoIteratorCallStats(
-          /*num_leaf_advance_calls_lite_index=*/0,
-          /*num_leaf_advance_calls_main_index=*/0,
-          /*num_leaf_advance_calls_integer_index=*/5,
-          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/2));
+  EXPECT_THAT(iter1->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/5,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/2,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // GetIterator for range [-1000, -100] and Advance all. Since we only have to
   // read bucket (-1000,-100), there will be 3 advance calls and 1 block
@@ -1534,13 +1535,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsMultipleBuckets) {
   while (iter2->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(
-      iter2->GetCallStats(),
-      EqualsDocHitInfoIteratorCallStats(
-          /*num_leaf_advance_calls_lite_index=*/0,
-          /*num_leaf_advance_calls_main_index=*/0,
-          /*num_leaf_advance_calls_integer_index=*/3,
-          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+  EXPECT_THAT(iter2->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/3,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
@@ -1574,13 +1576,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
   while (iter1->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(iter1->GetCallStats(),
-              EqualsDocHitInfoIteratorCallStats(
-                  /*num_leaf_advance_calls_lite_index=*/0,
-                  /*num_leaf_advance_calls_main_index=*/0,
-                  /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
-                  /*num_leaf_advance_calls_no_index=*/0,
-                  expected_num_blocks_inspected));
+  EXPECT_THAT(
+      iter1->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
+          /*num_leaf_advance_calls_no_index=*/0, expected_num_blocks_inspected,
+          DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // GetIterator for range [1, 1] and Advance all. Although there is only 1
   // relevant data, we still have to inspect the entire bucket and its posting
@@ -1591,13 +1594,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
   while (iter2->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(iter2->GetCallStats(),
-              EqualsDocHitInfoIteratorCallStats(
-                  /*num_leaf_advance_calls_lite_index=*/0,
-                  /*num_leaf_advance_calls_main_index=*/0,
-                  /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
-                  /*num_leaf_advance_calls_no_index=*/0,
-                  expected_num_blocks_inspected));
+  EXPECT_THAT(
+      iter2->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
+          /*num_leaf_advance_calls_no_index=*/0, expected_num_blocks_inspected,
+          DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 TEST_P(IntegerIndexStorageTest, SplitBuckets) {
