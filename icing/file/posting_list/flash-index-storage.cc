@@ -21,15 +21,23 @@
 #include <cerrno>
 #include <cinttypes>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage-header.h"
 #include "icing/file/posting_list/index-block.h"
 #include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-used.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/store/document-id.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
@@ -110,20 +118,24 @@ bool FlashIndexStorage::InitHeader() {
   // Look for an existing file size.
   int64_t file_size = filesystem_->GetFileSize(storage_sfd_.get());
   if (file_size == Filesystem::kBadFileSize) {
-    ICING_LOG(ERROR) << "Could not initialize main index. Bad file size.";
+    ICING_LOG(ERROR)
+        << "Could not initialize flash index storage. Bad file size. Path: "
+        << index_filename_;
     return false;
   }
 
   if (file_size == 0) {
     if (!CreateHeader()) {
-      ICING_LOG(ERROR)
-          << "Could not initialize main index. Unable to create header.";
+      ICING_LOG(ERROR) << "Could not initialize flash index storage. Unable to "
+                          "create header. Path: "
+                       << index_filename_;
       return false;
     }
   } else {
     if (!OpenHeader(file_size)) {
-      ICING_LOG(ERROR)
-          << "Could not initialize main index. Unable to open header.";
+      ICING_LOG(ERROR) << "Could not initialize flash index storage. Unable to "
+                          "open header. Path: "
+                       << index_filename_;
       return false;
     }
   }
@@ -181,25 +193,32 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
       HeaderBlock read_header,
       HeaderBlock::Read(filesystem_, storage_sfd_.get(), block_size), false);
   if (read_header.header()->magic != HeaderBlock::Header::kMagic) {
-    ICING_LOG(ERROR) << "Index header block wrong magic";
+    ICING_LOG(ERROR) << "Invalid FlashIndexStorage header for "
+                     << index_filename_ << ": wrong magic. Expected: "
+                     << HeaderBlock::Header::kMagic
+                     << ", actual: " << read_header.header()->magic;
     return false;
   }
   if (file_size % read_header.header()->block_size != 0) {
-    ICING_LOG(ERROR) << "Index size " << file_size
-                     << " not a multiple of block size "
+    ICING_LOG(ERROR) << "Invalid FlashIndexStorage header for "
+                     << index_filename_ << ": file size " << file_size
+                     << " is not a multiple of block size "
                      << read_header.header()->block_size;
     return false;
   }
 
   if (file_size < static_cast<int64_t>(read_header.header()->block_size)) {
-    ICING_LOG(ERROR) << "Index size " << file_size
-                     << " shorter than block size "
+    ICING_LOG(ERROR) << "Invalid FlashIndexStorage header for "
+                     << index_filename_ << ": file size " << file_size
+                     << " is shorter than block size "
                      << read_header.header()->block_size;
     return false;
   }
 
   if (read_header.header()->block_size % getpagesize() != 0) {
-    ICING_LOG(ERROR) << "Block size " << read_header.header()->block_size
+    ICING_LOG(ERROR) << "Invalid FlashIndexStorage header for "
+                     << index_filename_ << ": block size "
+                     << read_header.header()->block_size
                      << " is not a multiple of page size " << getpagesize();
     return false;
   }
@@ -211,7 +230,8 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
     // still use the main index, but reads/writes won't be as efficient in terms
     // of flash IO because the 'blocks' that we're reading are actually multiple
     // pages long.
-    ICING_LOG(ERROR) << "Block size of existing header ("
+    ICING_LOG(ERROR) << "Invalid FlashIndexStorage header for "
+                     << index_filename_ << ": block size of existing header ("
                      << read_header.header()->block_size
                      << ") does not match the requested block size ("
                      << block_size << "). Defaulting to existing block size "
@@ -244,7 +264,8 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
 bool FlashIndexStorage::PersistToDisk() {
   // First, write header.
   if (!header_block_->Write(storage_sfd_.get())) {
-    ICING_LOG(ERROR) << "Write index header failed: " << strerror(errno);
+    ICING_LOG(ERROR) << "Write index header failed: (" << errno << ") "
+                     << strerror(errno);
     return false;
   }
 
@@ -535,7 +556,8 @@ int FlashIndexStorage::GrowIndex() {
   if (!filesystem_->Grow(
           storage_sfd_.get(),
           static_cast<uint64_t>(num_blocks_ + 1) * block_size())) {
-    ICING_VLOG(1) << "Error growing index file: " << strerror(errno);
+    ICING_LOG(ERROR) << "Error growing index file: (" << errno << ") "
+                     << strerror(errno);
     return kInvalidBlockIndex;
   }
 

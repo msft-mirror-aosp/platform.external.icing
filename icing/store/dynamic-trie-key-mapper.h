@@ -81,7 +81,7 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
 
   libtextclassifier3::StatusOr<T> Get(std::string_view key) const override;
 
-  bool Delete(std::string_view key) override;
+  libtextclassifier3::Status Delete(std::string_view key) override;
 
   std::unique_ptr<typename KeyMapper<T, Formatter>::Iterator> GetIterator()
       const override;
@@ -277,7 +277,8 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::Get(
 }
 
 template <typename T, typename Formatter>
-bool DynamicTrieKeyMapper<T, Formatter>::Delete(std::string_view key) {
+libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Delete(
+    std::string_view key) {
   return trie_.Delete(key);
 }
 

@@ -1364,7 +1364,7 @@ TEST_F(FileBackedVectorTest, InitCorruptHeaderFails) {
   // to corruption of the header.
   FileBackedVector<char>::Header header;
   ASSERT_THAT(filesystem_.PRead(fd_, &header, sizeof(header), /*offset=*/0),
-              IsTrue());
+              Eq(sizeof(header)));
   header.num_elements = 1;
   ASSERT_THAT(filesystem_.PWrite(fd_, /*offset=*/0, &header, sizeof(header)),
               IsTrue());
@@ -1396,7 +1396,7 @@ TEST_F(FileBackedVectorTest, InitHeaderElementSizeTooBigFails) {
   // of the underlying file.
   FileBackedVector<char>::Header header;
   ASSERT_THAT(filesystem_.PRead(fd_, &header, sizeof(header), /*offset=*/0),
-              IsTrue());
+              Eq(sizeof(header)));
   int64_t file_size = filesystem_.GetFileSize(fd_);
   int64_t allocated_elements_size = file_size - sizeof(header);
   header.num_elements = (allocated_elements_size / sizeof(char)) + 1;
