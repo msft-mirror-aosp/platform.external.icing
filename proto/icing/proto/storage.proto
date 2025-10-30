@@ -200,7 +200,7 @@ message StorageInfoProto {
   repeated NamespaceBlobStorageInfoProto namespace_blob_storage_info = 5;
 }
 
-// Next tag: 3
+// Next tag: 4
 message StorageInfoResultProto {
   // Status code can be one of:
   //   OK
@@ -211,4 +211,7 @@ message StorageInfoResultProto {
 
   // Storage information of Icing.
   optional StorageInfoProto storage_info = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }

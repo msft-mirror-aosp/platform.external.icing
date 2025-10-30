@@ -31,7 +31,8 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorByUri : public DocHitInfoIterator {
+class DocHitInfoIteratorByUri
+    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
  public:
   // Creates a DocHitInfoIteratorByUri based on the given search_spec.
   //
@@ -51,7 +52,9 @@ class DocHitInfoIteratorByUri : public DocHitInfoIterator {
         "DocHitInfoIteratorByUri should not be used in suggestion.");
   }
 
-  void MapChildren(const ChildrenMapper& mapper) override {}
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
+  }
 
   CallStats GetCallStats() const override {
     return CallStats(
@@ -59,7 +62,8 @@ class DocHitInfoIteratorByUri : public DocHitInfoIterator {
         /*num_leaf_advance_calls_main_index_in=*/0,
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/num_advance_calls_,
-        /*num_blocks_inspected_in=*/0);
+        /*num_blocks_inspected_in=*/0,
+        /*embedding_stats_in=*/{});
   }
 
   std::string ToString() const override { return "uri_iterator"; }

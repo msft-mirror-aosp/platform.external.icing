@@ -14,7 +14,8 @@
 
 #include <jni.h>
 
-#include <string>
+#include <cstdint>
+#include <memory>
 #include <string_view>
 #include <utility>
 
@@ -33,6 +34,7 @@
 #include "icing/proto/status.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
 #include <google/protobuf/message_lite.h>
 
@@ -313,6 +315,39 @@ jbyteArray nativeGetNextPage(JNIEnv* env, jclass clazz, jobject object,
   return SerializeProtoToJniByteArray(env, next_page_result_proto);
 }
 
+// TODO: b/417644758 - pre-register this method.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetNextPageWithRequestProto(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray get_next_page_request_bytes,
+    jlong java_to_native_start_timestamp_ms) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  const std::unique_ptr<const icing::lib::Clock> clock =
+      std::make_unique<icing::lib::Clock>();
+  int32_t java_to_native_jni_latency_ms =
+      clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
+
+  icing::lib::GetNextPageRequestProto get_next_page_request_proto;
+  if (!ParseProtoFromJniByteArray(env, get_next_page_request_bytes,
+                                  &get_next_page_request_proto)) {
+    ICING_LOG(icing::lib::ERROR) << "Failed to parse GetNextPageRequestProto "
+                                    "in nativeGetNextPageWithRequestProto";
+    return nullptr;
+  }
+  icing::lib::SearchResultProto next_page_result_proto =
+      icing->GetNextPage(std::move(get_next_page_request_proto));
+
+  icing::lib::QueryStatsProto* query_stats =
+      next_page_result_proto.mutable_query_stats();
+  query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
+  query_stats->set_native_to_java_start_timestamp_ms(
+      clock->GetSystemTimeMilliseconds());
+
+  return SerializeProtoToJniByteArray(env, next_page_result_proto);
+}
+
 void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
                                    jlong next_page_token) {
   icing::lib::IcingSearchEngine* icing =
@@ -388,6 +423,41 @@ jbyteArray nativeCommitBlob(JNIEnv* env, jclass clazz, jobject object,
   }
 
   icing::lib::BlobProto blob_result_proto = icing->CommitBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetAllBlobInfos(JNIEnv* env, jclass clazz,
+                                                  jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::BlobProto blob_result_proto = icing->GetAllBlobInfos();
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativePutBlobInfos(JNIEnv* env, jclass clazz,
+                                                jobject object,
+                                                jbyteArray blob_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::BlobProto blob_proto;
+  if (!ParseProtoFromJniByteArray(env, blob_bytes, &blob_proto)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobInfo in nativePutBlobInfos";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto =
+      icing->PutBlobInfos(std::move(blob_proto));
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }

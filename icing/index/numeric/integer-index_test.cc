@@ -1200,8 +1200,9 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndex::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndex::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.last_added_document_id, Eq(kInvalidDocumentId));
   EXPECT_THAT(info.num_data_threshold_for_bucket_split,
@@ -1209,8 +1210,9 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndex::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndex::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
   // There are no storages initially, so storages_crc should be 0.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Eq(0));
   EXPECT_THAT(crcs.component_crcs.info_crc,
@@ -1396,8 +1398,9 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndex::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndex::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -1445,8 +1448,9 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndex::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndex::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
@@ -2545,7 +2549,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/1,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 1st Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2555,7 +2560,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/2,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 2nd Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2565,7 +2571,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/3,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 3rd Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2575,7 +2582,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/4,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 4th Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2585,7 +2593,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/4,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 5th Advance().
   ASSERT_THAT(iter->Advance(),
@@ -2596,7 +2605,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/4,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
@@ -2629,7 +2639,8 @@ TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/0,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/0));
+                  /*num_blocks_inspected=*/0,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 1st Advance().
   ASSERT_THAT(iter->Advance(),
@@ -2640,7 +2651,8 @@ TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/0,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/0));
+                  /*num_blocks_inspected=*/0,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -29,9 +29,11 @@
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-by-uri.h"
+#include "icing/index/iterator/doc-hit-info-iterator-data-holder.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/proto/logging.pb.h"
@@ -103,10 +105,15 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
     bool get_embedding_match_info, int64_t current_time_ms,
     QueryStatsProto::SearchStats* search_stats) {
-  ICING_ASSIGN_OR_RETURN(QueryResults results,
-                         ParseAdvancedQuery(search_spec, ranking_strategy,
-                                            get_embedding_match_info,
-                                            current_time_ms, search_stats));
+  std::unique_ptr<DocumentFilterPredicate> filter_predicate =
+      GetFilterPredicateBySchemaAndNamespace(search_spec, document_store_,
+                                             schema_store_, current_time_ms);
+
+  ICING_ASSIGN_OR_RETURN(
+      QueryResults results,
+      ParseAdvancedQuery(search_spec, ranking_strategy,
+                         get_embedding_match_info, current_time_ms,
+                         filter_predicate.get(), search_stats));
 
   // Check that all new features used in the search have been enabled in the
   // SearchSpec.
@@ -138,11 +145,12 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
   }
   results.root_iterator = CreateAndIterator(std::move(iterators));
 
-  DocHitInfoIteratorFilter::Options options =
-      GetFilterOptions(search_spec, document_store_, schema_store_);
-  results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
-      std::move(results.root_iterator), &document_store_, &schema_store_,
-      options, current_time_ms);
+  results.root_iterator = DocHitInfoIteratorFilter::ApplyFilter(
+      std::move(results.root_iterator), filter_predicate.get(),
+      feature_flags_.enable_passing_filter_to_children());
+  results.root_iterator =
+      std::make_unique<DocHitInfoIteratorDataHolder<DocumentFilterPredicate>>(
+          std::move(results.root_iterator), std::move(filter_predicate));
   if (!search_spec.type_property_filters().empty()) {
     results.root_iterator =
         DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
@@ -156,6 +164,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
     bool get_embedding_match_info, int64_t current_time_ms,
+    const DocumentFilterPredicate* filter_predicate,
     QueryStatsProto::SearchStats* search_stats) const {
   std::unique_ptr<Timer> lexer_timer = clock_.GetNewTimer();
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
@@ -182,8 +191,6 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
           StringIndexingConfig::TokenizerType::PLAIN, &language_segmenter_));
-  DocHitInfoIteratorFilter::Options options =
-      GetFilterOptions(search_spec, document_store_, schema_store_);
   bool needs_term_frequency_info =
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
 
@@ -191,7 +198,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
   QueryVisitor query_visitor(
       &index_, &numeric_index_, &embedding_index_, &document_store_,
       &schema_store_, &normalizer_, plain_tokenizer.get(),
-      join_children_fetcher_, search_spec, std::move(options),
+      join_children_fetcher_, search_spec, filter_predicate,
       needs_term_frequency_info, get_embedding_match_info, &feature_flags_,
       current_time_ms);
   tree_root->Accept(&query_visitor);
