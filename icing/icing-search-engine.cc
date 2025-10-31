@@ -52,6 +52,7 @@
 #include "icing/index/term-indexing-handler.h"
 #include "icing/index/term-metadata.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/delete-propagation-handler.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/join-processor.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
@@ -2348,50 +2349,28 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   return result_proto;
 }
 
+// TODO(b/384947619): remove this function once we fully ramp
+// enable_delete_propagation_from.
 libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
     const std::unordered_set<DocumentId>& deleted_document_ids,
     int64_t current_time_ms) {
-  int propagated_child_docs_deleted = 0;
-
   if (!options_.enable_delete_propagation_from()) {
     // No-op if delete propagation is disabled.
-    return propagated_child_docs_deleted;
+    return 0;
   }
 
-  if (qualified_id_join_index_->version() !=
-      QualifiedIdJoinIndex::Version::kV3) {
-    // This should not happen since Icing should've failed initialization with
-    // delete propagation enabled and join index v3 disabled.
-    // But let's check it here again just in case.
-    return absl_ports::FailedPreconditionError(
-        "Delete propagation is enabled but qualified id join index v3 is not "
-        "used.");
-  }
-
-  // Create join processor to get propagated child documents to delete.
-  JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
-                               qualified_id_join_index_.get(), current_time_ms);
   ICING_ASSIGN_OR_RETURN(
-      std::unordered_set<DocumentId> child_docs_to_delete,
-      join_processor.GetPropagatedChildDocumentsToDelete(deleted_document_ids));
-
-  // Delete all propagated child documents.
-  for (DocumentId child_doc_id : child_docs_to_delete) {
-    auto status = document_store_->Delete(child_doc_id, current_time_ms);
-    if (!status.ok()) {
-      if (absl_ports::IsNotFound(status)) {
-        // The child document has already been deleted or expired, so skip the
-        // error.
-        continue;
-      }
-
-      // Real error.
-      return status;
-    }
-    ++propagated_child_docs_deleted;
-  }
-
-  return propagated_child_docs_deleted;
+      DeletePropagationHandler delete_propagation_handler,
+      DeletePropagationHandler::Create(schema_store_.get(),
+                                       qualified_id_join_index_.get(),
+                                       document_store_.get(), current_time_ms));
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<DocumentStore::DocumentMetadata>
+          deleted_child_doc_metadata_list,
+      delete_propagation_handler.Handle(deleted_document_ids));
+  // TODO(b/384947619): return the metadata list instead of the size for
+  //   AppSearch observer.
+  return static_cast<int>(deleted_child_doc_metadata_list.size());
 }
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk(

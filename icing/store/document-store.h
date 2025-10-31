@@ -115,6 +115,12 @@ class DocumentStore {
     bool derived_files_regenerated;
   };
 
+  struct DocumentMetadata {
+    std::string schema_type_name;
+    std::string name_space;
+    std::string uri;
+  };
+
   // Not copyable
   DocumentStore(const DocumentStore&) = delete;
   DocumentStore& operator=(const DocumentStore&) = delete;
@@ -245,8 +251,10 @@ class DocumentStore {
   // or expired). Order of namespaces is undefined.
   std::vector<std::string> GetAllNamespaces() const;
 
-  // Deletes the document identified by the given namespace and uri. The
-  // document proto will be erased immediately.
+  // TODO(b/384947619): migrate Delete APIs to return DocumentMetadata.
+
+  // Deletes the document identified by the given namespace and uri, only if it
+  // is still alive. The document proto will be erased immediately.
   //
   // NOTE:
   //    Space is not reclaimed for deleted documents until Optimize() is
@@ -260,8 +268,8 @@ class DocumentStore {
                                     std::string_view uri,
                                     int64_t current_time_ms);
 
-  // Deletes the document identified by the given document_id. The document
-  // proto will be erased immediately.
+  // Deletes the document identified by the given document_id, only if it is
+  // still alive. The document proto will be erased immediately.
   //
   // NOTE:
   //    Space is not reclaimed for deleted documents until Optimize() is
@@ -274,6 +282,24 @@ class DocumentStore {
   //   INVALID_ARGUMENT if document_id is invalid.
   libtextclassifier3::Status Delete(DocumentId document_id,
                                     int64_t current_time_ms);
+
+  // Deletes the document identified by the given document_id. The document
+  // proto will be erased immediately.
+  //
+  // Different from Delete(), this method promises that the document proto will
+  // be erased even if the document is expired.
+  //
+  // NOTE:
+  //    Space is not reclaimed for deleted documents until Optimize() is
+  //    called.
+  //
+  // Returns:
+  //   DocumentMetadata of the deleted document on success
+  //   NOT_FOUND_ERROR if the document doesn't exist or has been deleted
+  //   INTERNAL_ERROR on IO error
+  //   INVALID_ARGUMENT_ERROR if document_id is invalid.
+  libtextclassifier3::StatusOr<DocumentMetadata> ForceDelete(
+      DocumentId document_id);
 
   // Returns the NamespaceId of the string namespace
   //

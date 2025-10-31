@@ -1603,6 +1603,45 @@ libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
   return ClearDerivedData(document_id);
 }
 
+libtextclassifier3::StatusOr<DocumentStore::DocumentMetadata>
+DocumentStore::ForceDelete(DocumentId document_id) {
+  if (document_id < 0 || document_id >= document_id_mapper_->num_elements()) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Document id '%d' is invalid to force delete.", document_id));
+  }
+
+  auto document_log_offset_or = document_id_mapper_->Get(document_id);
+  if (!document_log_offset_or.ok()) {
+    return absl_ports::InternalError("Failed to find document offset.");
+  }
+  int64_t document_log_offset = *document_log_offset_or.ValueOrDie();
+
+  if (document_log_offset == kDocDeletedFlag) {
+    // Already deleted.
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Document id '%d' was already deleted.", document_id));
+  }
+
+  // Read the document since we need to return DocumentMetadata.
+  auto document_wrapper_or = document_log_->ReadProto(document_log_offset);
+  if (!document_wrapper_or.ok()) {
+    ICING_LOG(ERROR) << document_wrapper_or.status().error_message()
+                     << "Failed to read from document log.";
+    return std::move(document_wrapper_or).status();
+  }
+  DocumentWrapper document_wrapper =
+      std::move(document_wrapper_or).ValueOrDie();
+
+  // Erases document proto.
+  ICING_RETURN_IF_ERROR(document_log_->EraseProto(document_log_offset));
+  ICING_RETURN_IF_ERROR(ClearDerivedData(document_id));
+
+  return DocumentMetadata{
+      .schema_type_name = document_wrapper.document().schema(),
+      .name_space = document_wrapper.document().namespace_(),
+      .uri = document_wrapper.document().uri()};
+}
+
 libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
     std::string_view name_space) const {
   return namespace_mapper_->Get(name_space);

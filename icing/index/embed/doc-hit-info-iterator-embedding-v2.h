@@ -87,7 +87,9 @@ class DocHitInfoIteratorEmbeddingV2
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/0,
         /*num_blocks_inspected_in=*/0,
-        embedding_hit_accessor_->GetEmbeddingStats());
+        embedding_hit_accessor_ != nullptr
+            ? embedding_hit_accessor_->GetEmbeddingStats()
+            : CallStats::EmbeddingStats{});
   }
 
   std::string ToString() const override { return "embedding_iterator"; }
@@ -188,7 +190,8 @@ class DocHitInfoIteratorEmbeddingV2
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;
-  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor_;
+  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>
+      embedding_hit_accessor_;  // Nullable.
 
   // Cached data from the embeddings index
   std::vector<HitWithScore> cached_hit_scores_;
