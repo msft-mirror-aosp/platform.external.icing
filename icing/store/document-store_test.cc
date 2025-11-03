@@ -677,6 +677,108 @@ TEST_P(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
+TEST_P(DocumentStoreTest, ForceDelete) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store->Put(
+          document_util::CreateDocumentWrapper(test_document1_)));
+  DocumentId document_id = put_result.new_document_id;
+
+  // Sanity check that the document is alive.
+  ASSERT_TRUE(document_store->GetAliveDocumentFilterData(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  ASSERT_TRUE(document_store->GetNonDeletedDocumentFilterData(document_id));
+
+  EXPECT_THAT(document_store->ForceDelete(document_id),
+              IsOkAndHolds(EqualsDocumentMetadata(test_document1_.schema(),
+                                                  test_document1_.namespace_(),
+                                                  test_document1_.uri())));
+  EXPECT_FALSE(document_store->GetAliveDocumentFilterData(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(document_id));
+}
+
+TEST_P(DocumentStoreTest, ForceDeleteAlreadyDeletedDocumentReturnsNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store->Put(
+          document_util::CreateDocumentWrapper(test_document1_)));
+  DocumentId document_id = put_result.new_document_id;
+
+  // Sanity check that the document is alive.
+  ASSERT_TRUE(document_store->GetAliveDocumentFilterData(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  ASSERT_TRUE(document_store->GetNonDeletedDocumentFilterData(document_id));
+
+  // First time is OK
+  ICING_ASSERT_OK(document_store->ForceDelete(document_id));
+
+  // Deleting it again should get NOT_FOUND.
+  EXPECT_THAT(document_store->ForceDelete(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_P(DocumentStoreTest, ForceDeleteExpiredDocumentOk) {
+  fake_clock_.SetSystemTimeMilliseconds(0);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetSchema("email")
+                               .SetCreationTimestampMs(0)
+                               .SetTtlMs(1000)
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store->Put(document_util::CreateDocumentWrapper(document)));
+  DocumentId document_id = put_result.new_document_id;
+
+  // Sanity check that the document is alive.
+  ASSERT_TRUE(document_store->GetAliveDocumentFilterData(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  ASSERT_TRUE(document_store->GetNonDeletedDocumentFilterData(document_id));
+
+  // Adjust the clock to make the document expired.
+  fake_clock_.SetSystemTimeMilliseconds(2000);
+  ASSERT_FALSE(document_store->GetAliveDocumentFilterData(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  ASSERT_TRUE(document_store->GetNonDeletedDocumentFilterData(document_id));
+
+  // Deleting an expired document is OK.
+  EXPECT_THAT(document_store->ForceDelete(document_id),
+              IsOkAndHolds(EqualsDocumentMetadata(
+                  document.schema(), document.namespace_(), document.uri())));
+  EXPECT_FALSE(document_store->GetAliveDocumentFilterData(
+      document_id,
+      /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(document_id));
+}
+
 TEST_P(DocumentStoreTest, DeleteByNamespaceOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,

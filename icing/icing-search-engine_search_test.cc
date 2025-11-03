@@ -8878,6 +8878,46 @@ TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchStats) {
   EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(11));
 }
 
+TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchStats_EmptyIndex) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {-1, -1, -1});
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Perform an embedding query.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+  // Check embedding search stats.
+  QueryStatsProto::SearchStats search_stats =
+      results.query_stats().parent_search_stats();
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(0));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(0));
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(0));
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(0));
+}
+
 TEST_F(IcingSearchEngineSearchTest,
        EmbeddingSearchWithManyFilteredOutDocuments) {
   SchemaProto schema =
