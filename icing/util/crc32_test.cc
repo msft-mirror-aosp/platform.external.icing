@@ -30,7 +30,9 @@ namespace icing {
 namespace lib {
 
 namespace {
+
 using ::testing::Eq;
+using ::testing::Ne;
 
 void UpdateAtRandomOffset(std::string* buf, uint32_t* update_xor, int* offset) {
   // The max value of rand() is 2^31 - 1 (2147483647) but the max value of
@@ -77,6 +79,60 @@ TEST(Crc32Test, Append) {
   crc32_foo_and_bar.Append("bar");
 
   EXPECT_THAT(crc32_foo_and_bar.Get(), Eq(crc32_foobar.Get()));
+}
+
+TEST(Crc32Test, Combine) {
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+
+  Crc32 crc32_barbaz;
+  crc32_barbaz.Append("barbaz");
+
+  Crc32 crc32_foobarbaz;
+  crc32_foobarbaz.Append("foobarbaz");
+
+  EXPECT_THAT(crc32_foo.Combine(crc32_barbaz, 6), Eq(crc32_foobarbaz.Get()));
+  EXPECT_THAT(crc32_foo.Get(), Eq(crc32_foobarbaz.Get()));
+}
+
+TEST(Crc32Test, Combine_incorrectResultWithWrongSize) {
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+
+  Crc32 crc32_barbaz;
+  crc32_barbaz.Append("barbaz");
+
+  Crc32 crc32_foobarbaz;
+  crc32_foobarbaz.Append("foobarbaz");
+
+  int wrong_size = 5;
+  EXPECT_THAT(crc32_foo.Combine(crc32_barbaz, wrong_size),
+              Ne(crc32_foobarbaz.Get()));
+  EXPECT_THAT(crc32_foo.Get(), Ne(crc32_foobarbaz.Get()));
+}
+
+TEST(Crc32Test, Combine_withEmptyString) {
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+  uint32_t crc_foo_val = crc32_foo.Get();
+
+  Crc32 crc32_empty;
+  crc32_empty.Append("");
+
+  EXPECT_THAT(crc32_foo.Combine(crc32_empty, 0), Eq(crc_foo_val));
+  EXPECT_THAT(crc32_foo.Get(), Eq(crc_foo_val));
+}
+
+TEST(Crc32Test, Combine_toEmptyString) {
+  Crc32 crc32_empty;
+  crc32_empty.Append("");
+
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+  uint32_t crc_foo_val = crc32_foo.Get();
+
+  EXPECT_THAT(crc32_empty.Combine(crc32_foo, 3), Eq(crc_foo_val));
+  EXPECT_THAT(crc32_empty.Get(), Eq(crc_foo_val));
 }
 
 TEST(Crc32Test, UpdateAtPosition) {

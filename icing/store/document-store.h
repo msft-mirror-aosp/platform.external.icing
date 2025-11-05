@@ -115,6 +115,12 @@ class DocumentStore {
     bool derived_files_regenerated;
   };
 
+  struct DocumentMetadata {
+    std::string schema_type_name;
+    std::string name_space;
+    std::string uri;
+  };
+
   // Not copyable
   DocumentStore(const DocumentStore&) = delete;
   DocumentStore& operator=(const DocumentStore&) = delete;
@@ -245,8 +251,10 @@ class DocumentStore {
   // or expired). Order of namespaces is undefined.
   std::vector<std::string> GetAllNamespaces() const;
 
-  // Deletes the document identified by the given namespace and uri. The
-  // document proto will be erased immediately.
+  // TODO(b/384947619): migrate Delete APIs to return DocumentMetadata.
+
+  // Deletes the document identified by the given namespace and uri, only if it
+  // is still alive. The document proto will be erased immediately.
   //
   // NOTE:
   //    Space is not reclaimed for deleted documents until Optimize() is
@@ -260,8 +268,8 @@ class DocumentStore {
                                     std::string_view uri,
                                     int64_t current_time_ms);
 
-  // Deletes the document identified by the given document_id. The document
-  // proto will be erased immediately.
+  // Deletes the document identified by the given document_id, only if it is
+  // still alive. The document proto will be erased immediately.
   //
   // NOTE:
   //    Space is not reclaimed for deleted documents until Optimize() is
@@ -274,6 +282,24 @@ class DocumentStore {
   //   INVALID_ARGUMENT if document_id is invalid.
   libtextclassifier3::Status Delete(DocumentId document_id,
                                     int64_t current_time_ms);
+
+  // Deletes the document identified by the given document_id. The document
+  // proto will be erased immediately.
+  //
+  // Different from Delete(), this method promises that the document proto will
+  // be erased even if the document is expired.
+  //
+  // NOTE:
+  //    Space is not reclaimed for deleted documents until Optimize() is
+  //    called.
+  //
+  // Returns:
+  //   DocumentMetadata of the deleted document on success
+  //   NOT_FOUND_ERROR if the document doesn't exist or has been deleted
+  //   INTERNAL_ERROR on IO error
+  //   INVALID_ARGUMENT_ERROR if document_id is invalid.
+  libtextclassifier3::StatusOr<DocumentMetadata> ForceDelete(
+      DocumentId document_id);
 
   // Returns the NamespaceId of the string namespace
   //
@@ -513,7 +539,9 @@ class DocumentStore {
   // Returns:
   //   OK on success
   //   INTERNAL on I/O error
-  libtextclassifier3::Status PersistToDisk(PersistType::Code persist_type);
+  libtextclassifier3::Status PersistToDisk(
+      PersistType::Code persist_type,
+      PersistToDiskStatsProto* persist_stats = nullptr);
 
   // Calculates the StorageInfo for the Document Store.
   //
@@ -521,6 +549,10 @@ class DocumentStore {
   // that field will be set to -1.
   DocumentStorageInfoProto GetStorageInfo() const;
 
+  struct UpdateSchemaStoreResult {
+    int deleted_document_count = 0;
+    bool derived_files_changed = false;
+  };
   // Update any derived data off of the SchemaStore with the new SchemaStore.
   // This may include pointers, SchemaTypeIds, etc.
   //
@@ -534,18 +566,24 @@ class DocumentStore {
   // OptimizedUpdateSchemaStore.
   //
   // Returns;
-  //   OK on success
+  //   UpdateSchemaStoreResult on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status UpdateSchemaStore(const SchemaStore* schema_store);
+  libtextclassifier3::StatusOr<UpdateSchemaStoreResult> UpdateSchemaStore(
+      const SchemaStore* schema_store);
 
-  // Performs the same funtionality as UpdateSchemaStore, but this can be more
+  // Performs the same functionality as UpdateSchemaStore, but this can be more
   // optimized in terms of less disk reads and less work if we know exactly
   // what's changed between the old and new SchemaStore.
   //
+  // NOTE: This function may delete documents. A document may be invalidated by
+  // the new SchemaStore, such as failing validation or having its schema type
+  // deleted from the schema.
+  //
   // Returns;
-  //   number of documents deleted on success
+  //   UpdateSchemaStoreResult on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<int> OptimizedUpdateSchemaStore(
+  libtextclassifier3::StatusOr<UpdateSchemaStoreResult>
+  OptimizedUpdateSchemaStore(
       const SchemaStore* schema_store,
       const SchemaStore::SetSchemaResult& set_schema_result);
 

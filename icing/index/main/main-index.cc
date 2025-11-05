@@ -592,7 +592,8 @@ libtextclassifier3::Status MainIndex::AddHits(
     PostingListAccessor::FinalizeResult result =
         std::move(*hit_accum).Finalize();
     if (result.id.is_valid()) {
-      main_lexicon_->SetValueAtIndex(other_tvi_main_tvi_pair.first, &result.id);
+      ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(
+          other_tvi_main_tvi_pair.first, &result.id));
     }
   }
   flash_index_storage_->set_last_indexed_docid(last_added_document_id);
@@ -648,7 +649,7 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   PostingListAccessor::FinalizeResult result =
       std::move(*pl_accessor).Finalize();
   if (result.id.is_valid()) {
-    main_lexicon_->SetValueAtIndex(tvi, &result.id);
+    ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(tvi, &result.id));
   }
   return libtextclassifier3::Status::OK;
 }

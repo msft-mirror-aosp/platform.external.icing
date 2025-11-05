@@ -2549,7 +2549,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/1,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 1st Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2559,7 +2560,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/2,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 2nd Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2569,7 +2571,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/3,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 3rd Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2579,7 +2582,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/4,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 4th Advance().
   ICING_ASSERT_OK(iter->Advance());
@@ -2589,7 +2593,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/4,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 5th Advance().
   ASSERT_THAT(iter->Advance(),
@@ -2600,7 +2605,8 @@ TEST_P(IntegerIndexTest, IteratorCallStats) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/4,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/1));
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
@@ -2633,7 +2639,8 @@ TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/0,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/0));
+                  /*num_blocks_inspected=*/0,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // 1st Advance().
   ASSERT_THAT(iter->Advance(),
@@ -2644,7 +2651,8 @@ TEST_P(IntegerIndexTest, IteratorCallStatsNonExistingProperty) {
                   /*num_leaf_advance_calls_main_index=*/0,
                   /*num_leaf_advance_calls_integer_index=*/0,
                   /*num_leaf_advance_calls_no_index=*/0,
-                  /*num_blocks_inspected=*/0));
+                  /*num_blocks_inspected=*/0,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 INSTANTIATE_TEST_SUITE_P(
