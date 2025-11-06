@@ -1259,8 +1259,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         is_index_incompatible = true;
       }
 
-      if (old_property_config.joinable_config().value_type() !=
-          new_property_config->joinable_config().value_type()) {
+      if (!AreJoinableConfigsEqual(old_property_config.joinable_config(),
+                                   new_property_config->joinable_config())) {
         is_join_incompatible = true;
       }
     }

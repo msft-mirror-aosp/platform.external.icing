@@ -339,3 +339,37 @@ message DeleteByQueryResultProto {
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 5;
 }
+
+message HandleExpiredDocumentsResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Metadata for the deleted documents, grouped by namespace and schema.
+  message DocumentGroupInfo {
+    optional string name_space = 1;
+    optional string schema = 2;
+    repeated string uris = 3;
+  }
+  // A list of groups of deleted documents. A document was deleted because:
+  // - It was expired.
+  // - OR it was a child document of an expired document with delete propagation
+  //   enabled.
+  repeated DocumentGroupInfo deleted_documents = 2;
+
+  // The number of expired documents that were deleted. This DOES NOT include
+  // the propagated child documents.
+  optional int32 num_expired_documents = 3;
+
+  // The number of deleted documents that were propagated from the expired
+  // documents.
+  optional int32 num_propagated_deleted_documents = 4;
+}
