@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -53,6 +54,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/join/delete-propagation-handler.h"
+#include "icing/join/document-dependency-processor.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/join-processor.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
@@ -107,6 +109,7 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
+#include "icing/util/simple-task-scheduler.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/status-util.h"
 #include "icing/util/tokenized-document.h"
@@ -119,6 +122,8 @@ namespace lib {
 namespace {
 
 using ::icing::lib::status_util::TransformStatus;
+
+constexpr SimpleTaskScheduler::TaskId kHandleExpiredDocumentsTaskId = 1;
 
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kBlobSubfolderName = "blob_dir";
@@ -386,22 +391,6 @@ InitializeStatsProto::RecoveryCause TranslateMarkerProtoToRecoveryCause(
   }
 }
 
-// Prepares the document for indexing. This includes tokenization and dependency
-// enforcement.
-libtextclassifier3::StatusOr<TokenizedDocument> PrepareDocumentForIndexing(
-    const SchemaStore* schema_store,
-    const LanguageSegmenter* language_segmenter, int64_t current_time_ms,
-    DocumentProto&& document) {
-  ICING_ASSIGN_OR_RETURN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store, language_segmenter,
-                                current_time_ms, std::move(document)));
-
-  // TODO(b/384947619): apply dependency enforcement.
-
-  return tokenized_document;
-}
-
 libtextclassifier3::Status RetrieveAndAddDocumentInfo(
     const DocumentStore* document_store, DeleteByQueryResultProto& result_proto,
     std::unordered_map<NamespaceTypePair,
@@ -520,7 +509,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_embedding_iterator_v2(),
                      options_.enable_reusable_decompression_buffer(),
                      options_.enable_schema_type_id_optimization(),
-                     options_.enable_optimize_improvements()),
+                     options_.enable_optimize_improvements(),
+                     options_.expired_document_purge_threshold_ms()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -529,6 +519,9 @@ IcingSearchEngine::IcingSearchEngine(
 }
 
 IcingSearchEngine::~IcingSearchEngine() {
+  // Stop all scheduled background tasks before persisting to disk.
+  DestroyTaskScheduler();
+
   if (initialized_) {
     if (PersistToDisk(PersistType::FULL).status().code() != StatusProto::OK) {
       ICING_LOG(ERROR)
@@ -568,7 +561,7 @@ InitializeResultProto IcingSearchEngine::Initialize() {
   return result;
 }
 
-void IcingSearchEngine::ResetMembers() {
+void IcingSearchEngine::ResetMembersLocked() {
   // Reset all members in the reverse order of their initialization to ensure
   // the dependencies are not violated.
   embedding_index_.reset();
@@ -607,7 +600,7 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
     if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
       // We're tried and failed to init too many times. We need to throw
       // everything out and start from scratch.
-      ResetMembers();
+      ResetMembersLocked();
       marker_file_fd.reset();
 
       // Delete the entire base directory.
@@ -671,11 +664,12 @@ InitializeResultProto IcingSearchEngine::InitializeLocked() {
   }
 
   if (options_.enable_delete_propagation_from() &&
-      !options_.enable_qualified_id_join_index_v3()) {
+      (!options_.enable_qualified_id_join_index_v3() ||
+       !options_.enable_soft_index_restoration())) {
     result_status->set_code(StatusProto::INVALID_ARGUMENT);
     result_status->set_message(
-        "Delete propagation is enabled but qualified id join index v3 is not "
-        "enabled.");
+        "Delete propagation is enabled but qualified id join index v3 or soft "
+        "index restoration is not enabled.");
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::OPTIONS_VALIDATION);
     return result_proto;
@@ -1056,6 +1050,32 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   if (status.ok()) {
     status = index_init_status;
+  }
+
+  // - Initialize the task scheduler for purging expired documents.
+  // - Since documents may expire when Icing is off, we have to purge them in
+  //   the last step of initialization.
+  if ((status.ok() || absl_ports::IsDataLoss(status)) &&
+      options_.enable_delete_propagation_from()) {
+    if (task_scheduler_ == nullptr) {
+      // Initialize the task scheduler.
+      //
+      // Note: InitializeMembers may be called by ResetLocked() when put API
+      //   fails. In that case, we can still use the existing task_scheduler_
+      //   and no need to re-initialize it.
+      task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
+    }
+
+    // Call HandleExpiredDocumentsLocked() to handle documents that expire
+    // during Icing was off. This function will reschedule another task with the
+    // next expiration timestamp and activate the task.
+    HandleExpiredDocumentsResultProto result = HandleExpiredDocumentsLocked();
+    if (result.status().code() != StatusProto::OK) {
+      ICING_LOG(ERROR) << "Failed to handle expired documents during "
+                          "initialization: "
+                       << result.status().message();
+      return absl_ports::InternalError(result.status().message());
+    }
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
@@ -1799,8 +1819,7 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
 
   auto tokenized_document_or =
-      PrepareDocumentForIndexing(schema_store_.get(), language_segmenter_.get(),
-                                 current_time_ms, std::move(document));
+      PrepareDocumentsForIndexing(std::move(document), current_time_ms);
   if (!tokenized_document_or.ok()) {
     TransformStatus(tokenized_document_or.status(), result_status);
     return result_proto;
@@ -1811,11 +1830,16 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   auto put_result_or = document_store_->Put(
       tokenized_document.document_wrapper(), put_document_stats);
   if (!put_result_or.ok()) {
+    // TODO(b/384947619): revisit here if it is document replacement. Determine
+    //   which stage of DocumentStore::Put failed and decide whether to delete
+    //   the document and run delete propagation.
     TransformStatus(put_result_or.status(), result_status);
     return result_proto;
   }
   DocumentId old_document_id = put_result_or.ValueOrDie().old_document_id;
   DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
+  int64_t expiration_timestamp_ms =
+      put_result_or.ValueOrDie().expiration_timestamp_ms;
   result_proto.set_was_replacement(
       put_result_or.ValueOrDie().was_replacement());
 
@@ -1834,9 +1858,32 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   //   threshold)
   auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, old_document_id, put_document_stats);
-  // Getting an internal error from the index could possibly mean that the index
-  // is broken. Try to rebuild them to recover.
-  if (absl_ports::IsInternal(index_status)) {
+  if (index_status.ok()) {
+    if (options_.enable_delete_propagation_from() &&
+        task_scheduler_ != nullptr) {
+      // Reschedule purging expired document task if:
+      // - expiration_timestamp_ms is not INT64_MAX (i.e. the new document never
+      //   expires). Note: it is fine to schedule a task with at t = INT64_MAX
+      //   since it will never be executed, but let's avoid this edge case.
+      // - AND one of the following is true:
+      //   - existing_scheduled_time_ms < 0: there was no task scheduled, so we
+      //     need to schedule one.
+      //   - expiration_timestamp_ms < existing_scheduled_time_ms: the new
+      //     document has an expiration time that is earlier than the existing
+      //     scheduled.
+      int64_t existing_scheduled_time_ms =
+          task_scheduler_->GetScheduledTimeMs(kHandleExpiredDocumentsTaskId);
+      if (expiration_timestamp_ms < std::numeric_limits<int64_t>::max() &&
+          (existing_scheduled_time_ms < 0 ||
+           expiration_timestamp_ms < existing_scheduled_time_ms)) {
+        task_scheduler_->ScheduleAt(kHandleExpiredDocumentsTaskId,
+                                    CreateHandleExpiredDocumentsTask(),
+                                    expiration_timestamp_ms);
+      }
+    }
+  } else if (absl_ports::IsInternal(index_status)) {
+    // Getting an internal error from the index could possibly mean that the
+    // index is broken. Try to rebuild them to recover.
     ICING_LOG(ERROR) << "Got an internal error from the index. Trying to "
                         "rebuild the index!\n"
                      << index_status.error_message();
@@ -1860,11 +1907,15 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
         document_store_->Delete(document_id, current_time_ms);
     if (!delete_status.ok()) {
       // This is pretty dire (and, hopefully, unlikely). We can't roll back the
-      // document that we just added. Wipeout the whole index.
+      // document that we just added. Wipeout the whole database.
       ICING_LOG(ERROR) << "Cannot delete the document that is failed to index. "
                           "Wiping out the whole Icing search engine.";
       ResetLocked();
     }
+    // TODO(b/384947619): revisit here and decide whether to propagate delete to
+    //   all dependents if it is a replacement. We might not be able to rely on
+    //   normal delete propagation to remove the dependents here, since the join
+    //   index may be broken at this point.
   }
 
   TransformStatus(index_status, result_status);
@@ -2102,11 +2153,14 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
     // It is possible that the document has expired and the delete operation
     // fails with NOT_FOUND_ERROR. In this case, we should still propagate the
     // delete operation, regardless of the outcome of the delete operation.
-    libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
-        PropagateDelete(/*deleted_document_ids=*/{document_id},
-                        current_time_ms);
+    // TODO(b/384947619): add metadata of propagated documents to
+    //   DeleteResultProto for observer.
+    libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+        propagated_child_docs_deleted_or = PropagateDelete(
+            /*deleted_document_ids=*/{document_id}, current_time_ms);
     if (propagated_child_docs_deleted_or.ok()) {
-      num_documents_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+      num_documents_deleted += static_cast<int>(
+          propagated_child_docs_deleted_or.ValueOrDie().size());
     } else {
       propagate_delete_status =
           std::move(propagated_child_docs_deleted_or).status();
@@ -2320,15 +2374,19 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   }
 
   // Propagate deletion.
-  libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
-      PropagateDelete(deleted_document_ids, current_time_ms);
+  // TODO(b/384947619): add metadata of propagated documents to
+  //   DeleteResultProto for observer.
+  libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+      propagated_child_docs_deleted_or =
+          PropagateDelete(deleted_document_ids, current_time_ms);
   if (!propagated_child_docs_deleted_or.ok()) {
     TransformStatus(propagated_child_docs_deleted_or.status(), result_status);
     delete_stats->set_document_removal_latency_ms(
         component_timer->GetElapsedMilliseconds());
     return result_proto;
   }
-  num_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+  num_deleted +=
+      static_cast<int>(propagated_child_docs_deleted_or.ValueOrDie().size());
 
   delete_stats->set_document_removal_latency_ms(
       component_timer->GetElapsedMilliseconds());
@@ -2351,12 +2409,15 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
 // TODO(b/384947619): remove this function once we fully ramp
 // enable_delete_propagation_from.
-libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
+libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+IcingSearchEngine::PropagateDelete(
     const std::unordered_set<DocumentId>& deleted_document_ids,
     int64_t current_time_ms) {
-  if (!options_.enable_delete_propagation_from()) {
-    // No-op if delete propagation is disabled.
-    return 0;
+  if (!options_.enable_delete_propagation_from() ||
+      deleted_document_ids.empty()) {
+    // No-op if delete propagation is disabled or no deleted document ids, so
+    // return an empty vector.
+    return std::vector<DocumentStore::DocumentMetadata>();
   }
 
   ICING_ASSIGN_OR_RETURN(
@@ -2364,13 +2425,7 @@ libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
       DeletePropagationHandler::Create(schema_store_.get(),
                                        qualified_id_join_index_.get(),
                                        document_store_.get(), current_time_ms));
-  ICING_ASSIGN_OR_RETURN(
-      std::vector<DocumentStore::DocumentMetadata>
-          deleted_child_doc_metadata_list,
-      delete_propagation_handler.Handle(deleted_document_ids));
-  // TODO(b/384947619): return the metadata list instead of the size for
-  //   AppSearch observer.
-  return static_cast<int>(deleted_child_doc_metadata_list.size());
+  return delete_propagation_handler.Handle(deleted_document_ids);
 }
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
@@ -3269,6 +3324,32 @@ SearchResultProto IcingSearchEngine::SearchLocked(
   return result_proto;
 }
 
+libtextclassifier3::StatusOr<TokenizedDocument>
+IcingSearchEngine::PrepareDocumentsForIndexing(DocumentProto&& document,
+                                               int64_t current_time_ms) {
+  ICING_ASSIGN_OR_RETURN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), language_segmenter_.get(),
+                                current_time_ms, std::move(document)));
+
+  if (!options_.enable_delete_propagation_from()) {
+    return tokenized_document;
+  }
+
+  // Make a temporary vector to hold the single tokenized document for
+  // DocumentDependencyProcessor.
+  std::vector<TokenizedDocument> tmp_tokenized_documents;
+  tmp_tokenized_documents.push_back(std::move(tokenized_document));
+
+  ICING_ASSIGN_OR_RETURN(
+      DocumentDependencyProcessor dependency_processor,
+      DocumentDependencyProcessor::Create(
+          document_store_.get(), tmp_tokenized_documents, current_time_ms));
+  ICING_RETURN_IF_ERROR(dependency_processor.Evaluate());
+
+  return std::move(tmp_tokenized_documents[0]);
+}
+
 IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec,
@@ -3473,6 +3554,116 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
     return;
   }
   result_state_manager_->InvalidateResultState(next_page_token);
+}
+
+HandleExpiredDocumentsResultProto IcingSearchEngine::HandleExpiredDocuments() {
+  absl_ports::unique_lock l(&mutex_);
+
+  if (!initialized_) {
+    HandleExpiredDocumentsResultProto result_proto;
+    StatusProto* result_status = result_proto.mutable_status();
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+
+  return HandleExpiredDocumentsLocked();
+}
+
+HandleExpiredDocumentsResultProto
+IcingSearchEngine::HandleExpiredDocumentsLocked() {
+  HandleExpiredDocumentsResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  // We don't need to purge expired documents before delete propagation is
+  // supported, since in search API it will automatically filter out expired
+  // documents. However, when delete propagation is enabled, we need to purge
+  // expired documents explicitly in order to propagate deletion to their
+  // children. Therefore, this API is implemented and can be released together
+  // with the delete propagation feature.
+  if (!options_.enable_delete_propagation_from()) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message(
+        "Delete propagation is not enabled in this Icing instance!");
+    return result_proto;
+  }
+
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  // Step 1: purge expired documents.
+  auto expired_docs_or =
+      document_store_->PurgeExpiredDocuments(current_time_ms);
+  if (!expired_docs_or.ok()) {
+    TransformStatus(expired_docs_or.status(), result_status);
+    return result_proto;
+  }
+  std::vector<DocumentStore::DocumentMetadata> expired_docs =
+      std::move(expired_docs_or).ValueOrDie();
+
+  // Step 2: propagate deletion to their children.
+  std::unordered_set<DocumentId> expired_doc_ids;
+  expired_doc_ids.reserve(expired_docs.size());
+  for (const DocumentStore::DocumentMetadata& metadata : expired_docs) {
+    expired_doc_ids.insert(metadata.document_id);
+  }
+  auto propagated_deleted_docs_or =
+      PropagateDelete(expired_doc_ids, current_time_ms);
+  if (!propagated_deleted_docs_or.ok()) {
+    TransformStatus(propagated_deleted_docs_or.status(), result_status);
+    return result_proto;
+  }
+  std::vector<DocumentStore::DocumentMetadata> propagated_deleted_docs =
+      std::move(propagated_deleted_docs_or).ValueOrDie();
+
+  // Step 3: reschedule the task to handle next expired document(s).
+  if (task_scheduler_ != nullptr) {
+    int64_t next_expired_doc_ts_ms =
+        document_store_->GetNextExpiredDocumentTimestampMs(current_time_ms);
+    if (next_expired_doc_ts_ms < 0) {
+      // No more expired documents. Cancel the scheduled task.
+      task_scheduler_->Cancel(kHandleExpiredDocumentsTaskId);
+    } else {
+      task_scheduler_->ScheduleAt(kHandleExpiredDocumentsTaskId,
+                                  CreateHandleExpiredDocumentsTask(),
+                                  next_expired_doc_ts_ms);
+    }
+  }
+
+  result_proto.set_num_expired_documents(
+      static_cast<int32_t>(expired_docs.size()));
+  result_proto.set_num_propagated_deleted_documents(
+      static_cast<int32_t>(propagated_deleted_docs.size()));
+
+  // Add all deleted documents to the result proto, grouped by NamespaceTypePair
+  // (namespace, schema).
+  std::unordered_map<NamespaceTypePair,
+                     HandleExpiredDocumentsResultProto::DocumentGroupInfo*,
+                     NamespaceTypePairHasher>
+      group_map;
+  const auto add_fn =
+      [&result_proto,
+       &group_map](std::vector<DocumentStore::DocumentMetadata>&& metadata_list)
+      -> void {
+    for (DocumentStore::DocumentMetadata& metadata : metadata_list) {
+      NamespaceTypePair group_key = {std::move(metadata.name_space),
+                                     std::move(metadata.schema_type_name)};
+      auto itr = group_map.find(group_key);
+      if (itr == group_map.end()) {
+        HandleExpiredDocumentsResultProto::DocumentGroupInfo* entry =
+            result_proto.add_deleted_documents();
+        entry->set_name_space(group_key.namespace_);
+        entry->set_schema(group_key.type);
+        entry->add_uris(std::move(metadata.uri));
+        group_map.insert({std::move(group_key), entry});
+      } else {
+        itr->second->add_uris(std::move(metadata.uri));
+      }
+    }
+  };
+  add_fn(std::move(expired_docs));
+  add_fn(std::move(propagated_deleted_docs));
+
+  result_status->set_code(StatusProto::OK);
+  return result_proto;
 }
 
 BlobProto IcingSearchEngine::OpenWriteBlob(
@@ -3805,9 +3996,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
 
     libtextclassifier3::Status status;
     libtextclassifier3::StatusOr<TokenizedDocument> tokenized_document_or =
-        PrepareDocumentForIndexing(schema_store_.get(),
-                                   language_segmenter_.get(), current_time_ms,
-                                   std::move(document));
+        PrepareDocumentsForIndexing(std::move(document), current_time_ms);
     if (!tokenized_document_or.ok()) {
       status = std::move(tokenized_document_or).status();
     } else {
@@ -3844,20 +4033,39 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     }
   }
 
-  // Finally, delete all failed documents.
+  // Delete all failed documents and propagate deletion to their child
+  // documents. If there is any error, log it without failing index restoration.
+  // TODO(b/384947619): add metadata of deleted documents into
+  //   InitializeResultProto.
   if (options_.enable_soft_index_restoration()) {
     for (DocumentId document_id : failed_document_ids) {
-      libtextclassifier3::Status delete_status =
-          document_store_->Delete(document_id, current_time_ms);
-      if (!delete_status.ok()) {
+      libtextclassifier3::StatusOr<DocumentStore::DocumentMetadata>
+          deleted_metadata_or = document_store_->ForceDelete(document_id);
+      if (!deleted_metadata_or.ok()) {
         // This is pretty dire (and, hopefully, unlikely). Log the error and
         // skip it.
         ICING_LOG(WARNING) << "Cannot delete document " << document_id
                            << " that which failed to index: "
-                           << delete_status.error_message();
+                           << deleted_metadata_or.status().error_message();
       }
     }
-    // TODO(b/384947619): apply delete propagation on these failed documents.
+
+    // Propagate deletion to child documents. Call PropagateDelete directly here
+    // since the delete propagation flag will be checked there.
+    auto propagated_deleted_child_docs_or =
+        PropagateDelete(failed_document_ids, current_time_ms);
+    if (!propagated_deleted_child_docs_or.ok()) {
+      ICING_LOG(WARNING)
+          << "Cannot propagate deletion for child documents of failed "
+             "documents during index restoration: "
+          << propagated_deleted_child_docs_or.status().error_message();
+    } else {
+      ICING_LOG(INFO)
+          << "Successfully deleted " << failed_document_ids.size()
+          << " documents that failed to index, and propagated deletion to "
+          << propagated_deleted_child_docs_or.ValueOrDie().size()
+          << " child documents during index restoration.";
+    }
   }
 
   return IndexRestorationResult(std::move(overall_status),
@@ -4126,8 +4334,18 @@ libtextclassifier3::Status IcingSearchEngine::ClearAllIndices() {
 }
 
 ResetResultProto IcingSearchEngine::ClearAndDestroy() {
-  absl_ports::unique_lock l(&mutex_);
-  return ClearAndDestroyLocked();
+  // Destroy the task scheduler first to make sure the background tasks finish
+  // before we delete the IcingSearchEngine object.
+  //
+  // Note: it is fine to not destroy the task scheduler since all the tasks will
+  //   fail silently due to initialized_ being false, but let's do it for
+  //   cleanup.
+  DestroyTaskScheduler();
+
+  {
+    absl_ports::unique_lock l(&mutex_);
+    return ClearAndDestroyLocked();
+  }
 }
 
 ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
@@ -4138,7 +4356,7 @@ ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
   StatusProto* result_status = result_proto.mutable_status();
 
   initialized_ = false;
-  ResetMembers();
+  ResetMembersLocked();
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
     result_status->set_code(StatusProto::INTERNAL);
     return result_proto;
@@ -4232,6 +4450,39 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   }
   response_status->set_code(StatusProto::OK);
   return response;
+}
+
+void IcingSearchEngine::DestroyTaskScheduler() {
+  // We have to acquire the lock before accessing and resetting task_scheduler_.
+  // Otherwise, if the background task is still running in the critical section
+  // and accessing task_scheduler_, then it will cause data race issues on the
+  // pointer.
+  SimpleTaskScheduler* task_scheduler_local = nullptr;
+  {
+    absl_ports::unique_lock l(&mutex_);
+
+    if (task_scheduler_ != nullptr) {
+      task_scheduler_local = task_scheduler_.release();
+    }
+  }
+
+  // Delete the task scheduler OUTSIDE of the critical section. Otherwise, it is
+  // possible that a background task starts to run and blocks at acquiring the
+  // global lock, which causes deadlock.
+  if (task_scheduler_local != nullptr) {
+    delete task_scheduler_local;
+  }
+}
+
+std::function<void()> IcingSearchEngine::CreateHandleExpiredDocumentsTask() {
+  return [this]() -> void {
+    HandleExpiredDocumentsResultProto result = HandleExpiredDocuments();
+    if (result.status().code() != StatusProto::OK) {
+      ICING_LOG(ERROR)
+          << "Failed to handle expired documents in the background: "
+          << result.status().message();
+    }
+  };
 }
 
 }  // namespace lib

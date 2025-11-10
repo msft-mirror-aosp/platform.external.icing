@@ -160,9 +160,11 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
              has_valid_scorable_property_cache_index;
 }
 
-MATCHER_P3(EqualsDocumentMetadata, schema_type_name, name_space, uri, "") {
+MATCHER_P4(EqualsDocumentMetadata, schema_type_name, name_space, uri,
+           document_id, "") {
   return arg.schema_type_name == schema_type_name &&
-         arg.name_space == name_space && arg.uri == uri;
+         arg.name_space == name_space && arg.uri == uri &&
+         arg.document_id == document_id;
 }
 
 // Used to match a ScorablePropertyManager::ScorablePropertyInfo
