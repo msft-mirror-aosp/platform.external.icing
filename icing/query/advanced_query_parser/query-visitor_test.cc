@@ -231,7 +231,8 @@ class QueryVisitorTest
                      GetParam().enable_embedding_iterator_v2,
                      /*enable_reusable_decompression_buffer=*/true,
                      /*enable_schema_type_id_optimization=*/true,
-                     /*enable_optimize_improvements=*/true));
+                     /*enable_optimize_improvements=*/true,
+                     /*expired_document_purge_threshold_ms=*/0));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";

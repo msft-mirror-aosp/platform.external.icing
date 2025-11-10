@@ -468,6 +468,34 @@ derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
           /*needs_qualified_id_join_index_rebuild=*/true,
           /*needs_embedding_index_rebuild=*/false);
     }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM: {
+      // By rebuilding qualified id join index, we will re-validate document
+      // dependency: if a schema enables delete propagation but a document of
+      // this schema references a deleted/expired/non-existent parent document,
+      // then Icing will remove this child document.
+      //
+      // Note: document dependency re-validation can be done by rebuilding any
+      //   index since the process is done in TokenizedDocument generation, but
+      //   we choose to rebuild the join index because:
+      //   - Rebuilding the join index guarantees to "replay" document protos
+      //     from doc id 0. All alive documents will be iterated and
+      //     re-validated.
+      //   - Delete propagation is related to the join index.
+      //   - We could've only generated TokenizedDocument and re-validated the
+      //     document dependency without rebuilding any indices, but:
+      //     - This would require more changes to Icing's derived files recovery
+      //       logic (i.e. RestoreIndexIfNeeded()).
+      //     - Tt is rare to switch this flag on and off too frequently.
+      //     - Therefore, let's just simply reuse the existing derived files
+      //       recovery logic to trigger document dependency re-validation.
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/false);
+    }
     case IcingSearchEngineFeatureInfoProto::UNKNOWN:
       return derived_file_util::DerivedFilesRebuildInfo(
           /*needs_document_store_derived_files_rebuild=*/true,
@@ -546,6 +574,11 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   if (options.enable_qualified_id_join_index_v3()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
+  }
+  // DeletePropagation PROPAGATE_FROM feature
+  if (options.enable_delete_propagation_from()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM));
   }
 }
 

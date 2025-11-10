@@ -140,8 +140,10 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_embedding_index(true);
   icing_options.set_enable_scorable_properties(true);
   icing_options.set_enable_embedding_quantization(true);
+  icing_options.set_enable_repeated_field_joins(true);
+  icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
-  icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_delete_propagation_from(true);
   icing_options.set_enable_passing_filter_to_children(true);
   icing_options.set_enable_embedding_iterator_v2(true);
   return icing_options;
@@ -1426,7 +1428,7 @@ TEST_F(IcingSearchEngineSearchTest, SearchDoesntIncludeDocumentsPastTtl) {
   // Time just has to be greater than the document's creation timestamp (100) +
   // the document's ttl (500)
   auto fake_clock = std::make_unique<FakeClock>();
-  fake_clock->SetSystemTimeMilliseconds(700);
+  FakeClock* fake_clock_ptr = fake_clock.get();
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
                               std::make_unique<Filesystem>(),
@@ -1436,6 +1438,10 @@ TEST_F(IcingSearchEngineSearchTest, SearchDoesntIncludeDocumentsPastTtl) {
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Adjust the clock to be greater than the document's creation timestamp (100)
+  // + the document's ttl (500).
+  fake_clock_ptr->SetSystemTimeMilliseconds(700);
 
   // Check that the document is not returned as part of search results
   SearchResultProto search_result_proto =
