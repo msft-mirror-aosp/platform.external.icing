@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v1.h"
 
 #include <cstdint>
 #include <memory>
@@ -26,7 +26,6 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/embedding-scorer.h"
-#include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
 #include "icing/proto/search.pb.h"
@@ -40,8 +39,8 @@
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIteratorEmbedding>>
-DocHitInfoIteratorEmbedding::Create(
+libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIteratorEmbeddingV1>>
+DocHitInfoIteratorEmbeddingV1::Create(
     const PropertyProto::VectorProto* query,
     SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
     double score_low, double score_high,
@@ -58,36 +57,37 @@ DocHitInfoIteratorEmbedding::Create(
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  libtextclassifier3::StatusOr<std::unique_ptr<PostingListEmbeddingHitAccessor>>
-      pl_accessor_or = embedding_index->GetAccessorForVector(*query);
-  std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor;
-  if (pl_accessor_or.ok()) {
-    pl_accessor = std::move(pl_accessor_or).ValueOrDie();
-  } else if (absl_ports::IsNotFound(pl_accessor_or.status())) {
+  libtextclassifier3::StatusOr<
+      std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>>
+      embedding_hit_accessor_or = embedding_index->GetAccessorForVector(*query);
+  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor;
+  if (embedding_hit_accessor_or.ok()) {
+    embedding_hit_accessor = std::move(embedding_hit_accessor_or).ValueOrDie();
+  } else if (absl_ports::IsNotFound(embedding_hit_accessor_or.status())) {
     // A not-found error should be fine, since that means there is no matching
     // embedding hits in the index.
-    pl_accessor = nullptr;
+    embedding_hit_accessor = nullptr;
   } else {
     // Otherwise, return the error as is.
-    return pl_accessor_or.status();
+    return embedding_hit_accessor_or.status();
   }
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<EmbeddingScorer> embedding_scorer,
                          EmbeddingScorer::Create(metric_type));
 
-  return std::unique_ptr<DocHitInfoIteratorEmbedding>(
-      new DocHitInfoIteratorEmbedding(
+  return std::unique_ptr<DocHitInfoIteratorEmbeddingV1>(
+      new DocHitInfoIteratorEmbeddingV1(
           query, metric_type, std::move(embedding_scorer), score_low,
           score_high, info_map, global_scores, global_section_infos,
-          embedding_index, std::move(pl_accessor), document_store, schema_store,
-          current_time_ms));
+          embedding_index, std::move(embedding_hit_accessor), document_store,
+          schema_store, current_time_ms));
 }
 
 libtextclassifier3::StatusOr<const EmbeddingHit*>
-DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
+DocHitInfoIteratorEmbeddingV1::AdvanceToNextEmbeddingHit() {
   if (cached_embedding_hits_idx_ == cached_embedding_hits_.size()) {
     ICING_ASSIGN_OR_RETURN(cached_embedding_hits_,
-                           posting_list_accessor_->GetNextHitsBatch());
+                           embedding_hit_accessor_->GetNextHitsBatch());
     cached_embedding_hits_idx_ = 0;
     if (cached_embedding_hits_.empty()) {
       no_more_hit_ = true;
@@ -98,14 +98,25 @@ DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
       cached_embedding_hits_[cached_embedding_hits_idx_];
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
     doc_hit_info_.set_document_id(embedding_hit.basic_hit().document_id());
-    current_allowed_sections_mask_ =
-        ComputeAllowedSectionsMask(doc_hit_info_.document_id());
+    if (DoesDocumentPassAllFilters(doc_hit_info_.document_id())) {
+      current_allowed_sections_mask_ =
+          ComputeAllowedSectionsMask(doc_hit_info_.document_id());
 
-    schema_type_id_ = document_store_.GetSchemaTypeId(
-        doc_hit_info_.document_id(), current_time_ms_);
-    if (schema_type_id_ == kInvalidSchemaTypeId) {
-      // This means that the document is deleted or expired, so update
-      // current_allowed_sections_mask_ to skip the document.
+      schema_type_id_ = document_store_.GetSchemaTypeId(
+          doc_hit_info_.document_id(), current_time_ms_);
+      if (schema_type_id_ == kInvalidSchemaTypeId) {
+        // This means that the document is deleted or expired, so update
+        // current_allowed_sections_mask_ to skip the document.
+        current_allowed_sections_mask_ = kSectionIdMaskNone;
+      } else {
+        ICING_ASSIGN_OR_RETURN(
+            schema_name_hash_,
+            schema_store_.GetSchemaNameHash(schema_type_id_));
+      }
+    } else {
+      // This means that the document is filtered out by the document filter
+      // predicate, so update current_allowed_sections_mask_ to skip the
+      // document.
       current_allowed_sections_mask_ = kSectionIdMaskNone;
     }
   } else if (doc_hit_info_.document_id() !=
@@ -117,14 +128,15 @@ DocHitInfoIteratorEmbedding::AdvanceToNextEmbeddingHit() {
 }
 
 libtextclassifier3::Status
-DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
-  if (no_more_hit_ || posting_list_accessor_ == nullptr) {
+DocHitInfoIteratorEmbeddingV1::AdvanceToNextUnfilteredDocument() {
+  if (no_more_hit_ || embedding_hit_accessor_ == nullptr) {
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
 
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId, kSectionIdMaskNone);
   schema_type_id_ = kInvalidSchemaTypeId;
+  schema_name_hash_ = 0;
   EmbeddingMatchInfos* matched_infos = nullptr;
   current_allowed_sections_mask_ = kSectionIdMaskAll;
   SectionId current_section_id = kInvalidSectionId;
@@ -146,6 +158,12 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
       continue;
     }
 
+    if (schema_type_id_ == kInvalidSchemaTypeId) {
+      // This should never happen, because current_allowed_sections_mask_ would
+      // have been updated to kSectionIdMaskNone for this case.
+      continue;
+    }
+
     // We've reached a new section. Reset the match count and retrieve the
     // quantization type for the new section.
     if (current_section_id != embedding_hit->basic_hit().section_id()) {
@@ -161,10 +179,10 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
     }
 
     // Calculate the semantic score.
-    ICING_ASSIGN_OR_RETURN(
-        float semantic_score,
-        embedding_index_.ScoreEmbeddingHit(*embedding_scorer_, query_,
-                                           *embedding_hit, quantization_type));
+    ICING_ASSIGN_OR_RETURN(float semantic_score,
+                           embedding_hit_accessor_->ScoreEmbeddingHit(
+                               *embedding_scorer_, query_, *embedding_hit,
+                               quantization_type, schema_name_hash_));
 
     // If the semantic score is within the desired score range, update
     // doc_hit_info_ and info_map_.
@@ -192,7 +210,7 @@ DocHitInfoIteratorEmbedding::AdvanceToNextUnfilteredDocument() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocHitInfoIteratorEmbedding::Advance() {
+libtextclassifier3::Status DocHitInfoIteratorEmbeddingV1::Advance() {
   do {
     ICING_RETURN_IF_ERROR(AdvanceToNextUnfilteredDocument());
   } while (doc_hit_info_.hit_section_ids_mask() == kSectionIdMaskNone);

@@ -62,7 +62,7 @@ class HeaderBlock {
   static libtextclassifier3::StatusOr<HeaderBlock> Read(
       const Filesystem* filesystem, int fd, int block_size) {
     std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(block_size);
-    if (!filesystem->PRead(fd, buffer.get(), block_size, 0)) {
+    if (filesystem->PRead(fd, buffer.get(), block_size, 0) != block_size) {
       return absl_ports::InternalError("Unable to reader header block!");
     }
     return HeaderBlock(filesystem, std::move(buffer), block_size);

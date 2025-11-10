@@ -3963,7 +3963,14 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   EXPECT_NE(old_email_schema_type_id, new_email_schema_type_id);
   EXPECT_NE(old_message_schema_type_id, new_message_schema_type_id);
 
-  ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->UpdateSchemaStore(schema_store.get()));
+  // - No documents should be deleted since we just reordered the schema type
+  //   ids.
+  // - The derived files should be changed.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // Check that the FilterCache holds the new SchemaTypeIds
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
@@ -4057,7 +4064,14 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_EXPECT_OK(schema_store->SetSchema(
       schema, /*ignore_errors_and_delete_documents=*/true));
 
-  ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->UpdateSchemaStore(schema_store.get()));
+  // - email_without_subject should be deleted since the new required property
+  //   is missing.
+  // - The derived files should be changed.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(1));
+  EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // The email without a subject should be marked as deleted
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
@@ -4140,7 +4154,13 @@ TEST_P(DocumentStoreTest,
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/true));
 
-  ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->UpdateSchemaStore(schema_store.get()));
+  // - email should be deleted.
+  // - The derived files should be changed.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(1));
+  EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // The "email" type is unknown now, so the "email" document should be deleted
   EXPECT_THAT(document_store->Get(email_document_id),
@@ -4149,6 +4169,80 @@ TEST_P(DocumentStoreTest,
   // The "message" document should be unaffected
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
+}
+
+TEST_P(DocumentStoreTest, UpdateSchemaStoreWithFullyCompatibleDocumentStore) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  // Set a schema with "email" and "message" types.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add "email" document
+  DocumentProto email_document = DocumentBuilder()
+                                     .SetNamespace("namespace")
+                                     .SetUri("email_uri")
+                                     .SetSchema("email")
+                                     .SetCreationTimestampMs(0)
+                                     .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_put_result,
+      document_store->Put(
+          document_util::CreateDocumentWrapper(email_document)));
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
+  DocumentId email_document_id = email_put_result.new_document_id;
+  EXPECT_THAT(document_store->Get(email_document_id),
+              IsOkAndHolds(EqualsProto(email_document)));
+
+  // Delete schema type "message".
+  // - "email" type should have the same schema type id.
+  // - There was no document with "message" schema type, so no document should
+  //   be deleted.
+  //
+  // Therefore, the new schema is fully compatible with the DocumentStore.
+  // Derived files should not be changed.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaStore::SetSchemaResult set_schema_result,
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/true));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->UpdateSchemaStore(schema_store.get()));
+  // - No document is deleted since there were no documents with "message"
+  //   schema type.
+  // - The derived files should be UNCHANGED.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.derived_files_changed, IsFalse());
+
+  // The "email" document should be unaffected
+  EXPECT_THAT(document_store->Get(email_document_id),
+              IsOkAndHolds(EqualsProto(email_document)));
 }
 
 TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
@@ -4243,8 +4337,15 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   EXPECT_NE(old_email_schema_type_id, new_email_schema_type_id);
   EXPECT_NE(old_message_schema_type_id, new_message_schema_type_id);
 
-  ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
-      schema_store.get(), set_schema_result));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->OptimizedUpdateSchemaStore(schema_store.get(),
+                                                 set_schema_result));
+  // - No documents should be deleted since we just reordered the schema type
+  //   ids.
+  // - The derived files should be changed.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // Check that the FilterCache holds the new SchemaTypeIds
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
@@ -4340,8 +4441,15 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
       schema_store->SetSchema(schema,
                               /*ignore_errors_and_delete_documents=*/true));
 
-  ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
-      schema_store.get(), set_schema_result));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->OptimizedUpdateSchemaStore(schema_store.get(),
+                                                 set_schema_result));
+  // - email_without_subject should be deleted since the new required property
+  //   is missing.
+  // - The derived files should be changed.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(1));
+  EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // The email without a subject should be marked as deleted
   EXPECT_THAT(document_store->Get(email_without_subject_document_id),
@@ -4425,8 +4533,14 @@ TEST_P(DocumentStoreTest,
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/true));
 
-  ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
-      schema_store.get(), set_schema_result));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->OptimizedUpdateSchemaStore(schema_store.get(),
+                                                 set_schema_result));
+  // - email should be deleted.
+  // - The derived files should be changed.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(1));
+  EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // The "email" type is unknown now, so the "email" document should be deleted
   EXPECT_THAT(document_store->Get(email_document_id),
@@ -4435,6 +4549,82 @@ TEST_P(DocumentStoreTest,
   // The "message" document should be unaffected
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
+}
+
+TEST_P(DocumentStoreTest,
+       OptimizedUpdateSchemaStoreWithFullyCompatibleDocumentStore) {
+  const std::string schema_store_dir = test_dir_ + "_custom";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+
+  // Set a schema with "email" and "message" types.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Add "email" document
+  DocumentProto email_document = DocumentBuilder()
+                                     .SetNamespace("namespace")
+                                     .SetUri("email_uri")
+                                     .SetSchema("email")
+                                     .SetCreationTimestampMs(0)
+                                     .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult email_put_result,
+      document_store->Put(
+          document_util::CreateDocumentWrapper(email_document)));
+  EXPECT_THAT(email_put_result.old_document_id, Eq(kInvalidDocumentId));
+  EXPECT_FALSE(email_put_result.was_replacement());
+  DocumentId email_document_id = email_put_result.new_document_id;
+  EXPECT_THAT(document_store->Get(email_document_id),
+              IsOkAndHolds(EqualsProto(email_document)));
+
+  // Delete schema type "message".
+  // - "email" type should have the same schema type id.
+  // - There was no document with "message" schema type, so no document should
+  //   be deleted.
+  //
+  // Therefore, the new schema is fully compatible with the DocumentStore.
+  // Derived files should not be changed.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaStore::SetSchemaResult set_schema_result,
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/true));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::UpdateSchemaStoreResult update_result,
+      document_store->OptimizedUpdateSchemaStore(schema_store.get(),
+                                                 set_schema_result));
+  // - No document is deleted since there were no documents with "message"
+  //   schema type.
+  // - The derived files should be UNCHANGED.
+  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.derived_files_changed, IsFalse());
+
+  // The "email" document should be unaffected
+  EXPECT_THAT(document_store->Get(email_document_id),
+              IsOkAndHolds(EqualsProto(email_document)));
 }
 
 TEST_P(DocumentStoreTest, GetOptimizeInfo) {
@@ -5113,7 +5303,8 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
 
     // Set dirty bit to true to reflect that something changed in the log.
     header.SetDirtyFlag(true);
-    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+    header.UpdateHeaderChecksums(
+        feature_flags_->enable_proto_log_new_header_format());
 
     WriteDocumentLogHeader(filesystem_, document_log_file, header);
   }

@@ -115,7 +115,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, InitializeNewFiles) {
       filesystem_.PRead(metadata_file_path.c_str(), metadata_buffer.get(),
                         QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                         /*offset=*/0),
-      IsTrue());
+      Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
   // Check info section
   const Info* info = reinterpret_cast<const Info*>(
@@ -437,7 +437,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
     // Manually change magic and update checksum
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -457,10 +457,12 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
 
   // Attempt to create the qualified id join index with different magic. This
   // should fail.
-  EXPECT_THAT(QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
-                                                 *feature_flags_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
-                       HasSubstr("Incorrect magic value")));
+  EXPECT_THAT(
+      QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
+                                         *feature_flags_),
+      StatusIs(
+          libtextclassifier3::StatusCode::FAILED_PRECONDITION,
+          HasSubstr("Invalid header magic for QualifiedIdJoinIndexImplV3")));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test,
@@ -489,7 +491,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
     // Manually corrupt all_crc
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -537,7 +539,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV3::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV3::kMetadataFileSize));
 
     // Modify info, but don't update the checksum. This would be similar to
     // corruption of info.
@@ -1289,6 +1291,58 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
 
   // Sanity check that the file size is extended and remap happens.
   EXPECT_THAT(file_size_after, Gt(file_size_before));
+}
+
+TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParentShouldSetDirty) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  DocumentId parent_doc_id1 = 1;
+  DocumentId parent_doc_id2 = 1024;
+
+  // Add 2 children with their parents to the index.
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair1,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+  ICING_ASSERT_OK(index->Put(
+      child_join_id_pair2,
+      /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+
+  // Sanity check.
+  ASSERT_THAT(index, Pointee(SizeIs(2)));
+  ASSERT_THAT(
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+  ASSERT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
+              IsOkAndHolds(IsEmpty()));
+  // PersistToDisk after putting data and get the checksum. This will reset the
+  // dirty flag.
+  ICING_ASSERT_OK(index->PersistToDisk());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc1, index->GetChecksum());
+
+  // Migrate parent document id 1 to 1024.
+  ICING_ASSERT_OK(index->MigrateParent(parent_doc_id1, parent_doc_id2));
+
+  // Call UpdateChecksums(). The checksum should be recomputed and be different
+  // from the previous one. This validates that MigrateParent() should set the
+  // dirty flag.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc2, index->UpdateChecksums());
+  EXPECT_THAT(crc2, Ne(crc1));
+
+  // Create another qualified id join index instance with the same file. It
+  // should succeed and GetChecksum() should return the same checksum as the
+  // previous one.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index2,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc3, index2->GetChecksum());
+  EXPECT_THAT(crc3, Eq(crc2));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {

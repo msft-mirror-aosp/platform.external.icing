@@ -4438,7 +4438,14 @@ TEST_P(SchemaUtilTest,
       /*enable_schema_database=*/true,
       /*release_backup_schema_file_if_overlay_present=*/true,
       /*enable_strict_page_byte_size_limit=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true);
+      /*enable_smaller_decompression_buffer_size=*/true,
+      /*enable_eigen_embedding_scoring=*/true,
+      /*enable_passing_filter_to_children=*/true,
+      /*enable_proto_log_new_header_format=*/true,
+      /*enable_embedding_iterator_v2=*/true,
+      /*enable_reusable_decompression_buffer=*/true,
+      /*enable_schema_type_id_optimization=*/true,
+      /*enable_optimize_improvements=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4502,7 +4509,14 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_schema_database=*/true,
       /*release_backup_schema_file_if_overlay_present=*/true,
       /*enable_strict_page_byte_size_limit=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true);
+      /*enable_smaller_decompression_buffer_size=*/true,
+      /*enable_eigen_embedding_scoring=*/true,
+      /*enable_passing_filter_to_children=*/true,
+      /*enable_proto_log_new_header_format=*/true,
+      /*enable_embedding_iterator_v2=*/true,
+      /*enable_reusable_decompression_buffer=*/true,
+      /*enable_schema_type_id_optimization=*/true,
+      /*enable_optimize_improvements=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5831,7 +5845,14 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_schema_database=*/true,
                         /*release_backup_schema_file_if_overlay_present=*/true,
                         /*enable_strict_page_byte_size_limit=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true),
+                        /*enable_smaller_decompression_buffer_size=*/true,
+                        /*enable_eigen_embedding_scoring=*/true,
+                        /*enable_passing_filter_to_children=*/true,
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true,
+                        /*enable_schema_type_id_optimization=*/true,
+                        /*enable_optimize_improvements=*/true),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -5841,7 +5862,14 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_schema_database=*/true,
                         /*release_backup_schema_file_if_overlay_present=*/true,
                         /*enable_strict_page_byte_size_limit=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true)));
+                        /*enable_smaller_decompression_buffer_size=*/true,
+                        /*enable_eigen_embedding_scoring=*/true,
+                        /*enable_passing_filter_to_children=*/true,
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true,
+                        /*enable_schema_type_id_optimization=*/true,
+                        /*enable_optimize_improvements=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;
