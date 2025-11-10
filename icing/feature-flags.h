@@ -15,6 +15,8 @@
 #ifndef ICING_FEATURE_FLAGS_H_
 #define ICING_FEATURE_FLAGS_H_
 
+#include <cstdint>
+
 namespace icing {
 namespace lib {
 
@@ -35,7 +37,8 @@ class FeatureFlags {
                         bool enable_embedding_iterator_v2,
                         bool enable_reusable_decompression_buffer,
                         bool enable_schema_type_id_optimization,
-                        bool enable_optimize_improvements)
+                        bool enable_optimize_improvements,
+                        int64_t expired_document_purge_threshold_ms)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -54,7 +57,9 @@ class FeatureFlags {
         enable_reusable_decompression_buffer_(
             enable_reusable_decompression_buffer),
         enable_schema_type_id_optimization_(enable_schema_type_id_optimization),
-        enable_optimize_improvements_(enable_optimize_improvements) {}
+        enable_optimize_improvements_(enable_optimize_improvements),
+        expired_document_purge_threshold_ms_(
+            expired_document_purge_threshold_ms) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -118,6 +123,10 @@ class FeatureFlags {
     return enable_optimize_improvements_;
   }
 
+  int64_t expired_document_purge_threshold_ms() const {
+    return expired_document_purge_threshold_ms_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -170,6 +179,20 @@ class FeatureFlags {
   // 1. Avoid unnecessary Status allocs for deleted/expired docs
   // 2. Remove an unnecessary persist to disk call
   bool enable_optimize_improvements_;
+
+  // The time threshold for an expired document to be purged.
+  // - Since we schedule a task to purge expired documents according to the next
+  //   expiration time of the documents, it is possible that some documents
+  //   expire within a small time window and the task executes too frequently.
+  // - Therefore, we use this flag to purge more documents that also expire in a
+  //   short period of time after the current time.
+  //
+  // For example, if the value is 1000 ms and the current time is 10000 ms:
+  // - All documents that are expired before 10000 ms will be purged, since they
+  //   are already expired.
+  // - Additionally, we will also purge documents that expire in the next 1000
+  //   ms, i.e. (10000, 11000] ms.
+  int64_t expired_document_purge_threshold_ms_;
 };
 
 }  // namespace lib

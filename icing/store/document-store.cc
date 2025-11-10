@@ -15,6 +15,7 @@
 #include "icing/store/document-store.h"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1166,6 +1167,7 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
   }
   PutResult put_result;
   put_result.new_document_id = new_document_id;
+  put_result.expiration_timestamp_ms = raw_expiration_timestamp_ms;
 
   // Update namespace maps
   ICING_ASSIGN_OR_RETURN(
@@ -1528,6 +1530,62 @@ DocumentStore::ResetAllAliveExpirationTimestampsToRaw(int64_t current_time_ms) {
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+DocumentStore::PurgeExpiredDocuments(int64_t current_time_ms) {
+  std::vector<DocumentMetadata> deleted_doc_metadata_list;
+  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
+       ++document_id) {
+    std::optional<DocumentFilterData> filter_data =
+        GetNonDeletedDocumentFilterData(document_id);
+    if (!filter_data.has_value()) {
+      continue;
+    }
+
+    // If the document is expired or expires within the threshold, delete it.
+    if (current_time_ms +
+            feature_flags_.expired_document_purge_threshold_ms() >=
+        filter_data->expiration_timestamp_ms()) {
+      // Expired but not deleted yet. Force delete it.
+      auto deleted_doc_metadata_or = ForceDelete(document_id);
+      if (!deleted_doc_metadata_or.ok()) {
+        if (absl_ports::IsNotFound(deleted_doc_metadata_or.status())) {
+          // This should not happen, but let's handle it here anyway.
+          continue;
+        }
+        // Real error. Return it.
+        return std::move(deleted_doc_metadata_or).status();
+      }
+      deleted_doc_metadata_list.push_back(
+          std::move(deleted_doc_metadata_or).ValueOrDie());
+    }
+  }
+  return deleted_doc_metadata_list;
+}
+
+int64_t DocumentStore::GetNextExpiredDocumentTimestampMs(
+    int64_t current_time_ms) {
+  int64_t next_expired_document_ts_ms = -1;
+  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
+       ++document_id) {
+    std::optional<DocumentFilterData> filter_data =
+        GetAliveDocumentFilterData(document_id, current_time_ms);
+    if (!filter_data.has_value()) {
+      continue;
+    }
+
+    // Note: std::numeric_limits<int64_t>::max() is used to indicate that a
+    // document never expires, so we should avoid returning it.
+    if (filter_data->expiration_timestamp_ms() !=
+            std::numeric_limits<int64_t>::max() &&
+        (next_expired_document_ts_ms == -1 ||
+         filter_data->expiration_timestamp_ms() <
+             next_expired_document_ts_ms)) {
+      next_expired_document_ts_ms = filter_data->expiration_timestamp_ms();
+    }
+  }
+  return next_expired_document_ts_ms;
+}
+
 bool DocumentStore::IsDeleted(DocumentId document_id) const {
   auto file_offset_or = document_id_mapper_->Get(document_id);
   if (!file_offset_or.ok()) {
@@ -1639,7 +1697,8 @@ DocumentStore::ForceDelete(DocumentId document_id) {
   return DocumentMetadata{
       .schema_type_name = document_wrapper.document().schema(),
       .name_space = document_wrapper.document().namespace_(),
-      .uri = document_wrapper.document().uri()};
+      .uri = document_wrapper.document().uri(),
+      .document_id = document_id};
 }
 
 libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
