@@ -519,6 +519,9 @@ IcingSearchEngine::IcingSearchEngine(
 }
 
 IcingSearchEngine::~IcingSearchEngine() {
+  // Stop all scheduled background tasks before persisting to disk.
+  DestroyTaskScheduler();
+
   if (initialized_) {
     if (PersistToDisk(PersistType::FULL).status().code() != StatusProto::OK) {
       ICING_LOG(ERROR)
@@ -558,10 +561,9 @@ InitializeResultProto IcingSearchEngine::Initialize() {
   return result;
 }
 
-void IcingSearchEngine::ResetMembers() {
+void IcingSearchEngine::ResetMembersLocked() {
   // Reset all members in the reverse order of their initialization to ensure
   // the dependencies are not violated.
-  task_scheduler_.reset();
   embedding_index_.reset();
   qualified_id_join_index_.reset();
   integer_index_.reset();
@@ -598,7 +600,7 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
     if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
       // We're tried and failed to init too many times. We need to throw
       // everything out and start from scratch.
-      ResetMembers();
+      ResetMembersLocked();
       marker_file_fd.reset();
 
       // Delete the entire base directory.
@@ -1055,8 +1057,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   //   the last step of initialization.
   if ((status.ok() || absl_ports::IsDataLoss(status)) &&
       options_.enable_delete_propagation_from()) {
-    // Initialize the task scheduler.
-    task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
+    if (task_scheduler_ == nullptr) {
+      // Initialize the task scheduler.
+      //
+      // Note: InitializeMembers may be called by ResetLocked() when put API
+      //   fails. In that case, we can still use the existing task_scheduler_
+      //   and no need to re-initialize it.
+      task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
+    }
 
     // Call HandleExpiredDocumentsLocked() to handle documents that expire
     // during Icing was off. This function will reschedule another task with the
@@ -4326,8 +4334,18 @@ libtextclassifier3::Status IcingSearchEngine::ClearAllIndices() {
 }
 
 ResetResultProto IcingSearchEngine::ClearAndDestroy() {
-  absl_ports::unique_lock l(&mutex_);
-  return ClearAndDestroyLocked();
+  // Destroy the task scheduler first to make sure the background tasks finish
+  // before we delete the IcingSearchEngine object.
+  //
+  // Note: it is fine to not destroy the task scheduler since all the tasks will
+  //   fail silently due to initialized_ being false, but let's do it for
+  //   cleanup.
+  DestroyTaskScheduler();
+
+  {
+    absl_ports::unique_lock l(&mutex_);
+    return ClearAndDestroyLocked();
+  }
 }
 
 ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
@@ -4338,7 +4356,7 @@ ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
   StatusProto* result_status = result_proto.mutable_status();
 
   initialized_ = false;
-  ResetMembers();
+  ResetMembersLocked();
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
     result_status->set_code(StatusProto::INTERNAL);
     return result_proto;
@@ -4432,6 +4450,28 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   }
   response_status->set_code(StatusProto::OK);
   return response;
+}
+
+void IcingSearchEngine::DestroyTaskScheduler() {
+  // We have to acquire the lock before accessing and resetting task_scheduler_.
+  // Otherwise, if the background task is still running in the critical section
+  // and accessing task_scheduler_, then it will cause data race issues on the
+  // pointer.
+  SimpleTaskScheduler* task_scheduler_local = nullptr;
+  {
+    absl_ports::unique_lock l(&mutex_);
+
+    if (task_scheduler_ != nullptr) {
+      task_scheduler_local = task_scheduler_.release();
+    }
+  }
+
+  // Delete the task scheduler OUTSIDE of the critical section. Otherwise, it is
+  // possible that a background task starts to run and blocks at acquiring the
+  // global lock, which causes deadlock.
+  if (task_scheduler_local != nullptr) {
+    delete task_scheduler_local;
+  }
 }
 
 std::function<void()> IcingSearchEngine::CreateHandleExpiredDocumentsTask() {

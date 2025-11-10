@@ -81,12 +81,12 @@ class MainClass {
 
   const Clock& clock_;  // Does not own.
   std::unique_ptr<SimpleTaskScheduler> scheduler_;
-  int counter_ = 0;
+  std::atomic<int> counter_ = 0;
 };
 
 TEST(SimpleTaskSchedulerTest, SimpleScheduleAndExecute) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
       SimpleTaskScheduler::Create(clock);
@@ -103,7 +103,7 @@ TEST(SimpleTaskSchedulerTest, SimpleScheduleAndExecute) {
 
 TEST(SimpleTaskSchedulerTest, ScheduleAt_rescheduleTask) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
@@ -133,7 +133,7 @@ TEST(SimpleTaskSchedulerTest, ScheduleAt_rescheduleTask) {
 
 TEST(SimpleTaskSchedulerTest, ScheduleAt_overwriteTask) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task1 = [&counter]() { ++counter; };
   const auto task2 = [&counter]() { counter += 10; };
 
@@ -163,7 +163,7 @@ TEST(SimpleTaskSchedulerTest, ScheduleAt_overwriteTask) {
 
 TEST(SimpleTaskSchedulerTest, ScheduleAt_negativeTimestampShouldCancel) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
@@ -186,7 +186,7 @@ TEST(SimpleTaskSchedulerTest, ScheduleAt_negativeTimestampShouldCancel) {
 TEST(SimpleTaskSchedulerTest,
      ScheduleAt_timestampEarlierThanNowShouldFireImmediately) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
@@ -203,7 +203,7 @@ TEST(SimpleTaskSchedulerTest,
 
 TEST(SimpleTaskSchedulerTest, Cancel) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
@@ -261,7 +261,7 @@ TEST(SimpleTaskSchedulerTest, GetScheduledTimeMs) {
 
 TEST(SimpleTaskSchedulerTest, Destructor) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
@@ -282,7 +282,7 @@ TEST(SimpleTaskSchedulerTest, Destructor) {
 
 TEST(SimpleTaskSchedulerTest, Destructor_shouldCancelAndJoinThread) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
@@ -301,7 +301,7 @@ TEST(SimpleTaskSchedulerTest, Destructor_shouldCancelAndJoinThread) {
 
 TEST(SimpleTaskSchedulerTest, Destructor_noScheduledTask) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =
       SimpleTaskScheduler::Create(clock);
@@ -315,7 +315,7 @@ TEST(SimpleTaskSchedulerTest, Destructor_noScheduledTask) {
 
 TEST(SimpleTaskSchedulerTest, Destructor_noDeadlock) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() {
     ++counter;
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
@@ -380,7 +380,7 @@ TEST(SimpleTaskSchedulerTest, MultipleScheduledTasks) {
 
 TEST(SimpleTaskSchedulerTest, ExpensiveTask_nextExecutionShouldWaitAndExecute) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() {
     ++counter;
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -417,7 +417,7 @@ TEST(SimpleTaskSchedulerTest, ExpensiveTask_nextExecutionShouldWaitAndExecute) {
 TEST(SimpleTaskSchedulerTest,
      ExpensiveTask_multipleSchedulesDuringOngoingExecutionFiresOnceAfterwards) {
   Clock clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() {
     ++counter;
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -467,7 +467,7 @@ TEST(SimpleTaskSchedulerTest,
 
 TEST(SimpleTaskSchedulerTest, MockClock) {
   FakeClock fake_clock;
-  int counter = 0;
+  std::atomic<int> counter = 0;
   const auto task = [&counter]() { ++counter; };
 
   std::unique_ptr<SimpleTaskScheduler> scheduler =

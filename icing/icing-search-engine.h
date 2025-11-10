@@ -732,13 +732,30 @@ class IcingSearchEngine {
 
   // Simple task scheduler for background tasks. Currently, it is used for:
   // - Handle (purge) expired documents.
+  //
+  // Note: after acquiring the global lock, checking task_scheduler_ is nullptr
+  //   or not before accessing it **is ESSENTIAL**. Consider an example:
+  // - Task scheduler thread: wakes up and ready to run HandleExpiredDocuments()
+  // - Main thread (which holds IcingSearchEngine object): destructs
+  //   IcingSearchEngine instance. IcingSearchEngine destructor destructs
+  //   task_scheduler_ and wait to join the task scheduler thread. At this
+  //   point, task_scheduler_ is nullptr.
+  // - Task scheduler thread: start to run HandleExpiredDocuments() and
+  //   reaches the point to reschedule the task.
+  //
+  // If task_scheduler_ is not checked, then the code will crash at runtime
+  // because task_scheduler_ is already set to nullptr.
   std::unique_ptr<SimpleTaskScheduler> task_scheduler_ ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
   // Resets all members that are created during Initialize.
-  void ResetMembers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  //
+  // Note: this method DOES NOT reset task_scheduler_. task_scheduler_ should be
+  //   reset only if we want to destroy IcingSearchEngine, and in this case,
+  //   DestroyTaskScheduler should be called.
+  void ResetMembersLocked() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Resets all members that are created during Initialize, deletes all
   // underlying files and initializes a fresh index.
@@ -998,6 +1015,12 @@ class IcingSearchEngine {
   libtextclassifier3::StatusOr<
       std::vector<std::unique_ptr<DataIndexingHandler>>>
   CreateDataIndexingHandlers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Destroys the task scheduler.
+  //
+  // Task scheduler should be destroyed ONLY IF we want to destroy
+  // IcingSearchEngine (e.g. destructor, ClearAndDestroy API, etc).
+  void DestroyTaskScheduler() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Helper method to discard parts of (term, integer, qualified id join,
   // embedding) indices if they contain data for document ids greater than
