@@ -146,6 +146,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_delete_propagation_from(true);
   icing_options.set_enable_passing_filter_to_children(true);
   icing_options.set_enable_embedding_iterator_v2(true);
+  icing_options.set_enable_non_existent_qualified_id_join(true);
   return icing_options;
 }
 
@@ -5726,6 +5727,361 @@ TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedId) {
   EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
   EXPECT_THAT(result3,
               EqualsSearchResultIgnoreStatsAndScores(expected_result3));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       JoinByQualifiedId_ChildPutBeforeParent_FixDisabled) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_non_existent_qualified_id_join(false);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should not be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
+}
+
+TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedId_ChildPutBeforeParent) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_non_existent_qualified_id_join(true);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       JoinByQualifiedId_ChildPutBeforeParent_DeleteAndPutParentAgain) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  // Put, delete and put again the parent document.
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete(person.namespace_(), person.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
+}
+
+TEST_F(
+    IcingSearchEngineSearchTest,
+    JoinByQualifiedId_ChildPutBeforeParent_DeleteAndPutParentAgain_Optimize) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_optimize_rebuild_index_threshold(1.0);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  // Put, delete, optimize and put again the parent document.
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete(person.namespace_(), person.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
 }
 
 TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedIdMultipleNamespaces) {

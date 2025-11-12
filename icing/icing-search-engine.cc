@@ -510,7 +510,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_reusable_decompression_buffer(),
                      options_.enable_schema_type_id_optimization(),
                      options_.enable_optimize_improvements(),
-                     options_.expired_document_purge_threshold_ms()),
+                     options_.expired_document_purge_threshold_ms(),
+                     options_.enable_non_existent_qualified_id_join()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1840,8 +1841,7 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
   int64_t expiration_timestamp_ms =
       put_result_or.ValueOrDie().expiration_timestamp_ms;
-  result_proto.set_was_replacement(
-      put_result_or.ValueOrDie().was_replacement());
+  result_proto.set_was_replacement(put_result_or.ValueOrDie().was_replacement);
 
   auto data_indexing_handlers_or = CreateDataIndexingHandlers();
   if (!data_indexing_handlers_or.ok()) {
@@ -2665,7 +2665,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
 
     libtextclassifier3::Status qualified_id_join_index_optimize_status =
         qualified_id_join_index_->Optimize(
-            optimize_result.document_id_old_to_new,
+            document_store_.get(), optimize_result.document_id_old_to_new,
             optimize_result.namespace_id_old_to_new,
             document_store_->last_added_document_id());
     if (!qualified_id_join_index_optimize_status.ok()) {
@@ -4117,11 +4117,11 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   handlers.push_back(std::move(integer_section_indexing_handler));
 
   // Qualified id join index handler
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<QualifiedIdJoinIndexingHandler>
-          qualified_id_join_indexing_handler,
-      QualifiedIdJoinIndexingHandler::Create(
-          clock_.get(), document_store_.get(), qualified_id_join_index_.get()));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                             qualified_id_join_indexing_handler,
+                         QualifiedIdJoinIndexingHandler::Create(
+                             clock_.get(), document_store_.get(),
+                             qualified_id_join_index_.get(), &feature_flags_));
   handlers.push_back(std::move(qualified_id_join_indexing_handler));
 
   // Embedding index handler
