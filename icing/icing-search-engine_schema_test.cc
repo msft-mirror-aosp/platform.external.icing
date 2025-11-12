@@ -3722,6 +3722,139 @@ TEST_F(IcingSearchEngineSchemaTest,
   EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    SetSchemaAddDeletePropagationTriggersIndexRestorationAndRevalidatesDependency) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Email" schema with a joinable property "senderQualifiedId" and
+  // delete propagation disabled.
+  SchemaProto schema1 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                            DELETE_PROPAGATION_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(10000)  // Expire at t = 10010.
+                             .AddStringProperty("name", "person")
+                             .Build();
+  // Create an email document.
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .SetTtlMs(0)  // Never expire.
+          .AddStringProperty("subject", "test")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .Build();
+
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Now update the schema to enable delete propagation for "senderQualifiedId".
+  // It is:
+  // - Schema compatible.
+  // - Join incompatible. This will trigger index restoration, and revalidation
+  //   of dependency. If any child documents are referring to a non-alive
+  //   parent, then they will be deleted.
+  SchemaProto schema2 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("senderQualifiedId")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Adjust the timestamp to t = 20000 so that the person document is expired
+  // during the schema update.
+  fake_clock_ptr->SetSystemTimeMilliseconds(20000);
+  set_schema_result = icing.SetSchema(schema2);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Attempt to get the email document. It should be deleted due to the
+  // dependency on the expired person document.
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace, email) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "email", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+}
+
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
