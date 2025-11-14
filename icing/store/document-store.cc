@@ -1221,6 +1221,13 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
     // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
 
+    // Currently, old_document_id is only used by join index v3 to
+    // MigrateParent. old_document_id should be set even if the document is
+    // deleted or expired, but we flag guard it for extra safety.
+    if (feature_flags_.enable_non_existent_qualified_id_join()) {
+      put_result.old_document_id = old_document_id;
+    }
+
     ICING_RETURN_IF_ERROR(
         usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
                                        /*to_document_id=*/new_document_id));
@@ -1230,9 +1237,9 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
     auto delete_status =
         Delete(old_document_id, clock_.GetSystemTimeMilliseconds());
     if (delete_status.ok()) {
-      // The old document had existed and was not previously deleted. Return its
-      // document id to mark it as a replacement.
+      // The old document had existed and was not previously deleted.
       put_result.old_document_id = old_document_id;
+      put_result.was_replacement = true;
     } else if (!absl_ports::IsNotFound(delete_status)) {
       // Real error, pass it up.
       return delete_status;

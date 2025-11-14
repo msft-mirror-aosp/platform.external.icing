@@ -223,7 +223,8 @@ class DeletePropagationHandlerTest : public ::testing::Test {
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
     ICING_RETURN_IF_ERROR(
         handler->Handle(tokenized_document, put_result.new_document_id,
                         put_result.old_document_id, /*recovery_mode=*/false,
@@ -708,42 +709,28 @@ TEST_F(DeletePropagationHandlerTest, Handle_cycleReference) {
           .AddStringProperty("object", "pkg$db/namespace#label2")
           .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId label1_doc_id_old,
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId label1_doc_id,
                              PutAndIndexDocument(label1));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId label2_doc_id,
                              PutAndIndexDocument(label2));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId label3_doc_id,
                              PutAndIndexDocument(label3));
-  // Put label1 again, due to the requirement of the join index: parent document
-  // must be present before the child document. This will make the relation data
-  // "label1 -> label3" present in the join index.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId label1_doc_id_new,
-                             PutAndIndexDocument(label1));
 
-  // Sanity check for migration: put label1 2nd time.
-  ASSERT_THAT(label1_doc_id_new, Ne(label1_doc_id_old));
-  // Old label1's doc id should get children = [].
-  ASSERT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  label1_doc_id_old),
-              IsOkAndHolds(IsEmpty()));
-  // New label1's doc id should get children = [label2_doc_id].
-  ASSERT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
-                  label1_doc_id_new),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
-                  label2_doc_id, /*joinable_property_id=*/0))));
+  // label1 should get children = [label2_doc_id].
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(label1_doc_id),
+      IsOkAndHolds(ElementsAre(
+          DocumentJoinIdPair(label2_doc_id, /*joinable_property_id=*/0))));
   // label2 should get children = [label3_doc_id].
   ASSERT_THAT(
       qualified_id_join_index_->GetDocumentJoinIdPairArrayView(label2_doc_id),
       IsOkAndHolds(ElementsAre(
           DocumentJoinIdPair(label3_doc_id, /*joinable_property_id=*/0))));
-  // label3 should get children = [label1_doc_id_new]. label1_doc_id_old will
-  // not be returned because when putting label1 for the 1st time, label3 was
-  // not present yet, and label1_doc_id_old will not be added to label3's
-  // children list.
+  // label3 should get children = [label1_doc_id]
   ASSERT_THAT(
       qualified_id_join_index_->GetDocumentJoinIdPairArrayView(label3_doc_id),
       IsOkAndHolds(
-          ElementsAre(DocumentJoinIdPair(label1_doc_id_new,
+          ElementsAre(DocumentJoinIdPair(label1_doc_id,
                                          /*joinable_property_id=*/0))));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -752,16 +739,16 @@ TEST_F(DeletePropagationHandlerTest, Handle_cycleReference) {
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
 
-  // Handle {label1_doc_id_new}:
-  // - Propagate to label2_doc_id from label1_doc_id_new.
+  // Handle {label1_doc_id}:
+  // - Propagate to label2_doc_id from label1_doc_id.
   // - Propagate to label3_doc_id from label2_doc_id.
   // - When trying to propage label3_doc_id to its children =
-  //   [label1_doc_id_new]:
-  //   - label1_doc_id_new is already deleted, so it should not be propagated
+  //   [label1_doc_id]:
+  //   - label1_doc_id is already deleted, so it should not be propagated
   //     again.
   //   - There should be no infinite propagation loop.
   EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id_new}),
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}),
       IsOkAndHolds(UnorderedElementsAre(
           EqualsDocumentMetadata("Label", "pkg$db/namespace", "label2",
                                  label2_doc_id),
