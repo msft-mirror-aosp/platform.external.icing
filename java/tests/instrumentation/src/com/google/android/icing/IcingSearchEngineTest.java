@@ -457,16 +457,18 @@ public final class IcingSearchEngineTest {
 
     PutDocumentRequest putDocumentRequest = PutDocumentRequest.getDefaultInstance();
     BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+    BatchPutResultProto actualProto =
+        batchPutResultProto.toBuilder().clearVmBinderTransactionLatencyStartTimeMs().build();
 
     BatchPutResultProto expected =
         BatchPutResultProto.newBuilder()
             .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.OK))
             .build();
-    assertThat(batchPutResultProto).isEqualTo(expected);
+    assertThat(actualProto).isEqualTo(expected);
 
     // PersistToDiskResultProto should not be set if persist_type is not set in the
     // PutDocumentRequest.
-    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+    assertThat(actualProto.getPersistToDiskResultProto().getStatus().getCode())
         .isEqualTo(StatusProto.Code.UNKNOWN);
   }
 

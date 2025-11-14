@@ -459,7 +459,7 @@ message IcingSearchEngineOptions {
 }
 
 // Result of a call to IcingSearchEngine.Initialize
-// Next tag: 5
+// Next tag: 6
 message InitializeResultProto {
   // Status code can be one of:
   //   OK
@@ -486,6 +486,10 @@ message InitializeResultProto {
   // Persist type needed after initialization. If UNKNOWN, then everything is
   // clean and no need to call persistToDisk.
   optional PersistType.Code needs_persist_type = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.

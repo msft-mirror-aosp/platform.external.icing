@@ -10634,6 +10634,7 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
@@ -10721,6 +10722,7 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
@@ -10825,6 +10827,7 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
@@ -11071,6 +11074,7 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_proto);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result

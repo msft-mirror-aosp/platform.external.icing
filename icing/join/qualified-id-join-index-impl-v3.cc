@@ -37,9 +37,9 @@
 #include "icing/join/qualified-id.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
-#include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
@@ -53,9 +53,17 @@ static constexpr QualifiedIdJoinIndexImplV3::ArrayInfo kInvalidArrayInfo;
 
 namespace {
 
-// Provide 144MiB of storage for the parent qualified id to child array info,
-// which has the same size as document_key_mapper_ in DocumentStore.
-constexpr uint32_t kQualifiedIdMapperMaxSize = 144 * 1024 * 1024;  // 144 MiB
+// This is the same as the max number of entries of document_key_mapper_ in
+// DocumentStore.
+constexpr uint32_t kQualifiedIdMapperMaxNumEntries = kMaxDocumentId + 1;
+
+// - Key (QualifiedId): 22 bytes
+//   - namespace (10 bytes)
+//   - '#' (1 byte)
+//   - uri (10 bytes)
+//   - '\0' (1 byte)
+// - Value (ArrayInfo): 12 bytes
+constexpr uint32_t kQualifiedIdMapperKVByteSize = 34;
 
 std::string MakeMetadataFilePath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/metadata");
@@ -390,10 +398,12 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
 
   ICING_ASSIGN_OR_RETURN(
       parent_qualified_id_to_child_array_info_,
-      DynamicTrieKeyMapper<ArrayInfo>::Create(
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
           filesystem_,
           MakeParentQualifiedIdToChildArrayInfoFilePath(working_path_),
-          kQualifiedIdMapperMaxSize));
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
 
   ICING_ASSIGN_OR_RETURN(
       child_document_join_id_pair_array_,
@@ -439,10 +449,12 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Clear() {
   }
   ICING_ASSIGN_OR_RETURN(
       parent_qualified_id_to_child_array_info_,
-      DynamicTrieKeyMapper<ArrayInfo>::Create(
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
           filesystem_,
           MakeParentQualifiedIdToChildArrayInfoFilePath(working_path_),
-          kQualifiedIdMapperMaxSize));
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
 
   child_document_join_id_pair_array_.reset();
   // Discard and reinitialize child_document_join_id_pair_array.
@@ -509,10 +521,12 @@ QualifiedIdJoinIndexImplV3::InitializeNewFiles(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<KeyMapper<ArrayInfo>>
           parent_qualified_id_to_child_array_info,
-      DynamicTrieKeyMapper<ArrayInfo>::Create(
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
           filesystem,
           MakeParentQualifiedIdToChildArrayInfoFilePath(working_path),
-          kQualifiedIdMapperMaxSize));
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
 
   // Initialize child_document_join_id_pair_array.
   ICING_ASSIGN_OR_RETURN(
@@ -577,10 +591,12 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<KeyMapper<ArrayInfo>>
           parent_qualified_id_to_child_array_info,
-      DynamicTrieKeyMapper<ArrayInfo>::Create(
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
           filesystem,
           MakeParentQualifiedIdToChildArrayInfoFilePath(working_path),
-          kQualifiedIdMapperMaxSize));
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
 
   // Initialize child_document_join_id_pair_array. Set mmap pre-mapping size to
   // 0, but MemoryMappedFile will still mmap to the file size.
