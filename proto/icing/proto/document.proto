@@ -130,7 +130,7 @@ message PropertyProto {
 }
 
 // Holds a list of PutResultProto.
-// Next tag: 4
+// Next tag: 5
 message BatchPutResultProto {
   // The overall status of doing the batch put. It is independent of the status
   // of the individual PutResultProtos. E.g. we may still return OK here even if
@@ -143,10 +143,13 @@ message BatchPutResultProto {
   // The result of calling PersistToDisk at the end of the BatchPut request if
   // PutDocumentRequest.persist_type is set.
   optional PersistToDiskResultProto persist_to_disk_result_proto = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 5
+// Next tag: 6
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -172,10 +175,13 @@ message PutResultProto {
 
   // Whether or not the document was a replacement of an existing document.
   optional bool was_replacement = 3;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.Get
-// Next tag: 4
+// Next tag: 5
 message GetResultProto {
   // Status code can be one of:
   //   OK
@@ -199,17 +205,23 @@ message GetResultProto {
   // Copy of the Document proto with the specified name_space, uri. Modifying
   // this does not affect the Document in IcingSearchEngine.
   optional DocumentProto document = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.BatchGet
-// Next tag: 3
+// Next tag: 4
 message BatchGetResultProto {
   optional StatusProto status = 1;
   repeated GetResultProto get_result_protos = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.GetAllNamespaces
-// Next tag: 3
+// Next tag: 4
 message GetAllNamespacesResultProto {
   // Status code can be one of:
   //   OK
@@ -220,10 +232,13 @@ message GetAllNamespacesResultProto {
   // List of namespaces which have at least one existing document in it (not
   // deleted and not expired). Order of namespaces is undefined.
   repeated string namespaces = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 3
+// Next tag: 4
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -239,10 +254,13 @@ message DeleteResultProto {
 
   // Stats for delete execution performance.
   optional DeleteStatsProto delete_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 3
+// Next tag: 4
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -258,10 +276,13 @@ message DeleteByNamespaceResultProto {
 
   // Stats for delete execution performance.
   optional DeleteStatsProto delete_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 3
+// Next tag: 4
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -277,10 +298,13 @@ message DeleteBySchemaTypeResultProto {
 
   // Stats for delete execution performance.
   optional DeleteStatsProto delete_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByQuery
-// Next tag: 5
+// Next tag: 6
 message DeleteByQueryResultProto {
   // Status code can be one of:
   //   OK
@@ -311,4 +335,41 @@ message DeleteByQueryResultProto {
   repeated DocumentGroupInfo deleted_documents = 4;
 
   reserved 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 5;
+}
+
+message HandleExpiredDocumentsResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Metadata for the deleted documents, grouped by namespace and schema.
+  message DocumentGroupInfo {
+    optional string name_space = 1;
+    optional string schema = 2;
+    repeated string uris = 3;
+  }
+  // A list of groups of deleted documents. A document was deleted because:
+  // - It was expired.
+  // - OR it was a child document of an expired document with delete propagation
+  //   enabled.
+  repeated DocumentGroupInfo deleted_documents = 2;
+
+  // The number of expired documents that were deleted. This DOES NOT include
+  // the propagated child documents.
+  optional int32 num_expired_documents = 3;
+
+  // The number of deleted documents that were propagated from the expired
+  // documents.
+  optional int32 num_propagated_deleted_documents = 4;
 }

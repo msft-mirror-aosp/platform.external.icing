@@ -122,7 +122,7 @@ bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
   if (old_property.cardinality() < new_property.cardinality()) {
     // We allow a new, less restrictive cardinality (i.e. a REQUIRED field
     // can become REPEATED or OPTIONAL, but not the other way around).
-    ICING_VLOG(1) << absl_ports::StrCat(
+    ICING_LOG(INFO) << absl_ports::StrCat(
         "Cardinality is more restrictive than before ",
         PropertyConfigProto::Cardinality::Code_Name(old_property.cardinality()),
         "->",
@@ -139,7 +139,7 @@ bool IsDataTypeCompatible(const PropertyConfigProto& old_property,
     // TODO(cassiewang): Maybe we can be a bit looser with this, e.g. we just
     // string cast an int64_t to a string. But for now, we'll stick with
     // simplistics.
-    ICING_VLOG(1) << absl_ports::StrCat(
+    ICING_LOG(INFO) << absl_ports::StrCat(
         "Data type ",
         PropertyConfigProto::DataType::Code_Name(old_property.data_type()),
         "->",
@@ -152,7 +152,7 @@ bool IsDataTypeCompatible(const PropertyConfigProto& old_property,
 bool IsSchemaTypeCompatible(const PropertyConfigProto& old_property,
                             const PropertyConfigProto& new_property) {
   if (old_property.schema_type() != new_property.schema_type()) {
-    ICING_VLOG(1) << absl_ports::StrCat("Schema type ",
+    ICING_LOG(INFO) << absl_ports::StrCat("Schema type ",
                                         old_property.schema_type(), "->",
                                         new_property.schema_type());
     return false;
@@ -1217,7 +1217,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       if (new_property_name_and_config ==
           new_parsed_property_configs.property_config_map.end()) {
         // Didn't find the old property
-        ICING_VLOG(1) << absl_ports::StrCat(
+        ICING_LOG(INFO) << absl_ports::StrCat(
             "Previously defined property type '", old_type_config.schema_type(),
             ".", old_property_config.property_name(),
             "' was not defined in new schema");
@@ -1237,7 +1237,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       }
 
       if (!IsPropertyCompatible(old_property_config, *new_property_config)) {
-        ICING_VLOG(1) << absl_ports::StrCat(
+        ICING_LOG(INFO) << absl_ports::StrCat(
             "Property '", old_type_config.schema_type(), ".",
             old_property_config.property_name(), "' is incompatible.");
         is_incompatible = true;
@@ -1259,8 +1259,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         is_index_incompatible = true;
       }
 
-      if (old_property_config.joinable_config().value_type() !=
-          new_property_config->joinable_config().value_type()) {
+      if (!AreJoinableConfigsEqual(old_property_config.joinable_config(),
+                                   new_property_config->joinable_config())) {
         is_join_incompatible = true;
       }
     }
@@ -1272,7 +1272,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // here to detect new required properties.
     if (!IsSubset(new_parsed_property_configs.required_properties,
                   old_required_properties)) {
-      ICING_VLOG(1) << absl_ports::StrCat(
+      ICING_LOG(INFO) << absl_ports::StrCat(
           "New schema '", old_type_config.schema_type(),
           "' has REQUIRED properties that are not "
           "present in the previously defined schema");
@@ -1285,9 +1285,9 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // reindex everything.
     if (!IsSubset(new_parsed_property_configs.indexed_properties,
                   old_indexed_properties)) {
-      ICING_VLOG(1) << "Set of indexed properties in schema type '"
-                    << old_type_config.schema_type()
-                    << "' has changed, required reindexing.";
+      ICING_LOG(INFO) << "Set of indexed properties in schema type '"
+                      << old_type_config.schema_type()
+                      << "' has changed, required reindexing.";
       is_index_incompatible = true;
     }
 
@@ -1302,9 +1302,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                   old_joinable_properties) ||
         !IsSubset(new_parsed_property_configs.nested_document_properties,
                   old_nested_document_properties)) {
-      ICING_VLOG(1) << "Set of joinable properties in schema type '"
-                    << old_type_config.schema_type()
-                    << "' has changed, required reconstructing joinable cache.";
+      ICING_LOG(INFO)
+          << "Set of joinable properties in schema type '"
+          << old_type_config.schema_type()
+          << "' has changed, required reconstructing joinable cache.";
       is_join_incompatible = true;
     }
 
@@ -1326,8 +1327,16 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                                    old_type_config_map, new_type_config_map);
     }
 
+    // Scorable-property inconsistent types are already added to the schema
+    // delta in FindScorablePropertyInconsistentTypes above.
+    bool is_scorable_property_cache_incompatible =
+        !schema_delta.schema_types_scorable_property_inconsistent.empty() &&
+        schema_delta.schema_types_scorable_property_inconsistent.find(
+            old_type_config.schema_type()) !=
+            schema_delta.schema_types_scorable_property_inconsistent.end();
+
     if (!is_incompatible && !is_index_incompatible && !is_join_incompatible &&
-        has_property_changed) {
+        !is_scorable_property_cache_incompatible && has_property_changed) {
       schema_delta.schema_types_changed_fully_compatible.insert(
           old_type_config.schema_type());
     }

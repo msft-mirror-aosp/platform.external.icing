@@ -71,6 +71,7 @@
 #include <cerrno>
 #include <cinttypes>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <ostream>
@@ -80,6 +81,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
@@ -87,12 +89,15 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
 #include "icing/util/crc32.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
+#include "unicode/utf8.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {
@@ -308,9 +313,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   // returns a writable element or array within and sets
   // dirty_pages_[array_type] as a side effect, assuming the mutable
   // area will get written to.
-  Node *GetMutableNode(uint32_t idx);
-  Next *GetMutableNextArray(uint32_t idx, uint32_t len);
-  char *GetMutableSuffix(uint32_t idx, uint32_t len);
+  libtextclassifier3::StatusOr<Node *> GetMutableNode(uint32_t idx);
+  libtextclassifier3::StatusOr<Next *> GetMutableNextArray(uint32_t idx,
+                                                           uint32_t len);
+  libtextclassifier3::StatusOr<char *> GetMutableSuffix(uint32_t idx,
+                                                        uint32_t len);
 
   // Update crcs based on current contents. Returns all_crc or kNoCrc.
   Crc32 UpdateCrc();
@@ -324,13 +331,14 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   uint32_t suffixes_left() const;
 
   // REQUIRES: nodes_left() > 0.
-  Node *AllocNode();
+  libtextclassifier3::StatusOr<Node *> AllocNode();
   // REQUIRES: nexts_left() >= kMaxNextArraySize.
   libtextclassifier3::StatusOr<Next *> AllocNextArray(int size);
   void FreeNextArray(Next *next, int log2_size);
   // REQUIRES: suffixes_left() >= strlen(suffix) + 1 + value_size()
-  uint32_t MakeSuffix(std::string_view suffix, const void *value,
-                      uint32_t *value_index);
+  libtextclassifier3::StatusOr<uint32_t> MakeSuffix(std::string_view suffix,
+                                                    const void *value,
+                                                    uint32_t *value_index);
 
   const IcingDynamicTrieHeader &hdr() const { return hdr_.hdr; }
 
@@ -535,7 +543,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
   if (!hdr_.Init(hdr_mmapper_.address(),
                  IcingMMapper::system_page_size() - sizeof(Crcs)) ||
       !hdr_.Verify()) {
-    ICING_LOG(ERROR) << "Trie reading header failed";
+    ICING_LOG(ERROR) << "Trie reading header failed. Path: " << file_basename_;
     goto failed;
   }
 
@@ -757,9 +765,10 @@ uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetElementsFileSize()
   return total;
 }
 
-IcingDynamicTrie::Node *IcingDynamicTrie::IcingDynamicTrieStorage::AllocNode() {
+libtextclassifier3::StatusOr<IcingDynamicTrie::Node *>
+IcingDynamicTrie::IcingDynamicTrieStorage::AllocNode() {
   if (nodes_left() == 0) {
-    ICING_LOG(FATAL) << "No allocated nodes left";
+    return absl_ports::ResourceExhaustedError("No allocated nodes left");
   }
 
   hdr_.hdr.set_num_nodes(hdr_.hdr.num_nodes() + 1);
@@ -774,7 +783,7 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   }
 
   if (nexts_left() < static_cast<uint32_t>(kMaxNextArraySize)) {
-    ICING_LOG(FATAL) << "'next' buffer not enough";
+    return absl_ports::ResourceExhaustedError("'next' buffer not enough");
   }
 
   // Compute ceil(log2(size)).
@@ -786,15 +795,17 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   // Look in free list.
   Next *ret;
   if (hdr_.hdr.free_lists(log2_size) != kInvalidNextIndex) {
-    ret = GetMutableNextArray(hdr_.hdr.free_lists(log2_size), aligned_size);
+    ICING_ASSIGN_OR_RETURN(
+        ret, GetMutableNextArray(hdr_.hdr.free_lists(log2_size), aligned_size));
     uint32_t next_link = ret->next_index();
     if (next_link != kInvalidNextIndex && next_link >= hdr_.hdr.max_nexts()) {
-      ICING_LOG(FATAL) << "'next' index is out of range";
+      return absl_ports::InternalError("'next' index is out of range");
     }
     hdr_.hdr.set_free_lists(log2_size, next_link);
   } else {
     // Allocate a new one.
-    ret = GetMutableNextArray(hdr_.hdr.num_nexts(), aligned_size);
+    ICING_ASSIGN_OR_RETURN(
+        ret, GetMutableNextArray(hdr_.hdr.num_nexts(), aligned_size));
     hdr_.hdr.set_num_nexts(hdr_.hdr.num_nexts() + aligned_size);
   }
 
@@ -816,14 +827,17 @@ void IcingDynamicTrie::IcingDynamicTrieStorage::FreeNextArray(Next *next,
   hdr_.hdr.set_free_lists(log2_size, GetNextArrayIndex(next));
 }
 
-uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::MakeSuffix(
-    std::string_view suffix, const void *value, uint32_t *value_index) {
+libtextclassifier3::StatusOr<uint32_t>
+IcingDynamicTrie::IcingDynamicTrieStorage::MakeSuffix(std::string_view suffix,
+                                                      const void *value,
+                                                      uint32_t *value_index) {
   if (suffixes_left() < suffix.size() + 1 + value_size()) {
-    ICING_LOG(FATAL) << "'suffix' buffer not enough";
+    return absl_ports::ResourceExhaustedError("'suffix' buffer not enough");
   }
 
-  char *start = GetMutableSuffix(hdr_.hdr.suffixes_size(),
-                                 suffix.size() + 1 + value_size());
+  ICING_ASSIGN_OR_RETURN(char *start,
+                         GetMutableSuffix(hdr_.hdr.suffixes_size(),
+                                          suffix.size() + 1 + value_size()));
   // Copy suffix.
   memcpy(start, suffix.data(), suffix.size());
   // Set a '\0' after suffix.
@@ -908,19 +922,20 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::WriteHeader() {
   return hdr_.SerializeToArray(hdr_mmapper_.address(), serialized_header_max());
 }
 
-IcingDynamicTrie::Node *
+libtextclassifier3::StatusOr<IcingDynamicTrie::Node *>
 IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableNode(uint32_t idx) {
   return array_storage_[NODE].GetMutableMem<Node>(idx, 1);
 }
 
-IcingDynamicTrie::Next *
+libtextclassifier3::StatusOr<IcingDynamicTrie::Next *>
 IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableNextArray(uint32_t idx,
                                                                uint32_t len) {
   return array_storage_[NEXT].GetMutableMem<Next>(idx, len);
 }
 
-char *IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableSuffix(
-    uint32_t idx, uint32_t len) {
+libtextclassifier3::StatusOr<char *>
+IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableSuffix(uint32_t idx,
+                                                            uint32_t len) {
   return array_storage_[SUFFIX].GetMutableMem<char>(idx, len);
 }
 
@@ -958,7 +973,8 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::Init(
   uint32_t magic;
   memcpy(&magic, buf, sizeof(magic));
   if (magic != kMagic) {
-    ICING_LOG(ERROR) << "Trie header magic mismatch";
+    ICING_LOG(ERROR) << "Invalid header magic for IcingDynamicTrie. Expected: "
+                     << kMagic << ", actual: " << magic;
     return false;
   }
   uint32_t len;
@@ -1558,49 +1574,42 @@ void IcingDynamicTrie::Clear() {
   deleted_bitmap_->Truncate(0);
 }
 
-bool IcingDynamicTrie::ClearSuffixAndValue(uint32_t suffix_value_index) {
+libtextclassifier3::Status IcingDynamicTrie::ClearSuffixAndValue(
+    uint32_t suffix_value_index) {
   // The size 1 below is for a '\0' between the suffix and the value.
   size_t suffix_and_value_length =
       strlen(this->storage_->GetSuffix(suffix_value_index)) + 1 +
       this->value_size();
-  char *mutable_suffix_and_value = this->storage_->GetMutableSuffix(
-      suffix_value_index, suffix_and_value_length);
-
-  if (mutable_suffix_and_value == nullptr) {
-    return false;
-  }
+  ICING_ASSIGN_OR_RETURN(char *mutable_suffix_and_value,
+                         this->storage_->GetMutableSuffix(
+                             suffix_value_index, suffix_and_value_length));
 
   memset(mutable_suffix_and_value, 0, suffix_and_value_length);
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::ResetNext(uint32_t next_index) {
-  Next *mutable_next =
-      this->storage_->GetMutableNextArray(next_index, /*len=*/1);
+libtextclassifier3::Status IcingDynamicTrie::ResetNext(uint32_t next_index) {
+  ICING_ASSIGN_OR_RETURN(
+      Next * mutable_next,
+      this->storage_->GetMutableNextArray(next_index, /*len=*/1));
 
-  if (mutable_next == nullptr) {
-    return false;
-  }
   ResetMutableNext(*mutable_next);
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::SortNextArray(const Node *node) {
+libtextclassifier3::Status IcingDynamicTrie::SortNextArray(const Node *node) {
   if (node == nullptr) {
     // Nothing to sort, return success directly.
-    return true;
+    return libtextclassifier3::Status::OK;
   }
 
   uint32_t next_array_buffer_size = 1u << node->log2_num_children();
-  Next *next_array_start = this->storage_->GetMutableNextArray(
-      node->next_index(), next_array_buffer_size);
-
-  if (next_array_start == nullptr) {
-    return false;
-  }
+  ICING_ASSIGN_OR_RETURN(Next * next_array_start,
+                         this->storage_->GetMutableNextArray(
+                             node->next_index(), next_array_buffer_size));
 
   std::sort(next_array_start, next_array_start + next_array_buffer_size);
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
@@ -1609,7 +1618,7 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
                                                     bool replace,
                                                     bool *pnew_key) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   if (pnew_key) *pnew_key = false;
@@ -1638,16 +1647,20 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
   if (key_offset < 0) {
     // First key.
     if (!storage_->empty()) {
-      ICING_LOG(FATAL) << "Key offset is negative but storage is not empty, "
-                          "there're inconsistencies in dynamic trie.";
+      return absl_ports::InternalError(
+          "Key offset is negative but storage is not empty, "
+          "there're inconsistencies in dynamic trie.");
     }
-    Node *node = storage_->AllocNode();
-    node->set_next_index(storage_->MakeSuffix(key, value, value_index));
+    ICING_ASSIGN_OR_RETURN(Node * node, storage_->AllocNode());
+    ICING_ASSIGN_OR_RETURN(uint32_t next_index,
+                           storage_->MakeSuffix(key, value, value_index));
+    node->set_next_index(next_index);
     node->set_is_leaf(true);
     node->set_log2_num_children(0);
   } else if (storage_->GetNode(best_node_index)->is_leaf()) {
     // Prefix in the trie. Split at leaf.
-    Node *split_node = storage_->GetMutableNode(best_node_index);
+    ICING_ASSIGN_OR_RETURN(Node * split_node,
+                           storage_->GetMutableNode(best_node_index));
     const char *prev_suffix = storage_->GetSuffix(split_node->next_index());
 
     // Find the common prefix length starting from prev_suffix[0] and
@@ -1672,9 +1685,11 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
       }
       // Update value if replace == true and return.
       if (replace) {
-        char *mutable_prev_suffix_cur = storage_->GetMutableSuffix(
-            storage_->GetSuffixIndex(prev_suffix + common_prefix_len + 1),
-            value_size());
+        ICING_ASSIGN_OR_RETURN(
+            char *mutable_prev_suffix_cur,
+            storage_->GetMutableSuffix(
+                storage_->GetSuffixIndex(prev_suffix + common_prefix_len + 1),
+                value_size()));
         memcpy(mutable_prev_suffix_cur, value, value_size());
       }
       return libtextclassifier3::Status::OK;
@@ -1689,7 +1704,7 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
       split_node->set_next_index(storage_->GetNextArrayIndex(split_next));
       split_node->set_is_leaf(false);
       split_node->set_log2_num_children(0);
-      Node *child_node = storage_->AllocNode();
+      ICING_ASSIGN_OR_RETURN(Node * child_node, storage_->AllocNode());
       split_next[0].set_val(*(prev_suffix + i));
       split_next[0].set_node_index(storage_->GetNodeIndex(child_node));
 
@@ -1701,8 +1716,8 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
     split_node->set_next_index(storage_->GetNextArrayIndex(split_next));
     split_node->set_is_leaf(false);
     split_node->set_log2_num_children(1);
-    Node *prev_suffix_node = storage_->AllocNode();
-    Node *key_node = storage_->AllocNode();
+    ICING_ASSIGN_OR_RETURN(Node * prev_suffix_node, storage_->AllocNode());
+    ICING_ASSIGN_OR_RETURN(Node * key_node, storage_->AllocNode());
     split_next[0].set_val(*(prev_suffix + common_prefix_len));
     split_next[0].set_node_index(storage_->GetNodeIndex(prev_suffix_node));
     if (*(prev_suffix + common_prefix_len)) {
@@ -1721,12 +1736,16 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
     split_next[1].set_val(next_val);
     split_next[1].set_node_index(storage_->GetNodeIndex(key_node));
     if (next_val != '\0') {
-      uint32_t next_index = storage_->MakeSuffix(
-          key.substr(key_offset + common_prefix_len + 1), value, value_index);
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset + common_prefix_len + 1),
+                               value, value_index));
       key_node->set_next_index(next_index);
     } else {
-      uint32_t next_index = storage_->MakeSuffix(
-          key.substr(key_offset + common_prefix_len), value, value_index);
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset + common_prefix_len),
+                               value, value_index));
       key_node->set_next_index(next_index);
     }
     key_node->set_is_leaf(true);
@@ -1738,14 +1757,16 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
     const Node *best_node = storage_->GetNode(best_node_index);
 
     // Add our value as a node + suffix.
-    Node *new_leaf_node = storage_->AllocNode();
+    ICING_ASSIGN_OR_RETURN(Node * new_leaf_node, storage_->AllocNode());
     if (key_offset < key.size()) {
-      uint32_t next_index =
-          storage_->MakeSuffix(key.substr(key_offset + 1), value, value_index);
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset + 1), value, value_index));
       new_leaf_node->set_next_index(next_index);
     } else {
-      uint32_t next_index =
-          storage_->MakeSuffix(key.substr(key_offset), value, value_index);
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset), value, value_index));
       new_leaf_node->set_next_index(next_index);
     }
     new_leaf_node->set_is_leaf(true);
@@ -1753,8 +1774,9 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
 
     // Figure out the real length of the existing next array.
     uint32_t next_array_buffer_size = 1u << best_node->log2_num_children();
-    Next *cur_next = storage_->GetMutableNextArray(best_node->next_index(),
-                                                   next_array_buffer_size);
+    ICING_ASSIGN_OR_RETURN(
+        Next * cur_next, storage_->GetMutableNextArray(best_node->next_index(),
+                                                       next_array_buffer_size));
     int next_len = GetValidNextsSize(cur_next, next_array_buffer_size);
     Next *new_next = cur_next;
     if (next_len == (next_array_buffer_size)) {
@@ -1772,8 +1794,9 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
     // If this was new, update the parent node and free the old next
     // array.
     if (new_next != cur_next) {
-      Node *mutable_best_node =
-          storage_->GetMutableNode(storage_->GetNodeIndex(best_node));
+      ICING_ASSIGN_OR_RETURN(
+          Node * mutable_best_node,
+          storage_->GetMutableNode(storage_->GetNodeIndex(best_node)));
       mutable_best_node->set_next_index(storage_->GetNextArrayIndex(new_next));
       mutable_best_node->set_is_leaf(false);
       uint8_t log2_num_children = mutable_best_node->log2_num_children();
@@ -1806,18 +1829,21 @@ const void *IcingDynamicTrie::GetValueAtIndex(uint32_t value_index) const {
   return static_cast<const void *>(storage_->GetSuffix(value_index));
 }
 
-void IcingDynamicTrie::SetValueAtIndex(uint32_t value_index,
-                                       const void *value) {
+libtextclassifier3::Status IcingDynamicTrie::SetValueAtIndex(
+    uint32_t value_index, const void *value) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   if (value_index > storage_->hdr().max_suffixes_size() - value_size()) {
-    ICING_LOG(FATAL) << "Value index is out of range";
+    return absl_ports::OutOfRangeError("Value index is out of range");
   }
 
-  memcpy(storage_->GetMutableSuffix(value_index, value_size()), value,
-         value_size());
+  ICING_ASSIGN_OR_RETURN(char *mutable_suffix,
+                         storage_->GetMutableSuffix(value_index, value_size()));
+  memcpy(mutable_suffix, value, value_size());
+
+  return libtextclassifier3::Status::OK;
 }
 
 bool IcingDynamicTrie::Find(std::string_view key, void *value,
@@ -2620,19 +2646,18 @@ bool IcingDynamicTrie::ClearDeleted(uint32_t value_index) {
 //        element will cause a crash or fetch incorrect data.
 //    - So we must reset the trie state to make sure storage_->empty() works
 //      correctly and prevents trie APIs from accessing the root node.
-bool IcingDynamicTrie::Delete(std::string_view key) {
+libtextclassifier3::Status IcingDynamicTrie::Delete(std::string_view key) {
   if (!is_initialized()) {
-    ICING_LOG(ERROR) << "DynamicTrie not initialized";
-    return false;
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   if (!IsKeyValid(key)) {
-    return false;
+    return absl_ports::InvalidArgumentError("Invalid key");
   }
 
   if (storage_->empty()) {
     // Nothing to delete.
-    return true;
+    return libtextclassifier3::Status::OK;
   }
 
   // Tries to find the key in the trie, starting from the root.
@@ -2656,7 +2681,7 @@ bool IcingDynamicTrie::Delete(std::string_view key) {
       // Leaf node, now check the suffix.
       if (key.substr(i) != storage_->GetSuffix(current_node->next_index())) {
         // Key does not exist in the trie, nothing to delete.
-        return true;
+        return libtextclassifier3::Status::OK;
       }
       // Otherwise, key is found.
       break;
@@ -2674,20 +2699,22 @@ bool IcingDynamicTrie::Delete(std::string_view key) {
 
     if (next == nullptr) {
       // Key does not exist in the trie, nothing to delete.
-      return true;
+      return libtextclassifier3::Status::OK;
     }
 
     // Checks the real size of next array.
     uint32_t next_array_buffer_size = 1u << current_node->log2_num_children();
-    Next *next_array_start = storage_->GetMutableNextArray(
-        current_node->next_index(), next_array_buffer_size);
+    ICING_ASSIGN_OR_RETURN(
+        Next * next_array_start,
+        storage_->GetMutableNextArray(current_node->next_index(),
+                                      next_array_buffer_size));
     int valid_next_array_size =
         GetValidNextsSize(next_array_start, next_array_buffer_size);
     if (valid_next_array_size == 0) {
       // Key does not exist in the trie, nothing to delete.
       // This shouldn't happen, but we put a sanity check here in case something
       // is wrong.
-      return true;
+      return libtextclassifier3::Status::OK;
     } else if (valid_next_array_size == 1) {
       // Single-child branch will be deleted.
       nexts_to_reset.push_back(storage_->GetNextArrayIndex(next));
@@ -2704,25 +2731,28 @@ bool IcingDynamicTrie::Delete(std::string_view key) {
   }
   // Now we've found the key in the trie.
 
-  ClearSuffixAndValue(current_node->next_index());
+  ICING_RETURN_IF_ERROR(ClearSuffixAndValue(current_node->next_index()));
 
   // Resets nexts to remove key information.
   for (uint32_t next_index : nexts_to_reset) {
-    ResetNext(next_index);
+    ICING_RETURN_IF_ERROR(ResetNext(next_index));
   }
 
   if (last_multichild_node != nullptr) {
-    SortNextArray(last_multichild_node);
+    ICING_RETURN_IF_ERROR(SortNextArray(last_multichild_node));
     uint32_t next_array_buffer_size =
         1u << last_multichild_node->log2_num_children();
-    Next *next_array_start = this->storage_->GetMutableNextArray(
-        last_multichild_node->next_index(), next_array_buffer_size);
+    ICING_ASSIGN_OR_RETURN(
+        Next * next_array_start,
+        this->storage_->GetMutableNextArray(last_multichild_node->next_index(),
+                                            next_array_buffer_size));
     uint32_t num_children =
         GetValidNextsSize(next_array_start, next_array_buffer_size);
     // Shrink the next array if we can.
     if (num_children == next_array_buffer_size / 2) {
-      Node *mutable_node = storage_->GetMutableNode(
-          storage_->GetNodeIndex(last_multichild_node));
+      ICING_ASSIGN_OR_RETURN(Node * mutable_node,
+                             storage_->GetMutableNode(
+                                 storage_->GetNodeIndex(last_multichild_node)));
       mutable_node->set_log2_num_children(mutable_node->log2_num_children() -
                                           1);
       // Add the unused second half of the next array to the free list.
@@ -2744,7 +2774,7 @@ bool IcingDynamicTrie::Delete(std::string_view key) {
     Clear();
   }
 
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
 bool IcingDynamicTrie::ClearPropertyForAllValues(uint32_t property_id) {

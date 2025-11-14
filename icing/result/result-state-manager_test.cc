@@ -326,8 +326,9 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
   // Second page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info2.first, Eq(next_page_token));
   ASSERT_THAT(page_result_info2.second.results, SizeIs(2));
   EXPECT_THAT(page_result_info2.second.results.at(0).document(),
@@ -338,8 +339,9 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
   // Third page, 1 result
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info3.first, Eq(kInvalidNextPageToken));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
@@ -347,8 +349,9 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
 
   // No results
   EXPECT_THAT(
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()),
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -490,8 +493,9 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
   // limiter, so we should get an empty page.
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info2.first, Eq(kInvalidNextPageToken));
   EXPECT_THAT(page_result_info2.second.results, IsEmpty());
 }
@@ -558,8 +562,9 @@ TEST_F(ResultStateManagerTest,
   clock()->SetSystemTimeMilliseconds(1000);
   // page_result_info1's token (page_result_info1.first) shouldn't be found.
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -607,18 +612,21 @@ TEST_F(ResultStateManagerTest,
   // 3. Then calling GetNextPage() on state 1 shouldn't get anything.
   clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
   // page_result_info2's token (page_result_info2.first) should be found
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info2,
-                             result_state_manager.GetNextPage(
-                                 page_result_info2.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   // We test the behavior by setting time back to 2s, to make sure the
   // invalidation of state 1 was done by the previous GetNextPage() instead of
   // the following GetNextPage().
   clock()->SetSystemTimeMilliseconds(2000);
   // page_result_info1's token (page_result_info1.first) shouldn't be found.
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -651,8 +659,9 @@ TEST_F(ResultStateManagerTest,
   clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
   // page_result_info's token (page_result_info.first) shouldn't be found.
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -726,15 +735,18 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
 
   // page_result_info1's token (page_result_info1.first) shouldn't be found
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // page_result_info2's token (page_result_info2.first) should still exist
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info2,
-                             result_state_manager.GetNextPage(
-                                 page_result_info2.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   // Should get docs.
   ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info2.second.results.at(0).document(),
@@ -776,14 +788,16 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
 
   // page_result_info1's token (page_result_info1.first) shouldn't be found
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // page_result_info2's token (page_result_info2.first) shouldn't be found
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -833,22 +847,27 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info2,
-                             result_state_manager.GetNextPage(
-                                 page_result_info2.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info2.second.results.at(0).document(),
               EqualsProto(document_protos2.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info3,
-                             result_state_manager.GetNextPage(
-                                 page_result_info3.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
               EqualsProto(document_protos3.at(1)));
@@ -924,31 +943,38 @@ TEST_F(ResultStateManagerTest,
           document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info1,
-                             result_state_manager.GetNextPage(
-                                 page_result_info1.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info1,
+      result_state_manager.GetNextPage(
+          page_result_info1.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info1.second.results.at(0).document(),
               EqualsProto(document_protos1.at(1)));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info3,
-                             result_state_manager.GetNextPage(
-                                 page_result_info3.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
               EqualsProto(document_protos3.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info4,
-                             result_state_manager.GetNextPage(
-                                 page_result_info4.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          page_result_info4.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info4.second.results.at(0).document(),
               EqualsProto(document_protos4.at(1)));
@@ -1051,40 +1077,49 @@ TEST_F(ResultStateManagerTest,
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info3.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info3.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info4,
-                             result_state_manager.GetNextPage(
-                                 page_result_info4.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          page_result_info4.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info4.second.results.at(0).document(),
               EqualsProto(document_protos4.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info5,
-                             result_state_manager.GetNextPage(
-                                 page_result_info5.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info5,
+      result_state_manager.GetNextPage(
+          page_result_info5.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info5.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info5.second.results.at(0).document(),
               EqualsProto(document_protos5.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info6,
-                             result_state_manager.GetNextPage(
-                                 page_result_info6.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info6,
+      result_state_manager.GetNextPage(
+          page_result_info6.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info6.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info6.second.results.at(0).document(),
               EqualsProto(document_protos6.at(1)));
@@ -1178,35 +1213,43 @@ TEST_F(
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info3,
-                             result_state_manager.GetNextPage(
-                                 page_result_info3.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
               EqualsProto(document_protos3.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info4,
-                             result_state_manager.GetNextPage(
-                                 page_result_info4.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          page_result_info4.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info4.second.results.at(0).document(),
               EqualsProto(document_protos4.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info5,
-                             result_state_manager.GetNextPage(
-                                 page_result_info5.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info5,
+      result_state_manager.GetNextPage(
+          page_result_info5.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info5.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info5.second.results.at(0).document(),
               EqualsProto(document_protos5.at(1)));
@@ -1263,10 +1306,12 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
 
   // GetNextPage for result state 1 should return its result and decrement the
   // number of cached hits to 2.
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info1,
-                             result_state_manager.GetNextPage(
-                                 page_result_info1.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info1,
+      result_state_manager.GetNextPage(
+          page_result_info1.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info1.second.results.at(0).document(),
               EqualsProto(document_protos1.at(1)));
@@ -1288,30 +1333,37 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info2,
-                             result_state_manager.GetNextPage(
-                                 page_result_info2.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info2.second.results.at(0).document(),
               EqualsProto(document_protos2.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info3,
-                             result_state_manager.GetNextPage(
-                                 page_result_info3.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
               EqualsProto(document_protos3.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info4,
-                             result_state_manager.GetNextPage(
-                                 page_result_info4.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          page_result_info4.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info4.second.results.at(0).document(),
               EqualsProto(document_protos4.at(1)));
@@ -1369,10 +1421,12 @@ TEST_F(ResultStateManagerTest,
 
   // GetNextPage for result state 1 should return its result and decrement the
   // number of cached hits to 2.
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info1,
-                             result_state_manager.GetNextPage(
-                                 page_result_info1.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info1,
+      result_state_manager.GetNextPage(
+          page_result_info1.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info1.second.results.at(0).document(),
               EqualsProto(document_protos1.at(1)));
@@ -1410,35 +1464,43 @@ TEST_F(ResultStateManagerTest,
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info3,
-                             result_state_manager.GetNextPage(
-                                 page_result_info3.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
               EqualsProto(document_protos3.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info4,
-                             result_state_manager.GetNextPage(
-                                 page_result_info4.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          page_result_info4.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info4.second.results.at(0).document(),
               EqualsProto(document_protos4.at(1)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info5,
-                             result_state_manager.GetNextPage(
-                                 page_result_info5.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info5,
+      result_state_manager.GetNextPage(
+          page_result_info5.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info5.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info5.second.results.at(0).document(),
               EqualsProto(document_protos5.at(1)));
@@ -1505,21 +1567,24 @@ TEST_F(ResultStateManagerTest,
 
   // GetNextPage for result state 1 and 2 should return NOT_FOUND.
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // Only the next four results in state 3 should be retrievable.
   uint64_t next_page_token3 = page_result_info3.first;
   ICING_ASSERT_OK_AND_ASSIGN(
       page_result_info3,
-      result_state_manager.GetNextPage(next_page_token3, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token3, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info3.first, Eq(next_page_token3));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
@@ -1527,8 +1592,9 @@ TEST_F(ResultStateManagerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       page_result_info3,
-      result_state_manager.GetNextPage(next_page_token3, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token3, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info3.first, Eq(next_page_token3));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
@@ -1536,8 +1602,9 @@ TEST_F(ResultStateManagerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       page_result_info3,
-      result_state_manager.GetNextPage(next_page_token3, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token3, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info3.first, Eq(next_page_token3));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
@@ -1545,8 +1612,9 @@ TEST_F(ResultStateManagerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       page_result_info3,
-      result_state_manager.GetNextPage(next_page_token3, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token3, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   // The final document should have been dropped because it exceeded the budget,
   // so the next page token of the second last round should be
   // kInvalidNextPageToken.
@@ -1557,8 +1625,9 @@ TEST_F(ResultStateManagerTest,
 
   // Double check that next_page_token3 is not retrievable anymore.
   EXPECT_THAT(
-      result_state_manager.GetNextPage(next_page_token3, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()),
+      result_state_manager.GetNextPage(
+          next_page_token3, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -1601,14 +1670,17 @@ TEST_F(ResultStateManagerTest,
 
   // state1 should have been evicted and state2 should still be retrievable.
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first, result_retriever(),
-                  clock()->GetSystemTimeMilliseconds()),
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK_AND_ASSIGN(page_result_info2,
-                             result_state_manager.GetNextPage(
-                                 page_result_info2.first, result_retriever(),
-                                 clock()->GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info2.second.results.at(0).document(),
               EqualsProto(document_protos2.at(1)));
@@ -1652,8 +1724,9 @@ TEST_F(ResultStateManagerTest,
   // Second page, 2 results.
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info2.second.results, SizeIs(2));
   EXPECT_THAT(page_result_info2.second.results.at(0).document(),
               EqualsProto(document_protos.at(2)));
@@ -1663,16 +1736,18 @@ TEST_F(ResultStateManagerTest,
   // Third page, 1 result.
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()));
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
   EXPECT_THAT(page_result_info3.second.results.at(0).document(),
               EqualsProto(document_protos.at(4)));
 
   // Fourth page, 0 results.
   EXPECT_THAT(
-      result_state_manager.GetNextPage(next_page_token, result_retriever(),
-                                       clock()->GetSystemTimeMilliseconds()),
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 

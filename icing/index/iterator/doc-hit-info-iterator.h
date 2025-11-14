@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -36,6 +37,7 @@ namespace icing {
 namespace lib {
 
 class SectionRestrictData;
+class DocumentFilterPredicate;
 
 // Data structure that maps a single matched query term to its section mask
 // and the list of term frequencies.
@@ -116,18 +118,60 @@ class DocHitInfoIterator {
     // - Internal nodes: should aggregate values from all children.
     int32_t num_blocks_inspected;
 
+    // Stats related to embedding index scoring.
+    struct EmbeddingStats {
+      // The number of unquantized embeddings that have been scored.
+      int32_t num_unquantized_embeddings_scored = 0;
+      // The number of quantized embeddings that have been scored.
+      int32_t num_quantized_embeddings_scored = 0;
+      // The set of shards that have been read for unquantized embeddings.
+      std::unordered_set<uint32_t> unquantized_shards_read;
+      // The set of shards that have been read for quantized embeddings.
+      std::unordered_set<uint32_t> quantized_shards_read;
+      // The number of raw embedding bytes read.
+      int64_t num_embedding_bytes_read = 0;
+
+      bool operator==(const EmbeddingStats& other) const {
+        return num_unquantized_embeddings_scored ==
+                   other.num_unquantized_embeddings_scored &&
+               num_quantized_embeddings_scored ==
+                   other.num_quantized_embeddings_scored &&
+               unquantized_shards_read == other.unquantized_shards_read &&
+               quantized_shards_read == other.quantized_shards_read &&
+               num_embedding_bytes_read == other.num_embedding_bytes_read;
+      }
+
+      EmbeddingStats operator+(const EmbeddingStats& other) const {
+        EmbeddingStats result = *this;
+        result.num_unquantized_embeddings_scored +=
+            other.num_unquantized_embeddings_scored;
+        result.num_quantized_embeddings_scored +=
+            other.num_quantized_embeddings_scored;
+        result.unquantized_shards_read.insert(
+            other.unquantized_shards_read.begin(),
+            other.unquantized_shards_read.end());
+        result.quantized_shards_read.insert(other.quantized_shards_read.begin(),
+                                            other.quantized_shards_read.end());
+        result.num_embedding_bytes_read += other.num_embedding_bytes_read;
+        return result;
+      }
+    };
+    EmbeddingStats embedding_stats;
+
     explicit CallStats()
         : CallStats(/*num_leaf_advance_calls_lite_index_in=*/0,
                     /*num_leaf_advance_calls_main_index_in=*/0,
                     /*num_leaf_advance_calls_integer_index_in=*/0,
                     /*num_leaf_advance_calls_no_index_in=*/0,
-                    /*num_blocks_inspected_in=*/0) {}
+                    /*num_blocks_inspected_in=*/0,
+                    /*embedding_stats_in=*/{}) {}
 
     explicit CallStats(int32_t num_leaf_advance_calls_lite_index_in,
                        int32_t num_leaf_advance_calls_main_index_in,
                        int32_t num_leaf_advance_calls_integer_index_in,
                        int32_t num_leaf_advance_calls_no_index_in,
-                       int32_t num_blocks_inspected_in)
+                       int32_t num_blocks_inspected_in,
+                       EmbeddingStats embedding_stats_in)
         : num_leaf_advance_calls_lite_index(
               num_leaf_advance_calls_lite_index_in),
           num_leaf_advance_calls_main_index(
@@ -135,7 +179,8 @@ class DocHitInfoIterator {
           num_leaf_advance_calls_integer_index(
               num_leaf_advance_calls_integer_index_in),
           num_leaf_advance_calls_no_index(num_leaf_advance_calls_no_index_in),
-          num_blocks_inspected(num_blocks_inspected_in) {}
+          num_blocks_inspected(num_blocks_inspected_in),
+          embedding_stats(std::move(embedding_stats_in)) {}
 
     int32_t num_leaf_advance_calls() const {
       return num_leaf_advance_calls_lite_index +
@@ -153,7 +198,8 @@ class DocHitInfoIterator {
                  other.num_leaf_advance_calls_integer_index &&
              num_leaf_advance_calls_no_index ==
                  other.num_leaf_advance_calls_no_index &&
-             num_blocks_inspected == other.num_blocks_inspected;
+             num_blocks_inspected == other.num_blocks_inspected &&
+             embedding_stats == other.embedding_stats;
     }
 
     CallStats operator+(const CallStats& other) const {
@@ -165,7 +211,8 @@ class DocHitInfoIterator {
                            other.num_leaf_advance_calls_integer_index,
                        num_leaf_advance_calls_no_index +
                            other.num_leaf_advance_calls_no_index,
-                       num_blocks_inspected + other.num_blocks_inspected);
+                       num_blocks_inspected + other.num_blocks_inspected,
+                       embedding_stats + other.embedding_stats);
     }
 
     CallStats& operator+=(const CallStats& other) {
@@ -212,18 +259,79 @@ class DocHitInfoIterator {
   //   INVALID_ARGUMENT if the right-most node is not suppose to be trimmed.
   virtual libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && = 0;
 
-  // Map all direct children of this iterator according to the passed mapper.
-  virtual void MapChildren(const ChildrenMapper& mapper) = 0;
+  // Returns raw pointers to the direct children of this iterator. Empty if this
+  // iterator has no children.
+  //
+  // This allows modifying the iterator tree structure, for example, by
+  // modifying the child iterators directly or even replacing them with new
+  // ones. The lifetime of the returned raw pointers is tied to this iterator
+  // object.
+  virtual std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() = 0;
 
-  virtual bool is_leaf() { return false; }
+  // Returns true if section restrictions are not applicable to this iterator.
+  //
+  // Several iterators do **not** need to respect section restrictions, since it
+  // does not have any section information. For example:
+  // - DocHitInfoIteratorAllDocumentId
+  // - DocHitInfoIteratorByUri
+  // - DocHitInfoIteratorMatchScoreExpression
+  // - DocHitInfoIteratorPropertyInSchema
+  // - DocHitInfoIteratorPropertyInDocument
+  //
+  // Unless DocHitInfoIteratorSectionRestrictionNotApplicable is extended, let's
+  // assume the iterator should respect section restrictions.
+  virtual bool SectionRestrictionNotApplicable() const { return false; }
+
+  // If not SectionRestrictionNotApplicable(), whether section restrictions
+  // should be passed down to the children iterators.
+  //
+  // Several iterators need to pass down section restrictions to their
+  // children to maintain the correct semantics of section restrictions. Check
+  // go/icing-section-restrict-fix for more details. For example:
+  // - DocHitInfoIteratorAnd
+  // - DocHitInfoIteratorOr
+  // - DocHitInfoIteratorFilter
+  //
+  // However, several iterators do respect section restrictions, but do not need
+  // to or cannot pass down section restrictions to their children. For example:
+  // - DocHitInfoIteratorSectionRestrict, since it's a section restriction
+  //   iterator itself. A new section restriction should be chained, instead of
+  //   passing down.
+  // - DocHitInfoIteratorTermLite, since it does not have any children. Section
+  //   restriction should be applied at the top of this iterator directly.
+  // - DocHitInfoIteratorEmbedding, since it does not have any children, and
+  //   in addition, it can internally handle the section restriction logic.
+  //
+  // Unless DocHitInfoIteratorSectionRestrictionApplyToChildren is extended,
+  // let's assume this is false, which means section restrictions should be
+  // applied at the top of this iterator directly or handled internally.
+  virtual bool SectionRestrictionShouldApplyToChildren() const { return false; }
 
   // Try to internally handle the provided section restriction in the iterator.
   //
   // Returns:
   //   - false if the iterator does not support handling section restriction.
   //   - true if the iterator supports handling section restriction, and the
-  //     section restriction has been applied.
+  //     section restriction has been applied. For example,
+  //     DocHitInfoIteratorEmbedding can internally handle the section
+  //     restriction logic.
   virtual bool HandleSectionRestriction(SectionRestrictData* other_data) {
+    return false;
+  }
+
+  // Whether a filter predicate can be passed through this iterator.
+  //
+  // Currently all iterators except for DocHitInfoIteratorNot are able to pass
+  // filter predicates through, while maintaining the same semantics.
+  virtual bool CanPassFilterPredicateThrough() const { return true; }
+
+  // Try to internally handle the provided filter in the iterator.
+  //
+  // Returns:
+  //   - false if the iterator does not support handling filter.
+  //   - true if the iterator supports handling filter, and the filter has been
+  //     applied.
+  virtual bool HandleFilter(const DocumentFilterPredicate* predicate) {
     return false;
   }
 
@@ -279,14 +387,16 @@ class DocHitInfoIterator {
   }
 };
 
-// A leaf node is a term node or a chain of section restriction node applied on
-// a term node.
-class DocHitInfoLeafIterator : public DocHitInfoIterator {
+class DocHitInfoIteratorSectionRestrictionNotApplicable
+    : public DocHitInfoIterator {
  public:
-  bool is_leaf() override { return true; }
+  bool SectionRestrictionNotApplicable() const override { return true; }
+};
 
-  // Calling MapChildren on leaf node does not make sense, and will do nothing.
-  void MapChildren(const ChildrenMapper& mapper) override {}
+class DocHitInfoIteratorSectionRestrictionApplyToChildren
+    : public DocHitInfoIterator {
+ public:
+  bool SectionRestrictionShouldApplyToChildren() const override { return true; }
 };
 
 }  // namespace lib

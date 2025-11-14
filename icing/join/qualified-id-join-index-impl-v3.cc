@@ -206,6 +206,10 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
     return libtextclassifier3::Status::OK;
   }
 
+  // Set dirty for the entire storage here once we make sure there are children
+  // to migrate for this parent doc.
+  SetDirty();
+
   ICING_ASSIGN_OR_RETURN(
       bool is_extended,
       ExtendParentDocumentIdToChildArrayInfoIfNecessary(new_document_id));
@@ -461,7 +465,13 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
 
   // Validate magic.
   if (join_index->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for QualifiedIdJoinIndexImplV3 "
+                     << join_index->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << join_index->info().magic;
+    return absl_ports::FailedPreconditionError(absl_ports::StrCat(
+        "Invalid header magic for QualifiedIdJoinIndexImplV3: ",
+        join_index->working_path_));
   }
 
   return join_index;
