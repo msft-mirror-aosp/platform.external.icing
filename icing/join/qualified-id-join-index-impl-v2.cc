@@ -38,6 +38,7 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
@@ -296,6 +297,7 @@ QualifiedIdJoinIndexImplV2::GetIterator(
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
+    const DocumentStore* /*document_store*/,
     const std::vector<DocumentId>& document_id_old_to_new,
     const std::vector<NamespaceId>& namespace_id_old_to_new,
     DocumentId new_last_added_document_id) {
