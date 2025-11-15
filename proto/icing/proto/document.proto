@@ -130,7 +130,7 @@ message PropertyProto {
 }
 
 // Holds a list of PutResultProto.
-// Next tag: 5
+// Next tag: 6
 message BatchPutResultProto {
   // The overall status of doing the batch put. It is independent of the status
   // of the individual PutResultProtos. E.g. we may still return OK here even if
@@ -146,10 +146,14 @@ message BatchPutResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 6
+// Next tag: 7
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -178,10 +182,14 @@ message PutResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 5;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 6;
 }
 
 // Result of a call to IcingSearchEngine.Get
-// Next tag: 5
+// Next tag: 6
 message GetResultProto {
   // Status code can be one of:
   //   OK
@@ -208,20 +216,28 @@ message GetResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.BatchGet
-// Next tag: 4
+// Next tag: 5
 message BatchGetResultProto {
   optional StatusProto status = 1;
   repeated GetResultProto get_result_protos = 2;
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.GetAllNamespaces
-// Next tag: 4
+// Next tag: 5
 message GetAllNamespacesResultProto {
   // Status code can be one of:
   //   OK
@@ -235,10 +251,14 @@ message GetAllNamespacesResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 4
+// Next tag: 5
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -257,10 +277,14 @@ message DeleteResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 4
+// Next tag: 5
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -279,10 +303,14 @@ message DeleteByNamespaceResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 4
+// Next tag: 5
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -301,10 +329,14 @@ message DeleteBySchemaTypeResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByQuery
-// Next tag: 6
+// Next tag: 7
 message DeleteByQueryResultProto {
   // Status code can be one of:
   //   OK
@@ -338,6 +370,10 @@ message DeleteByQueryResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 5;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 6;
 }
 
 message HandleExpiredDocumentsResultProto {

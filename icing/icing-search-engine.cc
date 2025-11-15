@@ -510,7 +510,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_reusable_decompression_buffer(),
                      options_.enable_schema_type_id_optimization(),
                      options_.enable_optimize_improvements(),
-                     options_.expired_document_purge_threshold_ms()),
+                     options_.expired_document_purge_threshold_ms(),
+                     options_.enable_non_existent_qualified_id_join()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -558,6 +559,8 @@ InitializeResultProto IcingSearchEngine::Initialize() {
       << ", embedding index restoration cause = "
       << static_cast<int>(
              result.initialize_stats().embedding_index_restoration_cause());
+  result.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result;
 }
 
@@ -1404,8 +1407,10 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   *set_schema_request.mutable_schema() = std::move(new_schema);
   set_schema_request.set_ignore_errors_and_delete_documents(
       ignore_errors_and_delete_documents);
-
-  return SetSchema(std::move(set_schema_request));
+  SetSchemaResultProto result_proto = SetSchema(std::move(set_schema_request));
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_proto;
 }
 
 SetSchemaResultProto IcingSearchEngine::SetSchema(
@@ -1719,17 +1724,23 @@ GetSchemaTypeResultProto IcingSearchEngine::GetSchemaType(
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
   auto type_config_or = schema_store_->GetSchemaTypeConfig(schema_type);
   if (!type_config_or.ok()) {
     TransformStatus(type_config_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
   result_status->set_code(StatusProto::OK);
   *result_proto.mutable_schema_type_config() = *(type_config_or.ValueOrDie());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -1752,6 +1763,8 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
         "IcingSearchEngine has not been initialized!");
     batch_put_result_proto.mutable_status()->set_code(
         StatusProto::FAILED_PRECONDITION);
+    batch_put_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return batch_put_result_proto;
   }
 
@@ -1776,7 +1789,8 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
   }
 
   batch_put_result_proto.mutable_status()->set_code(StatusProto::OK);
-
+  batch_put_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return batch_put_result_proto;
 }
 
@@ -1794,9 +1808,14 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     StatusProto* result_status = result_proto.mutable_status();
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
-  return PutLocked(std::move(document));
+  PutResultProto result_proto = PutLocked(std::move(document));
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_proto;
 }
 
 // PutLocked to be called when mutex_ is already held.
@@ -1822,6 +1841,8 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
       PrepareDocumentsForIndexing(std::move(document), current_time_ms);
   if (!tokenized_document_or.ok()) {
     TransformStatus(tokenized_document_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   TokenizedDocument tokenized_document(
@@ -1834,18 +1855,21 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
     //   which stage of DocumentStore::Put failed and decide whether to delete
     //   the document and run delete propagation.
     TransformStatus(put_result_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   DocumentId old_document_id = put_result_or.ValueOrDie().old_document_id;
   DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
   int64_t expiration_timestamp_ms =
       put_result_or.ValueOrDie().expiration_timestamp_ms;
-  result_proto.set_was_replacement(
-      put_result_or.ValueOrDie().was_replacement());
+  result_proto.set_was_replacement(put_result_or.ValueOrDie().was_replacement);
 
   auto data_indexing_handlers_or = CreateDataIndexingHandlers();
   if (!data_indexing_handlers_or.ok()) {
     TransformStatus(data_indexing_handlers_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   IndexProcessor index_processor(
@@ -1859,6 +1883,8 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, old_document_id, put_document_stats);
   if (index_status.ok()) {
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     if (options_.enable_delete_propagation_from() &&
         task_scheduler_ != nullptr) {
       // Reschedule purging expired document task if:
@@ -1919,6 +1945,8 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   }
 
   TransformStatus(index_status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2083,12 +2111,16 @@ ReportUsageResultProto IcingSearchEngine::ReportUsage(
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
   libtextclassifier3::Status status =
       document_store_->ReportUsage(usage_report);
   TransformStatus(status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2447,6 +2479,8 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
                           "uninitialized IcingSearchEngine.";
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2460,6 +2494,8 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
   }
   TransformStatus(status, result_status);
   persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2479,6 +2515,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2487,6 +2525,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   ScopedTimer optimize_timer(
       clock_->GetNewTimer(),
       [optimize_stats](int64_t t) { optimize_stats->set_latency_ms(t); });
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
 
   // Read the optimize status and assign previous_optimize_status. This is the
   // time that we last ran optimize.
@@ -2551,6 +2591,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
         persist_timer->GetElapsedMilliseconds());
     if (!status.ok()) {
       TransformStatus(status, result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
   }
@@ -2580,6 +2622,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
             IcingSearchEngineMarkerProto::OperationType::OPTIMIZE);
     if (!marker_file_or.ok()) {
       TransformStatus(marker_file_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
     marker_file = std::move(marker_file_or).ValueOrDie();
@@ -2605,6 +2649,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     // If INTERNAL_ERROR, we're having IO errors or other errors that we can't
     // recover from.
     TransformStatus(optimize_result_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2665,7 +2711,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
 
     libtextclassifier3::Status qualified_id_join_index_optimize_status =
         qualified_id_join_index_->Optimize(
-            optimize_result.document_id_old_to_new,
+            document_store_.get(), optimize_result.document_id_old_to_new,
             optimize_result.namespace_id_old_to_new,
             document_store_->last_added_document_id());
     if (!qualified_id_join_index_optimize_status.ok()) {
@@ -2706,6 +2752,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       TransformStatus(status, result_status);
       optimize_stats->set_index_restoration_latency_ms(
           optimize_index_timer->GetElapsedMilliseconds());
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
 
@@ -2723,6 +2771,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       TransformStatus(status, result_status);
       optimize_stats->set_index_restoration_latency_ms(
           optimize_index_timer->GetElapsedMilliseconds());
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
   }
@@ -2762,6 +2812,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       persist_timer->GetElapsedMilliseconds());
   if (!status.ok()) {
     TransformStatus(status, result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2770,6 +2822,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       Filesystem::SanitizeFileSize(after_size));
 
   TransformStatus(doc_store_optimize_result_status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2783,6 +2837,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2825,6 +2881,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   auto doc_store_optimize_info_or = document_store_->GetOptimizeInfo();
   if (!doc_store_optimize_info_or.ok()) {
     TransformStatus(doc_store_optimize_info_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   DocumentStore::OptimizeInfo doc_store_optimize_info =
@@ -2835,6 +2893,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     // Can return early since there's nothing to calculate on the index side
     result_proto.set_estimated_optimizable_bytes(0);
     result_status->set_code(StatusProto::OK);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2842,6 +2902,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   auto index_elements_size_or = index_->GetElementsSize();
   if (!index_elements_size_or.ok()) {
     TransformStatus(index_elements_size_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   int64_t index_elements_size = index_elements_size_or.ValueOrDie();
@@ -2855,6 +2917,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
       doc_store_optimize_info.estimated_optimizable_bytes);
 
   result_status->set_code(StatusProto::OK);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2883,6 +2947,8 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
       result.mutable_status()->set_code(StatusProto::INTERNAL);
       result.mutable_status()->set_message(
           namespace_blob_storage_infos_or.status().error_message());
+      result.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result;
     }
     std::vector<NamespaceBlobStorageInfoProto> namespace_blob_storage_infos =
@@ -2897,6 +2963,8 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   }
   // TODO(b/259744228): add stats for integer index
   result.mutable_status()->set_code(StatusProto::OK);
+  result.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result;
 }
 
@@ -3048,6 +3116,8 @@ SearchResultProto IcingSearchEngine::SearchLockedShared(
       lock_acquisition_latency);
   result_proto.mutable_query_stats()->set_latency_ms(
       overall_timer->GetElapsedMilliseconds());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -3067,6 +3137,8 @@ SearchResultProto IcingSearchEngine::SearchLockedExclusive(
       lock_acquisition_latency);
   result_proto.mutable_query_stats()->set_latency_ms(
       overall_timer->GetElapsedMilliseconds());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -3682,10 +3754,14 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
   if (!initialized_) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-
-  return blob_store_->OpenWrite(blob_handle);
+  blob_proto = blob_store_->OpenWrite(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::RemoveBlob(
@@ -3697,16 +3773,22 @@ BlobProto IcingSearchEngine::RemoveBlob(
   if (blob_store_ == nullptr) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("Remove blob is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
   if (!initialized_) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-
-  return blob_store_->RemoveBlob(blob_handle);
+  blob_proto = blob_store_->RemoveBlob(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::OpenReadBlob(
@@ -3718,17 +3800,23 @@ BlobProto IcingSearchEngine::OpenReadBlob(
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
         "Open read blob is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
   if (!initialized_) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     ICING_LOG(ERROR) << status->message();
     return blob_proto;
   }
-
-  return blob_store_->OpenRead(blob_handle);
+  blob_proto = blob_store_->OpenRead(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::CommitBlob(
@@ -3739,6 +3827,8 @@ BlobProto IcingSearchEngine::CommitBlob(
   if (blob_store_ == nullptr) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("Commit blob is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
@@ -3746,10 +3836,14 @@ BlobProto IcingSearchEngine::CommitBlob(
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
     ICING_LOG(ERROR) << status->message();
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-
-  return blob_store_->CommitBlob(blob_handle);
+  blob_proto = blob_store_->CommitBlob(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::GetAllBlobInfos() {
@@ -3760,6 +3854,8 @@ BlobProto IcingSearchEngine::GetAllBlobInfos() {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
         "Get all blob info is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
@@ -3767,9 +3863,14 @@ BlobProto IcingSearchEngine::GetAllBlobInfos() {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
     ICING_LOG(ERROR) << status->message();
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-  return blob_store_->GetAllBlobInfos();
+  blob_proto = blob_store_->GetAllBlobInfos();
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
@@ -3780,6 +3881,8 @@ BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
         "Put blob info is not supported in this Icing instance!");
+    result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_blob_proto;
   }
 
@@ -3787,9 +3890,15 @@ BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
     ICING_LOG(ERROR) << status->message();
+    result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_blob_proto;
   }
-  return blob_store_->PutBlobInfos(std::move(blob_info_protos));
+
+  result_blob_proto = blob_store_->PutBlobInfos(blob_info_protos);
+  result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_blob_proto;
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
@@ -4117,11 +4226,11 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   handlers.push_back(std::move(integer_section_indexing_handler));
 
   // Qualified id join index handler
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<QualifiedIdJoinIndexingHandler>
-          qualified_id_join_indexing_handler,
-      QualifiedIdJoinIndexingHandler::Create(
-          clock_.get(), document_store_.get(), qualified_id_join_index_.get()));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                             qualified_id_join_indexing_handler,
+                         QualifiedIdJoinIndexingHandler::Create(
+                             clock_.get(), document_store_.get(),
+                             qualified_id_join_index_.get(), &feature_flags_));
   handlers.push_back(std::move(qualified_id_join_indexing_handler));
 
   // Embedding index handler
@@ -4344,7 +4453,10 @@ ResetResultProto IcingSearchEngine::ClearAndDestroy() {
 
   {
     absl_ports::unique_lock l(&mutex_);
-    return ClearAndDestroyLocked();
+    ResetResultProto result_proto = ClearAndDestroyLocked();
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return result_proto;
   }
 }
 
@@ -4368,7 +4480,10 @@ ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
 
 ResetResultProto IcingSearchEngine::Reset() {
   absl_ports::unique_lock l(&mutex_);
-  return ResetLocked();
+  ResetResultProto result_proto = ResetLocked();
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_proto;
 }
 
 ResetResultProto IcingSearchEngine::ResetLocked() {
@@ -4411,6 +4526,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   if (!initialized_) {
     response_status->set_code(StatusProto::FAILED_PRECONDITION);
     response_status->set_message("IcingSearchEngine has not been initialized!");
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
 
@@ -4418,6 +4535,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       ValidateSuggestionSpec(suggestion_spec, performance_configuration_);
   if (!status.ok()) {
     TransformStatus(status, response_status);
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
 
@@ -4428,6 +4547,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       schema_store_.get(), clock_.get(), &feature_flags_);
   if (!suggestion_processor_or.ok()) {
     TransformStatus(suggestion_processor_or.status(), response_status);
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
   std::unique_ptr<SuggestionProcessor> suggestion_processor =
@@ -4439,6 +4560,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       suggestion_processor->QuerySuggestions(suggestion_spec, current_time_ms);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
 
@@ -4449,6 +4572,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
     response.mutable_suggestions()->Add(std::move(suggestion));
   }
   response_status->set_code(StatusProto::OK);
+  response.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return response;
 }
 
