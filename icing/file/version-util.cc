@@ -458,8 +458,9 @@ derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
           /*needs_qualified_id_join_index_rebuild=*/false,
           /*needs_embedding_index_rebuild=*/false);
     }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3:
     case IcingSearchEngineFeatureInfoProto::
-        FEATURE_QUALIFIED_ID_JOIN_INDEX_V3: {
+        FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN: {
       return derived_file_util::DerivedFilesRebuildInfo(
           /*needs_document_store_derived_files_rebuild=*/false,
           /*needs_schema_store_derived_files_rebuild=*/false,
@@ -579,6 +580,12 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   if (options.enable_delete_propagation_from()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM));
+  }
+  // NonExistentQualifiedIdJoin feature
+  if (options.enable_non_existent_qualified_id_join()) {
+    enabled_features->Add(
+        GetFeatureInfoProto(IcingSearchEngineFeatureInfoProto::
+                                FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN));
   }
 }
 
