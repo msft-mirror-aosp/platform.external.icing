@@ -3593,7 +3593,7 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
 }
 
 TEST_F(SchemaStoreTest,
-       SetSchemaWithReorderedSchemaTypesAndUpdatedScorablePropertyOk) {
+       SetSchemaWithChangedSchemaTypeIdAndUpdatedScorablePropertyOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -3615,7 +3615,7 @@ TEST_F(SchemaStoreTest,
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   // The new schema updates "score" as scorable_type ENABLED from type "email",
-  // and it also reorders the schema types of "email" and "message".
+  // and it also changes the schema types of "email".
   SchemaProto new_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -3629,7 +3629,6 @@ TEST_F(SchemaStoreTest,
                                         .SetDataType(TYPE_DOUBLE)
                                         .SetScorableType(SCORABLE_TYPE_ENABLED)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
 
   // Set old schema
@@ -3653,10 +3652,12 @@ TEST_F(SchemaStoreTest,
       email_schema_type_id);
   new_expected_result.schema_types_scorable_property_inconsistent_by_name
       .insert("email");
-  new_expected_result.old_schema_type_ids_changed.insert(0);
+  // 'email' schema type id is changed. 'message' is deleted.
   new_expected_result.old_schema_type_ids_changed.insert(1);
+  new_expected_result.schema_types_deleted_by_id.insert(0);
+  new_expected_result.schema_types_deleted_by_name.insert("message");
   EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/false),
+                  new_schema, /*ignore_errors_and_delete_documents=*/true),
               IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
