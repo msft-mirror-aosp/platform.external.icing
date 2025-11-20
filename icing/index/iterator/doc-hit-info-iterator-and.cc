@@ -14,8 +14,7 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 
-#include <stddef.h>
-
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -38,8 +37,6 @@ namespace {
 
 // When combining ANDed iterators, n-ary operator has better performance when
 // number of operands > 3 according to benchmark cl/243720660
-// TODO (samzheng): Tune this number when it's necessary, e.g. implementation
-// changes.
 inline constexpr int kBinaryAndIteratorPerformanceThreshold = 3;
 
 // The minimum number of iterators needed to construct a And iterator. The And
@@ -58,11 +55,12 @@ std::unique_ptr<DocHitInfoIterator> CreateAndIterator(
   if (iterators.size() <= kBinaryAndIteratorPerformanceThreshold &&
       iterators.size() >= kMinBinaryIterators) {
     // Accumulate the iterators that need to be ANDed together.
-    iterator = std::move(iterators.at(0));
-    for (size_t i = 1; i < iterators.size(); ++i) {
+    iterator = std::move(iterators.at(iterators.size() - 1));
+    for (int i = iterators.size() - 2; i >= 0; --i) {
       std::unique_ptr<DocHitInfoIterator> temp_iterator = std::move(iterator);
       iterator = std::make_unique<DocHitInfoIteratorAnd>(
-          std::move(temp_iterator), std::move(iterators[i]));
+          /*short_it=*/std::move(iterators[i]),
+          /*long_it=*/std::move(temp_iterator));
     }
   } else {
     // If the vector is too small, the AndNary iterator can handle it and return
@@ -85,7 +83,6 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
     // Didn't find anything for the first iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -107,18 +104,21 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
 
   // Guaranteed that short_doc_id and long_doc_id match now
   doc_hit_info_ = short_->doc_hit_info();
-  doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info());
-  hit_intersect_section_ids_mask_ = short_->hit_intersect_section_ids_mask() &
-                                    long_->hit_intersect_section_ids_mask();
+  doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info().hit_section_ids_mask());
   return libtextclassifier3::Status::OK;
 }
 
-int32_t DocHitInfoIteratorAnd::GetNumBlocksInspected() const {
-  return short_->GetNumBlocksInspected() + long_->GetNumBlocksInspected();
-}
-
-int32_t DocHitInfoIteratorAnd::GetNumLeafAdvanceCalls() const {
-  return short_->GetNumLeafAdvanceCalls() + long_->GetNumLeafAdvanceCalls();
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorAnd::TrimRightMostNode() && {
+  ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_long,
+                         std::move(*long_).TrimRightMostNode());
+  if (trimmed_long.iterator_ == nullptr) {
+    trimmed_long.iterator_ = std::move(short_);
+  } else {
+    trimmed_long.iterator_ = std::make_unique<DocHitInfoIteratorAnd>(
+        std::move(short_), std::move(trimmed_long.iterator_));
+  }
+  return trimmed_long;
 }
 
 std::string DocHitInfoIteratorAnd::ToString() const {
@@ -141,7 +141,6 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
     // Didn't find anything for the first iterator, reset to invalid values and
     // return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -164,6 +163,7 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
         DocumentId unused;
         ICING_ASSIGN_OR_RETURN(
             unused, AdvanceTo(iterator.get(), potential_document_id));
+        (void)unused;  // Silence unused warning.
       }
 
       if (iterator->doc_hit_info().document_id() == potential_document_id) {
@@ -184,31 +184,41 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
 
   // Found a DocumentId which exists in all the iterators
   doc_hit_info_ = iterators_.at(0)->doc_hit_info();
-  hit_intersect_section_ids_mask_ =
-      iterators_.at(0)->hit_intersect_section_ids_mask();
 
   for (size_t i = 1; i < iterators_.size(); i++) {
-    doc_hit_info_.MergeSectionsFrom(iterators_.at(i)->doc_hit_info());
-    hit_intersect_section_ids_mask_ &=
-        iterators_.at(i)->hit_intersect_section_ids_mask();
+    doc_hit_info_.MergeSectionsFrom(
+        iterators_.at(i)->doc_hit_info().hit_section_ids_mask());
   }
   return libtextclassifier3::Status::OK;
 }
 
-int32_t DocHitInfoIteratorAndNary::GetNumBlocksInspected() const {
-  int32_t blockCount = 0;
-  for (const std::unique_ptr<DocHitInfoIterator>& iter : iterators_) {
-    blockCount += iter->GetNumBlocksInspected();
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorAndNary::TrimRightMostNode() && {
+  ICING_ASSIGN_OR_RETURN(
+      TrimmedNode trimmed_right,
+      std::move(*iterators_.rbegin()->get()).TrimRightMostNode());
+  if (trimmed_right.iterator_ == nullptr) {
+    if (iterators_.size() > 2) {
+      iterators_.pop_back();
+      trimmed_right.iterator_ =
+          std::make_unique<DocHitInfoIteratorAndNary>(std::move(iterators_));
+    } else if (iterators_.size() == 2) {
+      trimmed_right.iterator_ = std::move(iterators_.at(0));
+    }
+  } else {
+    iterators_.at(iterators_.size() - 1) = std::move(trimmed_right.iterator_);
+    trimmed_right.iterator_ =
+        std::make_unique<DocHitInfoIteratorAndNary>(std::move(iterators_));
   }
-  return blockCount;
+  return trimmed_right;
 }
 
-int32_t DocHitInfoIteratorAndNary::GetNumLeafAdvanceCalls() const {
-  int32_t leafCount = 0;
-  for (const std::unique_ptr<DocHitInfoIterator>& iter : iterators_) {
-    leafCount += iter->GetNumLeafAdvanceCalls();
+DocHitInfoIterator::CallStats DocHitInfoIteratorAndNary::GetCallStats() const {
+  CallStats call_stats;
+  for (const auto& iter : iterators_) {
+    call_stats += iter->GetCallStats();
   }
-  return leafCount;
+  return call_stats;
 }
 
 std::string DocHitInfoIteratorAndNary::ToString() const {

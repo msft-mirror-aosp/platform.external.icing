@@ -32,13 +32,18 @@ namespace lib {
 //    The sparse file related methods are mostly for reporting/logging purposes
 //    and not affecting any system behaviors.
 std::string GetTestTempDir() {
-#ifdef __ANDROID__
+#ifdef ICING_REVERSE_JNI_SEGMENTATION
+  // The "icing.jni" should be whatever the package name is set for the
+  // Android test app. Set in //icing/testing/AndroidManifest.xml
+  // For JNI tests, we can only write to our package's directory.
+  return "/data/data/icing.jni";
+#elif defined(__ANDROID__)
   return "/data/local/tmp";
 #elif defined(__APPLE__)
   return absl_ports::StrCat(getenv("HOME"), "/tmp");
 #else
   return "/tmp";
-#endif  // __ANDROID__
+#endif  // ICING_REVERSE_JNI_SEGMENTATION
 }
 
 }  // namespace lib

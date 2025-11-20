@@ -16,9 +16,22 @@
 
 #include <chrono>  // NOLINT. Abseil library is not available in AOSP so we have
                    // to use chrono to get current time in milliseconds.
+#include <memory>
 
 namespace icing {
 namespace lib {
+
+int64_t GetSteadyTimeNanoseconds() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+int64_t GetSteadyTimeMilliseconds() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 
 int64_t Clock::GetSystemTimeMilliseconds() const {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -26,10 +39,8 @@ int64_t Clock::GetSystemTimeMilliseconds() const {
       .count();
 }
 
-uint64_t GetSteadyTimeNanoseconds() {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(
-             std::chrono::steady_clock::now().time_since_epoch())
-      .count();
+std::unique_ptr<Timer> Clock::GetNewTimer() const {
+  return std::make_unique<Timer>();
 }
 
 }  // namespace lib

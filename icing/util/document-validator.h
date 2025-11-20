@@ -17,7 +17,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-store.h"
 
 namespace icing {
@@ -32,7 +31,8 @@ class DocumentValidator {
 
   // This function validates:
   //  1. DocumentProto.namespace is not empty
-  //  2. DocumentProto.uri is not empty
+  //  2. DocumentProto.uri is not empty in top-level documents. Nested documents
+  //     may have empty uris.
   //  3. DocumentProto.schema is not empty
   //  4. DocumentProto.schema matches one of SchemaTypeConfigProto.schema_type
   //     in the given SchemaProto in constructor
@@ -56,7 +56,8 @@ class DocumentValidator {
   // In addition, all nested DocumentProto will also be validated towards the
   // requirements above.
   //
-  // DocumentProto.custom_properties are not validated.
+  // 'depth' indicates what nesting level the document may be at. A top-level
+  // document has a nesting depth of 0.
   //
   // Returns:
   //   OK on success
@@ -65,7 +66,8 @@ class DocumentValidator {
   //   NOT_FOUND if case 4 or 7 fails
   //   ALREADY_EXISTS if case 6 fails
   //   INTERNAL on any I/O error
-  libtextclassifier3::Status Validate(const DocumentProto& document);
+  libtextclassifier3::Status Validate(const DocumentProto& document,
+                                      int depth = 0);
 
   void UpdateSchemaStore(const SchemaStore* schema_store) {
     schema_store_ = schema_store;

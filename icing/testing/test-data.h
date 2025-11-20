@@ -31,16 +31,6 @@ namespace lib {
 // portable_cc_test or any other test build rules.
 std::string GetTestFilePath(const std::string& google3_relative_file_path);
 
-// This is for unit testing in Google3. The library binary doesn't contain any
-// ICU data files, so we generate a .dat file at compile time and here make ICU
-// use that file.
-//
-// Returns:
-//   Ok on success
-//   INTERNAL_ERROR if failed on any errors
-libtextclassifier3::Status SetUpICUDataFile(
-    const std::string& icu_data_file_relative_path);
-
 }  // namespace lib
 }  // namespace icing
 
