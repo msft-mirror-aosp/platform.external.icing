@@ -4414,6 +4414,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   // Set a schema
   SchemaProto schema =
       SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("dummy"))
           .AddType(SchemaTypeConfigBuilder().SetType("email"))
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
@@ -4476,31 +4477,30 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
-  // Add a new schema type. Since SchemaTypeId is assigned based on order,
-  // this should change the SchemaTypeIds.
+  // Delete the first type. With schema type id optimization, this should change
+  // the type id of "message" but not "email."
   schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("newType"))
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
                .AddType(SchemaTypeConfigBuilder().SetType("message"))
                .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_message_schema_type_id,
                              schema_store->GetSchemaTypeId("message"));
 
-  // SchemaTypeIds should have changed.
-  EXPECT_NE(old_email_schema_type_id, new_email_schema_type_id);
+  // SchemaTypeId for message should have changed.
   EXPECT_NE(old_message_schema_type_id, new_message_schema_type_id);
+  EXPECT_EQ(old_email_schema_type_id, new_email_schema_type_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::UpdateSchemaStoreResult update_result,
       document_store->UpdateSchemaStore(schema_store.get()));
-  // - No documents should be deleted since we just reordered the schema type
-  //   ids.
+  // - No documents should be deleted since 'dummy' type did not have any
+  //   documents.
   // - The derived files should be changed.
   EXPECT_THAT(update_result.deleted_document_count, Eq(0));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
@@ -4786,6 +4786,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   // Set a schema
   SchemaProto schema =
       SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("dummy"))
           .AddType(SchemaTypeConfigBuilder().SetType("email"))
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
@@ -4848,10 +4849,9 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
           message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
-  // Add a new schema type. Since SchemaTypeId is assigned based on order,
-  // this should change the SchemaTypeIds.
+  // Delete the first type. With schema type id optimization, this should change
+  // the type id of "message" but not "email."
   schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("newType"))
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
                .AddType(SchemaTypeConfigBuilder().SetType("message"))
                .Build();
@@ -4859,23 +4859,23 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_message_schema_type_id,
                              schema_store->GetSchemaTypeId("message"));
 
-  // SchemaTypeIds should have changed.
-  EXPECT_NE(old_email_schema_type_id, new_email_schema_type_id);
+  // SchemaTypeId for 'message' should have changed.
   EXPECT_NE(old_message_schema_type_id, new_message_schema_type_id);
+  EXPECT_EQ(old_email_schema_type_id, new_email_schema_type_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::UpdateSchemaStoreResult update_result,
       document_store->OptimizedUpdateSchemaStore(schema_store.get(),
                                                  set_schema_result));
-  // - No documents should be deleted since we just reordered the schema type
-  //   ids.
+  // - No documents should be deleted since 'dummy' type did not have any
+  //   documents.
   // - The derived files should be changed.
   EXPECT_THAT(update_result.deleted_document_count, Eq(0));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
@@ -6046,7 +6046,10 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
-  SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("dummy"))
+                           .AddType(email_type_config)
+                           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -6054,8 +6057,9 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
-  // The typeid for "email" should be 0.
-  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+  // The typeid for "dummy" should be 0 and "email" should be 1.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("dummy"), IsOkAndHolds(0));
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(1));
 
   DocumentId docid = kInvalidDocumentId;
   {
@@ -6089,32 +6093,16 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
 
-    ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(1));
   }
 
-  // Add another type to the schema before the email type.
-  schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("alarm")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("time")
-                                        .SetDataType(TYPE_INT64)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(email_type_config)
-          .Build();
+  // Delete the dummy type from the schema.
+  schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
-  // Adding a new type should cause ids to be reassigned. Ids are assigned in
-  // order of appearance so 'alarm' should be 0 and 'email' should be 1.
-  ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
-  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(1));
+  // Deleting the dummy type will cause email's type id to be reassigned to 0.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
   {
     // Create the document store the second time and force recovery
@@ -6139,7 +6127,7 @@ TEST_P(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
-    EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
+    EXPECT_THAT(filter_data.schema_type_id(), Eq(0));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
   }
@@ -6164,7 +6152,10 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
-  SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("dummy"))
+                           .AddType(email_type_config)
+                           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -6172,8 +6163,9 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
   ASSERT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
-  // The typeid for "email" should be 0.
-  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+  // The typeid for "dummy" should be 0 and "email" should be 1.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("dummy"), IsOkAndHolds(0));
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(1));
 
   DocumentId docid = kInvalidDocumentId;
   {
@@ -6207,32 +6199,17 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
 
-    ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(1));
   }
 
-  // Add another type to the schema.
-  schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("alarm")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("time")
-                                        .SetDataType(TYPE_INT64)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(email_type_config)
-          .Build();
+  // Delete the dummy type from the schema.
+  schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
-  // Adding a new type should cause ids to be reassigned. Ids are assigned in
-  // order of appearance so 'alarm' should be 0 and 'email' should be 1.
-  ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
-  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(1));
+  // Deleting the dummy type will cause email's type id to be reassigned to 0.
+
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
   {
     // Create the document store the second time. Don't force recovery.
@@ -6248,7 +6225,7 @@ TEST_P(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         DocumentFilterData filter_data,
         doc_store->GetAliveDocumentFilterData(
             docid, fake_clock_.GetSystemTimeMilliseconds()));
-    ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(1));
   }
 }
 

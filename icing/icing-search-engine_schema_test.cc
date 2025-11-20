@@ -732,10 +732,16 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
+  // We need to add 2 dummy types to the schema so that once deleted, both
+  // Person and Email types' schema type ids will change.
   SchemaProto schema_one =
       SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("DummyA"))  // schema type id 0
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("DummyB"))  // schema type id 1
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Person")  // schema type id 0
+                       .SetType("Person")  // schema type id 2
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("name")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -746,7 +752,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")  // schema type id 1
+                       .SetType("Email")  // schema type id 3
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -790,26 +796,16 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
 
-  // SetSchema again with the schema types reordered.
-  // - If we only reorder the existing types "Person" and "Email", schema store
-  //   will detect the new schema set is identical to the old one and skip the
-  //   entire SetSchema process. This will cause the schema type id not changed.
-  // - Therefore, to create a scenario that changes ids for the existing schema
-  //   types, we must add "newType".
+  // SetSchema again with both the dummy schema types deleted.
+  // - This will cause the schema type ids of both Person and Email types to be
+  //   shifted up.
   //
-  // This should succeed and all search features should still work after schema
-  // id changed.
+  // This should succeed and all search features should still work after the
+  // schema id change.
   SchemaProto schema_two =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("newType")  // schema type id 0
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("test")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Person")  // schema type id 1
+                       .SetType("Person")  // schema type id 0
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("name")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -820,7 +816,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")  // schema type id 2
+                       .SetType("Email")  // schema type id 1
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -831,9 +827,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetDataTypeJoinableString(
                                             JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
-
           .Build();
-  SetSchemaResultProto set_schema_result2 = icing.SetSchema(schema_two);
+  SetSchemaResultProto set_schema_result2 =
+      icing.SetSchema(schema_two, /*ignore_errors_and_delete_documents=*/true);
   EXPECT_THAT(set_schema_result2.status(), ProtoStatusIs(StatusProto::OK));
   EXPECT_THAT(set_schema_result2.set_schema_stats().overall_latency_ms(),
               Eq(1000));
