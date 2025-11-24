@@ -203,10 +203,7 @@ class DocumentStore {
     DocumentId old_document_id = kInvalidDocumentId;
     DocumentId new_document_id = kInvalidDocumentId;
     int64_t expiration_timestamp_ms = std::numeric_limits<int64_t>::max();
-
-    bool was_replacement() const {
-      return old_document_id != kInvalidDocumentId;
-    }
+    bool was_replacement = false;
   };
   libtextclassifier3::StatusOr<PutResult> Put(
       const DocumentWrapper& document_wrapper,

@@ -38,7 +38,8 @@ class FeatureFlags {
                         bool enable_reusable_decompression_buffer,
                         bool enable_schema_type_id_optimization,
                         bool enable_optimize_improvements,
-                        int64_t expired_document_purge_threshold_ms)
+                        int64_t expired_document_purge_threshold_ms,
+                        bool enable_non_existent_qualified_id_join)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -59,7 +60,9 @@ class FeatureFlags {
         enable_schema_type_id_optimization_(enable_schema_type_id_optimization),
         enable_optimize_improvements_(enable_optimize_improvements),
         expired_document_purge_threshold_ms_(
-            expired_document_purge_threshold_ms) {}
+            expired_document_purge_threshold_ms),
+        enable_non_existent_qualified_id_join_(
+            enable_non_existent_qualified_id_join) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -125,6 +128,10 @@ class FeatureFlags {
 
   int64_t expired_document_purge_threshold_ms() const {
     return expired_document_purge_threshold_ms_;
+  }
+
+  bool enable_non_existent_qualified_id_join() const {
+    return enable_non_existent_qualified_id_join_;
   }
 
  private:
@@ -193,6 +200,13 @@ class FeatureFlags {
   // - Additionally, we will also purge documents that expire in the next 1000
   //   ms, i.e. (10000, 11000] ms.
   int64_t expired_document_purge_threshold_ms_;
+
+  // Whether to allow a document to reference a join parent (by its qualified
+  // id) that does not yet exist. When enabled, the join index will handle cases
+  // where a child document is indexed before its parent. The join relationship
+  // will be established once the parent document is indexed. If disabled, the
+  // join relationship will be lost if the child is indexed before the parent.
+  bool enable_non_existent_qualified_id_join_;
 };
 
 }  // namespace lib

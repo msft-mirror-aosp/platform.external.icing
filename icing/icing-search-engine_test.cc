@@ -453,7 +453,7 @@ TEST_F(IcingSearchEngineTest, BatchGetDocumentAlwaysReturnOneDoc) {
   expected_get_result_proto1.set_uri("uri1");
   *expected_get_result_proto1.mutable_document() = document1;
   expected_batch_get_result_proto.mutable_get_result_protos()->Add(
-        std::move(expected_get_result_proto1));
+      std::move(expected_get_result_proto1));
 
   // result for doc2 should be ABORTED
   GetResultProto expected_get_result_proto2;

@@ -37,7 +37,8 @@ FeatureFlags GetTestFeatureFlags() {
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
       /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0);
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true);
 }
 
 }  // namespace lib

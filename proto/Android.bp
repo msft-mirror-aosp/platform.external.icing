@@ -30,6 +30,7 @@ java_library {
     },
     srcs: [
         "icing/proto/*.proto",
+        "appsearch/*.proto",
         "*.proto",
     ],
     sdk_version: "core_current",
@@ -49,6 +50,9 @@ cc_library_static {
         // Need to be able to see the .pb.h files that are generated
         export_proto_headers: true,
     },
-    srcs: ["icing/**/*.proto"],
+    srcs: [
+        "icing/**/*.proto",
+        "appsearch/*.proto",
+    ],
     min_sdk_version: "Tiramisu",
 }

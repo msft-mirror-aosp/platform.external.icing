@@ -246,7 +246,8 @@ class JoinProcessorTest : public ::testing::Test {
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
     ICING_RETURN_IF_ERROR(
         handler->Handle(tokenized_document, put_result.new_document_id,
                         put_result.old_document_id, /*recovery_mode=*/false,
