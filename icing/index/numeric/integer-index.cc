@@ -35,6 +35,7 @@
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -424,6 +425,7 @@ IntegerIndex::InitializeNewFiles(const Filesystem& filesystem,
   info_ref.last_added_document_id = kInvalidDocumentId;
   info_ref.num_data_threshold_for_bucket_split =
       num_data_threshold_for_bucket_split;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_integer_index->InitializeNewStorage());
@@ -487,12 +489,19 @@ IntegerIndex::InitializeExistingFiles(
       std::move(property_to_storage_map), std::move(wildcard_property_storage),
       std::move(wildcard_properties_set), std::move(wildcard_index_storage),
       num_data_threshold_for_bucket_split, pre_mapping_fbv));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(integer_index->InitializeExistingStorage());
 
   // Validate magic.
   if (integer_index->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for IntegerIndex "
+                     << integer_index->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << integer_index->info().magic;
+    return absl_ports::FailedPreconditionError(
+        absl_ports::StrCat("Invalid header magic for IntegerIndex: ",
+                           integer_index->working_path_));
   }
 
   // If num_data_threshold_for_bucket_split mismatches, then return error to let
@@ -582,8 +591,8 @@ libtextclassifier3::Status IntegerIndex::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk(bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -595,32 +604,25 @@ libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk(bool force) {
   if (wildcard_index_storage_) {
     ICING_RETURN_IF_ERROR(wildcard_index_storage_->PersistToDisk());
   }
+  is_storage_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk(bool force) {
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   // Changes should have been applied to the underlying file when using
   // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
   // extra safety step to ensure they are written out.
-  return metadata_mmapped_file_->PersistToDisk();
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file_->PersistToDisk());
+  is_info_dirty_ = false;
+  return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeInfoChecksum(
-    bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
-}
-
-libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
@@ -640,8 +642,45 @@ libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum(
     storages_checksum ^= storage_crc.Get();
   }
 
+  // FileBackedProto always keeps its checksum up to date. So we just need to
+  // retrieve the checksum.
   ICING_ASSIGN_OR_RETURN(Crc32 wildcard_properties_crc,
-                         wildcard_property_storage_->ComputeChecksum());
+                         wildcard_property_storage_->GetChecksum());
+  storages_checksum ^= wildcard_properties_crc.Get();
+
+  return Crc32(storages_checksum);
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::GetInfoChecksum() const {
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::GetStoragesChecksum() const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  // XOR all crcs of all storages. Since XOR is commutative and associative,
+  // the order doesn't matter.
+  uint32_t storages_checksum = 0;
+  for (auto& [property_path, storage] : property_to_storage_map_) {
+    ICING_ASSIGN_OR_RETURN(Crc32 storage_crc, storage->GetChecksum());
+    storage_crc.Append(property_path);
+
+    storages_checksum ^= storage_crc.Get();
+  }
+
+  if (wildcard_index_storage_ != nullptr) {
+    ICING_ASSIGN_OR_RETURN(Crc32 storage_crc,
+                           wildcard_index_storage_->GetChecksum());
+    storages_checksum ^= storage_crc.Get();
+  }
+
+  ICING_ASSIGN_OR_RETURN(Crc32 wildcard_properties_crc,
+                         wildcard_property_storage_->GetChecksum());
   storages_checksum ^= wildcard_properties_crc.Get();
 
   return Crc32(storages_checksum);

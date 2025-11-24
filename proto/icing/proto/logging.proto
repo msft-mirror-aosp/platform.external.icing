@@ -17,13 +17,14 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/scoring.proto";
+import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 14
+// Next tag: 20
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -40,7 +41,8 @@ message InitializeStatsProto {
     // Data in index is inconsistent with ground truth.
     INCONSISTENT_WITH_GROUND_TRUTH = 2;
 
-    // Changes were made to the schema, but possibly not fully applied to the
+    // Changes were made to the schema, but the marker file remains in the
+    // filesystem indicating that changes possibly were not fully applied to the
     // document store and the index - requiring a recovery.
     SCHEMA_CHANGES_OUT_OF_SYNC = 3;
 
@@ -55,6 +57,22 @@ message InitializeStatsProto {
 
     // Any dependencies have changed.
     DEPENDENCIES_CHANGED = 7;
+
+    // Change detected in Icing's feature flags since last initialization that
+    // requires recovery.
+    FEATURE_FLAG_CHANGED = 8;
+
+    // Changes were made by an incomplete complex operation, which caused marker
+    // file to remain in the filesystem - requiring a recovery.
+    //
+    // Note: Icing is unable to interpret the information from the marker file
+    // due to some reasons, so the OUT_OF_SYNC reason is UNKNOWN.
+    UNKNOWN_OUT_OF_SYNC = 9;
+
+    // Changes were made by optimize, but the marker file remains in the
+    // filesystem indicating that optimize possibly was not fully applied to the
+    // document store and the index - requiring a recovery.
+    OPTIMIZE_OUT_OF_SYNC = 10;
   }
 
   // Possible recovery causes for document store:
@@ -117,10 +135,95 @@ message InitializeStatsProto {
   // - SCHEMA_CHANGES_OUT_OF_SYNC
   // - IO_ERROR
   optional RecoveryCause qualified_id_join_index_restoration_cause = 13;
+
+  // Possible recovery causes for embedding index:
+  // - INCONSISTENT_WITH_GROUND_TRUTH
+  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - IO_ERROR
+  optional RecoveryCause embedding_index_restoration_cause = 14;
+
+  // Possible status codes for ICU data initialization.
+  // - OK
+  // - INVALID_ARGUMENT
+  // - INTERNAL
+  optional StatusProto initialize_icu_data_status = 15;
+
+  // Number of documents that failed to be reindexed during index restoration.
+  optional int32 num_failed_reindexed_documents = 16;
+
+  // A number indicating which stage of initialization failed.
+  message FailureStage {
+    enum Code {
+      NONE = 0;
+
+      OPTIONS_VALIDATION = 1;
+
+      BASE_DIRECTORY_CREATION = 2;
+
+      INIT_MARKER_FILE = 3;
+
+      READ_VERSION_FILE = 4;
+
+      MIGRATE_SCHEMA = 5;
+
+      DISCARD_DERIVED_FILES = 6;
+
+      WRITE_VERSION_FILE = 7;
+
+      SCHEMA_STORE_DIRECTORY_CREATION = 8;
+
+      SCHEMA_STORE_INSTANTIATION = 9;
+
+      LANGUAGE_SEGMENTER_CREATION = 10;
+
+      NORMALIZER_CREATION = 11;
+
+      // Discard any components, including delete the directory or call discard
+      // function of an index.
+      DISCARD_COMPONENTS = 12;
+
+      BLOB_STORE_INSTANTIATION = 13;
+
+      DOCUMENT_STORE_DIRECTORY_CREATION = 14;
+
+      DOCUMENT_STORE_INSTANTIATION = 15;
+
+      TERM_INDEX_DIRECTORY = 16;
+
+      TERM_INDEX_INSTANTIATION = 17;
+
+      INTEGER_INDEX_DIRECTORY = 18;
+
+      INTEGER_INDEX_INSTANTIATION = 19;
+
+      QUALIFIED_ID_JOIN_INDEX_DIRECTORY = 20;
+
+      QUALIFIED_ID_JOIN_INDEX_INSTANTIATION = 21;
+
+      EMBEDDING_INDEX_DIRECTORY = 22;
+
+      EMBEDDING_INDEX_INSTANTIATION = 23;
+
+      RESTORE_INDEX = 24;
+    }
+  }
+  optional FailureStage.Code failure_stage = 17;
+
+  // Status of the attempt to create the IcuLanguageSegmenter.
+  // This is only set if the ICU segmenter is enabled. Possible status codes:
+  // - OK: IcuLanguageSegmenter created successfully.
+  // - ABORTED: Failed to create the ICU break iterator.
+  optional StatusProto icu_segmenter_creation_status = 18;
+
+  // Status of the attempt to create the IcuNormalizer.
+  // This is only set if the ICU normalizer is enabled. Possible status codes:
+  // - OK: IcuNormalizer created successfully.
+  // - INTERNAL: Failed to create the ICU Transliterator.
+  optional StatusProto icu_normalizer_creation_status = 19;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
-// Next tag: 12
+// Next tag: 13
 message PutDocumentStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -166,11 +269,14 @@ message PutDocumentStatsProto {
   // Time used to index all metadata terms in the document, which can only be
   // added by PropertyExistenceIndexingHandler currently.
   optional int32 metadata_term_index_latency_ms = 11;
+
+  // Time used to index all embeddings in the document.
+  optional int32 embedding_index_latency_ms = 12;
 }
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 26
+// Next tag: 30
 message QueryStatsProto {
   // TODO(b/305098009): deprecate. Use parent_search_stats instead.
   // The UTF-8 length of the query string
@@ -252,7 +358,7 @@ message QueryStatsProto {
   optional bool is_join_query = 23;
 
   // Stats of the search. Only valid for first page.
-  // Next tag: 13
+  // Next tag: 20
   message SearchStats {
     // The UTF-8 length of the query string
     optional int32 query_length = 1;
@@ -290,6 +396,27 @@ message QueryStatsProto {
 
     // Number of hits fetched by integer index before applying any filters.
     optional int32 num_fetched_hits_integer_index = 12;
+
+    // Time used in Lexer to extract lexer tokens from the query.
+    optional int32 query_processor_lexer_extract_token_latency_ms = 13;
+
+    // Time used in Parser to consume lexer tokens extracted from the query.
+    optional int32 query_processor_parser_consume_query_latency_ms = 14;
+
+    // Time used in QueryVisitor to visit and build (nested) DocHitInfoIterator.
+    optional int32 query_processor_query_visitor_latency_ms = 15;
+
+    // Number of unquantized embeddings scored.
+    optional int32 num_unquantized_embeddings_scored = 16;
+
+    // Number of quantized embeddings scored.
+    optional int32 num_quantized_embeddings_scored = 17;
+
+    // Number of shards read from the embedding index.
+    optional int32 num_embedding_shards_read = 18;
+
+    // Number of raw embedding bytes read from the embedding index.
+    optional int64 num_embedding_bytes_read = 19;
   }
 
   // Search stats for parent. Only valid for first page.
@@ -297,6 +424,34 @@ message QueryStatsProto {
 
   // Search stats for child.
   optional SearchStats child_search_stats = 25;
+
+  // Byte size of the lite index hit buffer.
+  optional int64 lite_index_hit_buffer_byte_size = 26;
+
+  // Byte size of the unsorted tail of the lite index hit buffer.
+  optional int64 lite_index_hit_buffer_unsorted_byte_size = 27;
+
+  message PageTokenType {
+    enum Code {
+      // Default. Usually used when it is the first page.
+      NONE = 0;
+
+      VALID = 1;
+
+      // The current page token is not found in ResultStateManager. This is
+      // usually caused by cache eviction.
+      NOT_FOUND = 2;
+
+      // The current page token is empty (kInvalidNextPageToken).
+      EMPTY = 3;
+    }
+  }
+  // The type of the input page token.
+  optional PageTokenType.Code page_token_type = 28;
+
+  // Number of result states being force-evicted from ResultStateManager due to
+  // budget limit. This doesn't include expired or invalidated states.
+  optional int32 num_result_states_evicted = 29;
 
   reserved 9;
 }

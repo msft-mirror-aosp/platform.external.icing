@@ -62,21 +62,21 @@ TEST_F(JoinablePropertyManagerBuilderTest, Build) {
       PropertyConfigBuilder()
           .SetDataType(TYPE_STRING)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_OPTIONAL)
           .Build();
   PropertyConfigProto prop_bar =
       PropertyConfigBuilder()
           .SetDataType(TYPE_STRING)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/false)
+                       DELETE_PROPAGATION_TYPE_NONE)
           .SetCardinality(CARDINALITY_OPTIONAL)
           .Build();
   PropertyConfigProto prop_baz =
       PropertyConfigBuilder()
           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build();
 
@@ -123,7 +123,7 @@ TEST_F(JoinablePropertyManagerBuilderTest, TooManyPropertiesShouldFail) {
         PropertyConfigBuilder()
             .SetDataType(TYPE_STRING)
             .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                         /*propagate_delete=*/true)
+                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
             .SetCardinality(CARDINALITY_REQUIRED)
             .Build();
     ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
@@ -136,7 +136,7 @@ TEST_F(JoinablePropertyManagerBuilderTest, TooManyPropertiesShouldFail) {
       PropertyConfigBuilder()
           .SetDataType(TYPE_STRING)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build();
   EXPECT_THAT(builder.ProcessSchemaTypePropertyConfig(
@@ -159,7 +159,7 @@ TEST_F(JoinablePropertyManagerBuilderTest, InvalidSchemaTypeIdShouldFail) {
       PropertyConfigBuilder()
           .SetDataType(TYPE_STRING)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build();
 
@@ -189,7 +189,7 @@ TEST_F(JoinablePropertyManagerBuilderTest,
       PropertyConfigBuilder()
           .SetDataType(TYPE_STRING)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build();
 
@@ -216,56 +216,56 @@ TEST_F(JoinablePropertyManagerBuilderTest,
           .SetName("int1")
           .SetDataType(TYPE_INT64)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("int2")
           .SetDataType(TYPE_INT64)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/false)
+                       DELETE_PROPAGATION_TYPE_NONE)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("double1")
           .SetDataType(TYPE_DOUBLE)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("double2")
           .SetDataType(TYPE_DOUBLE)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/false)
+                       DELETE_PROPAGATION_TYPE_NONE)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("boolean1")
           .SetDataType(TYPE_BOOLEAN)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("boolean2")
           .SetDataType(TYPE_BOOLEAN)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/false)
+                       DELETE_PROPAGATION_TYPE_NONE)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("bytes1")
           .SetDataType(TYPE_BYTES)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
           .SetName("bytes2")
           .SetDataType(TYPE_BYTES)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/false)
+                       DELETE_PROPAGATION_TYPE_NONE)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
@@ -273,7 +273,7 @@ TEST_F(JoinablePropertyManagerBuilderTest,
           .SetDataTypeDocument(/*schema_type=*/"SchemaTypeTwo",
                                /*index_nested_properties=*/true)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/true)
+                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build(),
       PropertyConfigBuilder()
@@ -281,7 +281,7 @@ TEST_F(JoinablePropertyManagerBuilderTest,
           .SetDataTypeDocument(/*schema_type=*/"SchemaTypeTwo",
                                /*index_nested_properties=*/true)
           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                       /*propagate_delete=*/false)
+                       DELETE_PROPAGATION_TYPE_NONE)
           .SetCardinality(CARDINALITY_REQUIRED)
           .Build()};
 
@@ -335,14 +335,14 @@ INSTANTIATE_TEST_SUITE_P(
                         .SetName("property")
                         .SetDataType(TYPE_STRING)
                         .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                     /*propagate_delete=*/true)
+                                     DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                         .SetCardinality(CARDINALITY_OPTIONAL)
                         .Build(),
                     PropertyConfigBuilder()
                         .SetName("property")
                         .SetDataType(TYPE_STRING)
                         .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                     /*propagate_delete=*/false)
+                                     DELETE_PROPAGATION_TYPE_NONE)
                         .SetCardinality(CARDINALITY_OPTIONAL)
                         .Build(),
                     // Indexable string can be configured joinable as well. For
@@ -351,14 +351,14 @@ INSTANTIATE_TEST_SUITE_P(
                         .SetName("property")
                         .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                         .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                     /*propagate_delete=*/true)
+                                     DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
                         .SetCardinality(CARDINALITY_OPTIONAL)
                         .Build(),
                     PropertyConfigBuilder()
                         .SetName("property")
                         .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                         .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
-                                     /*propagate_delete=*/false)
+                                     DELETE_PROPAGATION_TYPE_NONE)
                         .SetCardinality(CARDINALITY_OPTIONAL)
                         .Build()));
 

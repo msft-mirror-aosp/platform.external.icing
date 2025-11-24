@@ -17,8 +17,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
-#include "icing/file/destructible-directory.h"
 #include "icing/file/filesystem.h"
 #include "icing/icing-search-engine.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
@@ -63,7 +63,7 @@ class IcingMonkeyTestRunner {
   IcingMonkeyTestRunnerConfiguration config_;
   MonkeyTestRandomEngine random_;
   Filesystem filesystem_;
-  std::unique_ptr<DestructibleDirectory> icing_dir_;
+  std::string icing_dir_;
   std::unique_ptr<InMemoryIcingSearchEngine> in_memory_icing_;
   std::unique_ptr<IcingSearchEngine> icing_;
 
@@ -71,6 +71,8 @@ class IcingMonkeyTestRunner {
   std::unique_ptr<MonkeyDocumentGenerator> document_generator_;
 
   void CreateIcingSearchEngine();
+  // Reloads the in-memory icing from the disk.
+  void ReloadInMemoryIcing();
 };
 
 }  // namespace lib

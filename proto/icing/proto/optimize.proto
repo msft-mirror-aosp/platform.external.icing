@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -23,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Optimize
-// Next tag: 3
+// Next tag: 6
 message OptimizeResultProto {
   // Status code can be one of:
   //   OK
@@ -36,12 +37,24 @@ message OptimizeResultProto {
   optional StatusProto status = 1;
 
   optional OptimizeStatsProto optimize_stats = 2;
+
+  // If Icing does not manage blob files, this field will be the list of blob
+  // file names that should be removed. Otherwise, this field will be empty.
+  repeated string blob_file_names_to_remove = 3;
+
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.GetOptimizeInfo
-// Next tag: 5
+// Next tag: 9
 message GetOptimizeInfoResultProto {
   // Status code can be one of:
   //   OK
@@ -61,9 +74,28 @@ message GetOptimizeInfoResultProto {
 
   // The amount of time since the last optimize ran.
   optional int64 time_since_last_optimize_ms = 4;
+
+  // True if there is no previous optimize info written to disk. This would
+  // indicate that Icing has never run optimize before.
+  optional bool no_previous_optimize_info = 5;
+
+  // The number of active result states in ResultStateManager.
+  //
+  // If this number is not 0, then the caller should avoid running optimize as
+  // much as possible to avoid result state manager reset and interrupted
+  // pagination, unless the last optimize run was a long time ago which exceeds
+  // the threshold.
+  optional int32 num_active_result_states = 6;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 7;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 8;
 }
 
-// Next tag: 13
+// Next tag: 16
 message OptimizeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -92,6 +124,9 @@ message OptimizeStatsProto {
   // The amount of time since the last optimize ran.
   optional int64 time_since_last_optimize_ms = 9;
 
+  // The amount of time since the last successful optimize run.
+  optional int64 time_since_last_successful_optimize_ms = 13;
+
   enum IndexRestorationMode {
     // The index has been translated in place to match the optimized document
     // store.
@@ -108,4 +143,10 @@ message OptimizeStatsProto {
 
   // Number of namespaces deleted.
   optional int32 num_deleted_namespaces = 12;
+
+  // Stats of the PersistToDisk call before optimization.
+  optional PersistToDiskStatsProto before_optimize_persist_stats = 14;
+
+  // Stats of the PersistToDisk call after optimization.
+  optional PersistToDiskStatsProto after_optimize_persist_stats = 15;
 }
