@@ -3617,9 +3617,10 @@ TEST_P(SchemaUtilTest, AddingNewNonJoinablePropertyShouldRemainJoinCompatible) {
               IsEmpty());
 }
 
-TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
+TEST_P(SchemaUtilTest,
+       ChangingJoinablePropertiesPropagateDeleteIsJoinIncompatible) {
   // Configure old schema
-  SchemaProto old_schema =
+  SchemaProto old_schema_without_delete_propagation =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
               PropertyConfigBuilder()
@@ -3631,7 +3632,7 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
           .Build();
 
   // Configure new schema with delete propagation type PROPAGATE_FROM
-  SchemaProto new_schema_with_optional =
+  SchemaProto new_schema_with_delete_propagation =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
               PropertyConfigBuilder()
@@ -3642,13 +3643,23 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_changed_fully_compatible.insert("MyType");
+  SchemaUtil::SchemaDelta expected_schema_delta;
+  expected_schema_delta.schema_types_join_incompatible.insert("MyType");
+
+  // New schema enabled delete propagation.
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  old_schema, new_schema_with_optional, no_dependents_map,
+                  old_schema_without_delete_propagation,
+                  new_schema_with_delete_propagation, no_dependents_map,
                   *feature_flags_),
-              Eq(schema_delta));
+              Eq(expected_schema_delta));
+
+  // New schema disabled a joinable property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema_without_delete_propagation,
+                  new_schema_with_delete_propagation, no_dependents_map,
+                  *feature_flags_),
+              Eq(expected_schema_delta));
 }
 
 TEST_P(SchemaUtilTest, AddingTypeIsCompatible) {
@@ -4436,7 +4447,18 @@ TEST_P(SchemaUtilTest,
       /*enable_repeated_field_joins=*/false,
       /*enable_embedding_backup_generation=*/true,
       /*enable_schema_database=*/true,
-      /*release_backup_schema_file_if_overlay_present=*/true);
+      /*release_backup_schema_file_if_overlay_present=*/true,
+      /*enable_strict_page_byte_size_limit=*/true,
+      /*enable_smaller_decompression_buffer_size=*/true,
+      /*enable_eigen_embedding_scoring=*/true,
+      /*enable_passing_filter_to_children=*/true,
+      /*enable_proto_log_new_header_format=*/true,
+      /*enable_embedding_iterator_v2=*/true,
+      /*enable_reusable_decompression_buffer=*/true,
+      /*enable_schema_type_id_optimization=*/true,
+      /*enable_optimize_improvements=*/true,
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4498,7 +4520,18 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
       /*enable_schema_database=*/true,
-      /*release_backup_schema_file_if_overlay_present=*/true);
+      /*release_backup_schema_file_if_overlay_present=*/true,
+      /*enable_strict_page_byte_size_limit=*/true,
+      /*enable_smaller_decompression_buffer_size=*/true,
+      /*enable_eigen_embedding_scoring=*/true,
+      /*enable_passing_filter_to_children=*/true,
+      /*enable_proto_log_new_header_format=*/true,
+      /*enable_embedding_iterator_v2=*/true,
+      /*enable_reusable_decompression_buffer=*/true,
+      /*enable_schema_type_id_optimization=*/true,
+      /*enable_optimize_improvements=*/true,
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5818,23 +5851,44 @@ TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
 
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
-    testing::Values(
-        FeatureFlags(
-            /*enable_circular_schema_definitions=*/false,
-            /*enable_scorable_properties=*/true,
-            /*enable_embedding_quantization=*/true,
-            /*enable_repeated_field_joins=*/true,
-            /*enable_embedding_backup_generation=*/true,
-            /*enable_schema_database=*/true,
-            /*release_backup_schema_file_if_overlay_present=*/true),
-        FeatureFlags(
-            /*enable_circular_schema_definitions=*/true,
-            /*enable_scorable_properties=*/true,
-            /*enable_embedding_quantization=*/true,
-            /*enable_repeated_field_joins=*/true,
-            /*enable_embedding_backup_generation=*/true,
-            /*enable_schema_database=*/true,
-            /*release_backup_schema_file_if_overlay_present=*/true)));
+    testing::Values(FeatureFlags(
+                        /*enable_circular_schema_definitions=*/false,
+                        /*enable_scorable_properties=*/true,
+                        /*enable_embedding_quantization=*/true,
+                        /*enable_repeated_field_joins=*/true,
+                        /*enable_embedding_backup_generation=*/true,
+                        /*enable_schema_database=*/true,
+                        /*release_backup_schema_file_if_overlay_present=*/true,
+                        /*enable_strict_page_byte_size_limit=*/true,
+                        /*enable_smaller_decompression_buffer_size=*/true,
+                        /*enable_eigen_embedding_scoring=*/true,
+                        /*enable_passing_filter_to_children=*/true,
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true,
+                        /*enable_schema_type_id_optimization=*/true,
+                        /*enable_optimize_improvements=*/true,
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true),
+                    FeatureFlags(
+                        /*enable_circular_schema_definitions=*/true,
+                        /*enable_scorable_properties=*/true,
+                        /*enable_embedding_quantization=*/true,
+                        /*enable_repeated_field_joins=*/true,
+                        /*enable_embedding_backup_generation=*/true,
+                        /*enable_schema_database=*/true,
+                        /*release_backup_schema_file_if_overlay_present=*/true,
+                        /*enable_strict_page_byte_size_limit=*/true,
+                        /*enable_smaller_decompression_buffer_size=*/true,
+                        /*enable_eigen_embedding_scoring=*/true,
+                        /*enable_passing_filter_to_children=*/true,
+                        /*enable_proto_log_new_header_format=*/true,
+                        /*enable_embedding_iterator_v2=*/true,
+                        /*enable_reusable_decompression_buffer=*/true,
+                        /*enable_schema_type_id_optimization=*/true,
+                        /*enable_optimize_improvements=*/true,
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

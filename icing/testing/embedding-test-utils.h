@@ -24,7 +24,9 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/proto/document.pb.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -50,14 +52,22 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
                           uint32_t dimension, std::string_view model_signature);
 
 std::vector<float> GetRawEmbeddingDataFromIndex(
-    const EmbeddingIndex* embedding_index);
+    const EmbeddingIndex* embedding_index, uint32_t shard_id);
 
 // Gets the quantized embedding vector from the index based on the given hit,
 // and returns the dequantized version of the vector.
 libtextclassifier3::StatusOr<std::vector<float>>
 GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
-    uint32_t dimension);
+    uint32_t dimension, std::string_view model_signature,
+    std::string_view schema_name);
+
+// Gets or creates the EmbeddingMatchInfos in embedding_query_results for the
+// given query_vector_index, metric_type, and document.
+EmbeddingMatchInfos& GetOrCreateEmbeddingMatchInfosForDocument(
+    EmbeddingQueryResults& embedding_query_results, int query_vector_index,
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
+    DocumentId doc_id);
 
 }  // namespace lib
 }  // namespace icing

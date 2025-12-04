@@ -34,6 +34,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/query/query-processor.h"
@@ -99,14 +100,18 @@ class CombinedTokenizerTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
@@ -114,7 +119,8 @@ class CombinedTokenizerTest : public ::testing::Test {
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
     // TODO(b/249829533): switch to use persistent numeric index.
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
@@ -122,7 +128,8 @@ class CombinedTokenizerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
-                               feature_flags_.get()));
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());

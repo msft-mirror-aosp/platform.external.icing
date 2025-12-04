@@ -25,6 +25,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/blob.pb.h"
@@ -68,7 +69,8 @@ class BlobStore {
   static libtextclassifier3::StatusOr<BlobStore> Create(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
       int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-      bool manage_blob_files);
+      int32_t compression_mem_level, bool manage_blob_files,
+      const FeatureFlags* feature_flags);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
@@ -142,6 +144,21 @@ class BlobStore {
   //   NotFoundError if the blob is not found
   BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle);
 
+  // Gets all the blob info from the blob store.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto GetAllBlobInfos();
+
+  // Puts the blob info protos from the blob proto to the blob info proto log
+  // file.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto PutBlobInfos(const BlobProto& blob_proto);
+
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
 
@@ -164,7 +181,8 @@ class BlobStore {
   //   manages blob files, this list will be empty.
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<std::vector<std::string>> Optimize(
-      const std::unordered_set<std::string>& dead_blob_handles);
+      const std::unordered_set<std::string>& dead_blob_handles,
+      const FeatureFlags* feature_flags);
 
   // Calculates the StorageInfo for the Blob Store.
   //
@@ -178,7 +196,7 @@ class BlobStore {
   explicit BlobStore(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
       int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-      bool manage_blob_files,
+      int32_t compression_mem_level, bool manage_blob_files,
       std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> blob_info_log,
       std::unordered_map<std::string, int32_t> blob_handle_to_offset,
       std::unordered_set<std::string> known_file_names)
@@ -187,6 +205,7 @@ class BlobStore {
         clock_(*clock),
         orphan_blob_time_to_live_ms_(orphan_blob_time_to_live_ms),
         compression_level_(compression_level),
+        compression_mem_level_(compression_mem_level),
         manage_blob_files_(manage_blob_files),
         blob_info_log_(std::move(blob_info_log)),
         blob_handle_to_offset_(std::move(blob_handle_to_offset)),
@@ -207,6 +226,7 @@ class BlobStore {
   const Clock& clock_;
   int64_t orphan_blob_time_to_live_ms_;
   int32_t compression_level_;
+  int32_t compression_mem_level_;
   bool manage_blob_files_;
 
   // The ground truth blob info log file, which is used to read/write/erase

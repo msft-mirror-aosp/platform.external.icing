@@ -22,6 +22,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-query-results.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/advanced-scorer.h"
 #include "icing/store/document-store.h"
@@ -55,6 +56,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           /*force_recovery_and_revalidate_documents=*/false,
           /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
           PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+          PortableFileBackedProtoLog<
+              DocumentWrapper>::kDefaultCompressionThresholdBytes,
+          protobuf_ports::kDefaultMemLevel,
           /*initialize_stats=*/nullptr)
           .ValueOrDie()
           .document_store;

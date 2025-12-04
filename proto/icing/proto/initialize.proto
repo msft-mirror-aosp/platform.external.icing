@@ -17,6 +17,7 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/logging.proto";
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -71,8 +72,18 @@ message IcingSearchEngineFeatureInfoProto {
     // join index v3 will be rebuilt to replace v2.
     FEATURE_QUALIFIED_ID_JOIN_INDEX_V3 = 6;
 
-    // TODO(b/384947619): decide whether need to add a feature type for delete
-    // propagation.
+    // Feature for flag
+    // IcingSearchEngineOptions::enable_delete_propagation_from.
+    //
+    // This feature covers whether to enable delete propagation PROPAGATE_FROM.
+    FEATURE_DELETE_PROPAGATION_FROM = 7;
+
+    // Feature for flag
+    // IcingSearchEngineOptions::enable_non_existent_qualified_id_join.
+    //
+    // This feature enables handling of cases where a child document is indexed
+    // before its join parent document.
+    FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN = 8;
   }
 
   // Whether the feature requires the document store to be rebuilt.
@@ -137,7 +148,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 35
+// Next tag: 50
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -192,6 +203,16 @@ message IcingSearchEngineOptions {
   // Valid values: [0, 9]
   // Optional.
   optional int32 compression_level = 7 [default = 3];
+
+  // Memory level for compression.
+  // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
+  // maximum memory for optimal speed and compression ratio.
+  // Icing historically used a memLevel of 8. Therefore, that value will be the
+  // default.
+  //
+  // Valid values: [1, 9]
+  // Optional.
+  optional int32 compression_mem_level = 37 [default = 8];
 
   // OPTIONAL: Whether to allow circular references between schema types for
   // the schema definition.
@@ -290,20 +311,18 @@ message IcingSearchEngineOptions {
   // Optional.
   optional int32 blob_store_compression_level = 23 [default = 3];
 
+  // Memory level for compression in blob store.
+  // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
+  // maximum memory for optimal speed and compression ratio.
+  // Icing historically used a memLevel of 8. Therefore, that value will be the
+  // default.
+  //
+  // Valid values: [1, 9]
+  // Optional.
+  optional int32 blob_store_compression_mem_level = 38 [default = 8];
+
   // Whether to allow repeated fields to have a joinable value type.
   optional bool enable_repeated_field_joins = 24;
-
-  // DEPRECATED (separate them into 2 flags): whether to use qualified id join
-  // index v3 and enable delete propagation PROPAGATE_FROM.
-  //
-  // - If set to true, qualified id join index v3 will be created and delete
-  //   propagation PROPAGATE_FROM will be enabled.
-  // - Otherwise, qualified id join index v2 will be created and delete
-  //   propagation will be disabled.
-  //
-  // The default value is false.
-  optional bool enable_qualified_id_join_index_v3_and_delete_propagate_from =
-      25;
 
   // The absolute path to the ICU data file.
   // If set, ICU will be initialized using this data file.
@@ -361,11 +380,86 @@ message IcingSearchEngineOptions {
   // the overlay exists.
   optional bool release_backup_schema_file_if_overlay_present = 34;
 
-  reserved 2, 20;
+  // Whether to enable strict byte size enforcement on a result page.
+  // - If set to true, then ResultRetrieverV2 will not include the next result
+  //   document if it would exceed the page byte size threshold (except for the
+  //   first document).
+  // - Otherwise, the page byte size enforcement works as a soft limit, i.e. it
+  //   will keep adding documents until exceeding the threshold.
+  optional bool enable_strict_page_byte_size_limit = 35;
+
+  // The threshold in bytes for compressing documents. If a document is larger
+  // than or equal to this threshold, it will be compressed based on
+  // compression_level. 0 means always compress.
+  optional uint32 compression_threshold_bytes = 36;
+
+  // Whether to enable using smaller input buffer size for decompression
+  // If set to false, the default buffer size of 64kb will be used.
+  optional bool enable_smaller_decompression_buffer_size = 39;
+
+  // Whether to enable the Eigen library for embedding scoring.
+  // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
+  // not defined), Eigen will be used for embedding scoring.
+  optional bool enable_eigen_embedding_scoring = 40;
+
+  // Whether to enable passing down filter predicates to child iterators during
+  // DocHitInfo retrieval. If set to true, filter predicates may be passed to
+  // children for optimized retrieval.
+  optional bool enable_passing_filter_to_children = 41;
+
+  // Whether to enable the new header format (refactor legacy format and
+  // introduce unsynced tail checksum) related changes in
+  // PortableFileBackedProtoLog.
+  optional bool enable_proto_log_new_header_format = 42;
+
+  // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
+  // This new iterator optimizes the access order of the embedding data for
+  // sequential reads.
+  optional bool enable_embedding_iterator_v2 = 43;
+
+  // Whether PortableFileBackedProtoLog should retain a decompression buffer
+  // that reads can reuse rather than allocating a new one for each read.
+  optional bool enable_reusable_decompression_buffer = 44;
+
+  // Whether to enable schema-type id optimization for setSchema. When enabled,
+  // the type-ids of existing types will be preserved when possible, and there
+  // will be no schema type-id reassignment for adding new types.
+  optional bool enable_schema_type_id_optimization = 45;
+
+  // The number of shards to use for the embedding index. 1 means no sharding.
+  optional uint32 embedding_index_num_shards = 46 [default = 1];
+
+  // Whether to enable optimize improvements.
+  optional bool enable_optimize_improvements = 47;
+
+  // The time threshold for an expired document to be purged.
+  // - Since we schedule a task to purge expired documents according to the next
+  //   expiration time of the documents, it is possible that some documents
+  //   expire within a small time window and the task executes too frequently.
+  // - Therefore, we use this flag to purge more documents that also expire in a
+  //   short period of time after the current time.
+  //
+  // For example, if the value is 1000 ms and the current time is 10000 ms:
+  // - All documents that are expired before 10000 ms will be purged, since they
+  //   are already expired.
+  // - Additionally, we will also purge documents that expire in the next 1000
+  //   ms, i.e. (10000, 11000] ms.
+  //
+  // The default value is 1 minute (1 * 60 * 1000 ms).
+  optional int64 expired_document_purge_threshold_ms = 48 [default = 60000];
+
+  // Whether to allow a document to reference a join parent (by its qualified
+  // id) that does not yet exist. When enabled, the join index will handle cases
+  // where a child document is indexed before its parent. The join relationship
+  // will be established once the parent document is indexed. If disabled, the
+  // join relationship will be lost if the child is indexed before the parent.
+  optional bool enable_non_existent_qualified_id_join = 49;
+
+  reserved 2, 20, 25;
 }
 
 // Result of a call to IcingSearchEngine.Initialize
-// Next tag: 3
+// Next tag: 6
 message InitializeResultProto {
   // Status code can be one of:
   //   OK
@@ -385,6 +479,17 @@ message InitializeResultProto {
   // accurate only when the status above is OK or WARNING_DATA_LOSS. See
   // logging.proto for details.
   optional InitializeStatsProto initialize_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
+
+  // Persist type needed after initialization. If UNKNOWN, then everything is
+  // clean and no need to call persistToDisk.
+  optional PersistType.Code needs_persist_type = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.
