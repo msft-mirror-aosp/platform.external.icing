@@ -72,7 +72,9 @@ libtextclassifier3::Status EmbeddingIndexingHandler::Handle(
       BasicHit hit(/*section_id=*/vector_section.metadata.id, document_id);
       for (const PropertyProto::VectorProto& vector : vector_section.content) {
         ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbedding(
-            hit, vector, vector_section.metadata.quantization_type));
+            hit, vector, vector_section.metadata.quantization_type,
+            /*schema_name=*/
+            tokenized_document.document_wrapper().document().schema()));
       }
     }
     ICING_RETURN_IF_ERROR(embedding_index_.CommitBufferToIndex());

@@ -49,8 +49,30 @@ bool AreStringIndexingConfigsEqual(const StringIndexingConfig& old_config,
 
 bool AreDocumentIndexingConfigsEqual(const DocumentIndexingConfig& old_config,
                                      const DocumentIndexingConfig& new_config) {
-  return old_config.index_nested_properties() ==
-         new_config.index_nested_properties();
+  // TODO(b/265304217): This could mark the new schema as incompatible and
+  // generate some unnecessary index rebuilds if the two schemas have an
+  // equivalent set of indexed properties, but changed the way that it is
+  // declared.
+  if (old_config.index_nested_properties() !=
+      new_config.index_nested_properties()) {
+    return false;
+  }
+
+  if (old_config.indexable_nested_properties_list().size() !=
+      new_config.indexable_nested_properties_list().size()) {
+    return false;
+  }
+
+  std::unordered_set<std::string_view> old_indexable_nested_properies_set(
+      old_config.indexable_nested_properties_list().begin(),
+      old_config.indexable_nested_properties_list().end());
+  for (const auto& property : new_config.indexable_nested_properties_list()) {
+    if (old_indexable_nested_properies_set.find(property) ==
+        old_indexable_nested_properies_set.end()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool AreIntegerIndexingConfigsEqual(const IntegerIndexingConfig& old_config,
@@ -100,7 +122,7 @@ bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
   if (old_property.cardinality() < new_property.cardinality()) {
     // We allow a new, less restrictive cardinality (i.e. a REQUIRED field
     // can become REPEATED or OPTIONAL, but not the other way around).
-    ICING_VLOG(1) << absl_ports::StrCat(
+    ICING_LOG(INFO) << absl_ports::StrCat(
         "Cardinality is more restrictive than before ",
         PropertyConfigProto::Cardinality::Code_Name(old_property.cardinality()),
         "->",
@@ -117,7 +139,7 @@ bool IsDataTypeCompatible(const PropertyConfigProto& old_property,
     // TODO(cassiewang): Maybe we can be a bit looser with this, e.g. we just
     // string cast an int64_t to a string. But for now, we'll stick with
     // simplistics.
-    ICING_VLOG(1) << absl_ports::StrCat(
+    ICING_LOG(INFO) << absl_ports::StrCat(
         "Data type ",
         PropertyConfigProto::DataType::Code_Name(old_property.data_type()),
         "->",
@@ -130,7 +152,7 @@ bool IsDataTypeCompatible(const PropertyConfigProto& old_property,
 bool IsSchemaTypeCompatible(const PropertyConfigProto& old_property,
                             const PropertyConfigProto& new_property) {
   if (old_property.schema_type() != new_property.schema_type()) {
-    ICING_VLOG(1) << absl_ports::StrCat("Schema type ",
+    ICING_LOG(INFO) << absl_ports::StrCat("Schema type ",
                                         old_property.schema_type(), "->",
                                         new_property.schema_type());
     return false;
@@ -143,53 +165,6 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
   return IsDataTypeCompatible(old_property, new_property) &&
          IsSchemaTypeCompatible(old_property, new_property) &&
          IsCardinalityCompatible(old_property, new_property);
-}
-
-bool IsTermMatchTypeCompatible(const StringIndexingConfig& old_indexed,
-                               const StringIndexingConfig& new_indexed) {
-  return old_indexed.term_match_type() == new_indexed.term_match_type() &&
-         old_indexed.tokenizer_type() == new_indexed.tokenizer_type();
-}
-
-bool IsIntegerNumericMatchTypeCompatible(
-    const IntegerIndexingConfig& old_indexed,
-    const IntegerIndexingConfig& new_indexed) {
-  return old_indexed.numeric_match_type() == new_indexed.numeric_match_type();
-}
-
-bool IsEmbeddingIndexingCompatible(const EmbeddingIndexingConfig& old_indexed,
-                                   const EmbeddingIndexingConfig& new_indexed) {
-  return old_indexed.embedding_indexing_type() ==
-             new_indexed.embedding_indexing_type() &&
-         old_indexed.quantization_type() == new_indexed.quantization_type();
-}
-
-bool IsDocumentIndexingCompatible(const DocumentIndexingConfig& old_indexed,
-                                  const DocumentIndexingConfig& new_indexed) {
-  // TODO(b/265304217): This could mark the new schema as incompatible and
-  // generate some unnecessary index rebuilds if the two schemas have an
-  // equivalent set of indexed properties, but changed the way that it is
-  // declared.
-  if (old_indexed.index_nested_properties() !=
-      new_indexed.index_nested_properties()) {
-    return false;
-  }
-
-  if (old_indexed.indexable_nested_properties_list().size() !=
-      new_indexed.indexable_nested_properties_list().size()) {
-    return false;
-  }
-
-  std::unordered_set<std::string_view> old_indexable_nested_properies_set(
-      old_indexed.indexable_nested_properties_list().begin(),
-      old_indexed.indexable_nested_properties_list().end());
-  for (const auto& property : new_indexed.indexable_nested_properties_list()) {
-    if (old_indexable_nested_properies_set.find(property) ==
-        old_indexable_nested_properies_set.end()) {
-      return false;
-    }
-  }
-  return true;
 }
 
 void AddIncompatibleChangeToDelta(
@@ -689,13 +664,13 @@ SchemaUtil::BuildTransitiveInheritanceGraph(const SchemaProto& schema) {
 }
 
 libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
-    const SchemaProto& schema, const FeatureFlags& feature_flags,
-    bool allow_circular_schema_definitions) {
+    const SchemaProto& schema, const FeatureFlags& feature_flags) {
   // 1. Build the dependent map. This will detect any cycles, non-existent or
   // duplicate types in the schema.
   ICING_ASSIGN_OR_RETURN(
       SchemaUtil::DependentMap dependent_map,
-      BuildTransitiveDependentGraph(schema, allow_circular_schema_definitions));
+      BuildTransitiveDependentGraph(
+          schema, feature_flags.allow_circular_schema_definitions()));
 
   // Tracks PropertyConfigs within a SchemaTypeConfig that we've validated
   // already.
@@ -1242,7 +1217,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       if (new_property_name_and_config ==
           new_parsed_property_configs.property_config_map.end()) {
         // Didn't find the old property
-        ICING_VLOG(1) << absl_ports::StrCat(
+        ICING_LOG(INFO) << absl_ports::StrCat(
             "Previously defined property type '", old_type_config.schema_type(),
             ".", old_property_config.property_name(),
             "' was not defined in new schema");
@@ -1262,30 +1237,30 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       }
 
       if (!IsPropertyCompatible(old_property_config, *new_property_config)) {
-        ICING_VLOG(1) << absl_ports::StrCat(
+        ICING_LOG(INFO) << absl_ports::StrCat(
             "Property '", old_type_config.schema_type(), ".",
             old_property_config.property_name(), "' is incompatible.");
         is_incompatible = true;
       }
 
       // Any change in the indexed property requires a reindexing
-      if (!IsTermMatchTypeCompatible(
+      if (!AreStringIndexingConfigsEqual(
               old_property_config.string_indexing_config(),
               new_property_config->string_indexing_config()) ||
-          !IsIntegerNumericMatchTypeCompatible(
+          !AreIntegerIndexingConfigsEqual(
               old_property_config.integer_indexing_config(),
               new_property_config->integer_indexing_config()) ||
-          !IsDocumentIndexingCompatible(
+          !AreDocumentIndexingConfigsEqual(
               old_property_config.document_indexing_config(),
               new_property_config->document_indexing_config()) ||
-          !IsEmbeddingIndexingCompatible(
+          !AreEmbeddingIndexingConfigsEqual(
               old_property_config.embedding_indexing_config(),
               new_property_config->embedding_indexing_config())) {
         is_index_incompatible = true;
       }
 
-      if (old_property_config.joinable_config().value_type() !=
-          new_property_config->joinable_config().value_type()) {
+      if (!AreJoinableConfigsEqual(old_property_config.joinable_config(),
+                                   new_property_config->joinable_config())) {
         is_join_incompatible = true;
       }
     }
@@ -1297,7 +1272,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // here to detect new required properties.
     if (!IsSubset(new_parsed_property_configs.required_properties,
                   old_required_properties)) {
-      ICING_VLOG(1) << absl_ports::StrCat(
+      ICING_LOG(INFO) << absl_ports::StrCat(
           "New schema '", old_type_config.schema_type(),
           "' has REQUIRED properties that are not "
           "present in the previously defined schema");
@@ -1310,9 +1285,9 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // reindex everything.
     if (!IsSubset(new_parsed_property_configs.indexed_properties,
                   old_indexed_properties)) {
-      ICING_VLOG(1) << "Set of indexed properties in schema type '"
-                    << old_type_config.schema_type()
-                    << "' has changed, required reindexing.";
+      ICING_LOG(INFO) << "Set of indexed properties in schema type '"
+                      << old_type_config.schema_type()
+                      << "' has changed, required reindexing.";
       is_index_incompatible = true;
     }
 
@@ -1327,9 +1302,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                   old_joinable_properties) ||
         !IsSubset(new_parsed_property_configs.nested_document_properties,
                   old_nested_document_properties)) {
-      ICING_VLOG(1) << "Set of joinable properties in schema type '"
-                    << old_type_config.schema_type()
-                    << "' has changed, required reconstructing joinable cache.";
+      ICING_LOG(INFO)
+          << "Set of joinable properties in schema type '"
+          << old_type_config.schema_type()
+          << "' has changed, required reconstructing joinable cache.";
       is_join_incompatible = true;
     }
 
@@ -1351,8 +1327,16 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                                    old_type_config_map, new_type_config_map);
     }
 
+    // Scorable-property inconsistent types are already added to the schema
+    // delta in FindScorablePropertyInconsistentTypes above.
+    bool is_scorable_property_cache_incompatible =
+        !schema_delta.schema_types_scorable_property_inconsistent.empty() &&
+        schema_delta.schema_types_scorable_property_inconsistent.find(
+            old_type_config.schema_type()) !=
+            schema_delta.schema_types_scorable_property_inconsistent.end();
+
     if (!is_incompatible && !is_index_incompatible && !is_join_incompatible &&
-        has_property_changed) {
+        !is_scorable_property_cache_incompatible && has_property_changed) {
       schema_delta.schema_types_changed_fully_compatible.insert(
           old_type_config.schema_type());
     }

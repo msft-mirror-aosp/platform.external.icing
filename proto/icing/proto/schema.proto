@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 import "icing/proto/term.proto";
 
@@ -34,7 +35,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 9
+// Next tag: 10
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that identifies the structured, logical schema being
   // defined.
@@ -82,6 +83,10 @@ message SchemaTypeConfigProto {
   // the Search APIs, including schema type filters and projections specified in
   // TypePropertyMask.
   repeated string parent_types = 6;
+
+  // List of all account properties that need to be managed. All accounts under
+  // this property should be existed in the account manager.
+  repeated string account_properties = 9;
 
   reserved 2, 3;
 }
@@ -423,8 +428,39 @@ message SchemaProto {
   repeated SchemaTypeConfigProto types = 1;
 }
 
+// Request for a call to IcingSearchEngine.SetSchema
+// Next tag: 4
+message SetSchemaRequestProto {
+  // REQUIRED: The new schema to set. This will replace the existing schema
+  // stored in IcingSearchEngine.
+  //
+  // schema.types is allowed to be empty. In this case, the SetSchema call will
+  // try to delete all types and indexed documents for the provided database,
+  // which is only allowed if ignore_errors_and_delete_documents=true
+  optional SchemaProto schema = 1;
+
+  // OPTIONAL: The database for the set schema request. Only schema types for
+  // this database will be modified.
+  //
+  // For a valid set schema request, this must match the database fields of
+  // schema.types.
+  //
+  // If unset, the default empty database is assumed for the set schema request.
+  optional string database = 2;
+
+  // OPTIONAL: Whether to ignore errors and delete documents when setting the
+  // schema.
+  //
+  // If true, then Icing will try to set the schema even if it is incompatible.
+  // In that case, documents that are invalidated by the new schema would be
+  // deleted from Icing. This cannot be used to force set an invalid schema.
+  //
+  // The default value is false.
+  optional bool ignore_errors_and_delete_documents = 3;
+}
+
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 9
+// Next tag: 19
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -462,7 +498,9 @@ message SetSchemaResultProto {
   repeated string index_incompatible_changed_schema_types = 6;
 
   // Overall time used for the function call.
-  optional int32 latency_ms = 7;
+  //
+  // DEPRECATED: Use SetSchemaStatsProto.overall_latency_ms instead.
+  optional int32 latency_ms = 7 [deprecated = true];
 
   // Schema types that were changed in a way that was backwards compatible, but
   // invalidated the joinable cache.
@@ -471,10 +509,77 @@ message SetSchemaResultProto {
   // but changed to joinable in the new definition. In this case, this property
   // will be considered join incompatible when setting new schema.
   repeated string join_incompatible_changed_schema_types = 8;
+
+  // Number of documents that were deleted due to the new schema with
+  // ignore_errors_and_delete_documents enabled.
+  optional int32 deleted_document_count = 9;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 10;
+
+  // Schema types that were changed in a way that was backwards compatible, but
+  // invalidated the scorable cache.
+  repeated string scorable_property_incompatible_changed_schema_types = 11;
+
+  // Stats and latencies for the SetSchema call.
+  optional SetSchemaStatsProto set_schema_stats = 12;
+
+  // Whether the term index (lite and main indices) was restored as a result of
+  // the set schema call.
+  optional bool has_term_index_restored = 13;
+
+  // Whether the integer index was restored as a result of the set schema call.
+  optional bool has_integer_index_restored = 14;
+
+  // Whether the embedding index was restored as a result of the set schema
+  // call.
+  optional bool has_embedding_index_restored = 15;
+
+  // Whether the qualified id join index was restored as a result of the set
+  // schema call.
+  optional bool has_qualified_id_join_index_restored = 16;
+
+  // Persist type needed after setting the new schema. If UNKNOWN, then
+  // everything is clean and no need to call persistToDisk.
+  optional PersistType.Code needs_persist_type = 17;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 18;
+}
+
+// Stats and latencies for IcingSearchEngine::SetSchema.
+// Next tag: 7
+message SetSchemaStatsProto {
+  // Overall time used for the function call. This is the sum of the latencies
+  // recorded in the other fields (schema_store_set_schema_latency,
+  // document_store_update_schema_latency,
+  // document_store_optimized_update_schema_latency,
+  // index_restoration_latency,
+  // scorable_property_cache_regeneration_latency)
+  optional int32 overall_latency_ms = 1;
+
+  // Latency for setting the schema in the schema store.
+  optional int32 schema_store_set_schema_latency_ms = 2;
+
+  // Latency for updating the document store's derived data using
+  // DocumentStore::UpdateSchemaStore.
+  optional int32 document_store_update_schema_latency_ms = 3;
+
+  // Latency for updating the document store's derived data using
+  // DocumentStore::OptimizedUpdateSchemaStore.
+  optional int32 document_store_optimized_update_schema_latency_ms = 4;
+
+  // Latency for rebuilding the index following an index-incompatible schema
+  // change.
+  optional int32 index_restoration_latency_ms = 5;
+
+  // Latency for regenerating the scorable property cache.
+  optional int32 scorable_property_cache_regeneration_latency_ms = 6;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema
-// Next tag: 3
+// Next tag: 4
 message GetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -491,10 +596,13 @@ message GetSchemaResultProto {
   // Copy of the Schema proto. Modifying this does not affect the Schema that
   // IcingSearchEngine holds.
   optional SchemaProto schema = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
 }
 
 // Result of a call to IcingSearchEngine.GetSchemaType
-// Next tag: 3
+// Next tag: 5
 message GetSchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -512,4 +620,11 @@ message GetSchemaTypeResultProto {
   // Modifying this does not affect the SchemaTypeConfig that IcingSearchEngine
   // holds.
   optional SchemaTypeConfigProto schema_type_config = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }

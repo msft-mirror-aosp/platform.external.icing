@@ -53,6 +53,7 @@
 #ifndef ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 #define ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -60,11 +61,11 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/constants.h"
 #include "icing/file/filesystem.h"
@@ -73,8 +74,9 @@
 #include "icing/portable/endian.h"
 #include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
-#include "icing/portable/zlib.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/util/bit-util.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
@@ -111,19 +113,55 @@ class PortableFileBackedProtoLog {
     // BEST_COMPRESSION = 9
     const int32_t compression_level;
 
+    // The threshold in bytes for compression if enabled. If the proto is larger
+    // than or equal to this threshold, it will be compressed.
+    const uint32_t compression_threshold_bytes;
+
+    // Level of memory usage for compression if enabled, BEST_MEMORY = 1,
+    // BEST_COMPRESSION and SPEED = 9
+    const int32_t compression_mem_level;
+
+    // Whether to use a smaller decompression buffer size. If false, the
+    // decompression buffer size will be the default size of 64MiB.
+    const bool enable_smaller_decompression_buffer_size;
+
+    // Whether to enable the new header format and unsynced tail checksum
+    // related changes.
+    const bool enable_new_header_format;
+
+    // Whether to retain a decompression buffer that reads can reuse rather than
+    // allocating a new one for each read.
+    const bool enable_reusable_decompression_buffer;
+
     // Must specify values for options.
     Options() = delete;
-    explicit Options(
-        bool compress_in,
-        const int32_t max_proto_size_in = constants::kMaxProtoSize,
-        const int32_t compression_level_in = kDefaultCompressionLevel)
+    explicit Options(bool compress_in, const int32_t max_proto_size_in,
+                     const int32_t compression_level_in,
+                     const uint32_t compression_threshold_bytes_in,
+                     const int32_t compression_mem_level_in,
+                     const bool enable_smaller_decompression_buffer_size_in,
+                     const bool enable_new_header_format_in,
+                     const bool enable_reusable_decompression_buffer_in)
         : compress(compress_in),
           max_proto_size(max_proto_size_in),
-          compression_level(compression_level_in) {}
+          compression_level(compression_level_in),
+          compression_threshold_bytes(compression_threshold_bytes_in),
+          compression_mem_level(compression_mem_level_in),
+          enable_smaller_decompression_buffer_size(
+              enable_smaller_decompression_buffer_size_in),
+          enable_new_header_format(enable_new_header_format_in),
+          enable_reusable_decompression_buffer(
+              enable_reusable_decompression_buffer_in) {}
   };
 
   // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
   static constexpr int kDefaultCompressionLevel = 3;
+
+  // The default compression threshold is 0, which means always compress.
+  static constexpr uint32_t kDefaultCompressionThresholdBytes = 0;
+
+  // The compression ratio to use for decompression buffer size.
+  static constexpr int kProtoCompressionRatio = 3;
 
   // Number of bytes we reserve for the heading at the beginning of the proto
   // log. We reserve this so the header can grow without running into the
@@ -140,19 +178,56 @@ class PortableFileBackedProtoLog {
     // format.
     static constexpr int32_t kFileFormatVersion = 0;
 
-    uint32_t CalculateHeaderChecksum() const {
+    // Legacy header section padding offset.
+    // - In the legacy header definition, we never declared the padding bytes.
+    //   Instead, it was implicitly added by C++ compiler.
+    // - In order to make the legacy header checksum calculation compatible, we
+    //   need to declare the padding bytes explicitly before the new fields.
+    static constexpr int32_t kLegacyHeaderSectionPaddingOffset =
+        offsetof(Header, reserved_padding1);
+
+    // Legacy header section size, including reserved_padding1. This size must
+    // not be changed due to compatibility issues.
+    static constexpr int32_t kLegacyHeaderSectionSize = 32;
+
+    uint32_t CalculateLegacyHeaderChecksum() const {
+      static_assert(offsetof(Header, flags_) == 28,
+                    "Incompatible header layout for flags and paddings!");
+      static_assert(kLegacyHeaderSectionPaddingOffset +
+                        sizeof(reserved_padding1) ==
+                    kLegacyHeaderSectionSize);
+
       Crc32 crc;
 
-      // Get a string_view of all the fields of the Header, excluding the
-      // magic_nbytes_ and header_checksum_nbytes_
-      std::string_view header_str(
+      // Get a string_view of all the fields of the legacy header section,
+      // excluding the magic_nbytes_ and legacy_header_checksum_nbytes_.
+      std::string_view legacy_header_str(
           reinterpret_cast<const char*>(this) +
-              offsetof(Header, header_checksum_nbytes_) +
-              sizeof(header_checksum_nbytes_),
-          sizeof(Header) - sizeof(magic_nbytes_) -
-              sizeof(header_checksum_nbytes_));
-      crc.Append(header_str);
+              offsetof(Header, legacy_header_checksum_nbytes_) +
+              sizeof(legacy_header_checksum_nbytes_),
+          kLegacyHeaderSectionSize - sizeof(magic_nbytes_) -
+              sizeof(legacy_header_checksum_nbytes_));
+      crc.Append(legacy_header_str);
       return crc.Get();
+    }
+
+    Crc32 CalculateHeaderChecksum() const {
+      // The header_checksum field must be at offset 252.
+      static_assert(offsetof(Header, header_checksum_nbytes_) == 252);
+
+      // Get a string_view of all the fields of the header, excluding
+      // header_checksum_nbytes_ itself.
+      std::string_view header_str(
+          reinterpret_cast<const char*>(this),
+          sizeof(Header) - sizeof(header_checksum_nbytes_));
+      return Crc32(header_str);
+    }
+
+    void UpdateHeaderChecksums(bool enable_new_header_format) {
+      SetLegacyHeaderChecksum(CalculateLegacyHeaderChecksum());
+      if (enable_new_header_format) {
+        SetHeaderChecksum(CalculateHeaderChecksum().Get());
+      }
     }
 
     int32_t GetMagic() const { return GNetworkToHostL(magic_nbytes_); }
@@ -193,12 +268,13 @@ class PortableFileBackedProtoLog {
       rewind_offset_nbytes_ = GHostToNetworkLL(rewind_offset_in);
     }
 
-    int32_t GetHeaderChecksum() const {
-      return GNetworkToHostL(header_checksum_nbytes_);
+    uint32_t GetLegacyHeaderChecksum() const {
+      return GNetworkToHostL(legacy_header_checksum_nbytes_);
     }
 
-    void SetHeaderChecksum(int32_t header_checksum_in) {
-      header_checksum_nbytes_ = GHostToNetworkL(header_checksum_in);
+    void SetLegacyHeaderChecksum(uint32_t legacy_header_checksum_in) {
+      legacy_header_checksum_nbytes_ =
+          GHostToNetworkL(legacy_header_checksum_in);
     }
 
     bool GetCompressFlag() const { return GetFlag(kCompressBit); }
@@ -208,6 +284,35 @@ class PortableFileBackedProtoLog {
     bool GetDirtyFlag() const { return GetFlag(kDirtyBit); }
 
     void SetDirtyFlag(bool dirty) { SetFlag(kDirtyBit, dirty); }
+
+    uint32_t GetUnsyncedTailChecksum() const {
+      return GNetworkToHostL(unsynced_tail_checksum_nbytes_);
+    }
+
+    void SetUnsyncedTailChecksum(uint32_t unsynced_tail_checksum_in) {
+      unsynced_tail_checksum_nbytes_ =
+          GHostToNetworkL(unsynced_tail_checksum_in);
+    }
+
+    // Resets paddings to 0.
+    //
+    // Normally a new header will have default 0 bytes for all paddings since we
+    // declared "= {0}" for them, but if the header was read from an existing
+    // file generated by older versions, the paddings may contain some random
+    // values. Therefore, InitializeExistingFile will reset the paddings to 0
+    // just in case.
+    void ResetPaddings() {
+      memset(reserved_padding1, 0, sizeof(reserved_padding1));
+      memset(available_padding, 0, sizeof(available_padding));
+    }
+
+    uint32_t GetHeaderChecksum() const {
+      return GNetworkToHostL(header_checksum_nbytes_);
+    }
+
+    void SetHeaderChecksum(uint32_t header_checksum_in) {
+      header_checksum_nbytes_ = GHostToNetworkL(header_checksum_in);
+    }
 
    private:
     // The least-significant bit offset at which the compress flag is stored in
@@ -228,16 +333,55 @@ class PortableFileBackedProtoLog {
       bit_util::BitfieldSet(value, offset, /*len=*/1, &flags_);
     }
 
+    // Header bytes layout:
+    //             +--------- 4 bytes ---------+--------- 4 bytes ---------+
+    // offset 0    |           magic           |  legacy_header_checksum   |
+    // offset 8    |                     rewind_offset                     |
+    // offset 16   |    file_format_version    |      max_proto_size       |
+    // offset 24   |       log_checksum        | flags | reserved_padding1 |
+    //
+    // <legacy header section: offset 0 to 31>
+    //
+    // offset 32   |  unsynced_tail_checksum   |    available_padding[]    |
+    // offset 40   |                  available_padding[]                  |
+    // ...
+    // offset 240  |                  available_padding[]                  |
+    // offset 248  |    available_padding[]    |      header_checksum      |
+    //             +--------- 4 bytes ---------+--------- 4 bytes ---------+
+    //
+    // Note:
+    // - Due to compatibility issues, legacy header checksum must always be
+    //   computed by the fixed legacy header section, and the legacy header
+    //   section must not be changed in the future.
+    // - The new "header_checksum" field is added to the end of the header
+    //   section, and it is computed by the entire header section (excluding
+    //   itself), i.e. offset 0 to 251.
+    // - Any new fields can be added into the section of available_padding, and
+    //   the developer must:
+    //   - Maintain the fields and essential paddings according to the C++
+    //     struct bytes layout and padding rules
+    //   - Recompute the available_padding size to make sizeof(Header) == 256
+    //     and header_checksum_nbytes_ remain at the end of the header (i.e.
+    //     offset 252-255).
+
+    //// START OF LEGACY HEADER SECTION ////
+
     // Holds the magic as a quick sanity check against file corruption.
     //
     // Field is in network-byte order.
     int32_t magic_nbytes_ = GHostToNetworkL(kMagic);
 
     // Must be at the beginning after kMagic. Contains the crc checksum of
-    // the following fields.
+    // the entire legacy header section excluding magic and itself (i.e. offset
+    // 8 to 31).
+    //
+    // Need to keep this field and it should be computed by the same way
+    // forever, due to Android mainline rollback policy. We have to maintain
+    // "forward compatibility", i.e. data generated by the new code should be
+    // able to be interpreted by the old code.
     //
     // Field is in network-byte order.
-    uint32_t header_checksum_nbytes_ = 0;
+    uint32_t legacy_header_checksum_nbytes_ = 0;
 
     // Last known good offset at which the log and its checksum were updated.
     // If we crash between writing to the log and updating the checksum, we can
@@ -272,12 +416,30 @@ class PortableFileBackedProtoLog {
     // Field is only 1 byte, so is byte-order agnostic.
     uint8_t flags_ = 0;
 
-    // NOTE: New fields should *almost always* be added to the end here. Since
-    // this class may have already been written to disk, appending fields
-    // increases the chances that changes are backwards-compatible.
+    // Reserved padding after flags_ for the C++ struct bytes layout.
+    // Due to compatibility with legacy_header_checksum_nbytes_, we have to pad
+    // the legacy header section to 32 bytes.
+    uint8_t reserved_padding1[3] = {0};
+
+    //// END OF LEGACY HEADER SECTION ////
+
+    // Checksum of the unsynced tail elements.
+    //
+    // Field is in network-byte order.
+    uint32_t unsynced_tail_checksum_nbytes_ = 0;
+
+    // Available bytes for future use.
+    uint8_t available_padding[216] = {0};
+
+    // Must be at the end of the header, i.e. offset 252-255. Contains the crc
+    // checksum of the entire header section excluding itself (i.e. offset 0 to
+    // 251).
+    //
+    // Field is in network-byte order.
+    uint32_t header_checksum_nbytes_ = 0;
   };
-  static_assert(sizeof(Header) <= kHeaderReservedBytes,
-                "Header has grown past our reserved bytes!");
+  static_assert(sizeof(Header) == kHeaderReservedBytes,
+                "Header size should be the same as the reserved bytes!");
 
   struct CreateResult {
     // A successfully initialized log.
@@ -381,6 +543,9 @@ class PortableFileBackedProtoLog {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
+  // For testing only.
+  Header* header() { return header_.get(); }
+
   // An iterator helping to find offsets of all the protos in file.
   // Example usage:
   //
@@ -390,8 +555,8 @@ class PortableFileBackedProtoLog {
   // }
   class Iterator {
    public:
-    Iterator(const Filesystem& filesystem, int fd, int64_t initial_offset,
-             int64_t file_size);
+    explicit Iterator(const Filesystem& filesystem, int fd,
+                      int64_t initial_offset, int64_t file_size);
 
     // Advances to the position of next proto whether it has been erased or not.
     //
@@ -402,7 +567,7 @@ class PortableFileBackedProtoLog {
     libtextclassifier3::Status Advance();
 
     // Returns the file offset of current proto.
-    int64_t GetOffset();
+    int64_t GetOffset() const;
 
    private:
     static constexpr int64_t kInvalidOffset = -1;
@@ -418,7 +583,7 @@ class PortableFileBackedProtoLog {
   // Returns an iterator of current proto log. The caller needs to keep the
   // proto log unchanged while using the iterator, otherwise unexpected
   // behaviors could happen.
-  Iterator GetIterator();
+  Iterator GetIterator() const;
 
   // Persists all changes since initialization or the last call to
   // PersistToDisk(). Any changes that aren't persisted may be lost if the
@@ -480,7 +645,9 @@ class PortableFileBackedProtoLog {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status PersistToDisk();
+  libtextclassifier3::Status PersistToDisk(
+      PersistToDiskStatsProto* persist_stats = nullptr,
+      const Clock* clock = nullptr);
 
   // Calculates the checksum of the log contents (excluding the header) and
   // updates the header.
@@ -500,10 +667,13 @@ class PortableFileBackedProtoLog {
 
  private:
   // Object can only be instantiated via the ::Create factory.
-  PortableFileBackedProtoLog(const Filesystem* filesystem,
-                             const std::string& file_path,
-                             std::unique_ptr<Header> header, int64_t file_size,
-                             int32_t compression_level);
+  explicit PortableFileBackedProtoLog(
+      const Filesystem* filesystem, const std::string& file_path,
+      std::unique_ptr<Header> header, int64_t file_size,
+      int32_t compression_level, uint32_t compression_threshold_bytes,
+      int32_t compression_mem_level,
+      bool enable_smaller_decompression_buffer_size,
+      bool enable_new_header_format, bool enable_reusable_decompression_buffer);
 
   // Initializes a new proto log.
   //
@@ -553,9 +723,9 @@ class PortableFileBackedProtoLog {
   // metadata and converts it into a portable metadata before writing.
   //
   // Returns:
-  //   OK on success
+  //   Crc32 of the written metadata bytes on success
   //   INTERNAL_ERROR on any IO errors
-  static libtextclassifier3::Status WriteProtoMetadata(
+  static libtextclassifier3::StatusOr<Crc32> WriteProtoMetadata(
       const Filesystem* filesystem, int fd, int32_t host_order_metadata);
 
   static bool IsEmptyBuffer(const char* buffer, int size) {
@@ -570,6 +740,30 @@ class PortableFileBackedProtoLog {
   // Helper function to get stored proto magic from the metadata.
   // Metadata format: 8 bits magic + 24 bits size
   static uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
+
+  class BufferHolder {
+   public:
+    BufferHolder(const PortableFileBackedProtoLog* log,
+                 std::unique_ptr<uint8_t[]> buffer, size_t size)
+        : log_(log), buffer_(std::move(buffer)), size_(size) {}
+
+    ~BufferHolder() { log_->ReturnBuffer(std::move(buffer_), size_); }
+
+    uint8_t* data() { return buffer_.get(); }
+    size_t size() const { return size_; }
+
+   private:
+    const PortableFileBackedProtoLog* log_;
+    std::unique_ptr<uint8_t[]> buffer_;
+    size_t size_;
+  };
+
+  // Returns the buffer to the log. It will either be cached or destroyed.
+  void ReturnBuffer(std::unique_ptr<uint8_t[]> buffer, size_t size) const;
+
+  // Returns a buffer holder to the caller - either a newly constructed one or
+  // the cached one if it is big enough.
+  BufferHolder PossiblyBorrowBuffer(size_t size) const;
 
   // Magic number added in front of every proto. Used when reading out protos
   // as a first check for corruption in each entry in the file. Even if there is
@@ -589,18 +783,38 @@ class PortableFileBackedProtoLog {
   std::unique_ptr<Header> header_;
   int64_t file_size_;
   const int32_t compression_level_;
+  const uint32_t compression_threshold_bytes_;
+  const int32_t compression_mem_level_;
+  const bool enable_smaller_decompression_buffer_size_;
+  const bool enable_new_header_format_;
+  const bool enable_reusable_decompression_buffer_;
+
+  mutable std::unique_ptr<uint8_t[]> read_buffer_ ICING_GUARDED_BY(mutex_);
+  mutable size_t read_buffer_size_ ICING_GUARDED_BY(mutex_);
+  mutable absl_ports::shared_mutex mutex_;
 };
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
     std::unique_ptr<Header> header, int64_t file_size,
-    int32_t compression_level)
+    int32_t compression_level, uint32_t compression_threshold_bytes,
+    int32_t compression_mem_level,
+    bool enable_smaller_decompression_buffer_size,
+    bool enable_new_header_format, bool enable_reusable_decompression_buffer)
     : filesystem_(filesystem),
       file_path_(file_path),
       header_(std::move(header)),
       file_size_(file_size),
-      compression_level_(compression_level) {
+      compression_level_(compression_level),
+      compression_threshold_bytes_(compression_threshold_bytes),
+      compression_mem_level_(compression_mem_level),
+      enable_smaller_decompression_buffer_size_(
+          enable_smaller_decompression_buffer_size),
+      enable_new_header_format_(enable_new_header_format),
+      enable_reusable_decompression_buffer_(
+          enable_reusable_decompression_buffer),
+      read_buffer_size_(0) {
   fd_.reset(filesystem_->OpenForAppend(file_path.c_str()));
 }
 
@@ -639,6 +853,13 @@ PortableFileBackedProtoLog<ProtoT>::Create(const Filesystem* filesystem,
         options.compression_level));
   }
 
+  if (options.compression_mem_level < 1 || options.compression_mem_level > 9) {
+    return absl_ports::InvalidArgumentError(
+        IcingStringUtil::StringPrintf("options.compression_mem_level must be "
+                                      "between 1 and 9 inclusive, was %d",
+                                      options.compression_mem_level));
+  }
+
   if (!filesystem->FileExists(file_path.c_str())) {
     return InitializeNewFile(filesystem, file_path, options);
   }
@@ -668,22 +889,50 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
         absl_ports::StrCat("Failed to initialize file size: ", file_path));
   }
 
-  // Create the header
+  // Create the header.
+  //
+  // No need to memset padding bytes to 0 since we declared = {0} in the struct
+  // definition and the new object created by std::make_unique will initialize
+  // them to 0.
   std::unique_ptr<Header> header = std::make_unique<Header>();
   header->SetCompressFlag(options.compress);
   header->SetMaxProtoSize(options.max_proto_size);
-  header->SetHeaderChecksum(header->CalculateHeaderChecksum());
+  header->UpdateHeaderChecksums(options.enable_new_header_format);
 
-  if (!filesystem->Write(file_path.c_str(), header.get(), sizeof(Header))) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to write header for file: ", file_path));
+  {
+    ScopedFd fd(filesystem->OpenForWrite(file_path.c_str()));
+    if (!fd.is_valid()) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to open file for write: ", file_path));
+    }
+
+    if (!filesystem->Write(fd.get(), header.get(), sizeof(Header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to write header for file: ", file_path));
+    }
+
+    // Sync the file to disk to ensure that the header is flushed to disk.
+    // - Otherwise, if the app crashes before the header is flushed, the next
+    //   initialize may fail.
+    // - This is especially important for this class, since it is used to store
+    //   ground truth data. If magic or checksum is wrong, then Icing cannot
+    //   recover it from this state and therefore end up with entire data loss.
+    if (!filesystem->DataSync(fd.get())) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to sync file: ", file_path));
+    }
   }
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(
               filesystem, file_path, std::move(header),
-              /*file_size=*/kHeaderReservedBytes, options.compression_level)),
+              /*file_size=*/kHeaderReservedBytes, options.compression_level,
+              options.compression_threshold_bytes,
+              options.compression_mem_level,
+              options.enable_smaller_decompression_buffer_size,
+              options.enable_new_header_format,
+              options.enable_reusable_decompression_buffer)),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
@@ -695,30 +944,67 @@ libtextclassifier3::StatusOr<
 PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
     const Filesystem* filesystem, const std::string& file_path,
     const Options& options, int64_t file_size) {
+  bool legacy_header_section_changed = false;
   bool header_changed = false;
   if (file_size < kHeaderReservedBytes) {
+    ICING_LOG(ERROR) << "Invalid file size for PortableFileBackedProtoLog "
+                     << file_path
+                     << " for header reserved bytes. File size: " << file_size
+                     << ", header reserved bytes: " << kHeaderReservedBytes;
     return absl_ports::InternalError(
         absl_ports::StrCat("File header too short for: ", file_path));
   }
 
   std::unique_ptr<Header> header = std::make_unique<Header>();
-  if (!filesystem->PRead(file_path.c_str(), header.get(), sizeof(Header),
-                         /*offset=*/0)) {
+  if (filesystem->PRead(file_path.c_str(), header.get(), sizeof(Header),
+                        /*offset=*/0) != sizeof(Header)) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to read header for file: ", file_path));
   }
 
   // Make sure the header is still valid before we use any of its values. This
-  // is covered by the header_checksum check below, but this is a quick check
-  // that can save us from an extra crc computation.
+  // is covered by the legacy_header_checksum check below, but this is a quick
+  // check that can save us from an extra crc computation.
   if (header->GetMagic() != Header::kMagic) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header kMagic for file: ", file_path));
+    ICING_LOG(ERROR) << "Invalid header magic for PortableFileBackedProtoLog "
+                     << file_path << ". Expected: " << Header::kMagic
+                     << ", actual: " << header->GetMagic();
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Invalid header magic for PortableFileBackedProtoLog: ", file_path));
   }
 
-  if (header->GetHeaderChecksum() != header->CalculateHeaderChecksum()) {
+  // Check the new header checksum.
+  bool header_checksum_mismatch = false;
+  if (options.enable_new_header_format) {
+    header_checksum_mismatch =
+        header->GetHeaderChecksum() != header->CalculateHeaderChecksum().Get();
+    if (header_checksum_mismatch) {
+      // If upgrade or rollforward happens, then existing data's header_checksum
+      // may not be written by the old code, so we need to fallback to legacy
+      // checksum.
+      ICING_LOG(WARNING)
+          << "Invalid header checksum for PortableFileBackedProtoLog "
+          << file_path
+          << ". Fallback to legacy header checksum validation, and need to "
+             "rewind unsynced tail.";
+    }
+  }
+
+  // Check the legacy header checksum.
+  if (header->GetLegacyHeaderChecksum() !=
+      header->CalculateLegacyHeaderChecksum()) {
+    // Old code and new code should write legacy header checksum correctly, so
+    // if it doesn't match, then it's likely that the file is corrupted.
+    ICING_LOG(ERROR)
+        << "Invalid legacy header checksum for PortableFileBackedProtoLog "
+        << file_path;
     return absl_ports::InternalError(
-        absl_ports::StrCat("Invalid header checksum for: ", file_path));
+        absl_ports::StrCat("Invalid legacy header checksum for: ", file_path));
+  }
+
+  if (header->GetRewindOffset() < kHeaderReservedBytes) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Invalid header rewind offset for: ", file_path));
   }
 
   if (header->GetFileFormatVersion() != Header::kFileFormatVersion) {
@@ -744,21 +1030,55 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
     // It's fine if our new max size is greater than our previous one. Existing
     // data is still valid.
     header->SetMaxProtoSize(options.max_proto_size);
-    header_changed = true;
+    legacy_header_section_changed = true;
   }
 
   DataLoss data_loss = DataLoss::NONE;
 
-  // If we have any documents in our tail, get rid of them since they're not in
-  // our checksum. Our checksum reflects content up to the rewind offset.
+  // If we have any documents in our tail, validate the unsynced tail checksum
+  // and get rid of the unsynced tail if they don't match.
   if (file_size > header->GetRewindOffset()) {
-    if (!filesystem->Truncate(file_path.c_str(), header->GetRewindOffset())) {
-      return absl_ports::InternalError(IcingStringUtil::StringPrintf(
-          "Failed to truncate '%s' to size %lld", file_path.data(),
-          static_cast<long long>(header->GetRewindOffset())));
+    // - If enable_new_header_format is false, then we need to throw away all
+    //   data in the unsynced tail.
+    // - Otherwise we use the new header format logic:
+    //   - If the header checksum doesn't match, then we need to throw away all
+    //     data in the unsynced tail, regardless of the unsynced tail checksum.
+    //   - Otherwise, validate the unsynced tail checksum to determine if we
+    //     need to throw away all data in the unsynced tail.
+    bool need_rewind_unsynced_tail =
+        !options.enable_new_header_format || header_checksum_mismatch;
+    if (!need_rewind_unsynced_tail) {
+      // Recompute the unsynced tail's checksum only if the header checksum
+      // matches. This saves us a crc computation if the header checksum already
+      // doesn't match.
+      ICING_ASSIGN_OR_RETURN(
+          Crc32 calculated_unsynced_tail_checksum,
+          GetPartialChecksum(filesystem, file_path, Crc32(),
+                             /*start=*/header->GetRewindOffset(),
+                             /*end=*/file_size, file_size));
+      if (header->GetUnsyncedTailChecksum() !=
+          calculated_unsynced_tail_checksum.Get()) {
+        // Unsynced tail checksum doesn't match, so we need to throw it out.
+        ICING_LOG(WARNING)
+            << "Mismatch unsynced tail checksum. Expected (from data): "
+            << calculated_unsynced_tail_checksum.Get()
+            << ", actual (stored in the header): "
+            << header->GetUnsyncedTailChecksum();
+        need_rewind_unsynced_tail = true;
+      }
     }
-    file_size = header->GetRewindOffset();
-    data_loss = DataLoss::PARTIAL;
+
+    if (need_rewind_unsynced_tail) {
+      if (!filesystem->Truncate(file_path.c_str(), header->GetRewindOffset())) {
+        return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+            "Failed to truncate '%s' to size %lld", file_path.data(),
+            static_cast<long long>(header->GetRewindOffset())));
+      }
+      header->SetUnsyncedTailChecksum(0);
+      file_size = header->GetRewindOffset();
+      data_loss = DataLoss::PARTIAL;
+      header_changed = true;
+    }
   }
 
   bool recalculated_checksum = false;
@@ -796,11 +1116,15 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
 
     // Update our header.
     header->SetDirtyFlag(false);
-    header_changed = true;
+    legacy_header_section_changed = true;
   }
 
-  if (header_changed) {
-    header->SetHeaderChecksum(header->CalculateHeaderChecksum());
+  if (legacy_header_section_changed || header_changed ||
+      header_checksum_mismatch) {
+    // Reset all padding bytes to 0 before recompute the checksums, just in
+    // case we had some random values generated by the old code.
+    header->ResetPaddings();
+    header->UpdateHeaderChecksums(options.enable_new_header_format);
 
     if (!filesystem->PWrite(file_path.c_str(), /*offset=*/0, header.get(),
                             sizeof(Header))) {
@@ -811,9 +1135,13 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
-          new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
-                                                 std::move(header), file_size,
-                                                 options.compression_level)),
+          new PortableFileBackedProtoLog<ProtoT>(
+              filesystem, file_path, std::move(header), file_size,
+              options.compression_level, options.compression_threshold_bytes,
+              options.compression_mem_level,
+              options.enable_smaller_decompression_buffer_size,
+              options.enable_new_header_format,
+              options.enable_reusable_decompression_buffer)),
       data_loss, recalculated_checksum};
 
   return create_result;
@@ -824,12 +1152,6 @@ libtextclassifier3::StatusOr<Crc32>
 PortableFileBackedProtoLog<ProtoT>::GetPartialChecksum(
     const Filesystem* filesystem, const std::string& file_path,
     Crc32 initial_crc, int64_t start, int64_t end, int64_t file_size) {
-  ICING_ASSIGN_OR_RETURN(
-      MemoryMappedFile mmapped_file,
-      MemoryMappedFile::Create(*filesystem, file_path,
-                               MemoryMappedFile::Strategy::READ_ONLY));
-  Crc32 new_crc(initial_crc.Get());
-
   if (start < 0) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Starting checksum offset of file '%s' must be greater than 0, was "
@@ -852,6 +1174,16 @@ PortableFileBackedProtoLog<ProtoT>::GetPartialChecksum(
         file_path.c_str(), static_cast<long long>(file_size),
         static_cast<long long>(end)));
   }
+
+  if (start == end) {
+    return initial_crc;
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      MemoryMappedFile mmapped_file,
+      MemoryMappedFile::Create(*filesystem, file_path,
+                               MemoryMappedFile::Strategy::READ_ONLY));
+  Crc32 new_crc(initial_crc.Get());
 
   Architecture architecture = GetArchitecture();
   switch (architecture) {
@@ -917,7 +1249,17 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   if (header_->GetCompressFlag()) {
     protobuf_ports::GzipOutputStream::Options options;
     options.format = protobuf_ports::GzipOutputStream::ZLIB;
-    options.compression_level = compression_level_;
+
+    if (proto_size >= compression_threshold_bytes_) {
+      options.compression_level = compression_level_;
+    } else {
+      options.compression_level = 0;
+    }
+    options.buffer_size = proto_size;
+    if (proto_size < 0 ||
+        static_cast<size_t>(proto_size) > protobuf_ports::kDefaultBufferSize) {
+      options.buffer_size = protobuf_ports::kDefaultBufferSize;
+    }
 
     protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 
@@ -950,7 +1292,8 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
 
   // Actually write metadata, has to be done after we know the possibly
   // compressed proto size
-  ICING_RETURN_IF_ERROR(
+  ICING_ASSIGN_OR_RETURN(
+      Crc32 metadata_crc,
       WriteProtoMetadata(filesystem_, fd_.get(), host_order_metadata));
 
   // Write the serialized proto
@@ -962,6 +1305,23 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   // Update file size. The file should have grown by sizeof(Metadata) + size of
   // the serialized proto.
   file_size_ += sizeof(host_order_metadata) + final_size;
+
+  if (enable_new_header_format_) {
+    // Compute the new unsynced tail checksum.
+    Crc32 new_unsynced_tail_crc(header_->GetUnsyncedTailChecksum());
+    new_unsynced_tail_crc.Combine(metadata_crc, sizeof(host_order_metadata));
+    new_unsynced_tail_crc.Append(proto_str);
+
+    // Set the new unsynced tail checksum and header checksum. Write the header.
+    header_->SetUnsyncedTailChecksum(new_unsynced_tail_crc.Get());
+    header_->SetHeaderChecksum(header_->CalculateHeaderChecksum().Get());
+    if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
+                             sizeof(Header))) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Failed to update header after write proto: ", file_path_));
+    }
+  }
+
   return current_position;
 }
 
@@ -985,7 +1345,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
                                       static_cast<long long>(file_size_ - 1)));
   }
   auto buf = std::make_unique<char[]>(stored_size);
-  if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+  if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+      stored_size) {
     return absl_ports::InternalError("");
   }
 
@@ -998,7 +1359,15 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   // Deserialize proto
   ProtoT proto;
   if (header_->GetCompressFlag()) {
-    protobuf_ports::GzipInputStream decompress_stream(&proto_stream);
+    size_t buffer_size = protobuf_ports::kDefaultBufferSize;
+    if (enable_smaller_decompression_buffer_size_ && stored_size >= 0) {
+      buffer_size = std::min(buffer_size, kProtoCompressionRatio *
+                                              static_cast<size_t>(stored_size));
+    }
+    BufferHolder buffer_holder = PossiblyBorrowBuffer(buffer_size);
+    protobuf_ports::GzipInputStream decompress_stream(
+        &proto_stream, protobuf_ports::GzipInputStream::AUTO,
+        buffer_holder.data(), buffer_holder.size());
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);
@@ -1025,28 +1394,44 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
   }
   auto buf = std::make_unique<char[]>(stored_size);
 
-  // We need to update the crc checksum if the erased area is before the
-  // rewind position.
-  int32_t new_crc;
+  // Update the checksum depending on whether the erased area is before or after
+  // rewind offset.
+  uint32_t new_crc = 0;  // Reused for both cases.
   if (file_offset < header_->GetRewindOffset()) {
+    // Case 1: erasing bytes from log checksummed area (before rewind offset).
+    //
+    // kHeaderReservedBytes                     RewindOffset           file_size
+    //          v                                    v                     v
+    // +--------+------------------------------------+---------------------+
+    // | Header |        Log checksummed area        |    Unsynced tail    |
+    // +--------+------------------------------------+---------------------+
+    //          |<-          log_checksum          ->|<-   ut_checksum   ->|
+    //                 xxxxxxxxxxxx
+    //                 ^           ^
+    //            file_offset file_offset
+    //                          + stored_size
+
     // Set to "dirty" before we start writing anything.
     header_->SetDirtyFlag(true);
-    header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
+    header_->UpdateHeaderChecksums(enable_new_header_format_);
+
     if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
                              sizeof(Header))) {
       return absl_ports::InternalError(absl_ports::StrCat(
           "Failed to update dirty bit of header to: ", file_path_));
     }
 
-    // We need to calculate [original string xor 0s].
-    // The xored string is the same as the original string because 0 xor 0 =
-    // 0, 1 xor 0 = 1.
     // Read the compressed proto out.
-    if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
-      return absl_ports::InternalError("");
+    if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+        stored_size) {
+      return absl_ports::InternalError("Cannot read proto from file");
     }
+    // We're going to erase the bytes. For example, "ABCDEF" -> "A\0\0DEF". The
+    // checksum can be easily updated by ("BC" XOR "\0\0"), which remains "BC",
+    // so the XORed string is the original string.
     const std::string_view xored_str(buf.get(), stored_size);
 
+    // Recompute the log checksum by the XORed data.
     Crc32 crc(header_->GetLogChecksum());
     ICING_ASSIGN_OR_RETURN(
         new_crc,
@@ -1054,6 +1439,42 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
                           /*full_data_size=*/header_->GetRewindOffset() -
                               kHeaderReservedBytes,
                           /*position=*/file_offset - kHeaderReservedBytes));
+  } else {
+    // Case 2: erasing bytes from unsynced tail checksum area (after rewind
+    // offset).
+    //
+    // kHeaderReservedBytes                     RewindOffset           file_size
+    //          v                                    v                     v
+    // +--------+------------------------------------+---------------------+
+    // | Header |        Log checksummed area        |    Unsynced tail    |
+    // +--------+------------------------------------+---------------------+
+    //          |<-          log_checksum          ->|<-   ut_checksum   ->|
+    //                                                    xxxxxxxxxxxx
+    //                                                    ^           ^
+    //                                               file_offset file_offset
+    //                                                             + stored_size
+
+    // Read the compressed proto out and re-calculate the unsynced tail checksum
+    // only if the flag is enabled.
+    if (enable_new_header_format_) {
+      if (filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset) !=
+          stored_size) {
+        return absl_ports::InternalError("Cannot read proto from file");
+      }
+      // We're going to erase the bytes. For example, "ABCDEF" -> "A\0\0DEF".
+      // The checksum can be easily updated by ("BC" XOR "\0\0"), which remains
+      // "BC", so the XORed string is the original string.
+      const std::string_view xored_str(buf.get(), stored_size);
+
+      // Recompute the unsynced tail checksum by the XORed data.
+      Crc32 crc(header_->GetUnsyncedTailChecksum());
+      ICING_ASSIGN_OR_RETURN(
+          new_crc,
+          crc.UpdateWithXor(
+              xored_str,
+              /*full_data_size=*/file_size_ - header_->GetRewindOffset(),
+              /*position=*/file_offset - header_->GetRewindOffset()));
+    }
   }
 
   // Clear the region.
@@ -1062,18 +1483,30 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     return absl_ports::InternalError("");
   }
 
-  // If we cleared something in our checksummed area, we should update our
-  // checksum and reset our dirty bit.
+  // Update header.
+  bool write_header = false;
   if (file_offset < header_->GetRewindOffset()) {
+    // If we cleared something in the log checksummed area, we should reset the
+    // dirty bit and update related all checksums.
     header_->SetDirtyFlag(false);
     header_->SetLogChecksum(new_crc);
-    header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
+    header_->UpdateHeaderChecksums(enable_new_header_format_);
 
-    if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
-                             sizeof(Header))) {
-      return absl_ports::InternalError(
-          absl_ports::StrCat("Failed to update header to: ", file_path_));
-    }
+    write_header = true;
+  } else if (enable_new_header_format_) {
+    // If we cleared something in the unsynced tail section, we should update
+    // the unsynced tail checksum and header checksum only if the flag is
+    // enabled.
+    header_->SetUnsyncedTailChecksum(new_crc);
+    header_->SetHeaderChecksum(header_->CalculateHeaderChecksum().Get());
+
+    write_header = true;
+  }
+
+  if (write_header && !filesystem_->PWrite(fd_.get(), /*offset=*/0,
+                                           header_.get(), sizeof(Header))) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Failed to update header to: ", file_path_));
   }
 
   return libtextclassifier3::Status::OK;
@@ -1130,13 +1563,13 @@ PortableFileBackedProtoLog<ProtoT>::Iterator::Advance() {
 }
 
 template <typename ProtoT>
-int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
+int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() const {
   return current_offset_;
 }
 
 template <typename ProtoT>
 typename PortableFileBackedProtoLog<ProtoT>::Iterator
-PortableFileBackedProtoLog<ProtoT>::GetIterator() {
+PortableFileBackedProtoLog<ProtoT>::GetIterator() const {
   return Iterator(*filesystem_, fd_.get(),
                   /*initial_offset=*/kHeaderReservedBytes, file_size_);
 }
@@ -1163,7 +1596,8 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
         static_cast<long long>(file_size)));
   }
 
-  if (!filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset)) {
+  if (filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset) !=
+      metadata_size) {
     return absl_ports::InternalError("");
   }
 
@@ -1182,7 +1616,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
 }
 
 template <typename ProtoT>
-libtextclassifier3::Status
+libtextclassifier3::StatusOr<Crc32>
 PortableFileBackedProtoLog<ProtoT>::WriteProtoMetadata(
     const Filesystem* filesystem, int fd, int32_t host_order_metadata) {
   // Convert it into portable endian format before writing to disk
@@ -1195,18 +1629,37 @@ PortableFileBackedProtoLog<ProtoT>::WriteProtoMetadata(
         absl_ports::StrCat("Failed to write proto metadata."));
   }
 
-  return libtextclassifier3::Status::OK;
+  std::string_view metadata_bytes(
+      reinterpret_cast<const char*>(&portable_metadata),
+      sizeof(portable_metadata));
+  return Crc32(metadata_bytes);
 }
 
 template <typename ProtoT>
-libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
+libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk(
+    PersistToDiskStatsProto* persist_stats, const Clock* clock) {
   if (file_size_ == header_->GetRewindOffset()) {
     // No new protos appended, don't need to update the checksum.
     return libtextclassifier3::Status::OK;
   }
 
+  std::unique_ptr<Timer> persist_timer;
+  if (persist_stats != nullptr && clock != nullptr) {
+    persist_timer = clock->GetNewTimer();
+  }
   ICING_RETURN_IF_ERROR(UpdateChecksum());
-  if (!filesystem_->DataSync(fd_.get())) {
+  if (persist_stats != nullptr && clock != nullptr) {
+    persist_stats->set_document_log_checksum_update_latency_ms(
+        persist_timer->GetElapsedMilliseconds());
+    persist_timer = clock->GetNewTimer();
+  }
+
+  bool datasync_succeeded = filesystem_->DataSync(fd_.get());
+  if (persist_stats != nullptr && clock != nullptr) {
+    persist_stats->set_document_log_data_sync_latency_ms(
+        persist_timer->GetElapsedMilliseconds());
+  }
+  if (!datasync_succeeded) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to sync data to disk: ", file_path_));
   }
@@ -1222,8 +1675,9 @@ PortableFileBackedProtoLog<ProtoT>::UpdateChecksum() {
   }
   ICING_ASSIGN_OR_RETURN(Crc32 crc, GetChecksum());
   header_->SetLogChecksum(crc.Get());
+  header_->SetUnsyncedTailChecksum(0);
   header_->SetRewindOffset(file_size_);
-  header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
+  header_->UpdateHeaderChecksums(enable_new_header_format_);
 
   if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
                            sizeof(Header))) {
@@ -1246,11 +1700,48 @@ PortableFileBackedProtoLog<ProtoT>::GetChecksum() const {
                               /*start=*/kHeaderReservedBytes,
                               /*end=*/file_size_, file_size_);
   } else {
+    if (enable_new_header_format_) {
+      // Combine unsynced tail checksum with log checksum.
+      Crc32 log_checksum(header_->GetLogChecksum());
+      Crc32 unsynced_tail_checksum(header_->GetUnsyncedTailChecksum());
+      log_checksum.Combine(unsynced_tail_checksum, new_content_size);
+      return log_checksum;
+    }
     // Append new changes to the existing checksum.
     return GetPartialChecksum(
         filesystem_, file_path_, Crc32(header_->GetLogChecksum()),
         /*start=*/header_->GetRewindOffset(), /*end=*/file_size_, file_size_);
   }
+}
+
+template <typename ProtoT>
+void PortableFileBackedProtoLog<ProtoT>::ReturnBuffer(
+    std::unique_ptr<uint8_t[]> buffer, size_t size) const {
+  if (!enable_reusable_decompression_buffer_) {
+    return;
+  }
+  absl_ports::unique_lock lock(&mutex_);
+  if (read_buffer_ == nullptr || read_buffer_size_ < size) {
+    read_buffer_.swap(buffer);
+    read_buffer_size_ = size;
+  }
+}
+
+template <typename ProtoT>
+typename PortableFileBackedProtoLog<ProtoT>::BufferHolder
+PortableFileBackedProtoLog<ProtoT>::PossiblyBorrowBuffer(size_t size) const {
+  if (!enable_reusable_decompression_buffer_) {
+    return BufferHolder(this, std::make_unique<uint8_t[]>(size), size);
+  }
+  absl_ports::unique_lock lock(&mutex_);
+  if (read_buffer_ == nullptr || read_buffer_size_ < size) {
+    return BufferHolder(this, std::make_unique<uint8_t[]>(size), size);
+  }
+  std::unique_ptr<uint8_t[]> temp;
+  temp.swap(read_buffer_);
+  size_t temp_size = read_buffer_size_;
+  read_buffer_size_ = 0;
+  return BufferHolder(this, std::move(temp), temp_size);
 }
 
 }  // namespace lib

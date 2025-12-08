@@ -92,7 +92,8 @@ libtextclassifier3::Status PropertyExistenceIndexingHandler::Handle(
       index_.Edit(document_id, /*section_id=*/0, /*namespace_id=*/0);
   std::unordered_set<std::string> meta_tokens;
   ConstructPropertyExistenceMetaToken(
-      /*current_path=*/"", tokenized_document.document(), meta_tokens);
+      /*current_path=*/"", tokenized_document.document_wrapper().document(),
+      meta_tokens);
   for (const std::string& meta_token : meta_tokens) {
     status = editor.BufferTerm(meta_token, TermMatchType::EXACT_ONLY);
     if (!status.ok()) {

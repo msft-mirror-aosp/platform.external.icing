@@ -16,37 +16,42 @@
 #define ICING_SCHEMA_BACKUP_SCHEMA_PRODUCER_H_
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/section-manager.h"
-#include "icing/schema/section.h"
 
 namespace icing {
 namespace lib {
 
 class BackupSchemaProducer {
  public:
-  // Creates a BackupSchemaProducer based off of schema.
+  explicit BackupSchemaProducer(const FeatureFlags* feature_flags)
+      : feature_flags_(*feature_flags) {}
+
+  // Creates a BackupSchemaResult based off of schema.
   // If schema doesn't require a backup schema (because it is fully
-  // rollback-proof) then no copies will be made and `is_backup_necessary` will
-  // return false.
-  // If schema *does* require a backup schema, then `is_backup_necessary` will
-  // return true and the backup schema can be retrieved by calling `Produce`.
+  // rollback-proof) then `BackupSchemaResult::backup_schema_produced` will be
+  // false. No guarantee is made about the state of
+  // `BackupSchemaResult::backup_schema` in this case.
+  // If schema *does* require a backup schema, then
+  //`BackupSchemaResult::backup_schema_produced` will be true and
+  // `BackupSchemaResult::backup_schema` will be populated accordingly.
   // Returns:
-  //   - On success, a BackupSchemaProducer
+  //   - On success, a BackupSchemaResult
   //   - INTERNAL_ERROR if the schema is inconsistent with the type_manager.
-  static libtextclassifier3::StatusOr<BackupSchemaProducer> Create(
-      const SchemaProto& schema, const SectionManager& type_manager);
+  struct BackupSchemaResult {
+    BackupSchemaResult() : backup_schema(), backup_schema_produced(false) {}
+    explicit BackupSchemaResult(SchemaProto backup_schema_in)
+        : backup_schema(backup_schema_in), backup_schema_produced(true) {}
 
-  SchemaProto Produce() && { return std::move(cached_schema_); }
-
-  bool is_backup_necessary() const { return !cached_schema_.types().empty(); }
+    SchemaProto backup_schema;
+    bool backup_schema_produced;
+  };
+  libtextclassifier3::StatusOr<BackupSchemaProducer::BackupSchemaResult>
+  Produce(const SchemaProto& schema, const SectionManager& type_manager);
 
  private:
-  BackupSchemaProducer() = default;
-  explicit BackupSchemaProducer(SchemaProto&& schema)
-      : cached_schema_(std::move(schema)) {}
-
-  SchemaProto cached_schema_;
+  const FeatureFlags& feature_flags_;
 };
 
 }  // namespace lib

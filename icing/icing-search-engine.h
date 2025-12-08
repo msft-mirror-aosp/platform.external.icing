@@ -16,6 +16,7 @@
 #define ICING_ICING_SEARCH_ENGINE_H_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -28,10 +29,11 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/feature-flags.h"
+#include "icing/file/derived-file-util.h"
 #include "icing/file/filesystem.h"
-#include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -62,6 +64,8 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/simple-task-scheduler.h"
+#include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
@@ -104,9 +108,22 @@ class IcingSearchEngine {
   //   NOT_FOUND if missing some internal data
   InitializeResultProto Initialize() ICING_LOCKS_EXCLUDED(mutex_);
 
+  // TODO: b/337913932 - Remove this method once all callers are migrated to the
+  // new SetSchema method.
+  //
+  // This method is deprecated. Please use
+  // `IcingSearchEngine::SetSchema(SetSchemaRequestProto)` instead.
+  //
   // Specifies the schema to be applied on all Documents that are already
-  // stored as well as future documents. A schema can be 'invalid' and/or
-  // 'incompatible'. These are two independent concepts.
+  // stored as well as future documents.
+  //
+  // This SetSchema call only allows setting schemas in the default empty
+  // database. Any non-empty database field in `new_schema.types` invalidates
+  // this SetSchema request. To set a schema for a non-empty database, please
+  // use `IcingSearchEngine::SetSchema(SetSchemaRequestProto)`.
+  //
+  // A schema can be 'invalid' and/or 'incompatible'. These are two independent
+  // concepts.
   //
   // An 'invalid' schema is one that is not constructed properly. For example,
   // a PropertyConfigProto is missing the property name field. A schema can be
@@ -167,6 +184,63 @@ class IcingSearchEngine {
                                  bool ignore_errors_and_delete_documents =
                                      false) ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Specifies the schema to be applied on all Documents that are already
+  // stored as well as future documents.
+  //
+  // This operation sets the schema for the single database specified in
+  // `set_schema_request.database()`. If unset, the default empty
+  // database is assumed.
+  //
+  // A schema can be 'invalid' and/or 'incompatible'. These are two independent
+  // concepts.
+  // - An 'invalid' schema is one that is not constructed properly.
+  //   - For example, a PropertyConfigProto is missing the property name field.
+  //   - A schema can be 'invalid' even if there is no previously existing
+  //     schema.
+  // - An 'incompatible' schema is one that is incompatible with a previously
+  //   existing schema.
+  //   - If there is no previously existing schema, then a new schema cannot be
+  //     incompatible. An incompatible schema is one that invalidates
+  //     pre-existing data.
+  //   - For example, a previously OPTIONAL field is now REQUIRED in the new
+  //     schema, and pre-existing data is considered invalid against the new
+  //     schema now.
+  //
+  // Default behavior will not allow a new schema to be set if it is invalid or
+  // incompatible.
+  // - `set_schema_request.ignore_errors_and_delete_documents' can be set to
+  //   true to force set an incompatible schema.
+  //   - In that case, documents that are invalidated by the new schema would be
+  //     deleted from Icing.
+  //   - This cannot be used to force set an invalid schema.
+  //
+  // This schema is persisted to disk and used across multiple instances.
+  // So, callers should only have to call this if the schema changed.
+  // However, calling it multiple times with the same schema is a no-op.
+  //
+  // On some errors, Icing will keep using the older schema, but on
+  // INTERNAL_ERROR, it is undefined to continue using Icing.
+  //
+  // Returns:
+  // - OK on success
+  // - ALREADY_EXISTS if 'set_schema_request.schema' contains multiple
+  //     definitions of the same type or contains a type that has multiple
+  //     properties with the same name.
+  // - INVALID_ARGUMENT if 'set_schema_request.schema' is invalid, or if
+  //     `set_schema_request.database` does not match the database fields of
+  //     `set_schema_request.schema.types`.
+  // - FAILED_PRECONDITION if 'set_schema_request.schema' is incompatible, or
+  //     IcingSearchEngine has not been initialized yet.
+  // - INTERNAL_ERROR if Icing failed to store the new schema or upgrade
+  //     existing data based on the new schema. Using Icing beyond this error is
+  //     undefined and may cause crashes.
+  // - DATA_LOSS_ERROR if 'set_schema_request.schema' requires the index to be
+  //     rebuilt and an IO error leads to some documents being excluded from the
+  //     index. These documents will still be retrievable via Get, but won't
+  //     match queries.
+  SetSchemaResultProto SetSchema(SetSchemaRequestProto&& set_schema_request)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Get Icing's current copy of the schema.
   //
   // Returns:
@@ -201,6 +275,16 @@ class IcingSearchEngine {
   //     SchemaProto
   //   INTERNAL_ERROR on IO error
   GetSchemaTypeResultProto GetSchemaType(std::string_view schema_type)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Batch puts the documents into icing search engine so that they're stored
+  // and indexed. Documents are automatically written to disk, callers can also
+  // call PersistToDisk() to flush changes immediately.
+  //
+  // Returns: BatchPutResultProto with a list of PutResultProtos for each
+  // document, and a PersistToDiskResultProto if persist_type is set in the
+  // request.
+  BatchPutResultProto BatchPut(PutDocumentRequest&& put_document_request)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Puts the document into icing search engine so that it's stored and
@@ -238,6 +322,11 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on IO error
   GetResultProto Get(std::string_view name_space, std::string_view uri,
                      const GetResultSpecProto& result_spec);
+
+  // Finds and returns the documents identified by the given GetResultSpecProto.
+  // Returns:
+  //   A BatchGetResultProto with a list of GetResultProto.
+  BatchGetResultProto BatchGet(GetResultSpecProto&& get_result_spec);
 
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.
@@ -358,6 +447,11 @@ class IcingSearchEngine {
   //   ABORTED if failed to get results but existing data is not affected
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
+  SearchResultProto GetNextPage(GetNextPageRequestProto&& get_next_page_request)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // TODO: b/417644758 - Remove this method once all old callers are migrated to
+  // the new GetNextPage API. Internally, this should just be used in tests.
   SearchResultProto GetNextPage(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -366,50 +460,118 @@ class IcingSearchEngine {
   void InvalidateNextPageToken(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Handles expired documents.
+  // - Purges expired documents from the document store. Note: it also purges
+  //   documents that expire before
+  //   current_time_ms + options_.expired_document_purge_threshold_ms().
+  // - Propagates the deletion to their child documents.
+  // - Reschedules another (background) task to handle the next expired
+  //   document(s).
+  //
+  // This method is called by:
+  // - (Main) Icing's internal task scheduler.
+  // - In the last step of Initialize(), to purge documents that expire during
+  //   Icing was off. Note: Initialize() calls the locked version of this
+  //   method.
+  //
+  // Returns a HandleExpiredDocumentsResultProto with status:
+  // - OK with results on success
+  // - FAILED_PRECONDITION_ERROR IcingSearchEngine has not been initialized yet
+  // - INTERNAL_ERROR on any other errors
+  HandleExpiredDocumentsResultProto HandleExpiredDocuments()
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Gets or creates a file for write only purpose for the given blob handle.
-  // To mark the blob is completed written, commitBlob must be called. Once
-  // commitBlob is called, the blob is sealed and rewrite is not allowed.
+  // To mark the blob is completed written, CommitBlob must be called. Once
+  // CommitBlob is called, the blob is sealed and rewrite is not allowed.
+  //
+  // If Icing does not manage blob files, this method only creates necessary
+  // metadata for the blob but does not open or manage the file descriptor. The
+  // caller is responsible for opening, writing to, and closing the file using
+  // the returned file name.
+  //
+  // Otherwise, a file descriptor is returned, and it is the user's
+  // responsibility to close the file descriptor after writing is done and
+  // should not operate on the file descriptor after commit or remove it.
   //
   // Returns:
-  //   File descriptor on success
+  //   OK with results on success
   //   InvalidArgumentError on invalid blob handle
-  //   FailedPreconditionError on blob is already opened for write
-  //   AlreadyExistsError on blob is committed
-  //   INTERNAL_ERROR on IO error
-  BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle);
+  //   FailedPreconditionError if the blob is already opened for write
+  //   AlreadyExistsError if the blob is already committed
+  //   InternalError on IO error
+  BlobProto OpenWriteBlob(const PropertyProto::BlobHandleProto& blob_handle)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Removes a blob file and blob handle from the blob store.
   //
   // This will remove the blob on any state. No matter it's committed or not or
   // it has reference document links or not.
   //
+  // If Icing does not manage blob files, this method only removes the metadata
+  // entry from the blob store, but does not delete the actual blob file. The
+  // caller is responsible for deleting the blob file.
+  //
   // Returns:
+  //   OK with results on success
   //   InvalidArgumentError on invalid blob handle
-  //   NotFoundError on blob is not found
+  //   NotFoundError if the blob is not found
   //   InternalError on IO error
-  BlobProto RemoveBlob(const PropertyProto::BlobHandleProto& blob_handle);
+  BlobProto RemoveBlob(const PropertyProto::BlobHandleProto& blob_handle)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
-  // Gets or creates a file for read only purpose for the given blob handle.
-  // The blob must be committed by calling commitBlob otherwise it is not
+  // Gets a file for read only purpose for the given blob handle.
+  // The blob must be committed by calling CommitBlob otherwise it is not
   // accessible.
   //
-  // Returns:
-  //   File descriptor on success
-  //   InvalidArgumentError on invalid blob handle
-  //   NotFoundError on blob is not found or is not committed
-  BlobProto OpenReadBlob(const PropertyProto::BlobHandleProto& blob_handle);
-
-  // Commits the given blob, the blob is open to write via openWrite.
-  // Before the blob is committed, it is not visible to any reader via openRead.
-  // After the blob is committed, it is not allowed to rewrite or update the
-  // content.
+  // If Icing does not manage blob files, this method only returns the file name
+  // associated with the blob but does not open or manage the file descriptor.
+  // The caller is responsible for opening, reading from, and closing the file
+  // using the returned file name.
+  //
+  // Otherwise, a file descriptor is returned, and it is the user's
+  // responsibility to close the file descriptor after reading.
   //
   // Returns:
-  //   True on the blob is successfuly committed.
-  //   False on the blob is already committed.
-  //   InvalidArgumentError on invalid blob handle or digest is mismatch with
-  //     file content NotFoundError on blob is not found.
-  BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle);
+  //   OK with results on success
+  //   InvalidArgumentError on invalid blob handle
+  //   NotFoundError if the blob is not found or is not committed
+  BlobProto OpenReadBlob(const PropertyProto::BlobHandleProto& blob_handle)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Commits the given blob when writing of the blob via OpenWrite is complete.
+  // Before the blob is committed, it is not visible to any reader
+  // via OpenRead. After the blob is committed, it is not allowed to rewrite or
+  // update the content.
+  //
+  // If Icing does not manage blob files, this method marks the blob as
+  // committed in the metadata store. The caller is responsible for verifying
+  // the digest of the blob file.
+  //
+  // Returns:
+  //   OK on success
+  //   AlreadyExistsError if the blob is already committed
+  //   InvalidArgumentError on invalid blob handle or if the digest is mismatch
+  //     with file content
+  //   NotFoundError if the blob is not found
+  BlobProto CommitBlob(const PropertyProto::BlobHandleProto& blob_handle)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Gets all the blob info from the blob store.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto GetAllBlobInfos() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Puts the blob info protos from the blob proto to the blob info proto log
+  // file.
+  //
+  // Returns:
+  //   BlobProto with all the blob info on success
+  //   InternalError on IO error
+  BlobProto PutBlobInfos(const BlobProto& blob_info_protos)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
@@ -492,16 +654,24 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR if internal state is no longer consistent
   ResetResultProto Reset() ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Clears all data from Icing. Clients DO need to call Initialize again.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR if failed to delete underlying files
+  ResetResultProto ClearAndDestroy() ICING_LOCKS_EXCLUDED(mutex_);
+
   // Disallow copy and move.
   IcingSearchEngine(const IcingSearchEngine&) = delete;
   IcingSearchEngine& operator=(const IcingSearchEngine&) = delete;
 
  protected:
-  IcingSearchEngine(IcingSearchEngineOptions options,
-                    std::unique_ptr<const Filesystem> filesystem,
-                    std::unique_ptr<const IcingFilesystem> icing_filesystem,
-                    std::unique_ptr<Clock> clock,
-                    std::unique_ptr<const JniCache> jni_cache = nullptr);
+  explicit IcingSearchEngine(
+      IcingSearchEngineOptions options,
+      std::unique_ptr<const Filesystem> filesystem,
+      std::unique_ptr<const IcingFilesystem> icing_filesystem,
+      std::unique_ptr<Clock> clock,
+      std::unique_ptr<const JniCache> jni_cache = nullptr);
 
  private:
   const IcingSearchEngineOptions options_;
@@ -560,15 +730,49 @@ class IcingSearchEngine {
   // Storage for all hits of embedding contents from the document store.
   std::unique_ptr<EmbeddingIndex> embedding_index_ ICING_GUARDED_BY(mutex_);
 
+  // Simple task scheduler for background tasks. Currently, it is used for:
+  // - Handle (purge) expired documents.
+  //
+  // Note: after acquiring the global lock, checking task_scheduler_ is nullptr
+  //   or not before accessing it **is ESSENTIAL**. Consider an example:
+  // - Task scheduler thread: wakes up and ready to run HandleExpiredDocuments()
+  // - Main thread (which holds IcingSearchEngine object): destructs
+  //   IcingSearchEngine instance. IcingSearchEngine destructor destructs
+  //   task_scheduler_ and wait to join the task scheduler thread. At this
+  //   point, task_scheduler_ is nullptr.
+  // - Task scheduler thread: start to run HandleExpiredDocuments() and
+  //   reaches the point to reschedule the task.
+  //
+  // If task_scheduler_ is not checked, then the code will crash at runtime
+  // because task_scheduler_ is already set to nullptr.
+  std::unique_ptr<SimpleTaskScheduler> task_scheduler_ ICING_GUARDED_BY(mutex_);
+
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
   // Resets all members that are created during Initialize.
-  void ResetMembers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  //
+  // Note: this method DOES NOT reset task_scheduler_. task_scheduler_ should be
+  //   reset only if we want to destroy IcingSearchEngine, and in this case,
+  //   DestroyTaskScheduler should be called.
+  void ResetMembersLocked() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Resets all members that are created during Initialize, deletes all
   // underlying files and initializes a fresh index.
-  ResetResultProto ResetInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  ResetResultProto ResetLocked() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Resets all members and clears all data from Icing.
+  ResetResultProto ClearAndDestroyLocked()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Assumes mutex_ is already held.
+  PutResultProto PutLocked(DocumentProto&& document)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Assumes mutex_ is already held.
+  GetResultProto GetLocked(std::string_view name_space, std::string_view uri,
+    const GetResultSpecProto& result_spec)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Checks for the existence of the init marker file. If the failed init count
   // exceeds kMaxUnsuccessfulInitAttempts, all data is deleted and the index is
@@ -586,13 +790,22 @@ class IcingSearchEngine {
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
-  libtextclassifier3::Status InternalPersistToDisk(
-      PersistType::Code persist_type) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  //
+  // @param persist_type: The type of persistence guarantee that PersistToDisk
+  // should provide.
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
+  libtextclassifier3::Status PersistToDiskLocked(
+      PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public
   // methods calling each other may cause deadlock issues.
-  InitializeResultProto InternalInitialize()
+  InitializeResultProto InitializeLocked()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to the actual work to handle expired documents.
+  HandleExpiredDocumentsResultProto HandleExpiredDocumentsLocked()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to initialize member variables.
@@ -640,8 +853,8 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   libtextclassifier3::Status InitializeBlobStore(
-      int32_t orphan_blob_time_to_live_ms, int32_t compression_level)
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+      int32_t orphan_blob_time_to_live_ms, int32_t compression_level,
+      int32_t compression_mem_level) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer
   // index, and qualified id join index instances.
@@ -679,10 +892,23 @@ class IcingSearchEngine {
 
   // Helper method for the actual work to Search. We need this separate
   // method to manage locking for Search.
-  SearchResultProto InternalSearch(const SearchSpecProto& search_spec,
+  SearchResultProto SearchLocked(const SearchSpecProto& search_spec,
                                    const ScoringSpecProto& scoring_spec,
                                    const ResultSpecProto& result_spec)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to prepare a document for indexing. This includes
+  // tokenization and dependency evaluation.
+  //
+  // TODO(b/397769319): change the input and output to a vector of documents to
+  //   support batch indexing.
+  //
+  // Returns:
+  //   On success, TokenizedDocument.
+  //   Any errors from tokenization or dependency evaluation.
+  libtextclassifier3::StatusOr<TokenizedDocument> PrepareDocumentsForIndexing(
+      DocumentProto&& document, int64_t current_time_ms)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Processes query and scores according to the specs. It is a helper function
   // (called by Search) to process and score normal query and the nested child
@@ -694,15 +920,22 @@ class IcingSearchEngine {
   //   Any other errors when processing the query or scoring
   struct QueryScoringResults {
     libtextclassifier3::Status status;
+    // This will be used to retrieve snippeting match info for the term query.
     SectionRestrictQueryTermsMap query_terms;
+    // Contains embedding match infos (scores and section info) from embedding
+    // based queries. This will be used to retrieve snippeting match info for
+    // the embedding query.
+    EmbeddingQueryResults embedding_query_results;
     std::vector<ScoredDocumentHit> scored_document_hits;
 
     explicit QueryScoringResults(
         libtextclassifier3::Status status_in,
         SectionRestrictQueryTermsMap&& query_terms_in,
+        EmbeddingQueryResults&& embedding_query_results_in,
         std::vector<ScoredDocumentHit>&& scored_document_hits_in)
         : status(std::move(status_in)),
           query_terms(std::move(query_terms_in)),
+          embedding_query_results(std::move(embedding_query_results_in)),
           scored_document_hits(std::move(scored_document_hits_in)) {}
   };
   QueryScoringResults ProcessQueryAndScore(
@@ -716,20 +949,21 @@ class IcingSearchEngine {
   // joinable properties with delete propagation enabled.
   //
   // Returns:
-  //   Number of propagated documents deleted on success
+  //   A list of metadata of the propagated documents deleted on success
   //   INTERNAL_ERROR on any I/O errors
-  libtextclassifier3::StatusOr<int> PropagateDelete(
-      const std::unordered_set<DocumentId>& deleted_document_ids,
-      int64_t current_time_ms) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+  PropagateDelete(const std::unordered_set<DocumentId>& deleted_document_ids,
+                  int64_t current_time_ms)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Discards derived data that requires rebuild based on rebuild_result.
+  // Discards derived data that requires rebuild based on rebuild_info.
   //
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION_ERROR if those instances are valid (non nullptr)
   //   INTERNAL_ERROR on any I/O errors
   libtextclassifier3::Status DiscardDerivedFiles(
-      const version_util::DerivedFilesRebuildResult& rebuild_result)
+      const derived_file_util::DerivedFilesRebuildInfo& rebuild_info)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Repopulates derived data off our ground truths.
@@ -764,30 +998,6 @@ class IcingSearchEngine {
                         OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to restore missing document data in index_, integer_index_,
-  // and qualified_id_join_index_. All documents will be reindexed. This does
-  // not clear the index, so it is recommended to call ClearAllIndices,
-  // ClearSearchIndices, or ClearJoinIndices first if needed.
-  //
-  // Returns:
-  //   On success, OK and a bool indicating whether or not restoration was
-  //     needed.
-  //   DATA_LOSS, if an error during index merging caused us to lose indexed
-  //     data in the main index. Despite the data loss, this is still considered
-  //     a successful run and needed_restoration will be set to true.
-  //   RESOURCE_EXHAUSTED if the index fills up before finishing indexing
-  //   NOT_FOUND if some Document's schema type is not in the SchemaStore
-  //   INTERNAL_ERROR on any IO errors
-  struct IndexRestorationResult {
-    libtextclassifier3::Status status;
-    bool index_needed_restoration;
-    bool integer_index_needed_restoration;
-    bool qualified_id_join_index_needed_restoration;
-    bool embedding_index_needed_restoration;
-  };
-  IndexRestorationResult RestoreIndexIfNeeded()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
   // If we lost the schema during a previous failure, it may "look" the same as
   // not having a schema set before: we don't have a schema proto file. So do
   // some extra checks to differentiate between having-lost the schema, and
@@ -806,9 +1016,26 @@ class IcingSearchEngine {
       std::vector<std::unique_ptr<DataIndexingHandler>>>
   CreateDataIndexingHandlers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to discard parts of (term, integer, qualified id join)
-  // indices if they contain data for document ids greater than
+  // Destroys the task scheduler.
+  //
+  // Task scheduler should be destroyed ONLY IF we want to destroy
+  // IcingSearchEngine (e.g. destructor, ClearAndDestroy API, etc).
+  void DestroyTaskScheduler() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Helper method to discard parts of (term, integer, qualified id join,
+  // embedding) indices if they contain data for document ids greater than
   // last_stored_document_id.
+  //
+  // Also notify the caller whether additional restoration action (i.e. replay
+  // documents from document store and reindex them) is needed for each index.
+  // There are several possibilities for restoration:
+  // - This function detects last_added_document_id is ahead of
+  //   last_stored_document_id, so truncate the index and notify the caller to
+  //   restore the index.
+  // - The upper caller (e.g. InitializeMembers) has already discarded the
+  //   entire index before entering this function, so no truncation was done in
+  //   this function. However, since last_added_document_id is behind
+  //   last_stored_document_id now, restoration action must be taken.
   //
   // REQUIRES: last_stored_document_id is valid (!= kInvalidDocumentId). Note:
   //   if we want to truncate everything in the index, then please call
@@ -816,8 +1043,8 @@ class IcingSearchEngine {
   //
   // Returns:
   //   On success, a DocumentId indicating the first document to start for
-  //     reindexing and 2 bool flags indicating whether term or integer index
-  //     needs restoration.
+  //     reindexing and bool flags indicating whether each index needs
+  //     restoration.
   //   INTERNAL on any I/O errors
   struct TruncateIndexResult {
     DocumentId first_document_to_reindex;
@@ -844,6 +1071,62 @@ class IcingSearchEngine {
       DocumentId last_stored_document_id)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Helper method to restore missing document data in index_, integer_index_,
+  // and qualified_id_join_index_. All documents will be reindexed. This does
+  // not clear the index, so it is recommended to call ClearAllIndices,
+  // ClearSearchIndices, or ClearJoinIndices first if needed.
+  //
+  // Returns:
+  //   IndexRestorationResult which contains the status of the restoration,
+  //   number of failed reindexed documents, and flags indicating whether each
+  //   index has been restored:
+  //   - True: the corresponding index was restored successfully only if the
+  //     status is OK or DATA_LOSS. Otherwise, the corresponding index was
+  //     attempted to be restored but failed or interrupted by other errors.
+  //   - False: the data in the index was consistent so no restoration action
+  //     was taken on it.
+  //
+  //   The following are the possible status codes:
+  //   - On success, OK.
+  //   - DATA_LOSS, if an error during index merging caused us to lose indexed
+  //     data in any index. Despite the data loss, this is still considered a
+  //     successful run and the corresponding boolean flag will be set to true
+  //     for the index that was restored.
+  //   - RESOURCE_EXHAUSTED if the index fills up before finishing indexing
+  //   - NOT_FOUND if some Document's schema type is not in the SchemaStore
+  //   - INTERNAL_ERROR on any IO errors
+  struct IndexRestorationResult {
+    libtextclassifier3::Status status;
+    int num_failed_reindexed_documents;
+    bool has_index_restored;
+    bool has_integer_index_restored;
+    bool has_qualified_id_join_index_restored;
+    bool has_embedding_index_restored;
+
+    explicit IndexRestorationResult(libtextclassifier3::Status status_in)
+        : status(std::move(status_in)),
+          num_failed_reindexed_documents(0),
+          has_index_restored(false),
+          has_integer_index_restored(false),
+          has_qualified_id_join_index_restored(false),
+          has_embedding_index_restored(false) {}
+
+    explicit IndexRestorationResult(libtextclassifier3::Status status_in,
+                                    int num_failed_reindexed_documents_in,
+                                    const TruncateIndexResult& truncate_result)
+        : status(std::move(status_in)),
+          num_failed_reindexed_documents(num_failed_reindexed_documents_in),
+          has_index_restored(truncate_result.index_needed_restoration),
+          has_integer_index_restored(
+              truncate_result.integer_index_needed_restoration),
+          has_qualified_id_join_index_restored(
+              truncate_result.qualified_id_join_index_needed_restoration),
+          has_embedding_index_restored(
+              truncate_result.embedding_index_needed_restoration) {}
+  };
+  IndexRestorationResult RestoreIndexIfNeeded()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Helper method to discard search (term, integer) indices.
   //
   // Returns:
@@ -866,6 +1149,11 @@ class IcingSearchEngine {
   //   OK on success
   //   INTERNAL_ERROR on any I/O errors
   libtextclassifier3::Status ClearAllIndices()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to create a lambda function for handling expired documents
+  // task. This is used to schedule the task with the task scheduler.
+  std::function<void()> CreateHandleExpiredDocumentsTask()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 
