@@ -219,6 +219,17 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   }
 
   @Override
+  public @NonNull BlobProto getAllBlobInfos() {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(icingSearchEngineImpl.getAllBlobInfos());
+  }
+
+  @Override
+  public @NonNull BlobProto putBlobInfos(@NonNull BlobProto blobProto) {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(
+        icingSearchEngineImpl.putBlobInfos(blobProto.toByteArray()));
+  }
+
+  @Override
   public @NonNull DeleteResultProto delete(@NonNull String namespace, @NonNull String uri) {
     return IcingSearchEngineUtils.byteArrayToDeleteResultProto(
         icingSearchEngineImpl.delete(namespace, uri));

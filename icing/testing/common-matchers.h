@@ -93,27 +93,47 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
 }
 
 // Used to match a DocHitInfoIterator::CallStats
-MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
+MATCHER_P6(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
            num_leaf_advance_calls_main_index,
            num_leaf_advance_calls_integer_index,
-           num_leaf_advance_calls_no_index, num_blocks_inspected, "") {
+           num_leaf_advance_calls_no_index, num_blocks_inspected,
+           embedding_stats, "") {
   const DocHitInfoIterator::CallStats& actual = arg;
+  auto embedding_stats_to_string =
+      [](const DocHitInfoIterator::CallStats::EmbeddingStats& stats) {
+        return absl_ports::StrCat(
+            "{num_unquantized_embeddings_scored=",
+            std::to_string(stats.num_unquantized_embeddings_scored),
+            ", num_quantized_embeddings_scored=",
+            std::to_string(stats.num_quantized_embeddings_scored),
+            ", unquantized_shards_read=[",
+            absl_ports::StrJoin(stats.unquantized_shards_read, ",",
+                                absl_ports::NumberFormatter()),
+            "], quantized_shards_read=[",
+            absl_ports::StrJoin(stats.quantized_shards_read, ",",
+                                absl_ports::NumberFormatter()),
+            "], num_embedding_bytes_read=",
+            std::to_string(stats.num_embedding_bytes_read), "}");
+      };
   *result_listener << IcingStringUtil::StringPrintf(
       "(actual is {num_leaf_advance_calls_lite_index=%d, "
       "num_leaf_advance_calls_main_index=%d, "
       "num_leaf_advance_calls_integer_index=%d, "
-      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}, but "
+      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d, "
+      "embedding_stats=%s}, but "
       "expected was {num_leaf_advance_calls_lite_index=%d, "
       "num_leaf_advance_calls_main_index=%d, "
       "num_leaf_advance_calls_integer_index=%d, "
-      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}.)",
+      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d, "
+      "embedding_stats=%s}.)",
       actual.num_leaf_advance_calls_lite_index,
       actual.num_leaf_advance_calls_main_index,
       actual.num_leaf_advance_calls_integer_index,
       actual.num_leaf_advance_calls_no_index, actual.num_blocks_inspected,
+      embedding_stats_to_string(actual.embedding_stats).c_str(),
       num_leaf_advance_calls_lite_index, num_leaf_advance_calls_main_index,
       num_leaf_advance_calls_integer_index, num_leaf_advance_calls_no_index,
-      num_blocks_inspected);
+      num_blocks_inspected, embedding_stats_to_string(embedding_stats).c_str());
   return actual.num_leaf_advance_calls_lite_index ==
              num_leaf_advance_calls_lite_index &&
          actual.num_leaf_advance_calls_main_index ==
@@ -122,7 +142,8 @@ MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
              num_leaf_advance_calls_integer_index &&
          actual.num_leaf_advance_calls_no_index ==
              num_leaf_advance_calls_no_index &&
-         actual.num_blocks_inspected == num_blocks_inspected;
+         actual.num_blocks_inspected == num_blocks_inspected &&
+         actual.embedding_stats == embedding_stats;
 }
 
 // Used to match a DocumentAssociatedScoreData
@@ -137,6 +158,11 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
          arg.length_in_tokens() == length_in_tokens &&
          expected_has_valid_scorable_property_cache_index ==
              has_valid_scorable_property_cache_index;
+}
+
+MATCHER_P3(EqualsDocumentMetadata, schema_type_name, name_space, uri, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space && arg.uri == uri;
 }
 
 // Used to match a ScorablePropertyManager::ScorablePropertyInfo

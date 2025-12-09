@@ -242,6 +242,89 @@ TEST_P(IcingSearchEngineBlobTest, WriteAndReadBlob) {
   }
 }
 
+TEST_P(IcingSearchEngineBlobTest, GetAllBlobInfo) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
+
+  BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(GetScopedFdFromBlobProto(write_blob_proto));
+    ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  }
+
+  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
+
+  BlobProto blob_proto = icing.GetAllBlobInfos();
+  EXPECT_THAT(blob_proto.status(), ProtoIsOk());
+  EXPECT_THAT(blob_proto.blob_info_protos_size(), Eq(1));
+  EXPECT_THAT(blob_proto.blob_info_protos(0).blob_handle().namespace_(),
+              Eq("namespaceA"));
+}
+
+TEST_P(IcingSearchEngineBlobTest, PutBlobInfos) {
+  bool manage_blob_files = GetParam();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  PropertyProto::BlobHandleProto blob_handle;
+  std::vector<unsigned char> data = GenerateRandomBytes(24);
+  std::array<uint8_t, 32> digest = CalculateDigest(data);
+  blob_handle.set_digest((void*)digest.data(), digest.size());
+  blob_handle.set_namespace_("namespaceA");
+
+  BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
+  ASSERT_THAT(write_blob_proto.status(), ProtoIsOk());
+  {
+    ScopedFd write_fd(GetScopedFdFromBlobProto(write_blob_proto));
+    ASSERT_TRUE(filesystem()->Write(write_fd.get(), data.data(), data.size()));
+  }
+
+  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
+  ASSERT_THAT(commit_blob_proto.status(), ProtoIsOk());
+
+  BlobProto blob_proto = icing.GetAllBlobInfos();
+  EXPECT_THAT(blob_proto.status(), ProtoIsOk());
+  EXPECT_THAT(blob_proto.blob_info_protos_size(), Eq(1));
+  EXPECT_THAT(blob_proto.blob_info_protos(0).blob_handle().namespace_(),
+              Eq("namespaceA"));
+
+  // Delete the blob info proto log file.
+  filesystem()->DeleteFile(
+      absl_ports::StrCat(GetTestBlobDir(), "/blob_info_proto_file").c_str());
+
+  if (manage_blob_files) {
+    ASSERT_THAT(icing.PutBlobInfos(std::move(blob_proto)).status(),
+                ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  } else {
+    // Put the blob info proto log file.
+    BlobProto result_blob_proto = icing.PutBlobInfos(std::move(blob_proto));
+    EXPECT_THAT(result_blob_proto.status(), ProtoIsOk());
+
+    BlobProto read_blob_proto = icing.OpenReadBlob(blob_handle);
+    ASSERT_THAT(read_blob_proto.status(), ProtoIsOk());
+    {
+      ScopedFd read_fd(GetScopedFdFromBlobProto(read_blob_proto));
+
+      uint64_t size = filesystem()->GetFileSize(*read_fd);
+      std::unique_ptr<unsigned char[]> buf =
+          std::make_unique<unsigned char[]>(size);
+      EXPECT_THAT(filesystem()->Read(read_fd.get(), buf.get(), size), Eq(size));
+      std::string expected_data = std::string(data.begin(), data.end());
+      std::string actual_data = std::string(buf.get(), buf.get() + size);
+      EXPECT_EQ(expected_data, actual_data);
+    }
+  }
+}
+
 TEST_P(IcingSearchEngineBlobTest, RemovePendingBlob) {
   bool manage_blob_files = GetParam();
 
