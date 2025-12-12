@@ -1083,6 +1083,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
                        << result.status().message();
       return absl_ports::InternalError(result.status().message());
     }
+    initialize_stats->set_next_expiration_timestamp_ms(
+        result.next_expiration_timestamp_ms());
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
@@ -1772,10 +1774,13 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
     return batch_put_result_proto;
   }
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
   for (DocumentProto& document_proto :
        *(put_document_request.mutable_documents())) {
     batch_put_result_proto.mutable_put_result_protos()->Add(
-        PutLocked(std::move(document_proto)));  // Call the locked version
+        PutLocked(std::move(document_proto),
+                  current_time_ms));  // Call the locked version
   }
 
   if (put_document_request.persist_type() != PersistType::UNKNOWN) {
@@ -1816,14 +1821,18 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
         clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
-  PutResultProto result_proto = PutLocked(std::move(document));
+
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
+  PutResultProto result_proto = PutLocked(std::move(document), current_time_ms);
   result_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
 // PutLocked to be called when mutex_ is already held.
-PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
+PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document,
+                                            int64_t current_time_ms) {
   PutResultProto result_proto;
   result_proto.set_uri(document.uri());
 
@@ -1838,8 +1847,6 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   // the schema file to validate, and the schema could be changed in
   // SetSchema() which is protected by the same mutex.
   // NO LOCK ACQUISITION HERE - mutex_ is already held.
-
-  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
 
   auto tokenized_document_or =
       PrepareDocumentsForIndexing(std::move(document), current_time_ms);
@@ -1887,6 +1894,7 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, old_document_id, put_document_stats);
   if (index_status.ok()) {
+    result_proto.set_document_expiration_timestamp_ms(expiration_timestamp_ms);
     result_proto.set_vm_binder_transaction_latency_start_time_ms(
         clock_->GetSystemTimeMilliseconds());
     if (options_.enable_delete_propagation_from() &&
@@ -3691,10 +3699,13 @@ IcingSearchEngine::HandleExpiredDocumentsLocked() {
   std::vector<DocumentStore::DocumentMetadata> propagated_deleted_docs =
       std::move(propagated_deleted_docs_or).ValueOrDie();
 
+  // Get the next expiration timestamp.
+  int64_t next_expired_doc_ts_ms =
+      document_store_->GetNextExpiredDocumentTimestampMs(current_time_ms);
+  result_proto.set_next_expiration_timestamp_ms(next_expired_doc_ts_ms);
+
   // Step 3: reschedule the task to handle next expired document(s).
   if (task_scheduler_ != nullptr) {
-    int64_t next_expired_doc_ts_ms =
-        document_store_->GetNextExpiredDocumentTimestampMs(current_time_ms);
     if (next_expired_doc_ts_ms < 0) {
       // No more expired documents. Cancel the scheduled task.
       task_scheduler_->Cancel(kHandleExpiredDocumentsTaskId);

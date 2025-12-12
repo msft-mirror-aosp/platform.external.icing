@@ -1676,6 +1676,41 @@ TEST_F(
   EXPECT_THAT(icing.Put(email4).status(), ProtoIsOk());
 }
 
+TEST_F(IcingSearchEnginePutTest,
+       PutDocument_shouldSetExpirationTimestampInPutResultProto) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "message/1")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(10)
+                                .SetTtlMs(10000)  // Expire at 10010 ms.
+                                .AddStringProperty("body", "message body")
+                                .Build();
+  PutResultProto put_result_proto1 = icing.Put(document1);
+  ASSERT_THAT(put_result_proto1.status(), ProtoIsOk());
+  EXPECT_THAT(put_result_proto1.document_expiration_timestamp_ms(), Eq(10010));
+
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "message/2")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(10)
+                                .SetTtlMs(0)  // Never expire.
+                                .AddStringProperty("body", "message body")
+                                .Build();
+  PutResultProto put_result_google::protobuf = icing.Put(document2);
+  ASSERT_THAT(put_result_google::protobuf.status(), ProtoIsOk());
+  EXPECT_THAT(put_result_google::protobuf.document_expiration_timestamp_ms(),
+              Eq(std::numeric_limits<int64_t>::max()));
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing

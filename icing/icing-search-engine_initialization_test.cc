@@ -5070,6 +5070,10 @@ TEST_F(
                               std::move(fake_clock), GetTestJniCache());
   InitializeResultProto initialize_result = icing.Initialize();
   EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  // Next expiration timestamp should be set correctly.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().next_expiration_timestamp_ms(),
+      Eq(21010));
 
   // Sanity check: person2 and message2 are still alive.
   GetResultProto expected_get_result_proto1;
@@ -5087,7 +5091,7 @@ TEST_F(
               EqualsProto(expected_get_result_google::protobuf));
 
   // Adjust the clock to 21010 ms and sleep for 1010 ms. The purging expiration
-  // task should execute and purge person2 and email2.
+  // task should execute and purge person2 and message2.
   // - At t = 21010 ms, person2 is expired, but DocumentFilterData has already
   //   filtered it out, so we're unsure whether it is purged or not.
   // - But message2 never expires and DocumentFilterData doesn't filter it out.
@@ -5113,6 +5117,126 @@ TEST_F(
   EXPECT_THAT(icing.Get("namespace", "message/2",
                         GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_proto4));
+}
+
+TEST_F(
+    IcingSearchEngineInitializationTest,
+    Initialize_taskSchedulerDisabled_shouldPurgeExpiredDocumentsButNoRescheduling) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("body")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person1 = DocumentBuilder()
+                              .SetKey("namespace", "person1")
+                              .SetSchema("Person")
+                              .AddStringProperty("name", "person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(10000)  // Expire at 10010 ms.
+                              .Build();
+  DocumentProto person2 = DocumentBuilder()
+                              .SetKey("namespace", "person2")
+                              .SetSchema("Person")
+                              .AddStringProperty("name", "person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(21000)  // Expire at 21010 ms.
+                              .Build();
+  DocumentProto message1 = DocumentBuilder()
+                               .SetKey("namespace", "message/1")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddStringProperty("sender", "namespace#person1")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(0)  // Never expire.
+                               .Build();
+  DocumentProto message2 = DocumentBuilder()
+                               .SetKey("namespace", "message/2")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddStringProperty("sender", "namespace#person2")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(0)  // Never expire.
+                               .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(false);
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  {
+    // Initialize Icing and put all documents. Destruct Icing.
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message2).status(), ProtoIsOk());
+  }
+
+  // Initialize Icing again with a fake clock and t = 20000 ms.
+  // - Initialization should purge person1 (since it expired at t = 10010 ms)
+  //   and apply delete propagation to message1.
+  // - Since the task scheduler is disabled, it should NOT schedule the puring
+  //   expired documents task for the next expiration event.
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  fake_clock->SetSystemTimeMilliseconds(20000);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  // Next expiration timestamp should be set correctly.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().next_expiration_timestamp_ms(),
+      Eq(21010));
+
+  // Sanity check: person2 and message2 are still alive.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto1.mutable_document() = person2;
+  EXPECT_THAT(
+      icing.Get("namespace", "person2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = message2;
+  EXPECT_THAT(icing.Get("namespace", "message/2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
+
+  // Adjust the clock to 21010 ms and sleep for 1010 ms. message2 should still
+  // be present.
+  fake_clock_ptr->SetSystemTimeMilliseconds(21010);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1010));
+  EXPECT_THAT(icing.Get("namespace", "message/2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,

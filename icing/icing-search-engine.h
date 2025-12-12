@@ -770,7 +770,7 @@ class IcingSearchEngine {
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Assumes mutex_ is already held.
-  PutResultProto PutLocked(DocumentProto&& document)
+  PutResultProto PutLocked(DocumentProto&& document, int64_t current_time_ms)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Assumes mutex_ is already held.
