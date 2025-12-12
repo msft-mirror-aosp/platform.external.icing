@@ -511,7 +511,9 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_schema_type_id_optimization(),
                      options_.enable_optimize_improvements(),
                      options_.expired_document_purge_threshold_ms(),
-                     options_.enable_non_existent_qualified_id_join()),
+                     options_.enable_non_existent_qualified_id_join(),
+                     options_.enable_skip_set_schema_type_equality_check(),
+                     options_.enable_embed_query_optimization()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1051,24 +1053,26 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     }
   }
 
+  if (options_.enable_background_task_scheduler() &&
+      task_scheduler_ == nullptr) {
+    // Initialize the task scheduler.
+    //
+    // Note: InitializeMembers may be called by ResetLocked() when put API
+    //   fails. In that case, we can still use the existing task_scheduler_
+    //   and no need to re-initialize it.
+    task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
+  }
+
   if (status.ok()) {
     status = index_init_status;
   }
 
-  // - Initialize the task scheduler for purging expired documents.
-  // - Since documents may expire when Icing is off, we have to purge them in
-  //   the last step of initialization.
+  // Call HandleExpiredDocumentsLocked() to handle documents that expire during
+  // Icing was off. This function will reschedule another task with the next
+  // expiration timestamp if task_scheduler_ is not null (i.e.
+  // options_.enable_background_task_scheduler() is true).
   if ((status.ok() || absl_ports::IsDataLoss(status)) &&
       options_.enable_delete_propagation_from()) {
-    if (task_scheduler_ == nullptr) {
-      // Initialize the task scheduler.
-      //
-      // Note: InitializeMembers may be called by ResetLocked() when put API
-      //   fails. In that case, we can still use the existing task_scheduler_
-      //   and no need to re-initialize it.
-      task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
-    }
-
     // Call HandleExpiredDocumentsLocked() to handle documents that expire
     // during Icing was off. This function will reschedule another task with the
     // next expiration timestamp and activate the task.
@@ -2824,6 +2828,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   TransformStatus(doc_store_optimize_result_status, result_status);
   result_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
+  ICING_LOG(INFO) << "Finished optimizing icing storage";
   return result_proto;
 }
 

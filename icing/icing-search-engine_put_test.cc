@@ -717,6 +717,104 @@ TEST_F(IcingSearchEnginePutTest, DocumentCompressionThreshold) {
             document_log_size_part_compression);
 }
 
+TEST_F(
+    IcingSearchEnginePutTest,
+    PutDocument_taskSchedulerDisabled_shouldNotReschedulePurgingExpirationTask) {
+  // This test verifies that when enable_delete_propagation_from is true but
+  // enable_background_task_scheduler is false, then:
+  // - No background tasks are scheduled.
+  // - Since task_scheduler_ is null, APIs attempt to (re)schedule a task should
+  //   check the nullness of task_scheduler_ before using it.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(1000)  // Expire at 1010 ms.
+                             .AddStringProperty("name", "Alice")
+                             .Build();
+  DocumentProto email = DocumentBuilder()
+                            .SetKey("namespace", "email")
+                            .SetSchema("Email")
+                            .SetCreationTimestampMs(10)
+                            .SetTtlMs(0)  // Never expire.
+                            .AddStringProperty("subject", "test")
+                            .AddStringProperty("sender", "namespace#person")
+                            .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(false);
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  // Initialize Icing with a fake clock and t = 10 ms.
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  fake_clock->SetSystemTimeMilliseconds(10);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Put person and email. Since enable_background_task_scheduler is false,
+  // there should be no background tasks scheduled.
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Sanity check that person and email are present.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto1.mutable_document() = person;
+  EXPECT_THAT(
+      icing.Get("namespace", "person", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = email;
+  EXPECT_THAT(
+      icing.Get("namespace", "email", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  // Adjust the clock to 1010 ms and sleep for 1010 ms. Email document should
+  // still be present since no background tasks were and therefore, expiration
+  // propagation and purging did not run for the child document.
+  fake_clock_ptr->SetSystemTimeMilliseconds(1010);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1010));
+
+  GetResultProto expected_get_result_proto4;
+  expected_get_result_proto4.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto4.mutable_document() = email;
+  EXPECT_THAT(
+      icing.Get("namespace", "email", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto4));
+}
+
 TEST_F(IcingSearchEnginePutTest,
        PutDocument_shouldReschedulePurgingExpirationTaskForNewExpTs) {
   SchemaProto schema =
@@ -759,6 +857,7 @@ TEST_F(IcingSearchEnginePutTest,
                             .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(true);
   options.set_enable_qualified_id_join_index_v3(true);
   options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
@@ -881,6 +980,7 @@ TEST_F(IcingSearchEnginePutTest,
                              .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(true);
   options.set_enable_qualified_id_join_index_v3(true);
   options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
@@ -1013,6 +1113,7 @@ TEST_F(IcingSearchEnginePutTest,
                              .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(true);
   options.set_enable_qualified_id_join_index_v3(true);
   options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);

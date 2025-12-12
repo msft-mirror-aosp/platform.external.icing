@@ -1511,7 +1511,9 @@ TEST_P(DocumentStoreTest,
       /*enable_schema_type_id_optimization=*/true,
       /*enable_optimize_improvements=*/true,
       /*expired_document_purge_threshold_ms=*/1000,  // 1 second
-      /*enable_non_existent_qualified_id_join=*/true);
+      /*enable_non_existent_qualified_id_join=*/true,
+      /*enable_skip_set_schema_type_equality_check=*/true,
+      /*enable_embed_query_optimization=*/true);
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(

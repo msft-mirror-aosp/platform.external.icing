@@ -4980,8 +4980,9 @@ TEST_F(IcingSearchEngineInitializationTest,
               EqualsProto(expected_get_result_google::protobuf));
 }
 
-TEST_F(IcingSearchEngineInitializationTest,
-       InitializeShouldSchedulePurgingExpiredDocumentsTask) {
+TEST_F(
+    IcingSearchEngineInitializationTest,
+    Initialize_taskSchedulerEnabled_shouldSchedulePurgingExpiredDocumentsTask) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -5037,6 +5038,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(true);
   options.set_enable_qualified_id_join_index_v3(true);
   options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);

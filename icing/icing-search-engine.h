@@ -469,7 +469,8 @@ class IcingSearchEngine {
   //   document(s).
   //
   // This method is called by:
-  // - (Main) Icing's internal task scheduler.
+  // - (Icing lib direct client only) Icing's internal task scheduler.
+  // - AppSearch task scheduler.
   // - In the last step of Initialize(), to purge documents that expire during
   //   Icing was off. Note: Initialize() calls the locked version of this
   //   method.
@@ -734,17 +735,20 @@ class IcingSearchEngine {
   // - Handle (purge) expired documents.
   //
   // Note: after acquiring the global lock, checking task_scheduler_ is nullptr
-  //   or not before accessing it **is ESSENTIAL**. Consider an example:
-  // - Task scheduler thread: wakes up and ready to run HandleExpiredDocuments()
-  // - Main thread (which holds IcingSearchEngine object): destructs
-  //   IcingSearchEngine instance. IcingSearchEngine destructor destructs
-  //   task_scheduler_ and wait to join the task scheduler thread. At this
-  //   point, task_scheduler_ is nullptr.
-  // - Task scheduler thread: start to run HandleExpiredDocuments() and
-  //   reaches the point to reschedule the task.
-  //
-  // If task_scheduler_ is not checked, then the code will crash at runtime
-  // because task_scheduler_ is already set to nullptr.
+  //   or not before accessing it **is ESSENTIAL**.
+  // - task_scheduler_ may be always nullptr if
+  //   options_.enable_background_task_scheduler() is false.
+  // - Race condition during destruction. Consider an example:
+  //   - Task scheduler thread: wakes up and ready to run
+  //     HandleExpiredDocuments()
+  //   - Main thread (which holds IcingSearchEngine object): destructs
+  //     IcingSearchEngine instance. IcingSearchEngine destructor destructs
+  //     task_scheduler_ via DestroyTaskScheduler() and wait to join the task
+  //     scheduler thread. At this point, task_scheduler_ is nullptr.
+  //   - Task scheduler thread: start to run HandleExpiredDocuments() and
+  //     reaches the point to reschedule the task.
+  //   - If task_scheduler_ is not checked, then the code will crash at runtime
+  //     because task_scheduler_ is already set to nullptr.
   std::unique_ptr<SimpleTaskScheduler> task_scheduler_ ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references

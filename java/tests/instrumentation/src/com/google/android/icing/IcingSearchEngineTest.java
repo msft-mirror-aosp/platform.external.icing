@@ -36,8 +36,10 @@ import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.JoinableConfig;
 import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
@@ -68,6 +70,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
+import com.google.common.collect.ImmutableList;
 import com.google.android.icing.protobuf.ByteString;
 import java.io.File;
 import java.io.FileDescriptor;
@@ -741,7 +744,128 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
-  @Ignore // b/350530146
+  // TODO(b/384947619): Re-enable this test once the JNI API is pre-registered and dropped back into
+  // g3.
+  @Ignore
+  @Test
+  public void testHandleExpiredDocuments() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBackgroundTaskScheduler(false)
+            .setEnableQualifiedIdJoinIndexV3(true)
+            .setEnableSoftIndexRestoration(true)
+            .setEnableDeletePropagationFrom(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    SchemaTypeConfigProto personTypeConfig =
+        SchemaTypeConfigProto.newBuilder()
+            .setSchemaType("Person")
+            .addProperties(
+                PropertyConfigProto.newBuilder()
+                    .setPropertyName("name")
+                    .setDataType(PropertyConfigProto.DataType.Code.STRING)
+                    .setCardinality(PropertyConfigProto.Cardinality.Code.OPTIONAL)
+                    .setStringIndexingConfig(
+                        StringIndexingConfig.newBuilder()
+                            .setTokenizerType(TokenizerType.Code.PLAIN)
+                            .setTermMatchType(TermMatchType.Code.PREFIX)))
+            .build();
+    SchemaTypeConfigProto labelTypeConfig =
+        SchemaTypeConfigProto.newBuilder()
+            .setSchemaType("Label")
+            .addProperties(
+                PropertyConfigProto.newBuilder()
+                    .setPropertyName("title")
+                    .setDataType(PropertyConfigProto.DataType.Code.STRING)
+                    .setCardinality(PropertyConfigProto.Cardinality.Code.OPTIONAL)
+                    .setStringIndexingConfig(
+                        StringIndexingConfig.newBuilder()
+                            .setTokenizerType(TokenizerType.Code.PLAIN)
+                            .setTermMatchType(TermMatchType.Code.PREFIX)))
+            .addProperties(
+                PropertyConfigProto.newBuilder()
+                    .setPropertyName("target")
+                    .setDataType(PropertyConfigProto.DataType.Code.STRING)
+                    .setCardinality(PropertyConfigProto.Cardinality.Code.OPTIONAL)
+                    .setJoinableConfig(
+                        JoinableConfig.newBuilder()
+                            .setValueType(JoinableConfig.ValueType.Code.QUALIFIED_ID)
+                            .setDeletePropagationType(
+                                JoinableConfig.DeletePropagationType.Code.PROPAGATE_FROM)))
+            .build();
+
+    SchemaProto schema =
+        SchemaProto.newBuilder().addTypes(personTypeConfig).addTypes(labelTypeConfig).build();
+    assertThat(
+            icing
+                .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    long creationTimestampMs = System.currentTimeMillis();
+    DocumentProto personDocument =
+        DocumentProto.newBuilder()
+            .setSchema("Person")
+            .setNamespace("namespace")
+            .setUri("person/1")
+            .setCreationTimestampMs(creationTimestampMs)
+            .setTtlMs(1000) // 1 second
+            .addProperties(PropertyProto.newBuilder().setName("name").addStringValues("foo"))
+            .build();
+    DocumentProto labelDocument =
+        DocumentProto.newBuilder()
+            .setSchema("Label")
+            .setNamespace("namespace")
+            .setUri("label/1")
+            .setCreationTimestampMs(creationTimestampMs)
+            .setTtlMs(0) // Never expire
+            .addProperties(PropertyProto.newBuilder().setName("title").addStringValues("bar"))
+            .addProperties(
+                PropertyProto.newBuilder().setName("target").addStringValues("namespace#person/1"))
+            .build();
+    assertStatusOk(icing.put(personDocument).getStatus());
+    assertStatusOk(icing.put(labelDocument).getStatus());
+
+    // Sanity check that label document is present.
+    GetResultProto getResultProto1 =
+        icing.get("namespace", "label/1", GetResultSpecProto.getDefaultInstance());
+    assertStatusOk(getResultProto1.getStatus());
+    assertThat(getResultProto1.getDocument()).isEqualTo(labelDocument);
+
+    // Sleep for 1 second and call HandleExpiredDocuments.
+    Thread.sleep(1000);
+
+    HandleExpiredDocumentsResultProto handleExpiredDocumentsResultProto =
+        icing.handleExpiredDocuments();
+    assertStatusOk(handleExpiredDocumentsResultProto.getStatus());
+    assertThat(handleExpiredDocumentsResultProto.getNumExpiredDocuments()).isEqualTo(1);
+    assertThat(handleExpiredDocumentsResultProto.getNumPropagatedDeletedDocuments()).isEqualTo(1);
+
+    ImmutableList<HandleExpiredDocumentsResultProto.DocumentGroupInfo> expectedDeletedDocuments =
+        ImmutableList.of(
+            HandleExpiredDocumentsResultProto.DocumentGroupInfo.newBuilder()
+                .setNameSpace("namespace")
+                .setSchema("Person")
+                .addUris("person/1")
+                .build(),
+            HandleExpiredDocumentsResultProto.DocumentGroupInfo.newBuilder()
+                .setNameSpace("namespace")
+                .setSchema("Label")
+                .addUris("label/1")
+                .build());
+    assertThat(handleExpiredDocumentsResultProto.getDeletedDocumentsList())
+        .containsExactlyElementsIn(expectedDeletedDocuments);
+
+    // Verify that the label document is purged.
+    GetResultProto getResultProto2 =
+        icing.get("namespace", "label/1", GetResultSpecProto.getDefaultInstance());
+    assertThat(getResultProto2.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
@@ -796,7 +920,6 @@ public final class IcingSearchEngineTest {
     assertThat(output).isEqualTo(data);
   }
 
-  @Ignore // b/350530146
   @Test
   public void removeBlob() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
@@ -843,7 +966,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  @Ignore // b/434206770
   public void getAndPutBlobInfo() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
     File tempDir = temporaryFolder.newFolder();
@@ -1462,9 +1584,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  @Ignore
-  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
-  // into g3.
   public void throwIfClosed() throws Exception {
     icingSearchEngine.close();
     assertThrows(IllegalStateException.class, () -> icingSearchEngine.initialize());

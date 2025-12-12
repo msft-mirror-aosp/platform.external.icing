@@ -1160,7 +1160,8 @@ TEST_F(IcingSearchEngineDeleteTest, DeleteByQueryWithDeletePropagation) {
               EqualsProto(expected_get_result_proto6));
 }
 
-TEST_F(IcingSearchEngineDeleteTest, HandleExpiredDocuments) {
+TEST_F(IcingSearchEngineDeleteTest,
+       HandleExpiredDocuments_taskSchedulerDisabled) {
   SchemaProto schema =
       SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
 
@@ -1173,6 +1174,7 @@ TEST_F(IcingSearchEngineDeleteTest, HandleExpiredDocuments) {
                                .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(false);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1244,8 +1246,9 @@ TEST_F(IcingSearchEngineDeleteTest, HandleExpiredDocuments) {
       EqualsProto(expected_get_result_google::protobuf));
 }
 
-TEST_F(IcingSearchEngineDeleteTest,
-       HandleExpiredDocuments_propagateToChildrenWithDeletePropagationEnabled) {
+TEST_F(
+    IcingSearchEngineDeleteTest,
+    HandleExpiredDocuments_taskSchedulerDisabled_propagateToChildrenWithDeletePropagationEnabled) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -1376,6 +1379,7 @@ TEST_F(IcingSearchEngineDeleteTest,
                              .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(false);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1520,8 +1524,9 @@ TEST_F(IcingSearchEngineDeleteTest,
       EqualsProto(expected_get_result_proto8));
 }
 
-TEST_F(IcingSearchEngineDeleteTest,
-       HandleExpiredDocuments_shouldPurgeDocumentsThatExpireWithinThreshold) {
+TEST_F(
+    IcingSearchEngineDeleteTest,
+    HandleExpiredDocuments_taskSchedulerDisabled_shouldPurgeDocumentsThatExpireWithinThreshold) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -1592,8 +1597,9 @@ TEST_F(IcingSearchEngineDeleteTest,
                              .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_expired_document_purge_threshold_ms(100);
+  options.set_enable_background_task_scheduler(false);
   options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(100);
 
   auto fake_clock = std::make_unique<FakeClock>();
   FakeClock* fake_clock_ptr = fake_clock.get();
@@ -1643,8 +1649,9 @@ TEST_F(IcingSearchEngineDeleteTest,
                   UnorderedElementsAre("email1", "email3")))));
 }
 
-TEST_F(IcingSearchEngineDeleteTest,
-       HandleExpiredDocuments_shouldScheduleNextPurgingExpirationTask) {
+TEST_F(
+    IcingSearchEngineDeleteTest,
+    HandleExpiredDocuments_taskSchedulerEnabled_shouldScheduleNextPurgingExpirationTask) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -1700,8 +1707,9 @@ TEST_F(IcingSearchEngineDeleteTest,
                              .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_expired_document_purge_threshold_ms(100);
+  options.set_enable_background_task_scheduler(true);
   options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(100);
 
   {
     // Initialize Icing and put all documents. Destruct Icing.
