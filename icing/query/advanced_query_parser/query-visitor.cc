@@ -51,6 +51,7 @@
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/function.h"
 #include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/optimizer/query-optimization-util.h"
 #include "icing/query/advanced_query_parser/param.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/pending-value.h"
@@ -739,7 +740,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessAndOperator(
   ICING_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators,
       PopAllPendingIterators());
-  return PendingValue(CreateAndIterator(std::move(iterators)));
+  return PendingValue(query_optimization_util::OptimizeAndIteratorsIfPossible(
+      std::move(iterators), feature_flags_));
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessOrOperator(
