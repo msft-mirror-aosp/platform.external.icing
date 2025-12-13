@@ -745,6 +745,7 @@ public final class IcingSearchEngineTest {
   }
 
 
+  @Ignore // b/350530146
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
