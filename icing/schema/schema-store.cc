@@ -982,30 +982,32 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   SetSchemaResult result;
   result.success = true;
 
-  if (feature_flags_->enable_schema_database()) {
-    // Sanity check to make sure that we're comparing schemas from the same
-    // database.
-    // The new code path ensures that old_schema contains types from exactly one
-    // database since it's obtained using GetSchema(database), which is
-    // guaranteed to only return types from the single provided database.
-    libtextclassifier3::Status validate_old_schema_database =
-        ValidateSchemaDatabase(old_schema, database);
-    if (!validate_old_schema_database.ok()) {
-      return absl_ports::InvalidArgumentError(
-          "Schema database mismatch between new and old schemas. This should "
-          "never happen");
-    }
+  if (!feature_flags_->enable_skip_set_schema_type_equality_check()) {
+    if (feature_flags_->enable_schema_database()) {
+      // Sanity check to make sure that we're comparing schemas from the same
+      // database.
+      // The new code path ensures that old_schema contains types from exactly
+      // one database since it's obtained using GetSchema(database), which is
+      // guaranteed to only return types from the single provided database.
+      libtextclassifier3::Status validate_old_schema_database =
+          ValidateSchemaDatabase(old_schema, database);
+      if (!validate_old_schema_database.ok()) {
+        return absl_ports::InvalidArgumentError(
+            "Schema database mismatch between new and old schemas. This should "
+            "never happen");
+      }
 
-    // Check if the schema types are the same between the new and old schema,
-    // ignoring order.
-    if (AreSchemaTypesEqual(new_schema, old_schema)) {
-      return result;
-    }
-  } else {
-    // Old equality check that is sensitive to type definition order.
-    if (new_schema.SerializeAsString() == old_schema.SerializeAsString()) {
-      // Same schema as before. No need to update anything
-      return result;
+      // Check if the schema types are the same between the new and old schema,
+      // ignoring order.
+      if (AreSchemaTypesEqual(new_schema, old_schema)) {
+        return result;
+      }
+    } else {
+      // Old equality check that is sensitive to type definition order.
+      if (new_schema.SerializeAsString() == old_schema.SerializeAsString()) {
+        // Same schema as before. No need to update anything
+        return result;
+      }
     }
   }
 

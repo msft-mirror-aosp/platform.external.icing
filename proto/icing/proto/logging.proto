@@ -24,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 20
+// Next tag: 21
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -220,6 +220,9 @@ message InitializeStatsProto {
   // - OK: IcuNormalizer created successfully.
   // - INTERNAL: Failed to create the ICU Transliterator.
   optional StatusProto icu_normalizer_creation_status = 19;
+
+  // The expiration timestamp (in milliseconds) of the next expired document.
+  optional int64 next_expiration_timestamp_ms = 20;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
