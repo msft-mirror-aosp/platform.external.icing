@@ -31,15 +31,13 @@ std::unique_ptr<DocHitInfoIterator> OptimizeAndIteratorsIfPossible(
     std::vector<std::unique_ptr<DocHitInfoIterator>>&& iterators,
     const FeatureFlags& feature_flags) {
   std::unique_ptr<DocHitInfoIterator> embed_iterator;
-  DocHitInfoIteratorEmbeddingV2* embed_iterator_ptr = nullptr;
   bool delegate_node_is_right_most = true;
   if (feature_flags.enable_embed_query_optimization()) {
     // Find the first embedding iterator and remove it from the vector.
     int embed_iterator_index = 0;
     for (int i = embed_iterator_index; embed_iterator_index < iterators.size();
          ++embed_iterator_index) {
-      if ((embed_iterator_ptr = dynamic_cast<DocHitInfoIteratorEmbeddingV2*>(
-               iterators.at(i).get())) != nullptr) {
+      if (iterators.at(i)->CanAdoptDelegate()) {
         embed_iterator = std::move(iterators.at(i));
         if (i == iterators.size() - 1) {
           // If this embedding iterator is the last iterator, then the node is
@@ -60,7 +58,7 @@ std::unique_ptr<DocHitInfoIterator> OptimizeAndIteratorsIfPossible(
   if (embed_iterator == nullptr) {
     return and_iterator;
   }
-  embed_iterator_ptr->AdoptDelegate(std::move(and_iterator),
+  embed_iterator->AdoptDelegate(std::move(and_iterator),
                                     delegate_node_is_right_most);
   return embed_iterator;
 }
