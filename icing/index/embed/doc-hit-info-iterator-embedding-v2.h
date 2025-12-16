@@ -71,8 +71,10 @@ class DocHitInfoIteratorEmbeddingV2
          const DocumentStore* document_store, const SchemaStore* schema_store,
          int64_t current_time_ms);
 
+  bool CanAdoptDelegate() const override { return true; }
+
   void AdoptDelegate(std::unique_ptr<DocHitInfoIterator> delegate,
-                     bool delegate_node_is_right_most) {
+                     bool delegate_node_is_right_most) override {
     delegate_ = std::move(delegate);
     delegate_node_is_right_most_ = delegate_node_is_right_most;
   }
