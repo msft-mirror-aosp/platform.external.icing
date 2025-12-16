@@ -148,7 +148,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 50
+// Next tag: 53
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -454,6 +454,33 @@ message IcingSearchEngineOptions {
   // will be established once the parent document is indexed. If disabled, the
   // join relationship will be lost if the child is indexed before the parent.
   optional bool enable_non_existent_qualified_id_join = 49;
+
+  // Whether to skip the schema type equality check during SetSchema. We
+  // serialize the schema proto to strings when doing this check, which is slow.
+  //
+  // This will be set to true in AppSearch.
+  // - AppSearch already checks if schema types are unchanged for a new
+  //   SetSchema request, and skips the Icing interaction entirely if that is
+  //   the case.
+  // - Therefore, the Icing-side equality check in SetSchema is redundant and
+  //   can be skipped if caller is AppSearch.
+  optional bool enable_skip_set_schema_type_equality_check = 50;
+
+  // Whether to enable the background task scheduler. This value should be true
+  // for all Icing lib direct clients (e.g. iOS), and false for AppSearch since
+  // task scheduling must be handled at the AppSearch layer.
+  //
+  // If set to true, the background task scheduler will be enabled. Otherwise,
+  // the background task scheduler will be disabled.
+  optional bool enable_background_task_scheduler =
+      51;  // TODO(b/384947619): set default to true
+
+  // Whether to enable a query optimization that will rewrite embedding query
+  // iterators that are being AND'ed with other iterators such that those other
+  // iterators can be pushed down into the embedding iterator as a delegate.
+  // This allows us to avoid reading and scoring embeddings for documents that
+  // don't match the other requirements of the query.
+  optional bool enable_embed_query_optimization = 52;
 
   reserved 2, 20, 25;
 }
