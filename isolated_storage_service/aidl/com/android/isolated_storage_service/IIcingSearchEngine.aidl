@@ -76,6 +76,9 @@ interface IIcingSearchEngine {
   void invalidateNextPageToken(long nextPageToken);
 
   @nullable
+  /*HandleExpiredDocumentsResultProto*/ byte[] handleExpiredDocuments();
+
+  @nullable
   /*BlobProto*/ byte[] openWriteBlob(in byte[] blobHandleProto);
 
   @nullable

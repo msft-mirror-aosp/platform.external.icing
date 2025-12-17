@@ -3016,21 +3016,21 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
     EXPECT_THAT(*actual_schema, EqualsProto(schema));
   } else {
     // Since we assign SchemaTypeIds based on order in the SchemaProto, this
-    // will
-    // cause SchemaTypeIds to change
+    // will cause SchemaTypeIds to change
     result = SchemaStore::SetSchemaResult();
     result.success = true;
-    result.old_schema_type_ids_changed.emplace(
-        0);  // Old SchemaTypeId of "email"
-    result.old_schema_type_ids_changed.emplace(
-        1);  // Old SchemaTypeId of "message"
+    // Old SchemaTypeId of "email"
+    result.old_schema_type_ids_changed.emplace(0);
+    // Old SchemaTypeId of "message"
+    result.old_schema_type_ids_changed.emplace(1);
 
     // Set the compatible schema
-    EXPECT_THAT(schema_store->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+    EXPECT_THAT(
+        schema_store->SetSchema(reordered_schema,
+                                /*ignore_errors_and_delete_documents=*/false),
+        IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
-    EXPECT_THAT(*actual_schema, EqualsProto(schema));
+    EXPECT_THAT(*actual_schema, EqualsProto(reordered_schema));
   }
 }
 

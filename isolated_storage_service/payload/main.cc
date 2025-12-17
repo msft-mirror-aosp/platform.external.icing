@@ -68,6 +68,7 @@ using ::icing::lib::GetResultProto;
 using ::icing::lib::GetResultSpecProto;
 using ::icing::lib::GetSchemaResultProto;
 using ::icing::lib::GetSchemaTypeResultProto;
+using ::icing::lib::HandleExpiredDocumentsResultProto;
 using ::icing::lib::IcingSearchEngine;
 using ::icing::lib::IcingSearchEngineOptions;
 using ::icing::lib::InitializeResultProto;
@@ -533,6 +534,15 @@ class IcingConnectionImpl
 
     icing_->InvalidateNextPageToken(next_page_token);
     return ScopedAStatus::ok();
+  }
+
+  ScopedAStatus handleExpiredDocuments(
+      std::optional<std::vector<uint8_t>>* handle_expired_documents_result_proto) {
+    CHECK_ICING_INIT(icing_);
+    CREATE_ACTIVE_REQUEST_AND_CHECK(conn_state_.CreateActiveRequest());
+
+    HandleExpiredDocumentsResultProto handle_result = icing_->HandleExpiredDocuments();
+    SERIALIZE_AND_RETURN_ASTATUS(handle_result, handle_expired_documents_result_proto);
   }
 
   ScopedAStatus openWriteBlob(const std::vector<uint8_t>& blob_handle_proto,

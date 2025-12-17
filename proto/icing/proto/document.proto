@@ -153,7 +153,7 @@ message BatchPutResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 7
+// Next tag: 8
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -186,6 +186,15 @@ message PutResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 6;
+
+  // The expiration timestamp (in milliseconds) of the newly added document.
+  // This field can be used by the caller (mostly AppSearch) for expired
+  // document and expiration propagation handling.
+  // - INT64_MAX means the new document never expires.
+  // - This field is set only when the document is added successfully (i.e.
+  //   status is OK). The caller should ignore this field if the value is 0,
+  //   since it is impossible to have a document expires at t = 0.
+  optional int64 document_expiration_timestamp_ms = 7;
 }
 
 // Result of a call to IcingSearchEngine.Get
@@ -376,6 +385,7 @@ message DeleteByQueryResultProto {
   optional int64 vm_binder_transaction_latency_start_time_ms = 6;
 }
 
+// Next tag: 6
 message HandleExpiredDocumentsResultProto {
   // Status code can be one of:
   //   OK
@@ -408,4 +418,7 @@ message HandleExpiredDocumentsResultProto {
   // The number of deleted documents that were propagated from the expired
   // documents.
   optional int32 num_propagated_deleted_documents = 4;
+
+  // The expiration timestamp (in milliseconds) of the next expired document.
+  optional int64 next_expiration_timestamp_ms = 5;
 }

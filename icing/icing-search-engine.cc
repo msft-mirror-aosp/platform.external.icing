@@ -511,7 +511,9 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_schema_type_id_optimization(),
                      options_.enable_optimize_improvements(),
                      options_.expired_document_purge_threshold_ms(),
-                     options_.enable_non_existent_qualified_id_join()),
+                     options_.enable_non_existent_qualified_id_join(),
+                     options_.enable_skip_set_schema_type_equality_check(),
+                     options_.enable_embed_query_optimization()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1051,24 +1053,26 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     }
   }
 
+  if (options_.enable_background_task_scheduler() &&
+      task_scheduler_ == nullptr) {
+    // Initialize the task scheduler.
+    //
+    // Note: InitializeMembers may be called by ResetLocked() when put API
+    //   fails. In that case, we can still use the existing task_scheduler_
+    //   and no need to re-initialize it.
+    task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
+  }
+
   if (status.ok()) {
     status = index_init_status;
   }
 
-  // - Initialize the task scheduler for purging expired documents.
-  // - Since documents may expire when Icing is off, we have to purge them in
-  //   the last step of initialization.
+  // Call HandleExpiredDocumentsLocked() to handle documents that expire during
+  // Icing was off. This function will reschedule another task with the next
+  // expiration timestamp if task_scheduler_ is not null (i.e.
+  // options_.enable_background_task_scheduler() is true).
   if ((status.ok() || absl_ports::IsDataLoss(status)) &&
       options_.enable_delete_propagation_from()) {
-    if (task_scheduler_ == nullptr) {
-      // Initialize the task scheduler.
-      //
-      // Note: InitializeMembers may be called by ResetLocked() when put API
-      //   fails. In that case, we can still use the existing task_scheduler_
-      //   and no need to re-initialize it.
-      task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
-    }
-
     // Call HandleExpiredDocumentsLocked() to handle documents that expire
     // during Icing was off. This function will reschedule another task with the
     // next expiration timestamp and activate the task.
@@ -1079,6 +1083,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
                        << result.status().message();
       return absl_ports::InternalError(result.status().message());
     }
+    initialize_stats->set_next_expiration_timestamp_ms(
+        result.next_expiration_timestamp_ms());
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
@@ -1768,10 +1774,13 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
     return batch_put_result_proto;
   }
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
   for (DocumentProto& document_proto :
        *(put_document_request.mutable_documents())) {
     batch_put_result_proto.mutable_put_result_protos()->Add(
-        PutLocked(std::move(document_proto)));  // Call the locked version
+        PutLocked(std::move(document_proto),
+                  current_time_ms));  // Call the locked version
   }
 
   if (put_document_request.persist_type() != PersistType::UNKNOWN) {
@@ -1812,14 +1821,18 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
         clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
-  PutResultProto result_proto = PutLocked(std::move(document));
+
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
+  PutResultProto result_proto = PutLocked(std::move(document), current_time_ms);
   result_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
 // PutLocked to be called when mutex_ is already held.
-PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
+PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document,
+                                            int64_t current_time_ms) {
   PutResultProto result_proto;
   result_proto.set_uri(document.uri());
 
@@ -1834,8 +1847,6 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   // the schema file to validate, and the schema could be changed in
   // SetSchema() which is protected by the same mutex.
   // NO LOCK ACQUISITION HERE - mutex_ is already held.
-
-  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
 
   auto tokenized_document_or =
       PrepareDocumentsForIndexing(std::move(document), current_time_ms);
@@ -1883,6 +1894,7 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, old_document_id, put_document_stats);
   if (index_status.ok()) {
+    result_proto.set_document_expiration_timestamp_ms(expiration_timestamp_ms);
     result_proto.set_vm_binder_transaction_latency_start_time_ms(
         clock_->GetSystemTimeMilliseconds());
     if (options_.enable_delete_propagation_from() &&
@@ -3687,10 +3699,13 @@ IcingSearchEngine::HandleExpiredDocumentsLocked() {
   std::vector<DocumentStore::DocumentMetadata> propagated_deleted_docs =
       std::move(propagated_deleted_docs_or).ValueOrDie();
 
+  // Get the next expiration timestamp.
+  int64_t next_expired_doc_ts_ms =
+      document_store_->GetNextExpiredDocumentTimestampMs(current_time_ms);
+  result_proto.set_next_expiration_timestamp_ms(next_expired_doc_ts_ms);
+
   // Step 3: reschedule the task to handle next expired document(s).
   if (task_scheduler_ != nullptr) {
-    int64_t next_expired_doc_ts_ms =
-        document_store_->GetNextExpiredDocumentTimestampMs(current_time_ms);
     if (next_expired_doc_ts_ms < 0) {
       // No more expired documents. Cancel the scheduled task.
       task_scheduler_->Cancel(kHandleExpiredDocumentsTaskId);
