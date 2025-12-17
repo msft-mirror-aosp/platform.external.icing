@@ -31,6 +31,7 @@ import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.LogSeverity;
@@ -192,6 +193,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   @Override
   public void invalidateNextPageToken(long nextPageToken) {
     icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);
+  }
+
+  @Override
+  public @NonNull HandleExpiredDocumentsResultProto handleExpiredDocuments() {
+    return IcingSearchEngineUtils.byteArrayToHandleExpiredDocumentsResultProto(
+        icingSearchEngineImpl.handleExpiredDocuments());
   }
 
   @Override

@@ -245,6 +245,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
   optimize_result_proto.mutable_status()->set_message("");
   OptimizeResultProto actual_result = icing.Optimize();
   actual_result.clear_optimize_stats();
+  actual_result.clear_vm_binder_transaction_latency_start_time_ms();
   ASSERT_THAT(actual_result, EqualsProto(optimize_result_proto));
 
   // Tries to fetch the second page, no results since all tokens have been
