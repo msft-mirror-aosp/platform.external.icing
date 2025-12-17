@@ -34,8 +34,12 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/qualified-id-join-index.h"
+#include "icing/join/qualified-id.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
@@ -49,6 +53,18 @@ static constexpr QualifiedIdJoinIndexImplV3::ArrayInfo kInvalidArrayInfo;
 
 namespace {
 
+// This is the same as the max number of entries of document_key_mapper_ in
+// DocumentStore.
+constexpr uint32_t kQualifiedIdMapperMaxNumEntries = kMaxDocumentId + 1;
+
+// - Key (QualifiedId): 22 bytes
+//   - namespace (10 bytes)
+//   - '#' (1 byte)
+//   - uri (10 bytes)
+//   - '\0' (1 byte)
+// - Value (ArrayInfo): 12 bytes
+constexpr uint32_t kQualifiedIdMapperKVByteSize = 34;
+
 std::string MakeMetadataFilePath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/metadata");
 }
@@ -59,9 +75,26 @@ std::string MakeParentDocumentIdToChildArrayInfoFilePath(
                             "/parent_document_id_to_child_array_info");
 }
 
+std::string MakeParentQualifiedIdToChildArrayInfoFilePath(
+    std::string_view working_path) {
+  return absl_ports::StrCat(working_path,
+                            "/parent_qualified_id_to_child_array_info");
+}
+
 std::string MakeChildDocumentJoinIdPairArrayFilePath(
     std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/child_document_join_id_pair_array");
+}
+
+DocumentId GetDocumentId(const DocumentStore& document_store,
+                         const QualifiedId& parent_qualified_id) {
+  libtextclassifier3::StatusOr<DocumentId> parent_doc_id_or =
+      document_store.GetDocumentId(parent_qualified_id.name_space(),
+                                   parent_qualified_id.uri());
+  if (!parent_doc_id_or.ok()) {
+    return kInvalidDocumentId;
+  }
+  return parent_doc_id_or.ValueOrDie();
 }
 
 }  // namespace
@@ -76,10 +109,14 @@ QualifiedIdJoinIndexImplV3::Create(const Filesystem& filesystem,
   bool parent_document_id_to_child_array_info_file_exists =
       filesystem.FileExists(
           MakeParentDocumentIdToChildArrayInfoFilePath(working_path).c_str());
+  bool parent_qualified_id_to_child_array_info_file_exists =
+      filesystem.DirectoryExists(
+          MakeParentQualifiedIdToChildArrayInfoFilePath(working_path).c_str());
   bool child_document_join_id_pair_array_file_exists = filesystem.FileExists(
       MakeChildDocumentJoinIdPairArrayFilePath(working_path).c_str());
 
-  // If all files exist, initialize from existing files.
+  // If all files exist (except parent_qualified_id_to_child_array_info),
+  // initialize from existing files.
   if (metadata_file_exists &&
       parent_document_id_to_child_array_info_file_exists &&
       child_document_join_id_pair_array_file_exists) {
@@ -90,6 +127,7 @@ QualifiedIdJoinIndexImplV3::Create(const Filesystem& filesystem,
   // If all files don't exist, initialize new files.
   if (!metadata_file_exists &&
       !parent_document_id_to_child_array_info_file_exists &&
+      !parent_qualified_id_to_child_array_info_file_exists &&
       !child_document_join_id_pair_array_file_exists) {
     return InitializeNewFiles(filesystem, std::move(working_path),
                               feature_flags);
@@ -109,6 +147,7 @@ QualifiedIdJoinIndexImplV3::~QualifiedIdJoinIndexImplV3() {
   }
 }
 
+// Deprecated
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Put(
     const DocumentJoinIdPair& child_document_join_id_pair,
     std::vector<DocumentId>&& parent_document_ids) {
@@ -141,6 +180,41 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Put(
     // array.
     ICING_RETURN_IF_ERROR(AppendChildDocumentJoinIdPairsForParent(
         parent_document_id, {child_document_join_id_pair}));
+  }
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Put(
+    const DocumentStore* document_store,
+    const DocumentJoinIdPair& child_document_join_id_pair,
+    std::vector<QualifiedId>&& parent_qualified_ids) {
+  if (!feature_flags_.enable_non_existent_qualified_id_join()) {
+    return absl_ports::InvalidArgumentError(
+        "Put with QualifiedId is not enabled yet!");
+  }
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+
+  if (!child_document_join_id_pair.is_valid()) {
+    return absl_ports::InvalidArgumentError("Invalid child DocumentJoinIdPair");
+  }
+  if (parent_qualified_ids.empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+  SetDirty();
+
+  // Sort and dedupe parent qualified ids.
+  std::sort(parent_qualified_ids.begin(), parent_qualified_ids.end());
+  auto last =
+      std::unique(parent_qualified_ids.begin(), parent_qualified_ids.end());
+  parent_qualified_ids.erase(last, parent_qualified_ids.end());
+
+  // Append child_document_join_id_pair to each parent's DocumentJoinIdPair
+  // array.
+  for (const QualifiedId& parent_qualified_id : parent_qualified_ids) {
+    ICING_RETURN_IF_ERROR(AppendChildDocumentJoinIdPairsForParent(
+        parent_qualified_id,
+        GetDocumentId(*document_store, parent_qualified_id),
+        {child_document_join_id_pair}));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -229,10 +303,41 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::Status QualifiedIdJoinIndexImplV3::MigrateParent(
+    const QualifiedId& parent_qualified_id, DocumentId new_document_id) {
+  if (!feature_flags_.enable_non_existent_qualified_id_join()) {
+    return absl_ports::InvalidArgumentError(
+        "QualifiedId entry is not enabled yet in the index!");
+  }
+
+  if (!IsDocumentIdValid(new_document_id)) {
+    return absl_ports::InvalidArgumentError(
+        "Invalid new parent document id to migrate to");
+  }
+
+  std::string key = parent_qualified_id.ToString();
+  auto array_info_or = parent_qualified_id_to_child_array_info_->Get(key);
+  if (absl_ports::IsNotFound(array_info_or.status())) {
+    // The qualified id does not exist in the index, nothing to migrate.
+    return libtextclassifier3::Status::OK;
+  }
+  ICING_RETURN_IF_ERROR(array_info_or.status());
+
+  SetDirty();
+  ICING_RETURN_IF_ERROR(
+      ExtendParentDocumentIdToChildArrayInfoIfNecessary(new_document_id));
+  ICING_RETURN_IF_ERROR(parent_document_id_to_child_array_info_->Set(
+      new_document_id, array_info_or.ValueOrDie()));
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
+    const DocumentStore* document_store,
     const std::vector<DocumentId>& document_id_old_to_new,
-    const std::vector<NamespaceId>& namespace_id_old_to_new,
+    const std::vector<NamespaceId>& /*namespace_id_old_to_new*/,
     DocumentId new_last_added_document_id) {
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+
   std::string temp_working_path = working_path_ + "_temp";
   ICING_RETURN_IF_ERROR(
       QualifiedIdJoinIndex::Discard(filesystem_, temp_working_path));
@@ -252,8 +357,8 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexImplV3> new_index,
         Create(filesystem_, temp_working_path_ddir.dir(), feature_flags_));
-    ICING_RETURN_IF_ERROR(
-        TransferIndex(document_id_old_to_new, new_index.get()));
+    ICING_RETURN_IF_ERROR(TransferIndex(*document_store, document_id_old_to_new,
+                                        new_index.get()));
     new_index->set_last_added_document_id(new_last_added_document_id);
     new_index->SetDirty();
 
@@ -262,6 +367,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
 
   // Destruct current index's storage instances to safely swap directories.
   child_document_join_id_pair_array_.reset();
+  parent_qualified_id_to_child_array_info_.reset();
   parent_document_id_to_child_array_info_.reset();
   metadata_mmapped_file_.reset();
   if (!filesystem_.SwapFiles(temp_working_path_ddir.dir().c_str(),
@@ -289,6 +395,15 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
           FileBackedVector<ArrayInfo>::kMaxFileSize,
           /*pre_mapping_mmap_size=*/0));
+
+  ICING_ASSIGN_OR_RETURN(
+      parent_qualified_id_to_child_array_info_,
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
+          filesystem_,
+          MakeParentQualifiedIdToChildArrayInfoFilePath(working_path_),
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
 
   ICING_ASSIGN_OR_RETURN(
       child_document_join_id_pair_array_,
@@ -321,6 +436,25 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Clear() {
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
           FileBackedVector<ArrayInfo>::kMaxFileSize,
           /*pre_mapping_mmap_size=*/0));
+
+  parent_qualified_id_to_child_array_info_.reset();
+  // Discard and reinitialize parent_qualified_id_to_child_array_info_.
+  std::string parent_qualified_id_to_child_array_info_file_path =
+      MakeParentQualifiedIdToChildArrayInfoFilePath(working_path_);
+  if (!filesystem_.DeleteDirectoryRecursively(
+          parent_qualified_id_to_child_array_info_file_path.c_str())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to clear parent qualified id to child array info: ",
+        parent_qualified_id_to_child_array_info_file_path));
+  }
+  ICING_ASSIGN_OR_RETURN(
+      parent_qualified_id_to_child_array_info_,
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
+          filesystem_,
+          MakeParentQualifiedIdToChildArrayInfoFilePath(working_path_),
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
 
   child_document_join_id_pair_array_.reset();
   // Discard and reinitialize child_document_join_id_pair_array.
@@ -383,6 +517,17 @@ QualifiedIdJoinIndexImplV3::InitializeNewFiles(
           FileBackedVector<ArrayInfo>::kMaxFileSize,
           /*pre_mapping_mmap_size=*/0));
 
+  // Initialize parent_qualified_id_to_child_array_info.
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<KeyMapper<ArrayInfo>>
+          parent_qualified_id_to_child_array_info,
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
+          filesystem,
+          MakeParentQualifiedIdToChildArrayInfoFilePath(working_path),
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
+
   // Initialize child_document_join_id_pair_array.
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<DocumentJoinIdPair>>
@@ -399,6 +544,7 @@ QualifiedIdJoinIndexImplV3::InitializeNewFiles(
           filesystem, std::move(working_path),
           std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
           std::move(parent_document_id_to_child_array_info),
+          std::move(parent_qualified_id_to_child_array_info),
           std::move(child_document_join_id_pair_array), feature_flags));
   // Initialize info content.
   new_join_index->info().magic = Info::kMagic;
@@ -441,6 +587,17 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
           FileBackedVector<ArrayInfo>::kMaxFileSize,
           /*pre_mapping_mmap_size=*/0));
 
+  // Initialize parent_qualified_id_to_child_array_info.
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<KeyMapper<ArrayInfo>>
+          parent_qualified_id_to_child_array_info,
+      PersistentHashMapKeyMapper<ArrayInfo>::Create(
+          filesystem,
+          MakeParentQualifiedIdToChildArrayInfoFilePath(working_path),
+          /*pre_mapping_fbv=*/false,
+          /*max_num_entries=*/kQualifiedIdMapperMaxNumEntries,
+          /*average_kv_byte_size=*/kQualifiedIdMapperKVByteSize));
+
   // Initialize child_document_join_id_pair_array. Set mmap pre-mapping size to
   // 0, but MemoryMappedFile will still mmap to the file size.
   ICING_ASSIGN_OR_RETURN(
@@ -458,6 +615,7 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
           filesystem, std::move(working_path),
           std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
           std::move(parent_document_id_to_child_array_info),
+          std::move(parent_qualified_id_to_child_array_info),
           std::move(child_document_join_id_pair_array), feature_flags));
 
   // Initialize existing PersistentStorage. Checksums will be validated.
@@ -477,6 +635,7 @@ QualifiedIdJoinIndexImplV3::InitializeExistingFiles(
   return join_index;
 }
 
+// Deprecated
 libtextclassifier3::Status
 QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
     DocumentId parent_document_id,
@@ -497,9 +656,25 @@ QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
       const ArrayInfo* array_info,
       parent_document_id_to_child_array_info_->Get(parent_document_id));
   ICING_ASSIGN_OR_RETURN(
+      ArrayInfo new_array_info,
+      AppendToChildArray(*array_info, std::move(child_document_join_id_pairs)));
+
+  // Set ArrayInfo back to parent_document_id_to_child_array_info_.
+  ICING_RETURN_IF_ERROR(parent_document_id_to_child_array_info_->Set(
+      parent_document_id, new_array_info));
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<QualifiedIdJoinIndexImplV3::ArrayInfo>
+QualifiedIdJoinIndexImplV3::AppendToChildArray(
+    const ArrayInfo& current_array_info,
+    std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs) {
+  ICING_ASSIGN_OR_RETURN(
       GetMutableAndExtendResult result,
       GetMutableAndExtendChildDocumentJoinIdPairArrayIfNecessary(
-          *array_info, /*num_to_add=*/child_document_join_id_pairs.size()));
+          current_array_info,
+          /*num_to_add=*/child_document_join_id_pairs.size()));
   // - [0, result.array_info.used_length) contain valid elements.
   // - We will write new elements starting from index
   //   result.array_info.used_length, and update the used_length.
@@ -508,12 +683,44 @@ QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
                               /*len=*/child_document_join_id_pairs.size());
   result.array_info.used_length += child_document_join_id_pairs.size();
 
-  // Set ArrayInfo back to parent_document_id_to_child_array_info_.
-  ICING_RETURN_IF_ERROR(parent_document_id_to_child_array_info_->Set(
-      parent_document_id, result.array_info));
-
   // Update header.
   info().num_data += child_document_join_id_pairs.size();
+
+  return result.array_info;
+}
+
+libtextclassifier3::Status
+QualifiedIdJoinIndexImplV3::AppendChildDocumentJoinIdPairsForParent(
+    std::string_view parent_qualified_id_str, DocumentId parent_document_id,
+    std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs) {
+  if (child_document_join_id_pairs.empty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  auto array_info_or =
+      parent_qualified_id_to_child_array_info_->Get(parent_qualified_id_str);
+  ArrayInfo array_info = kInvalidArrayInfo;
+  if (array_info_or.ok()) {
+    array_info = std::move(array_info_or).ValueOrDie();
+  } else if (!absl_ports::IsNotFound(array_info_or.status())) {
+    return array_info_or.status();
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      ArrayInfo new_array_info,
+      AppendToChildArray(array_info, std::move(child_document_join_id_pairs)));
+
+  ICING_RETURN_IF_ERROR(parent_qualified_id_to_child_array_info_->Put(
+      parent_qualified_id_str, new_array_info));
+
+  // Update parent_document_id_to_child_array_info_ if the parent document has a
+  // valid document id.
+  if (IsDocumentIdValid(parent_document_id)) {
+    ICING_RETURN_IF_ERROR(
+        ExtendParentDocumentIdToChildArrayInfoIfNecessary(parent_document_id));
+    ICING_RETURN_IF_ERROR(parent_document_id_to_child_array_info_->Set(
+        parent_document_id, new_array_info));
+  }
 
   return libtextclassifier3::Status::OK;
 }
@@ -696,64 +903,99 @@ QualifiedIdJoinIndexImplV3::
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::TransferIndex(
+    const DocumentStore& document_store,
     const std::vector<DocumentId>& document_id_old_to_new,
     QualifiedIdJoinIndexImplV3* new_index) const {
-  for (DocumentId old_parent_doc_id = 0;
-       old_parent_doc_id <
-       parent_document_id_to_child_array_info_->num_elements();
-       ++old_parent_doc_id) {
-    if (old_parent_doc_id < 0 ||
-        old_parent_doc_id >= document_id_old_to_new.size()) {
-      // If it happens, then the data is corrupted. Return error and let the
-      // caller rebuild everything.
-      return absl_ports::InternalError(
-          "Qualified id join index data parent document id is out of range. "
-          "The index may have been corrupted.");
-    }
-
-    if (document_id_old_to_new[old_parent_doc_id] == kInvalidDocumentId) {
-      // Skip if the old parent document id is invalid after optimization.
-      continue;
-    }
-
-    ICING_ASSIGN_OR_RETURN(
-        const ArrayInfo* array_info,
-        parent_document_id_to_child_array_info_->Get(old_parent_doc_id));
-    if (!array_info->IsValid()) {
-      continue;
-    }
-    ICING_ASSIGN_OR_RETURN(
-        const DocumentJoinIdPair* ptr,
-        child_document_join_id_pair_array_->Get(array_info->index));
-
-    // Get all child DocumentJoinIdPairs and assign new child document ids.
-    std::vector<DocumentJoinIdPair> new_child_doc_join_id_pairs;
-    new_child_doc_join_id_pairs.reserve(array_info->length);
-    for (int i = 0; i < array_info->used_length; ++i) {
-      DocumentId old_child_doc_id = ptr[i].document_id();
-      if (old_child_doc_id < 0 ||
-          old_child_doc_id >= document_id_old_to_new.size()) {
+  // If the flag is disabled, use the old logic to transfer the index.
+  if (!feature_flags_.enable_non_existent_qualified_id_join()) {
+    for (DocumentId old_parent_doc_id = 0;
+         old_parent_doc_id <
+         parent_document_id_to_child_array_info_->num_elements();
+         ++old_parent_doc_id) {
+      if (old_parent_doc_id < 0 ||
+          old_parent_doc_id >= document_id_old_to_new.size()) {
         // If it happens, then the data is corrupted. Return error and let the
         // caller rebuild everything.
         return absl_ports::InternalError(
-            "Qualified id join index data child document id is out of range. "
+            "Qualified id join index data parent document id is out of range. "
             "The index may have been corrupted.");
       }
 
-      DocumentId new_child_doc_id = document_id_old_to_new[old_child_doc_id];
-      if (new_child_doc_id == kInvalidDocumentId) {
+      if (document_id_old_to_new[old_parent_doc_id] == kInvalidDocumentId) {
+        // Skip if the old parent document id is invalid after optimization.
         continue;
       }
 
-      new_child_doc_join_id_pairs.push_back(
-          DocumentJoinIdPair(new_child_doc_id, ptr[i].joinable_property_id()));
+      ICING_ASSIGN_OR_RETURN(
+          const ArrayInfo* array_info,
+          parent_document_id_to_child_array_info_->Get(old_parent_doc_id));
+      ICING_ASSIGN_OR_RETURN(
+          std::vector<DocumentJoinIdPair> new_child_doc_join_id_pairs,
+          GetTransferredChildDocumentJoinIdPairs(*array_info,
+                                                 document_id_old_to_new));
+      ICING_RETURN_IF_ERROR(new_index->AppendChildDocumentJoinIdPairsForParent(
+          document_id_old_to_new[old_parent_doc_id],
+          std::move(new_child_doc_join_id_pairs)));
     }
+    return libtextclassifier3::Status::OK;
+  }
 
+  // The parent qualified id map is the source of truth. Iterate through it to
+  // transfer the index.
+  auto iter = parent_qualified_id_to_child_array_info_->GetIterator();
+  while (iter->Advance()) {
+    ArrayInfo array_info = iter->GetValue();
+    ICING_ASSIGN_OR_RETURN(
+        std::vector<DocumentJoinIdPair> new_child_doc_join_id_pairs,
+        GetTransferredChildDocumentJoinIdPairs(array_info,
+                                               document_id_old_to_new));
+    ICING_ASSIGN_OR_RETURN(QualifiedId parent_qualified_id,
+                           QualifiedId::Parse(iter->GetKey()));
+    // This will automatically transfer the parent document id map (for existing
+    // documents) to the new index.
     ICING_RETURN_IF_ERROR(new_index->AppendChildDocumentJoinIdPairsForParent(
-        document_id_old_to_new[old_parent_doc_id],
+        iter->GetKey(), GetDocumentId(document_store, parent_qualified_id),
         std::move(new_child_doc_join_id_pairs)));
   }
+
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>>
+QualifiedIdJoinIndexImplV3::GetTransferredChildDocumentJoinIdPairs(
+    const QualifiedIdJoinIndexImplV3::ArrayInfo& array_info,
+    const std::vector<DocumentId>& document_id_old_to_new) const {
+  if (!array_info.IsValid()) {
+    return std::vector<DocumentJoinIdPair>();
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      const DocumentJoinIdPair* ptr,
+      child_document_join_id_pair_array_->Get(array_info.index));
+
+  // Get all child DocumentJoinIdPairs and assign new child document ids.
+  std::vector<DocumentJoinIdPair> new_child_doc_join_id_pairs;
+  new_child_doc_join_id_pairs.reserve(array_info.used_length);
+  for (int i = 0; i < array_info.used_length; ++i) {
+    DocumentId old_child_doc_id = ptr[i].document_id();
+    if (old_child_doc_id < 0 ||
+        old_child_doc_id >= document_id_old_to_new.size()) {
+      // If it happens, then the data is corrupted. Return error and let the
+      // caller rebuild everything.
+      return absl_ports::InternalError(
+          "Qualified id join index data child document id is out of range. "
+          "The index may have been corrupted.");
+    }
+
+    DocumentId new_child_doc_id = document_id_old_to_new[old_child_doc_id];
+    if (new_child_doc_id == kInvalidDocumentId) {
+      continue;
+    }
+
+    new_child_doc_join_id_pairs.push_back(
+        DocumentJoinIdPair(new_child_doc_id, ptr[i].joinable_property_id()));
+  }
+  return new_child_doc_join_id_pairs;
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::PersistMetadataToDisk() {
@@ -778,6 +1020,8 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::PersistStoragesToDisk() {
 
   ICING_RETURN_IF_ERROR(
       parent_document_id_to_child_array_info_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(
+      parent_qualified_id_to_child_array_info_->PersistToDisk());
   ICING_RETURN_IF_ERROR(child_document_join_id_pair_array_->PersistToDisk());
 
   is_storage_dirty_ = false;
@@ -794,10 +1038,20 @@ QualifiedIdJoinIndexImplV3::UpdateStoragesChecksum() {
   ICING_ASSIGN_OR_RETURN(
       Crc32 parent_document_id_to_child_array_info_crc,
       parent_document_id_to_child_array_info_->UpdateChecksum());
+  ICING_ASSIGN_OR_RETURN(
+      Crc32 parent_qualified_id_to_child_array_info_crc,
+      parent_qualified_id_to_child_array_info_->UpdateChecksum());
+  if (!feature_flags_.enable_non_existent_qualified_id_join()) {
+    // We have still called UpdateChecksum() for this storage even if the flag
+    // is off. However, for flag guarding purposes, we set the local variable to
+    // 0 to exclude it from the overall checksum.
+    parent_qualified_id_to_child_array_info_crc = Crc32(0);
+  }
   ICING_ASSIGN_OR_RETURN(Crc32 child_document_join_id_pair_array_crc,
                          child_document_join_id_pair_array_->UpdateChecksum());
 
   return Crc32(parent_document_id_to_child_array_info_crc.Get() ^
+               parent_qualified_id_to_child_array_info_crc.Get() ^
                child_document_join_id_pair_array_crc.Get());
 }
 
@@ -819,10 +1073,17 @@ QualifiedIdJoinIndexImplV3::GetStoragesChecksum() const {
   // Get checksums for all components.
   Crc32 parent_document_id_to_child_array_info_crc =
       parent_document_id_to_child_array_info_->GetChecksum();
+  Crc32 parent_qualified_id_to_child_array_info_crc(0);
+  if (feature_flags_.enable_non_existent_qualified_id_join()) {
+    ICING_ASSIGN_OR_RETURN(
+        parent_qualified_id_to_child_array_info_crc,
+        parent_qualified_id_to_child_array_info_->GetChecksum());
+  }
   Crc32 child_document_join_id_pair_array_crc =
       child_document_join_id_pair_array_->GetChecksum();
 
   return Crc32(parent_document_id_to_child_array_info_crc.Get() ^
+               parent_qualified_id_to_child_array_info_crc.Get() ^
                child_document_join_id_pair_array_crc.Get());
 }
 
