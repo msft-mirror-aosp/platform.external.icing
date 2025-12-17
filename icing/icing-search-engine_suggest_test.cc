@@ -144,7 +144,14 @@ SchemaProto CreatePersonAndEmailSchema() {
                                .SetName("sender")
                                .SetDataTypeDocument(
                                    "Person", /*index_nested_properties=*/true)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                      .SetName("embed")
+                      .SetDataTypeVector(
+                          EmbeddingIndexingConfig_EmbeddingIndexingType::
+                              LINEAR_SEARCH)
+                      .SetCardinality(CARDINALITY_OPTIONAL)))
       .Build();
 }
 

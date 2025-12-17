@@ -4457,7 +4457,10 @@ TEST_P(SchemaUtilTest,
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
       /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0);
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true,
+      /*enable_skip_set_schema_type_equality_check=*/true,
+      /*enable_embed_query_optimization=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4529,7 +4532,10 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
       /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0);
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true,
+      /*enable_skip_set_schema_type_equality_check=*/true,
+      /*enable_embed_query_optimization=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5866,7 +5872,10 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0),
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true,
+                        /*enable_skip_set_schema_type_equality_check=*/true,
+                        /*enable_embed_query_optimization=*/true),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -5884,7 +5893,10 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0)));
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true,
+                        /*enable_skip_set_schema_type_equality_check=*/true,
+                        /*enable_embed_query_optimization=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;
