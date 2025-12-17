@@ -585,6 +585,9 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_schema_database(GetRandomBoolean(&random_));
   icing_options.set_enable_schema_type_id_optimization(
       GetRandomBoolean(&random_));
+  icing_options.set_enable_skip_set_schema_type_equality_check(
+      GetRandomBoolean(&random_));
+  icing_options.set_enable_embed_query_optimization(GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

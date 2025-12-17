@@ -831,6 +831,59 @@ class SchemaStore {
       const SchemaProto& new_schema, const std::string& database) const;
 
   // Returns a SchemaProto representing the full schema, which is a combination
+  // of the existing schema and the input database schema. The returned
+  // SchemaProto is optimized to preserve as many type ids as possible.
+  //
+  // Note that `database_to_update` could also be the empty string, which means
+  // that the entire schema is being updated. In this case,
+  // `input_database_schema` must contain all types in the full schema. Any
+  // preexisting type not in `input_database_schema` will be deleted.
+  //
+  // For database_to_update, we replace the existing types with the input
+  //   types. Any existing type not included in input_database_schema is
+  //   deleted.
+  // - When possible, existing types are added in the position in which they
+  //   appear in the existing schema so as to preserve the type-ids of
+  //   existing types.
+  // - If there are more input types than existing types for
+  //   database_to_update, added input types are appended to the end of the
+  //   full_schema.
+  // - If there are fewer input types than existing types for
+  //   database_to_update, we use the last few input types to replace the
+  //   deleted existing types, so as to preserve as many old type-ids as
+  //   possible.
+  // - For existing types from other databases, we preserve the existing order
+  //   after adding to full_schema. Note that the type-ids of existing types
+  //   might still change if some types are deleted in the database_to_update
+  //   as this will cause all subsequent types ids to shift forward.
+  // - This means that:
+  //   - When adding types to a database, the type-ids of existing types will
+  //     not change.
+  //   - When types are deleted, we fill their original slots with the last
+  //     valid types in the schema to preserve as many type-ids as possible.
+  // - If input_database_schema is an empty proto, then all types from
+  //   database_to_update are deleted.
+  //
+  // Requires:
+  //   - input_database_schema is valid according to `ValidateSchemaDatabase`.
+  //
+  // Returns:
+  //   - SchemaProto on success
+  //   - INTERNAL_ERROR on any IO errors, or if the schema store was not
+  //     previously initialized properly.
+  //   - INVALID_ARGUMENT_ERROR if the input schema does not match
+  //     database_to_update.
+  libtextclassifier3::StatusOr<SchemaProto> GetFullOptimizedSchemaProto(
+      SchemaProto input_database_schema,
+      const std::string& database_to_update) const;
+
+  // TODO: b/434218554 - Remove this method once schema type id optimization is
+  // fully rolled out.
+  //
+  // This method should only be called when
+  // `feature_flags_->enable_schema_type_id_optimization` is false.
+  //
+  // Returns a SchemaProto representing the full schema, which is a combination
   // of the existing schema and the input database schema. Deletes all types
   // belonging to the specified database if input_database_schema is an empty
   // proto.

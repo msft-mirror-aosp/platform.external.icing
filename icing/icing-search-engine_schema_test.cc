@@ -414,6 +414,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     SetSchemaResultProto set_schema_result = icing.SetSchema(schema);
     // Ignore latency numbers. They're covered elsewhere.
     set_schema_result.clear_set_schema_stats();
+    set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_new_schema_types()->Add("Email");
@@ -446,6 +447,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     SetSchemaResultProto set_schema_result = icing.SetSchema(schema, true);
     // Ignore latency numbers. They're covered elsewhere.
     set_schema_result.clear_set_schema_stats();
+    set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_fully_compatible_changed_schema_types()
@@ -730,10 +732,16 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
+  // We need to add 2 dummy types to the schema so that once deleted, both
+  // Person and Email types' schema type ids will change.
   SchemaProto schema_one =
       SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("DummyA"))  // schema type id 0
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("DummyB"))  // schema type id 1
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Person")  // schema type id 0
+                       .SetType("Person")  // schema type id 2
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("name")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -744,7 +752,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")  // schema type id 1
+                       .SetType("Email")  // schema type id 3
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -788,26 +796,16 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
 
-  // SetSchema again with the schema types reordered.
-  // - If we only reorder the existing types "Person" and "Email", schema store
-  //   will detect the new schema set is identical to the old one and skip the
-  //   entire SetSchema process. This will cause the schema type id not changed.
-  // - Therefore, to create a scenario that changes ids for the existing schema
-  //   types, we must add "newType".
+  // SetSchema again with both the dummy schema types deleted.
+  // - This will cause the schema type ids of both Person and Email types to be
+  //   shifted up.
   //
-  // This should succeed and all search features should still work after schema
-  // id changed.
+  // This should succeed and all search features should still work after the
+  // schema id change.
   SchemaProto schema_two =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("newType")  // schema type id 0
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("test")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Person")  // schema type id 1
+                       .SetType("Person")  // schema type id 0
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("name")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -818,7 +816,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")  // schema type id 2
+                       .SetType("Email")  // schema type id 1
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -829,9 +827,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                         .SetDataTypeJoinableString(
                                             JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
-
           .Build();
-  SetSchemaResultProto set_schema_result2 = icing.SetSchema(schema_two);
+  SetSchemaResultProto set_schema_result2 =
+      icing.SetSchema(schema_two, /*ignore_errors_and_delete_documents=*/true);
   EXPECT_THAT(set_schema_result2.status(), ProtoStatusIs(StatusProto::OK));
   EXPECT_THAT(set_schema_result2.set_schema_stats().overall_latency_ms(),
               Eq(1000));
@@ -1719,6 +1717,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
@@ -1784,6 +1783,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -1838,6 +1838,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
@@ -1899,6 +1900,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -2136,6 +2138,7 @@ TEST_F(
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -2230,6 +2233,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
@@ -2334,6 +2338,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   set_schema_result = icing.SetSchema(no_nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -2460,6 +2465,7 @@ TEST_F(
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
@@ -2634,6 +2640,7 @@ TEST_F(
   set_schema_result = icing.SetSchema(nested_schema_with_less_props);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -2705,6 +2712,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Message");
@@ -2823,6 +2831,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
@@ -2993,6 +3002,7 @@ TEST_F(
       icing.SetSchema(email_with_body_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
@@ -3070,6 +3080,7 @@ TEST_F(
       email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -3145,6 +3156,7 @@ TEST_F(IcingSearchEngineSchemaTest,
       icing.SetSchema(email_with_receiver_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
@@ -3247,6 +3259,7 @@ TEST_F(IcingSearchEngineSchemaTest,
                       /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
@@ -3306,6 +3319,7 @@ TEST_F(
       icing.SetSchema(email_with_body_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
@@ -3389,6 +3403,7 @@ TEST_F(
       email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -3465,6 +3480,7 @@ TEST_F(
       icing.SetSchema(email_with_body_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
@@ -3569,6 +3585,7 @@ TEST_F(
       email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
@@ -3634,6 +3651,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
@@ -3693,6 +3711,7 @@ TEST_F(IcingSearchEngineSchemaTest,
       nested_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
@@ -3766,6 +3785,7 @@ TEST_F(
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
@@ -3830,6 +3850,7 @@ TEST_F(
   set_schema_result = icing.SetSchema(schema2);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
@@ -3904,6 +3925,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
       icing.SetSchema(schema_with_required_subject);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result_proto;
   expected_set_schema_result_proto.mutable_status()->set_code(
       StatusProto::FAILED_PRECONDITION);
@@ -3918,6 +3940,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
                       /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result_proto.mutable_status()->clear_message();
   expected_set_schema_result_proto.set_deleted_document_count(1);
@@ -3984,6 +4007,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {
   SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_result;
   expected_result.mutable_status()->set_code(StatusProto::FAILED_PRECONDITION);
   expected_result.mutable_status()->set_message("Schema is incompatible.");
@@ -3997,6 +4021,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {
                       /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_result.mutable_status()->set_code(StatusProto::OK);
   expected_result.mutable_status()->clear_message();
   expected_result.set_deleted_document_count(1);
@@ -4163,6 +4188,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
           db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
@@ -4240,7 +4266,11 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeOk) {
       StatusProto::OK);
   *expected_get_schema_type_result_proto.mutable_schema_type_config() =
       schema_type_config;
-  EXPECT_THAT(icing.GetSchemaType("SchemaType"),
+  GetSchemaTypeResultProto actual_get_schema_type_result_proto =
+      icing.GetSchemaType("SchemaType");
+  actual_get_schema_type_result_proto
+      .clear_vm_binder_transaction_latency_start_time_ms();
+  EXPECT_THAT(actual_get_schema_type_result_proto,
               EqualsProto(expected_get_schema_type_result_proto));
 }
 
