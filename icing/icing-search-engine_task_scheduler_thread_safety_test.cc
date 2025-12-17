@@ -97,6 +97,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(true);
+  icing_options.set_enable_background_task_scheduler(true);
   icing_options.set_expired_document_purge_threshold_ms(0);
   return icing_options;
 }
