@@ -19,8 +19,11 @@
 #include <limits>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/posting_list/posting-list-used.h"
+#include "icing/index/hit/hit.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/util/logging.h"
@@ -33,6 +36,10 @@ namespace {
 
 uint32_t GetTermFrequencyByteSize(const Hit& hit) {
   return hit.has_term_frequency() ? sizeof(Hit::TermFrequency) : 0;
+}
+
+uint32_t GetFlagsByteSize(const Hit& hit) {
+  return hit.has_flags() ? sizeof(Hit::Flags) : 0;
 }
 
 }  // namespace
@@ -55,14 +62,45 @@ uint32_t PostingListHitSerializer::GetMinPostingListSizeToFit(
     return posting_list_used->size_in_bytes();
   }
 
-  // In NOT_FULL status BytesUsed contains no special hits. The minimum sized
-  // posting list that would be guaranteed to fit these hits would be
-  // ALMOST_FULL, with kInvalidHit in special_hit(0), the uncompressed Hit in
-  // special_hit(1) and the n compressed hits in the compressed region.
-  // BytesUsed contains one uncompressed Hit and n compressed hits. Therefore,
-  // fitting these hits into a posting list would require BytesUsed plus one
-  // extra hit.
-  return GetBytesUsed(posting_list_used) + sizeof(Hit);
+  // Edge case: if number of hits <= 2, and posting_list_used is NOT_FULL, we
+  // should return kMinPostingListSize as we know that two hits is able to fit
+  // in the 2 special hits position of a min-sized posting list.
+  // - Checking this scenario requires deserializing posting_list_used, which is
+  //   an expensive operation. However this is only possible when
+  //   GetBytesUsed(posting_list_used) <=
+  //   sizeof(uncompressed hit) + max(delta encoded value size) +
+  //   (sizeof(Hit) + (sizeof(Hit) - sizeof(Hit::Value)), so we don't need to do
+  //   this when the size exceeds this number.
+  if (GetBytesUsed(posting_list_used) <=
+      2 * sizeof(Hit) + 5 - sizeof(Hit::Value)) {
+    // Check if we're able to get more than 2 hits from posting_list_used
+    std::vector<Hit> hits;
+    libtextclassifier3::Status status =
+        GetHitsInternal(posting_list_used, /*limit=*/3, /*pop=*/false, &hits);
+    if (status.ok() && hits.size() <= 2) {
+      return GetMinPostingListSize();
+    }
+  }
+
+  // - In NOT_FULL status, BytesUsed contains no special hits. For a posting
+  //   list in the NOT_FULL state with n hits, we would have n-1 compressed hits
+  //   and 1 uncompressed hit.
+  // - The minimum sized posting list that would be guaranteed to fit these hits
+  //   would be FULL, but calculating the size required for the FULL posting
+  //   list would require deserializing the last two added hits, so instead we
+  //   will calculate the size of an ALMOST_FULL posting list to fit.
+  // - An ALMOST_FULL posting list would have kInvalidHit in special_hit(0), the
+  //   full uncompressed Hit in special_hit(1), and the n-1 compressed hits in
+  //   the compressed region.
+  // - Currently BytesUsed contains one uncompressed Hit and n-1 compressed
+  //   hits. However, it's possible that the uncompressed Hit is not a full hit,
+  //   but rather only the Hit::Value (this is the case if
+  //   !hit.has_term_frequency()).
+  // - Therefore, fitting these hits into a posting list would require
+  //   BytesUsed + one extra full hit + byte difference between a full hit and
+  //   Hit::Value. i.e:
+  //   ByteUsed + sizeof(Hit) + (sizeof(Hit) - sizeof(Hit::Value)).
+  return GetBytesUsed(posting_list_used) + 2 * sizeof(Hit) - sizeof(Hit::Value);
 }
 
 void PostingListHitSerializer::Clear(PostingListUsed* posting_list_used) const {
@@ -160,27 +198,37 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToAlmostFull(
   // in the padded area and put new hit at the special position 1.
   // Calling ValueOrDie is safe here because 1 < kNumSpecialData.
   Hit cur = GetSpecialHit(posting_list_used, /*index=*/1).ValueOrDie();
-  if (cur.value() <= hit.value()) {
+  if (!(hit < cur)) {
     return absl_ports::InvalidArgumentError(
         "Hit being prepended must be strictly less than the most recent Hit");
   }
-  uint64_t delta = cur.value() - hit.value();
   uint8_t delta_buf[VarInt::kMaxEncodedLen64];
-  size_t delta_len = VarInt::Encode(delta, delta_buf);
+  size_t delta_len =
+      EncodeNextHitValue(/*next_hit_value=*/hit.value(),
+                         /*curr_hit_value=*/cur.value(), delta_buf);
+  uint32_t cur_flags_bytes = GetFlagsByteSize(cur);
   uint32_t cur_term_frequency_bytes = GetTermFrequencyByteSize(cur);
 
   uint32_t pad_end = GetPadEnd(posting_list_used,
                                /*offset=*/kSpecialHitsSize);
 
-  if (pad_end >= kSpecialHitsSize + delta_len + cur_term_frequency_bytes) {
-    // Pad area has enough space for delta and term_frequency of existing hit
-    // (cur). Write delta at pad_end - delta_len - cur_term_frequency_bytes.
+  if (pad_end >= kSpecialHitsSize + delta_len + cur_flags_bytes +
+                     cur_term_frequency_bytes) {
+    // Pad area has enough space for delta, flags and term_frequency of existing
+    // hit (cur). Write delta at pad_end - delta_len - cur_flags_bytes -
+    // cur_term_frequency_bytes.
     uint8_t* delta_offset = posting_list_used->posting_list_buffer() + pad_end -
-                            delta_len - cur_term_frequency_bytes;
+                            delta_len - cur_flags_bytes -
+                            cur_term_frequency_bytes;
     memcpy(delta_offset, delta_buf, delta_len);
-    // Now copy term_frequency.
+
+    // Now copy flags.
+    Hit::Flags flags = cur.flags();
+    uint8_t* flags_offset = delta_offset + delta_len;
+    memcpy(flags_offset, &flags, cur_flags_bytes);
+    // Copy term_frequency.
     Hit::TermFrequency term_frequency = cur.term_frequency();
-    uint8_t* term_frequency_offset = delta_offset + delta_len;
+    uint8_t* term_frequency_offset = flags_offset + cur_flags_bytes;
     memcpy(term_frequency_offset, &term_frequency, cur_term_frequency_bytes);
 
     // Now first hit is the new hit, at special position 1. Safe to ignore the
@@ -231,23 +279,36 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToNotFull(
     return absl_ports::FailedPreconditionError(
         "Posting list is in an invalid state.");
   }
+
+  // Retrieve the last added (cur) hit's value and flags and compare to the hit
+  // we're adding.
   Hit::Value cur_value;
-  memcpy(&cur_value, posting_list_used->posting_list_buffer() + offset,
-         sizeof(Hit::Value));
-  if (cur_value <= hit.value()) {
-    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "Hit %d being prepended must be strictly less than the most recent "
-        "Hit %d",
-        hit.value(), cur_value));
+  uint8_t* cur_value_offset = posting_list_used->posting_list_buffer() + offset;
+  memcpy(&cur_value, cur_value_offset, sizeof(Hit::Value));
+  Hit::Flags cur_flags = Hit::kNoEnabledFlags;
+  if (GetFlagsByteSize(Hit(cur_value)) > 0) {
+    uint8_t* cur_flags_offset = cur_value_offset + sizeof(Hit::Value);
+    memcpy(&cur_flags, cur_flags_offset, sizeof(Hit::Flags));
   }
-  uint64_t delta = cur_value - hit.value();
+  // Term-frequency is not used for hit comparison so it's ok to pass in the
+  // default term-frequency here.
+  Hit cur(cur_value, cur_flags, Hit::kDefaultTermFrequency);
+  if (!(hit < cur)) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Hit (value=%d, flags=%d) being prepended must be strictly less than "
+        "the most recent Hit (value=%d, flags=%d)",
+        hit.value(), hit.flags(), cur_value, cur_flags));
+  }
   uint8_t delta_buf[VarInt::kMaxEncodedLen64];
-  size_t delta_len = VarInt::Encode(delta, delta_buf);
+  size_t delta_len =
+      EncodeNextHitValue(/*next_hit_value=*/hit.value(),
+                         /*curr_hit_value=*/cur.value(), delta_buf);
+  uint32_t hit_flags_bytes = GetFlagsByteSize(hit);
   uint32_t hit_term_frequency_bytes = GetTermFrequencyByteSize(hit);
 
   // offset now points to one past the end of the first hit.
   offset += sizeof(Hit::Value);
-  if (kSpecialHitsSize + sizeof(Hit::Value) + delta_len +
+  if (kSpecialHitsSize + sizeof(Hit::Value) + delta_len + hit_flags_bytes +
           hit_term_frequency_bytes <=
       offset) {
     // Enough space for delta in compressed area.
@@ -257,9 +318,9 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToNotFull(
     memcpy(posting_list_used->posting_list_buffer() + offset, delta_buf,
            delta_len);
 
-    // Prepend new hit with (possibly) its term_frequency. We know that there is
-    // room for 'hit' because of the if statement above, so calling ValueOrDie
-    // is safe.
+    // Prepend new hit with (possibly) its flags and term_frequency. We know
+    // that there is room for 'hit' because of the if statement above, so
+    // calling ValueOrDie is safe.
     offset =
         PrependHitUncompressed(posting_list_used, hit, offset).ValueOrDie();
     // offset is guaranteed to be valid here. So it's safe to ignore the return
@@ -295,13 +356,13 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToNotFull(
     // (i.e. varint delta encoding expanded required storage). We
     // move first hit to special position 1 and put new hit in
     // special position 0.
-    Hit cur(cur_value);
-    // offset is < kSpecialHitsSize + delta_len. delta_len is at most 5 bytes.
+
+    // Offset is < kSpecialHitsSize + delta_len. delta_len is at most 5 bytes.
     // Therefore, offset must be less than kSpecialHitSize + 5. Since posting
-    // list size must be divisible by sizeof(Hit) (5), it is guaranteed that
+    // list size must be divisible by sizeof(Hit) (6), it is guaranteed that
     // offset < size_in_bytes, so it is safe to ignore the return value here.
-    ICING_RETURN_IF_ERROR(
-        ConsumeTermFrequencyIfPresent(posting_list_used, &cur, &offset));
+    ICING_RETURN_IF_ERROR(ConsumeFlagsAndTermFrequencyIfPresent(
+        posting_list_used, &cur, &offset));
     // Safe to ignore the return value of PadToEnd because offset must be less
     // than posting_list_used->size_in_bytes(). Otherwise, this function
     // already would have returned FAILED_PRECONDITION.
@@ -463,19 +524,19 @@ libtextclassifier3::Status PostingListHitSerializer::GetHitsInternal(
       offset += sizeof(Hit::Value);
     } else {
       // Now we have delta encoded subsequent hits. Decode and push.
-      uint64_t delta;
-      offset += VarInt::Decode(
-          posting_list_used->posting_list_buffer() + offset, &delta);
-      val += delta;
+      DecodedHitInfo decoded_hit_info = DecodeNextHitValue(
+          posting_list_used->posting_list_buffer() + offset, val);
+      offset += decoded_hit_info.encoded_size;
+      val = decoded_hit_info.hit_value;
     }
     Hit hit(val);
     libtextclassifier3::Status status =
-        ConsumeTermFrequencyIfPresent(posting_list_used, &hit, &offset);
+        ConsumeFlagsAndTermFrequencyIfPresent(posting_list_used, &hit, &offset);
     if (!status.ok()) {
       // This posting list has been corrupted somehow. The first hit of the
-      // posting list claims to have a term frequency, but there's no more room
-      // in the posting list for that term frequency to exist. Return an empty
-      // vector and zero to indicate no hits retrieved.
+      // posting list claims to have a term frequency or flag, but there's no
+      // more room in the posting list for that term frequency or flag to exist.
+      // Return an empty vector and zero to indicate no hits retrieved.
       if (out != nullptr) {
         out->clear();
       }
@@ -497,10 +558,10 @@ libtextclassifier3::Status PostingListHitSerializer::GetHitsInternal(
       // In the compressed area. Pop and reconstruct. offset/val is
       // the last traversed hit, which we must discard. So move one
       // more forward.
-      uint64_t delta;
-      offset += VarInt::Decode(
-          posting_list_used->posting_list_buffer() + offset, &delta);
-      val += delta;
+      DecodedHitInfo decoded_hit_info = DecodeNextHitValue(
+          posting_list_used->posting_list_buffer() + offset, val);
+      offset += decoded_hit_info.encoded_size;
+      val = decoded_hit_info.hit_value;
 
       // Now val is the first hit of the new posting list.
       if (kSpecialHitsSize + sizeof(Hit::Value) <= offset) {
@@ -509,17 +570,18 @@ libtextclassifier3::Status PostingListHitSerializer::GetHitsInternal(
         memcpy(mutable_posting_list_used->posting_list_buffer() + offset, &val,
                sizeof(Hit::Value));
       } else {
-        // val won't fit in compressed area. Also see if there is a
+        // val won't fit in compressed area. Also see if there is a flag or
         // term_frequency.
         Hit hit(val);
         libtextclassifier3::Status status =
-            ConsumeTermFrequencyIfPresent(posting_list_used, &hit, &offset);
+            ConsumeFlagsAndTermFrequencyIfPresent(posting_list_used, &hit,
+                                                  &offset);
         if (!status.ok()) {
           // This posting list has been corrupted somehow. The first hit of
-          // the posting list claims to have a term frequency, but there's no
-          // more room in the posting list for that term frequency to exist.
-          // Return an empty vector and zero to indicate no hits retrieved. Do
-          // not pop anything.
+          // the posting list claims to have a term frequency or flag, but
+          // there's no more room in the posting list for that term frequency or
+          // flag to exist. Return an empty vector and zero to indicate no hits
+          // retrieved. Do not pop anything.
           if (out != nullptr) {
             out->clear();
           }
@@ -569,7 +631,7 @@ libtextclassifier3::StatusOr<Hit> PostingListHitSerializer::GetSpecialHit(
     return absl_ports::InvalidArgumentError(
         "Special hits only exist at indices 0 and 1");
   }
-  Hit val;
+  Hit val(Hit::kInvalidValue);
   memcpy(&val, posting_list_used->posting_list_buffer() + index * sizeof(val),
          sizeof(val));
   return val;
@@ -653,11 +715,11 @@ bool PostingListHitSerializer::SetStartByteOffset(
     // not_full state. Safe to ignore the return value because 0 and 1 are both
     // < kNumSpecialData.
     SetSpecialHit(posting_list_used, /*index=*/0, Hit(offset));
-    SetSpecialHit(posting_list_used, /*index=*/1, Hit());
+    SetSpecialHit(posting_list_used, /*index=*/1, Hit(Hit::kInvalidValue));
   } else if (offset == sizeof(Hit)) {
     // almost_full state. Safe to ignore the return value because 1 is both <
     // kNumSpecialData.
-    SetSpecialHit(posting_list_used, /*index=*/0, Hit());
+    SetSpecialHit(posting_list_used, /*index=*/0, Hit(Hit::kInvalidValue));
   }
   // Nothing to do for the FULL state - the offset isn't actually stored
   // anywhere and both special hits hold valid hits.
@@ -667,46 +729,72 @@ bool PostingListHitSerializer::SetStartByteOffset(
 libtextclassifier3::StatusOr<uint32_t>
 PostingListHitSerializer::PrependHitUncompressed(
     PostingListUsed* posting_list_used, const Hit& hit, uint32_t offset) const {
-  if (hit.has_term_frequency()) {
-    if (offset < kSpecialHitsSize + sizeof(Hit)) {
-      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-          "Not enough room to prepend Hit at offset %d.", offset));
-    }
-    offset -= sizeof(Hit);
-    memcpy(posting_list_used->posting_list_buffer() + offset, &hit,
-           sizeof(Hit));
-  } else {
-    if (offset < kSpecialHitsSize + sizeof(Hit::Value)) {
-      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-          "Not enough room to prepend Hit::Value at offset %d.", offset));
-    }
-    offset -= sizeof(Hit::Value);
-    Hit::Value val = hit.value();
-    memcpy(posting_list_used->posting_list_buffer() + offset, &val,
-           sizeof(Hit::Value));
+  uint32_t hit_bytes_to_prepend = sizeof(Hit::Value) + GetFlagsByteSize(hit) +
+                                  GetTermFrequencyByteSize(hit);
+
+  if (offset < kSpecialHitsSize + hit_bytes_to_prepend) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Not enough room to prepend Hit at offset %d.", offset));
   }
+
+  if (hit.has_term_frequency()) {
+    offset -= sizeof(Hit::TermFrequency);
+    Hit::TermFrequency term_frequency = hit.term_frequency();
+    memcpy(posting_list_used->posting_list_buffer() + offset, &term_frequency,
+           sizeof(Hit::TermFrequency));
+  }
+  if (hit.has_flags()) {
+    offset -= sizeof(Hit::Flags);
+    Hit::Flags flags = hit.flags();
+    memcpy(posting_list_used->posting_list_buffer() + offset, &flags,
+           sizeof(Hit::Flags));
+  }
+  offset -= sizeof(Hit::Value);
+  Hit::Value val = hit.value();
+  memcpy(posting_list_used->posting_list_buffer() + offset, &val,
+         sizeof(Hit::Value));
   return offset;
 }
 
 libtextclassifier3::Status
-PostingListHitSerializer::ConsumeTermFrequencyIfPresent(
+PostingListHitSerializer::ConsumeFlagsAndTermFrequencyIfPresent(
     const PostingListUsed* posting_list_used, Hit* hit,
     uint32_t* offset) const {
-  if (!hit->has_term_frequency()) {
-    // No term frequency to consume. Everything is fine.
+  if (!hit->has_flags()) {
+    // No flags (and by extension, no term-frequency) to consume. Everything is
+    // fine.
     return libtextclassifier3::Status::OK;
   }
-  if (*offset + sizeof(Hit::TermFrequency) >
-      posting_list_used->size_in_bytes()) {
+
+  // Consume flags
+  Hit::Flags flags;
+  if (*offset + sizeof(Hit::Flags) > posting_list_used->size_in_bytes()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "offset %d must not point past the end of the posting list of size %d.",
+        "offset %d must not point past the end of the posting list of size "
+        "%d.",
         *offset, posting_list_used->size_in_bytes()));
   }
-  Hit::TermFrequency term_frequency;
-  memcpy(&term_frequency, posting_list_used->posting_list_buffer() + *offset,
-         sizeof(Hit::TermFrequency));
-  *hit = Hit(hit->value(), term_frequency);
-  *offset += sizeof(Hit::TermFrequency);
+  memcpy(&flags, posting_list_used->posting_list_buffer() + *offset,
+         sizeof(Hit::Flags));
+  *hit = Hit(hit->value(), flags, Hit::kDefaultTermFrequency);
+  *offset += sizeof(Hit::Flags);
+
+  if (hit->has_term_frequency()) {
+    // Consume term frequency
+    if (*offset + sizeof(Hit::TermFrequency) >
+        posting_list_used->size_in_bytes()) {
+      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+          "offset %d must not point past the end of the posting list of size "
+          "%d.",
+          *offset, posting_list_used->size_in_bytes()));
+    }
+    Hit::TermFrequency term_frequency;
+    memcpy(&term_frequency, posting_list_used->posting_list_buffer() + *offset,
+           sizeof(Hit::TermFrequency));
+    *hit = Hit(hit->value(), flags, term_frequency);
+    *offset += sizeof(Hit::TermFrequency);
+  }
+
   return libtextclassifier3::Status::OK;
 }
 

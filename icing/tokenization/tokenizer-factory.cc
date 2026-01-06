@@ -21,7 +21,6 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/plain-tokenizer.h"
-#include "icing/tokenization/raw-query-tokenizer.h"
 #include "icing/tokenization/rfc822-tokenizer.h"
 #include "icing/tokenization/tokenizer.h"
 
@@ -61,21 +60,6 @@ CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
       // This should never happen.
       return absl_ports::InvalidArgumentError(
           "Invalid tokenizer type for an indexed section");
-  }
-}
-
-libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>> CreateQueryTokenizer(
-    QueryTokenizerType query_tokenizer_type,
-    const LanguageSegmenter* lang_segmenter) {
-  ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
-
-  switch (query_tokenizer_type) {
-    case RAW_QUERY:
-      return std::make_unique<RawQueryTokenizer>(lang_segmenter);
-    default:
-      // This should never happen.
-      return absl_ports::InvalidArgumentError(
-          "Invalid tokenizer type for query");
   }
 }
 

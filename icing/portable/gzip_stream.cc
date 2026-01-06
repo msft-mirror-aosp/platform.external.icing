@@ -18,17 +18,23 @@
 // smaller libprotobuf-lite instead.
 
 #include "icing/portable/gzip_stream.h"
+
+#include <cstddef>
+
 #include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
 namespace protobuf_ports {
 
-static const int kDefaultBufferSize = 65536;
-
 GzipInputStream::GzipInputStream(ZeroCopyInputStream* sub_stream, Format format,
-                                 int buffer_size)
-    : format_(format), sub_stream_(sub_stream), zerror_(Z_OK), byte_count_(0) {
+                                 void* output_buffer, size_t buffer_size)
+    : format_(format),
+      sub_stream_(sub_stream),
+      zerror_(Z_OK),
+      output_buffer_(output_buffer),
+      output_buffer_length_(buffer_size),
+      byte_count_(0) {
   zcontext_.state = Z_NULL;
   zcontext_.zalloc = Z_NULL;
   zcontext_.zfree = Z_NULL;
@@ -38,18 +44,12 @@ GzipInputStream::GzipInputStream(ZeroCopyInputStream* sub_stream, Format format,
   zcontext_.avail_in = 0;
   zcontext_.total_in = 0;
   zcontext_.msg = NULL;
-  if (buffer_size == -1) {
-    output_buffer_length_ = kDefaultBufferSize;
-  } else {
-    output_buffer_length_ = buffer_size;
-  }
-  output_buffer_ = operator new(output_buffer_length_);
   zcontext_.next_out = static_cast<Bytef*>(output_buffer_);
   zcontext_.avail_out = output_buffer_length_;
   output_position_ = output_buffer_;
 }
+
 GzipInputStream::~GzipInputStream() {
-  operator delete(output_buffer_);
   zerror_ = inflateEnd(&zcontext_);
 }
 
@@ -179,7 +179,8 @@ GzipOutputStream::Options::Options()
     : format(GZIP),
       buffer_size(kDefaultBufferSize),
       compression_level(Z_DEFAULT_COMPRESSION),
-      compression_strategy(Z_DEFAULT_STRATEGY) {}
+      compression_strategy(Z_DEFAULT_STRATEGY),
+      mem_level(kDefaultMemLevel) {}
 
 GzipOutputStream::GzipOutputStream(ZeroCopyOutputStream* sub_stream) {
   Init(sub_stream, Options());
@@ -214,10 +215,10 @@ void GzipOutputStream::Init(ZeroCopyOutputStream* sub_stream,
   if (options.format == ZLIB) {
     windowBitsFormat = 0;
   }
-  zerror_ =
-      deflateInit2(&zcontext_, options.compression_level, Z_DEFLATED,
-                   /* windowBits */ 15 | windowBitsFormat,
-                   /* memLevel (default) */ 8, options.compression_strategy);
+  zerror_ = deflateInit2(&zcontext_, options.compression_level, Z_DEFLATED,
+                         /* windowBits */ 15 | windowBitsFormat,
+                         /* memLevel */ options.mem_level,
+                         options.compression_strategy);
 }
 
 GzipOutputStream::~GzipOutputStream() {

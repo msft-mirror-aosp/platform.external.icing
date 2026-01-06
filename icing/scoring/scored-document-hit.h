@@ -15,9 +15,10 @@
 #ifndef ICING_SCORING_SCORED_DOCUMENT_HIT_H_
 #define ICING_SCORING_SCORED_DOCUMENT_HIT_H_
 
-#include <type_traits>
+#include <memory>
+#include <utility>
+#include <vector>
 
-#include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
@@ -43,6 +44,39 @@ class ScoredDocumentHit {
         hit_section_id_mask_(hit_section_id_mask),
         score_(score) {}
 
+  ScoredDocumentHit(DocumentId document_id, SectionIdMask hit_section_id_mask,
+                    double score, std::vector<double> additional_scores)
+      : document_id_(document_id),
+        hit_section_id_mask_(hit_section_id_mask),
+        score_(score) {
+    SetAdditionalScores(std::move(additional_scores));
+  }
+
+  ScoredDocumentHit(const ScoredDocumentHit& other)
+      : document_id_(other.document_id_),
+        hit_section_id_mask_(other.hit_section_id_mask_),
+        score_(other.score_) {
+    if (other.additional_scores_ != nullptr) {
+      SetAdditionalScores(*other.additional_scores_);
+    }
+  }
+
+  ScoredDocumentHit& operator=(const ScoredDocumentHit& other) {
+    document_id_ = other.document_id_;
+    hit_section_id_mask_ = other.hit_section_id_mask_;
+    score_ = other.score_;
+    if (other.additional_scores_ != nullptr) {
+      SetAdditionalScores(*other.additional_scores_);
+    }
+    return *this;
+  }
+
+  ScoredDocumentHit(ScoredDocumentHit&& other) { Swap(&other); }
+  ScoredDocumentHit& operator=(ScoredDocumentHit&& other) {
+    Swap(&other);
+    return *this;
+  }
+
   bool operator<(const ScoredDocumentHit& other) const {
     if (score() < other.score()) return true;
     if (score() > other.score()) return false;
@@ -55,15 +89,34 @@ class ScoredDocumentHit {
 
   double score() const { return score_; }
 
+  // nullptr if no additional scores.
+  const std::vector<double>* additional_scores() const {
+    return additional_scores_.get();
+  }
+
  private:
+  void Swap(ScoredDocumentHit* other) {
+    std::swap(document_id_, other->document_id_);
+    std::swap(hit_section_id_mask_, other->hit_section_id_mask_);
+    std::swap(score_, other->score_);
+    std::swap(additional_scores_, other->additional_scores_);
+  }
+
+  void SetAdditionalScores(std::vector<double> additional_scores) {
+    if (additional_scores.empty()) {
+      additional_scores_.reset();
+      return;
+    }
+    additional_scores_ =
+        std::make_unique<std::vector<double>>(std::move(additional_scores));
+  }
+
   DocumentId document_id_;
   SectionIdMask hit_section_id_mask_;
   double score_;
-} __attribute__((packed));
-
-static_assert(sizeof(ScoredDocumentHit) == 20,
-              "Size of ScoredDocHit should be 20");
-static_assert(icing_is_packed_pod<ScoredDocumentHit>::value, "go/icing-ubsan");
+  // nullptr if no additional scores.
+  std::unique_ptr<std::vector<double>> additional_scores_;
+};
 
 // A custom comparator for ScoredDocumentHit that determines which
 // ScoredDocumentHit is better (should come first) based off of
@@ -150,7 +203,7 @@ class JoinedScoredDocumentHit {
   double final_score_;
   ScoredDocumentHit parent_scored_document_hit_;
   std::vector<ScoredDocumentHit> child_scored_document_hits_;
-} __attribute__((packed));
+};
 
 }  // namespace lib
 }  // namespace icing
