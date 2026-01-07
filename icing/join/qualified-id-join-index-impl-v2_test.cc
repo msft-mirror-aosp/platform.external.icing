@@ -131,7 +131,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, InitializeNewFiles) {
       filesystem_.PRead(metadata_file_path.c_str(), metadata_buffer.get(),
                         QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                         /*offset=*/0),
-      IsTrue());
+      Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
   // Check info section
   const Info* info = reinterpret_cast<const Info*>(
@@ -372,7 +372,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
     // Manually change magic and update checksum
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -425,7 +425,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
     // Manually corrupt all_crc
     Crcs* crcs = reinterpret_cast<Crcs*>(
@@ -474,7 +474,7 @@ TEST_F(QualifiedIdJoinIndexImplV2Test,
     ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
                                   QualifiedIdJoinIndexImplV2::kMetadataFileSize,
                                   /*offset=*/0),
-                IsTrue());
+                Eq(QualifiedIdJoinIndexImplV2::kMetadataFileSize));
 
     // Modify info, but don't update the checksum. This would be similar to
     // corruption of info.
@@ -850,9 +850,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Optimize) {
   namespace_id_old_to_new[4] = 0;
 
   DocumentId new_last_added_document_id = 2;
-  EXPECT_THAT(index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
-                              new_last_added_document_id),
-              IsOk());
+  EXPECT_THAT(
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new, new_last_added_document_id),
+      IsOk());
   EXPECT_THAT(index, Pointee(SizeIs(3)));
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
 
@@ -961,9 +962,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDocumentIdChange) {
   std::vector<NamespaceId> namespace_id_old_to_new = {0, 1};
 
   DocumentId new_last_added_document_id = 2;
-  EXPECT_THAT(index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
-                              new_last_added_document_id),
-              IsOk());
+  EXPECT_THAT(
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new, new_last_added_document_id),
+      IsOk());
   EXPECT_THAT(index, Pointee(SizeIs(4)));
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
 
@@ -1027,22 +1029,18 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeOutOfRangeDocumentId) {
       IsOk());
   index->set_last_added_document_id(99);
 
-  // Create document_id_old_to_new with size = 1. Optimize should handle out of
-  // range DocumentId properly.
+  // Create document_id_old_to_new with size = 1. Optimize should return
+  // internal error for out of range document id.
   std::vector<DocumentId> document_id_old_to_new = {kInvalidDocumentId};
   std::vector<NamespaceId> namespace_id_old_to_new = {0, 1};
 
-  // There shouldn't be any error due to vector index.
   EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new,
                       /*new_last_added_document_id=*/kInvalidDocumentId),
-      IsOk());
-  EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
-
-  // Verify all data are discarded after Optimize().
-  EXPECT_THAT(index, Pointee(IsEmpty()));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
-              IsOkAndHolds(IsEmpty()));
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+               HasSubstr("Qualified id join index data document id is out of "
+                         "range. The index may have been corrupted.")));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllDocuments) {
@@ -1094,7 +1092,8 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllDocuments) {
   std::vector<NamespaceId> namespace_id_old_to_new = {0, 1};
 
   EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new,
                       /*new_last_added_document_id=*/kInvalidDocumentId),
       IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -1164,9 +1163,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChange) {
   namespace_id_old_to_new[5] = 0;
 
   DocumentId new_last_added_document_id = 21;
-  EXPECT_THAT(index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
-                              new_last_added_document_id),
-              IsOk());
+  EXPECT_THAT(
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new, new_last_added_document_id),
+      IsOk());
   EXPECT_THAT(index, Pointee(SizeIs(4)));
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
 
@@ -1255,9 +1255,10 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeNamespaceIdChangeShouldReorder) {
   std::vector<NamespaceId> namespace_id_old_to_new = {2, 0, 1};
 
   DocumentId new_last_added_document_id = 1;
-  EXPECT_THAT(index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
-                              new_last_added_document_id),
-              IsOk());
+  EXPECT_THAT(
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new, new_last_added_document_id),
+      IsOk());
   EXPECT_THAT(index, Pointee(SizeIs(4)));
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
 
@@ -1302,22 +1303,18 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeOutOfRangeNamespaceId) {
       IsOk());
   index->set_last_added_document_id(0);
 
-  // Create namespace_id_old_to_new with size = 1. Optimize should handle out of
-  // range NamespaceId properly.
+  // Create namespace_id_old_to_new with size = 1. Optimize should return
+  // internal error for out of range ref namespace id.
   std::vector<DocumentId> document_id_old_to_new = {0};
   std::vector<NamespaceId> namespace_id_old_to_new = {kInvalidNamespaceId};
 
-  // There shouldn't be any error due to vector index.
   EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new,
                       /*new_last_added_document_id=*/kInvalidDocumentId),
-      IsOk());
-  EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
-
-  // Verify all data are discarded after Optimize().
-  EXPECT_THAT(index, Pointee(IsEmpty()));
-  EXPECT_THAT(GetJoinData(*index, schema_type_id, joinable_property_id),
-              IsOkAndHolds(IsEmpty()));
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+               HasSubstr("Qualified id join index data ref namespace id is out "
+                         "of range. The index may have been corrupted.")));
 }
 
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllNamespaces) {
@@ -1358,7 +1355,8 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDeleteAllNamespaces) {
   std::vector<NamespaceId> namespace_id_old_to_new(3, kInvalidNamespaceId);
 
   EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, namespace_id_old_to_new,
+      index->Optimize(/*document_store=*/nullptr, document_id_old_to_new,
+                      namespace_id_old_to_new,
                       /*new_last_added_document_id=*/kInvalidDocumentId),
       IsOk());
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));

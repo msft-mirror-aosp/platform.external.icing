@@ -30,6 +30,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
@@ -42,12 +43,14 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-type-manager.h"
+#include "icing/schema/schema-util.h"
 #include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -154,6 +157,8 @@ class SchemaStore {
       serialized_header_.min_overlay_version_compatibility =
           min_overlay_version_compatibility;
     }
+
+    void SetSwappedFilepath(std::string path) { path_ = std::move(path); }
 
    private:
     explicit Header(SerializedHeader serialized_header, std::string path,
@@ -321,9 +326,26 @@ class SchemaStore {
   // schema or schema with types from multiple databases. Compatibility rules
   // defined by SchemaUtil::ComputeCompatibilityDelta.
   //
-  // The schema types in the new schema proto must all be from a single
-  // database. Does not support setting schema types across multiple databases
-  // at once.
+  // NOTE: This method is deprecated. Please use
+  // `SetSchema(SetSchemaRequestProto&& set_schema_request)` instead.
+  //
+  // TODO: b/337913932 - Remove this method once all callers (currently only
+  // used in tests) are migrated to the new SetSchema method that takes a
+  // SetSchemaRequestProto.
+  libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
+      SchemaProto new_schema, bool ignore_errors_and_delete_documents);
+
+  // Update our current schema if it's compatible. Does not accept incompatible
+  // schema or schema subsets with types from multiple databases. Compatibility
+  // rules defined by SchemaUtil::ComputeCompatibilityDelta.
+  //
+  // This method accepts either a full schema (indicated by an empty database
+  // field) or a schema subset with types from a single database.
+  // - If `set_schema_request.database()` is non-empty, then all types in the
+  //   new schema must have their `database` field matching
+  //   `set_schema_request.database()`.
+  // - If `set_schema_request.database()` is empty, then the new schema will be
+  //   taken as the full schema, and will replace the entire existing schema.
   //
   // If ignore_errors_and_delete_documents is set to true, then incompatible
   // schema are allowed and we'll force set the schema, meaning
@@ -335,12 +357,12 @@ class SchemaStore {
   //   - INTERNAL_ERROR on any IO errors
   //   - ALREADY_EXISTS_ERROR if type names in the new schema are already in use
   //     by a different database.
-  //   - INVALID_ARGUMENT_ERROR if the schema is invalid, or if the schema types
-  //     are from multiple databases (once schema database is enabled).
+  //   - INVALID_ARGUMENT_ERROR if the schema is invalid. This can happen if
+  //     the schema is malformed, if the new schema contains types where the
+  //     database field does not match the database field in the
+  //     set_schema_request.
   libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
-      const SchemaProto& new_schema, bool ignore_errors_and_delete_documents);
-  libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
-      SchemaProto&& new_schema, bool ignore_errors_and_delete_documents);
+      SetSchemaRequestProto&& set_schema_request);
 
   // Get the SchemaTypeConfigProto of schema_type name.
   //
@@ -561,6 +583,26 @@ class SchemaStore {
       const google::protobuf::RepeatedPtrField<TypePropertyMask>& type_property_masks)
       const;
 
+  // Returns the hash of a schema name.
+  static uint32_t GetSchemaNameHash(std::string_view schema_name) {
+    return Crc32(schema_name).Get();
+  }
+
+  // Returns the hash of the schema name for the given schema type id.
+  //
+  // Returns:
+  //   - The hash value on success.
+  //   - INVALID_ARGUMENT_ERROR if schema_type_id is invalid.
+  libtextclassifier3::StatusOr<uint32_t> GetSchemaNameHash(
+      SchemaTypeId schema_type_id) const {
+    auto it = reverse_schema_type_mapper_hash_.find(schema_type_id);
+    if (it == reverse_schema_type_mapper_hash_.end()) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Invalid SchemaTypeId ", std::to_string(schema_type_id)));
+    }
+    return it->second;
+  }
+
  private:
   // Factory function to create a SchemaStore and set its schema. The created
   // instance does not take ownership of any input components and all pointers
@@ -694,6 +736,11 @@ class SchemaStore {
 
   // Correctly loads the Header, schema_file_ and (if present) the
   // overlay_schema_file_.
+  //
+  // If feature_flags_->release_backup_schema_file_after_initialization() is
+  // true, then schema_file_ will be released if the overlay_schema_file_ is
+  // present.
+  //
   // RETURNS:
   //   - OK on success
   //   - INTERNAL if an IO error is encountered when reading the Header or
@@ -701,22 +748,35 @@ class SchemaStore {
   //     Or an invalid schema configuration is present.
   libtextclassifier3::Status LoadSchema();
 
+  // Resets the schema_file_'s cached FileBackedProto instance if needed.
+  //
+  // This is the case if the overlay_schema_file_ is present and
+  // feature_flags_->release_backup_schema_file_if_overlay_present is true.
+  void ResetSchemaFileIfNeeded() {
+    if (feature_flags_->release_backup_schema_file_if_overlay_present() &&
+        overlay_schema_file_ != nullptr) {
+      ICING_VLOG(2)
+          << "Freeing schema store's base schema file's "
+             "FileBackedProto instance since overlay_schema_file_ is present.";
+      schema_file_.ReleaseCachedSchemaFile();
+    }
+  }
+
   // Sets the schema for a database for the first time.
   //
   // Note that when schema database is disabled, this function sets the entire
-  // schema, with all under the default empty database.
+  // schema, with all types under the default empty database.
   //
   // Requires:
-  //   - All types in new_schema are from the same database.
-  //   - new_schema does not contain type names that are already in use by a
-  //     different database.
+  //   - `new_schema` is valid according to `ValidateSchemaDatabase'
   //
   // Returns:
   //   - SetSchemaResult that indicates if the new schema can be set.
   //   - INTERNAL_ERROR on any IO errors.
-  //   - INVALID_ARGUMENT_ERROR if the schema is invalid.
+  //   - INVALID_ARGUMENT_ERROR if the new schema is invalid.
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetInitialSchemaForDatabase(SchemaProto new_schema,
+                              const std::string& database,
                               bool ignore_errors_and_delete_documents);
 
   // Sets the schema for a database, overriding any existing schema for that
@@ -726,18 +786,25 @@ class SchemaStore {
   // overrides the entire schema.
   //
   // Requires:
-  //   - All types in new_schema are from the same database.
-  //   - new_schema does not contain type names that are already in use by a
-  //     different database.
+  //   - `new_schema` and `database` are valid according to
+  //     `ValidateSchemaDatabase(new_schema, database)`
+  //   - `database` is not empty.
+  //   - Types in `new_schema` and `old_schema` all belong to the provided
+  //     database.
+  //     - The old schema is guaranteed to contain types from exactly one
+  //       database when schema database is enabled, because it was obtained
+  //       using `GetSchema(database)`.
   //
   // Returns:
   //   - SetSchemaResult that encapsulates the differences between the old and
   //     new schema, as well as if the new schema can be set.
   //   - INTERNAL_ERROR on any IO errors.
-  //   - INVALID_ARGUMENT_ERROR if the schema is invalid.
+  //   - INVALID_ARGUMENT_ERROR if the schema is invalid, or if there are
+  //     mismatches between the schema databases.
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetSchemaWithDatabaseOverride(SchemaProto new_schema,
                                 const SchemaProto& old_schema,
+                                const std::string& database,
                                 bool ignore_errors_and_delete_documents);
 
   // Initial validation on the SchemaProto for SetSchema. This is intended as a
@@ -748,22 +815,78 @@ class SchemaStore {
   // an empty string is returned as the database.
   //
   // Checks that:
-  // - The new schema only contains types from a single database.
+  // - The new schema only contains types from a single database, which matches
+  //   the provided database.
   // - The schema's type names are not already in use in other databases. This
   //   is done outside of `SchemaUtil::Validate` because we need to know all
   //   existing type names, which is stored in the SchemaStore and not known to
   //   SchemaUtil.
   //
   // Returns:
-  //   - new_schema's database on success
-  //   - INVALID_ARGUMENT_ERROR if new_schema contains types from multiple
-  //     databases
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_schema.types's databases do not match the
+  //     provided database.
   //   - ALREADY_EXISTS_ERROR if new_schema's types names are not unique
-  libtextclassifier3::StatusOr<std::string> ValidateAndGetDatabase(
-      const SchemaProto& new_schema) const;
+  libtextclassifier3::Status ValidateSchemaDatabase(
+      const SchemaProto& new_schema, const std::string& database) const;
 
   // Returns a SchemaProto representing the full schema, which is a combination
-  // of the existing schema and the input database schema.
+  // of the existing schema and the input database schema. The returned
+  // SchemaProto is optimized to preserve as many type ids as possible.
+  //
+  // Note that `database_to_update` could also be the empty string, which means
+  // that the entire schema is being updated. In this case,
+  // `input_database_schema` must contain all types in the full schema. Any
+  // preexisting type not in `input_database_schema` will be deleted.
+  //
+  // For database_to_update, we replace the existing types with the input
+  //   types. Any existing type not included in input_database_schema is
+  //   deleted.
+  // - When possible, existing types are added in the position in which they
+  //   appear in the existing schema so as to preserve the type-ids of
+  //   existing types.
+  // - If there are more input types than existing types for
+  //   database_to_update, added input types are appended to the end of the
+  //   full_schema.
+  // - If there are fewer input types than existing types for
+  //   database_to_update, we use the last few input types to replace the
+  //   deleted existing types, so as to preserve as many old type-ids as
+  //   possible.
+  // - For existing types from other databases, we preserve the existing order
+  //   after adding to full_schema. Note that the type-ids of existing types
+  //   might still change if some types are deleted in the database_to_update
+  //   as this will cause all subsequent types ids to shift forward.
+  // - This means that:
+  //   - When adding types to a database, the type-ids of existing types will
+  //     not change.
+  //   - When types are deleted, we fill their original slots with the last
+  //     valid types in the schema to preserve as many type-ids as possible.
+  // - If input_database_schema is an empty proto, then all types from
+  //   database_to_update are deleted.
+  //
+  // Requires:
+  //   - input_database_schema is valid according to `ValidateSchemaDatabase`.
+  //
+  // Returns:
+  //   - SchemaProto on success
+  //   - INTERNAL_ERROR on any IO errors, or if the schema store was not
+  //     previously initialized properly.
+  //   - INVALID_ARGUMENT_ERROR if the input schema does not match
+  //     database_to_update.
+  libtextclassifier3::StatusOr<SchemaProto> GetFullOptimizedSchemaProto(
+      SchemaProto input_database_schema,
+      const std::string& database_to_update) const;
+
+  // TODO: b/434218554 - Remove this method once schema type id optimization is
+  // fully rolled out.
+  //
+  // This method should only be called when
+  // `feature_flags_->enable_schema_type_id_optimization` is false.
+  //
+  // Returns a SchemaProto representing the full schema, which is a combination
+  // of the existing schema and the input database schema. Deletes all types
+  // belonging to the specified database if input_database_schema is an empty
+  // proto.
   //
   // For the database being updated by the input database schema:
   // - If the existing schema does not contain the database, the input types
@@ -779,7 +902,8 @@ class SchemaStore {
   //     existing types from unaffected databases.
   //
   // Requires:
-  //   - input_database_schema must not contain types from multiple databases.
+  //   - input_database_schema is valid according to `ValidateSchemaDatabase`
+  //     and `SchemaUtil::Validate`.
   //
   // Returns:
   //   - SchemaProto on success
@@ -788,7 +912,8 @@ class SchemaStore {
   //   - INVALID_ARGUMENT_ERROR if the input schema contains types from multiple
   //     databases.
   libtextclassifier3::StatusOr<SchemaProto> GetFullSchemaProtoWithUpdatedDb(
-      SchemaProto input_database_schema) const;
+      SchemaProto input_database_schema,
+      const std::string& database_to_update) const;
 
   const Filesystem* filesystem_;
   std::string base_dir_;
@@ -800,8 +925,82 @@ class SchemaStore {
   // schema has ever been set.
   bool has_schema_successfully_set_ = false;
 
-  // Cached schema
-  std::unique_ptr<FileBackedProto<SchemaProto>> schema_file_;
+  // Wrapper class to store a cached schema file FileBackedProto instance and
+  // its checksum.
+  class SchemaFileCache {
+   public:
+    explicit SchemaFileCache(const Filesystem* filesystem,
+                             const std::string& schema_file_path)
+        : filesystem_(filesystem), schema_file_path_(schema_file_path) {}
+    // Returns a reference to the proto read from the schema FileBackedProto.
+    //
+    // NOTE: The caller does NOT get ownership of the object returned and
+    // the returned object is only valid till a new version of the proto is
+    // written to the file.
+    //
+    // Returns NOT_FOUND if the file was empty or never written to.
+    // Returns INTERNAL_ERROR if an IO error or a corruption was encountered.
+    libtextclassifier3::StatusOr<const SchemaProto*> Read() {
+      return GetCachedSchemaFile().Read();
+    }
+
+    // Writes the new schema_proto to schema_file_ and updates the cached
+    // checksum.
+    //
+    // Returns: INTERNAL_ERROR if any IO error is encountered.
+    libtextclassifier3::Status Write(
+        std::unique_ptr<SchemaProto> schema_proto) {
+      ICING_RETURN_IF_ERROR(
+          GetCachedSchemaFile().Write(std::move(schema_proto)));
+      ICING_ASSIGN_OR_RETURN(Crc32 checksum,
+                             GetCachedSchemaFile().GetChecksum());
+      checksum_ = std::make_unique<Crc32>(checksum);
+      return libtextclassifier3::Status::OK;
+    }
+
+    // Sets the swapped_to_file_path for the cached schema_file_ instance and
+    // the schema_file_path_.
+    void SetSwappedFilepath(std::string new_schema_file_path) {
+      if (schema_file_ != nullptr) {
+        schema_file_->SetSwappedFilepath(new_schema_file_path);
+      }
+      schema_file_path_ = std::move(new_schema_file_path);
+    }
+
+    // Releases the cached schema_file_ FileBackedProto instance.
+    void ReleaseCachedSchemaFile() { schema_file_.reset(); }
+
+    libtextclassifier3::StatusOr<Crc32> GetChecksum() {
+      if (checksum_ == nullptr) {
+        ICING_ASSIGN_OR_RETURN(Crc32 checksum,
+                               GetCachedSchemaFile().GetChecksum());
+        checksum_ = std::make_unique<Crc32>(std::move(checksum));
+      }
+      return *checksum_;
+    }
+
+   private:
+    FileBackedProto<SchemaProto>& GetCachedSchemaFile() {
+      if (schema_file_ == nullptr) {
+        schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
+            *filesystem_, schema_file_path_);
+      }
+      return *schema_file_;
+    }
+
+    const Filesystem* filesystem_;
+    std::string schema_file_path_;
+    std::unique_ptr<FileBackedProto<SchemaProto>> schema_file_;
+    std::unique_ptr<Crc32> checksum_;
+  };
+
+  // Caches a FileBackedProto instance and the checksum for the schema file.
+  //
+  // If the overlay_schema_file_ is present and
+  // feature_flags_->release_backup_schema_file_if_overlay_present is true, then
+  // the cached schema FileBackedProto instance should be released and reloaded
+  // only during mutating SetSchema operations.
+  mutable SchemaFileCache schema_file_;
 
   // This schema holds the definition of any schema types that are not
   // compatible with older versions of Icing code.
@@ -813,6 +1012,12 @@ class SchemaStore {
   // Maps schema type ids to the corresponding schema type. This is an inverse
   // map of schema_type_mapper_.
   std::unordered_map<SchemaTypeId, std::string> reverse_schema_type_mapper_;
+
+  // Maps schema type ids to the hash value of the corresponding schema type
+  // name.
+  // TODO(b/436237337): Consider merging this with reverse_schema_type_mapper_
+  // to save memory.
+  std::unordered_map<SchemaTypeId, uint32_t> reverse_schema_type_mapper_hash_;
 
   // A hash map of (database -> vector of type config names in the database).
   //

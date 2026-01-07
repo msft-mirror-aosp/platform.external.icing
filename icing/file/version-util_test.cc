@@ -23,6 +23,7 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/derived-file-util.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage-header.h"
 #include "icing/portable/equals-proto.h"
@@ -35,6 +36,8 @@ namespace lib {
 namespace version_util {
 
 namespace {
+
+using derived_file_util::DerivedFilesRebuildInfo;
 
 using ::testing::Contains;
 using ::testing::Eq;
@@ -586,7 +589,7 @@ struct VersionUtilDerivedFilesRebuildTestParam {
   int32_t curr_version;
   std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
       curr_enabled_features;
-  DerivedFilesRebuildResult expected_derived_files_rebuild_result;
+  DerivedFilesRebuildInfo expected_derived_files_rebuild_info;
 
   explicit VersionUtilDerivedFilesRebuildTestParam(
       int32_t existing_version_in, int32_t max_version_in,
@@ -595,14 +598,14 @@ struct VersionUtilDerivedFilesRebuildTestParam {
       int32_t curr_version_in,
       std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
           curr_enabled_features_in,
-      DerivedFilesRebuildResult expected_derived_files_rebuild_result_in)
+      DerivedFilesRebuildInfo expected_derived_files_rebuild_info_in)
       : existing_version(existing_version_in),
         max_version(max_version_in),
         existing_enabled_features(std::move(existing_enabled_features_in)),
         curr_version(curr_version_in),
         curr_enabled_features(std::move(curr_enabled_features_in)),
-        expected_derived_files_rebuild_result(
-            std::move(expected_derived_files_rebuild_result_in)) {}
+        expected_derived_files_rebuild_info(
+            std::move(expected_derived_files_rebuild_info_in)) {}
 };
 
 class VersionUtilDerivedFilesRebuildTest
@@ -621,7 +624,7 @@ TEST_P(VersionUtilDerivedFilesRebuildTest,
                   MakeTestVersionProto(
                       VersionInfo(param.curr_version, param.max_version),
                       param.curr_enabled_features)),
-              Eq(param.expected_derived_files_rebuild_result));
+              Eq(param.expected_derived_files_rebuild_info));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -637,8 +640,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/-1, /*max_version_in=*/-1,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/true,
                 /*needs_schema_store_derived_files_rebuild_in=*/true,
                 /*needs_term_index_rebuild_in=*/true,
@@ -656,8 +659,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/-1, /*max_version_in=*/-1,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/true,
                 /*needs_schema_store_derived_files_rebuild_in=*/true,
                 /*needs_term_index_rebuild_in=*/true,
@@ -675,8 +678,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/3, /*max_version_in=*/3,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -695,8 +698,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/true,
@@ -715,8 +718,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -734,8 +737,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/4, /*max_version_in=*/4,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -753,8 +756,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/4, /*max_version_in=*/4,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -772,8 +775,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/4, /*max_version_in=*/5,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/true,
                 /*needs_schema_store_derived_files_rebuild_in=*/true,
                 /*needs_term_index_rebuild_in=*/true,
@@ -791,8 +794,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_version_in=*/5, /*max_version_in=*/5,
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/true,
                 /*needs_schema_store_derived_files_rebuild_in=*/true,
                 /*needs_term_index_rebuild_in=*/true,
@@ -811,8 +814,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/true,
@@ -831,8 +834,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -853,8 +856,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
              IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -877,8 +880,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
              IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -897,8 +900,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/true,
@@ -917,8 +920,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -939,8 +942,8 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
              IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -962,8 +965,8 @@ INSTANTIATE_TEST_SUITE_P(
              IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION},
             /*curr_version_in=*/4, /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -983,8 +986,8 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::UNKNOWN}, /*curr_version_in=*/4,
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/true,
                 /*needs_schema_store_derived_files_rebuild_in=*/true,
                 /*needs_term_index_rebuild_in=*/true,
@@ -1003,8 +1006,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{}, /*curr_version_in=*/5,
             /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/true,
@@ -1023,8 +1026,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*existing_enabled_features_in=*/{},
             /*curr_version_in=*/5, /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -1044,8 +1047,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*curr_version_in=*/5, /*curr_enabled_features_in=*/
             {IcingSearchEngineFeatureInfoProto::
                  FEATURE_QUALIFIED_ID_JOIN_INDEX_V3},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -1066,8 +1069,94 @@ INSTANTIATE_TEST_SUITE_P(
             {IcingSearchEngineFeatureInfoProto::
                  FEATURE_QUALIFIED_ID_JOIN_INDEX_V3},
             /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
-            /*expected_derived_files_rebuild_result_in=*/
-            DerivedFilesRebuildResult(
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 8, max_version 8
+        // - Existing enabled features = {}
+        // - Current version = 8
+        // - Current enabled features = {FEATURE_DELETE_PROPAGATION_FROM}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/8, /*max_version_in=*/8,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/8, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_DELETE_PROPAGATION_FROM},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 8, max_version 8
+        // - Existing enabled features =
+        //   {FEATURE_DELETE_PROPAGATION_FROM}
+        // - Current version = 8
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/8, /*max_version_in=*/8,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_DELETE_PROPAGATION_FROM},
+            /*curr_version_in=*/8, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features =
+        //   {FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
                 /*needs_document_store_derived_files_rebuild_in=*/false,
                 /*needs_schema_store_derived_files_rebuild_in=*/false,
                 /*needs_term_index_rebuild_in=*/false,
@@ -1212,10 +1301,10 @@ TEST(VersionUtilTest, Upgrade) {
               IsFalse());
 }
 
-TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildResult_unknown) {
-  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildInfo_unknown) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
                   IcingSearchEngineFeatureInfoProto::UNKNOWN),
-              Eq(DerivedFilesRebuildResult(
+              Eq(DerivedFilesRebuildInfo(
                   /*needs_document_store_derived_files_rebuild_in=*/true,
                   /*needs_schema_store_derived_files_rebuild_in=*/true,
                   /*needs_term_index_rebuild_in=*/true,
@@ -1225,11 +1314,11 @@ TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildResult_unknown) {
 }
 
 TEST(VersionUtilTest,
-     GetFeatureDerivedFilesRebuildResult_featureHasPropertyOperator) {
+     GetFeatureDerivedFilesRebuildInfo_featureHasPropertyOperator) {
   EXPECT_THAT(
-      GetFeatureDerivedFilesRebuildResult(
+      GetFeatureDerivedFilesRebuildInfo(
           IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR),
-      Eq(DerivedFilesRebuildResult(
+      Eq(DerivedFilesRebuildInfo(
           /*needs_document_store_derived_files_rebuild_in=*/false,
           /*needs_schema_store_derived_files_rebuild_in=*/false,
           /*needs_term_index_rebuild_in=*/true,
@@ -1238,11 +1327,10 @@ TEST(VersionUtilTest,
           /*needs_embedding_index_rebuild_in=*/false)));
 }
 
-TEST(VersionUtilTest,
-     GetFeatureDerivedFilesRebuildResult_featureEmbeddingIndex) {
-  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildInfo_featureEmbeddingIndex) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
                   IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX),
-              Eq(DerivedFilesRebuildResult(
+              Eq(DerivedFilesRebuildInfo(
                   /*needs_document_store_derived_files_rebuild_in=*/false,
                   /*needs_schema_store_derived_files_rebuild_in=*/false,
                   /*needs_term_index_rebuild_in=*/false,
@@ -1252,11 +1340,11 @@ TEST(VersionUtilTest,
 }
 
 TEST(VersionUtilTest,
-     GetFeatureDerivedFilesRebuildResult_featureEmbeddingQuantization) {
+     GetFeatureDerivedFilesRebuildInfo_featureEmbeddingQuantization) {
   EXPECT_THAT(
-      GetFeatureDerivedFilesRebuildResult(
+      GetFeatureDerivedFilesRebuildInfo(
           IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION),
-      Eq(DerivedFilesRebuildResult(
+      Eq(DerivedFilesRebuildInfo(
           /*needs_document_store_derived_files_rebuild_in=*/false,
           /*needs_schema_store_derived_files_rebuild_in=*/false,
           /*needs_term_index_rebuild_in=*/false,
@@ -1265,11 +1353,10 @@ TEST(VersionUtilTest,
           /*needs_embedding_index_rebuild_in=*/true)));
 }
 
-TEST(VersionUtilTest,
-     GetFeatureDerivedFilesRebuildResult_featureSchemaDatabase) {
-  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildInfo_featureSchemaDatabase) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
                   IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE),
-              Eq(DerivedFilesRebuildResult(
+              Eq(DerivedFilesRebuildInfo(
                   /*needs_document_store_derived_files_rebuild_in=*/false,
                   /*needs_schema_store_derived_files_rebuild_in=*/false,
                   /*needs_term_index_rebuild_in=*/false,
@@ -1279,11 +1366,39 @@ TEST(VersionUtilTest,
 }
 
 TEST(VersionUtilTest,
-     GetFeatureDerivedFilesRebuildResult_featureQualifiedIdJoinIndexV3) {
-  EXPECT_THAT(GetFeatureDerivedFilesRebuildResult(
+     GetFeatureDerivedFilesRebuildInfo_featureQualifiedIdJoinIndexV3) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildInfo(IcingSearchEngineFeatureInfoProto::
+                                            FEATURE_QUALIFIED_ID_JOIN_INDEX_V3),
+      Eq(DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/false,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/true,
+          /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildInfo_featureDeletePropagationFrom) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildInfo(
+          IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM),
+      Eq(DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/false,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/true,
+          /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildInfo_featureNonExistentQualifiedIdJoin) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
                   IcingSearchEngineFeatureInfoProto::
-                      FEATURE_QUALIFIED_ID_JOIN_INDEX_V3),
-              Eq(DerivedFilesRebuildResult(
+                      FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN),
+              Eq(DerivedFilesRebuildInfo(
                   /*needs_document_store_derived_files_rebuild_in=*/false,
                   /*needs_schema_store_derived_files_rebuild_in=*/false,
                   /*needs_term_index_rebuild_in=*/false,
@@ -1364,6 +1479,34 @@ TEST(VersionUtilTest,
                                 FEATURE_QUALIFIED_ID_JOIN_INDEX_V3))));
 }
 
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_deletePropagationFrom_enabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_delete_propagation_from(true);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Contains(Property(
+          &IcingSearchEngineFeatureInfoProto::feature_type,
+          IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM)));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_deletePropagationFrom_disabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_delete_propagation_from(false);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Not(Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                            IcingSearchEngineFeatureInfoProto::
+                                FEATURE_DELETE_PROPAGATION_FROM))));
+}
+
 class VersionUtilFeatureProtoTest
     : public ::testing::TestWithParam<
           IcingSearchEngineFeatureInfoProto::FlaggedFeatureType> {};
@@ -1371,25 +1514,25 @@ class VersionUtilFeatureProtoTest
 TEST_P(VersionUtilFeatureProtoTest, GetFeatureInfoProto) {
   IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature_type =
       GetParam();
-  DerivedFilesRebuildResult rebuild_result =
-      GetFeatureDerivedFilesRebuildResult(feature_type);
+  DerivedFilesRebuildInfo rebuild_info =
+      GetFeatureDerivedFilesRebuildInfo(feature_type);
 
   IcingSearchEngineFeatureInfoProto feature_info =
       GetFeatureInfoProto(feature_type);
   EXPECT_THAT(feature_info.feature_type(), Eq(feature_type));
 
   EXPECT_THAT(feature_info.needs_document_store_rebuild(),
-              Eq(rebuild_result.needs_document_store_derived_files_rebuild));
+              Eq(rebuild_info.needs_document_store_derived_files_rebuild));
   EXPECT_THAT(feature_info.needs_schema_store_rebuild(),
-              Eq(rebuild_result.needs_schema_store_derived_files_rebuild));
+              Eq(rebuild_info.needs_schema_store_derived_files_rebuild));
   EXPECT_THAT(feature_info.needs_term_index_rebuild(),
-              Eq(rebuild_result.needs_term_index_rebuild));
+              Eq(rebuild_info.needs_term_index_rebuild));
   EXPECT_THAT(feature_info.needs_integer_index_rebuild(),
-              Eq(rebuild_result.needs_integer_index_rebuild));
+              Eq(rebuild_info.needs_integer_index_rebuild));
   EXPECT_THAT(feature_info.needs_qualified_id_join_index_rebuild(),
-              Eq(rebuild_result.needs_qualified_id_join_index_rebuild));
+              Eq(rebuild_info.needs_qualified_id_join_index_rebuild));
   EXPECT_THAT(feature_info.needs_embedding_index_rebuild(),
-              Eq(rebuild_result.needs_embedding_index_rebuild));
+              Eq(rebuild_info.needs_embedding_index_rebuild));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1401,7 +1544,10 @@ INSTANTIATE_TEST_SUITE_P(
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
         IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE,
-        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
+        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3,
+        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM,
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN));
 
 }  // namespace
 
