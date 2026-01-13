@@ -94,7 +94,8 @@ class QualifiedIdJoinIndexImplV3Test : public ::testing::TestWithParam<bool> {
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/GetParam(),
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true);
+        /*enable_embed_query_optimization=*/true,
+        /*enable_schema_definition_deduping=*/true);
 
     base_dir_ = GetTestTempDir() + "/icing";
     working_path_ = base_dir_ + "/qualified_id_join_index_impl_v3";
