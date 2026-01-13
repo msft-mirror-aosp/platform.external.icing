@@ -41,7 +41,8 @@ class FeatureFlags {
                         int64_t expired_document_purge_threshold_ms,
                         bool enable_non_existent_qualified_id_join,
                         bool enable_skip_set_schema_type_equality_check,
-                        bool enable_embed_query_optimization)
+                        bool enable_embed_query_optimization,
+                        bool enable_schema_definition_deduping)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_scorable_properties_(enable_scorable_properties),
         enable_embedding_quantization_(enable_embedding_quantization),
@@ -67,7 +68,8 @@ class FeatureFlags {
             enable_non_existent_qualified_id_join),
         enable_skip_set_schema_type_equality_check_(
             enable_skip_set_schema_type_equality_check),
-        enable_embed_query_optimization_(enable_embed_query_optimization) {}
+        enable_embed_query_optimization_(enable_embed_query_optimization),
+        enable_schema_definition_deduping_(enable_schema_definition_deduping) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -145,6 +147,10 @@ class FeatureFlags {
 
   bool enable_embed_query_optimization() const {
     return enable_embed_query_optimization_;
+  }
+
+  bool enable_schema_definition_deduping() const {
+    return enable_schema_definition_deduping_;
   }
 
  private:
@@ -238,6 +244,9 @@ class FeatureFlags {
   // This allows us to avoid reading and scoring embeddings for documents that
   // don't match the other requirements of the query.
   bool enable_embed_query_optimization_;
+
+  // Whether to enable deduping for the schema's type definitions.
+  bool enable_schema_definition_deduping_;
 };
 
 }  // namespace lib
