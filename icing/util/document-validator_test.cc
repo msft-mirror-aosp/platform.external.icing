@@ -23,6 +23,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -30,6 +31,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -61,6 +63,8 @@ class DocumentValidatorTest : public ::testing::Test {
   DocumentValidatorTest() {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -133,11 +137,10 @@ class DocumentValidatorTest : public ::testing::Test {
     schema_dir_ = GetTestTempDir() + "/schema_store";
     ASSERT_TRUE(filesystem_.CreateDirectory(schema_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     document_validator_ =
@@ -182,6 +185,7 @@ class DocumentValidatorTest : public ::testing::Test {
                              SimpleEmailBuilder().Build());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   std::string schema_dir_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
@@ -488,10 +492,10 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
   // Set a schema with only the 'Email' type
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, custom_schema_dir, &fake_clock_));
+      SchemaStore::Create(&filesystem_, custom_schema_dir, &fake_clock_,
+                          feature_flags_.get()));
   ASSERT_THAT(schema_store->SetSchema(
-                  email_schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  email_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   DocumentValidator document_validator(schema_store.get());
@@ -524,8 +528,7 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
   // separately
   ASSERT_THAT(
       schema_store->SetSchema(email_and_conversation_schema,
-                              /*ignore_errors_and_delete_documents=*/false,
-                              /*allow_circular_schema_definitions=*/false),
+                              /*ignore_errors_and_delete_documents=*/false),
       IsOk());
 
   ICING_EXPECT_OK(document_validator.Validate(conversation));

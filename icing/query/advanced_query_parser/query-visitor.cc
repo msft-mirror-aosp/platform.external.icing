@@ -23,19 +23,23 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v1.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
+#include "icing/index/iterator/doc-hit-info-iterator-match-score-expression.h"
 #include "icing/index/iterator/doc-hit-info-iterator-none.h"
 #include "icing/index/iterator/doc-hit-info-iterator-not.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
@@ -43,11 +47,11 @@
 #include "icing/index/iterator/doc-hit-info-iterator-property-in-schema.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/iterator/section-restrict-data.h"
 #include "icing/index/property-existence-indexing-handler.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/function.h"
 #include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/optimizer/query-optimization-util.h"
 #include "icing/query/advanced_query_parser/param.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/pending-value.h"
@@ -55,10 +59,12 @@
 #include "icing/query/query-features.h"
 #include "icing/query/query-results.h"
 #include "icing/schema/property-util.h"
-#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/score-expression-util.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/status-macros.h"
 
@@ -196,9 +202,9 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
                              search_spec_.term_match_type(),
                              needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
-          std::make_unique<DocHitInfoIteratorFilter>(
-              std::move(term_iterator), &document_store_, &schema_store_,
-              filter_options_, current_time_ms_);
+          DocHitInfoIteratorFilter::ApplyFilter(
+              std::move(term_iterator), filter_predicate_,
+              feature_flags_.enable_passing_filter_to_children());
     }
   }
 
@@ -295,6 +301,19 @@ void QueryVisitor::RegisterFunctions() {
   registered_functions_.insert(
       {get_search_string_parameter_function.name(),
        std::move(get_search_string_parameter_function)});
+
+  // DocHitInfoIterator matchScoreExpression(std::string, double, double)
+  auto match_score_expression = [this](std::vector<PendingValue>&& args) {
+    return this->MatchScoreExpressionFunction(std::move(args));
+  };
+  Function match_score_expression_function =
+      Function::Create(DataType::kDocumentIterator, "matchScoreExpression",
+                       {Param(DataType::kString), Param(DataType::kDouble),
+                        Param(DataType::kDouble, Cardinality::kOptional)},
+                       std::move(match_score_expression))
+          .ValueOrDie();
+  registered_functions_.insert({match_score_expression_function.name(),
+                                std::move(match_score_expression_function)});
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
@@ -333,9 +352,10 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
   } else {
     QueryVisitor query_visitor(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
-        &schema_store_, &normalizer_, &tokenizer_, search_spec_,
-        filter_options_, needs_term_frequency_info_,
-        pending_property_restricts_, processing_not_, current_time_ms_);
+        &schema_store_, &normalizer_, &tokenizer_, join_children_fetcher_,
+        search_spec_, filter_predicate_, needs_term_frequency_info_,
+        get_embedding_match_info_, &feature_flags_, pending_property_restricts_,
+        processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);
     ICING_ASSIGN_OR_RETURN(query_result,
                            std::move(query_visitor).ConsumeResults());
@@ -444,13 +464,34 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   }
 
   // Create and return iterator.
-  EmbeddingQueryResults::EmbeddingQueryScoreMap* score_map =
-      &embedding_query_results_.result_scores[vector_index][metric_type];
   ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      DocHitInfoIteratorEmbedding::Create(
-          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, score_map, &embedding_index_));
+      EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
+      embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
+                                                       metric_type));
+  std::unique_ptr<DocHitInfoIterator> iterator;
+  if (feature_flags_.enable_embedding_iterator_v2()) {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV2::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        iterator,
+        DocHitInfoIteratorEmbeddingV1::Create(
+            &search_spec_.embedding_query_vectors(vector_index), metric_type,
+            low, high, info_map, embedding_query_results_.global_scores.get(),
+            get_embedding_match_info_
+                ? embedding_query_results_.global_section_infos.get()
+                : nullptr,
+            &embedding_index_, &document_store_, &schema_store_,
+            current_time_ms_));
+  }
   return PendingValue(std::move(iterator));
 }
 
@@ -468,6 +509,44 @@ QueryVisitor::GetSearchStringParameterFunction(
   QueryTerm text_value = {string_value, string_value, /*is_prefix_val=*/false};
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
                          ProduceTextTokenIterators(std::move(text_value)));
+  return PendingValue(std::move(iterator));
+}
+
+libtextclassifier3::StatusOr<PendingValue>
+QueryVisitor::MatchScoreExpressionFunction(std::vector<PendingValue>&& args) {
+  const std::string& scoring_expression_str =
+      args.at(0).string_val().ValueOrDie()->term;
+  libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
+      scoring_expression = score_expression_util::GetScoreExpression(
+          scoring_expression_str,
+          /*default_score=*/-std::numeric_limits<double>::infinity(),
+          SearchSpecProto::EmbeddingQueryMetricType::UNKNOWN, &document_store_,
+          &schema_store_, current_time_ms_, join_children_fetcher_,
+          /*embedding_query_results=*/nullptr, /*section_weights=*/nullptr,
+          /*bm25f_calculator=*/nullptr, /*schema_type_alias_map=*/nullptr,
+          &feature_flags_, &scoring_feature_types_enabled_);
+  if (!scoring_expression.ok()) {
+    return absl_ports::Annotate(
+        scoring_expression.status(),
+        absl_ports::StrCat(
+            "matchScoreExpression: Failed to handle the score expression ",
+            scoring_expression_str));
+  }
+  double low = args.at(1).double_val().ValueOrDie();
+  double high = std::numeric_limits<double>::infinity();
+  if (args.size() == 3) {
+    high = args.at(2).double_val().ValueOrDie();
+  }
+  if (low > high) {
+    return absl_ports::InvalidArgumentError(
+        "The lower bound cannot be greater than the upper bound.");
+  }
+
+  std::unique_ptr<DocHitInfoIterator> iterator =
+      std::make_unique<DocHitInfoIteratorMatchScoreExpression>(
+          document_store_.last_added_document_id(),
+          std::move(scoring_expression).ValueOrDie(), low, high);
+  features_.insert(kMatchScoreExpressionFunctionFeature);
   return PendingValue(std::move(iterator));
 }
 
@@ -504,19 +583,20 @@ libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> token_itr,
                          tokenizer_.Tokenize(text_value.term));
-  std::string normalized_term;
+  Normalizer::NormalizedTerm normalized_term;
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   // raw_text is the portion of text_value.raw_term that hasn't yet been
   // matched to any of the tokens that we've processed. escaped_token will
-  // hold the portion of raw_text that corresponds to the current token that
+  // holds the portion of raw_text that corresponds to the current token that
   // is being processed.
   std::string_view raw_text = text_value.raw_term;
+  std::vector<Token> tokens;
   std::string_view raw_token;
   bool reached_final_token = !token_itr->Advance();
   // If the term is different then the raw_term, then there must have been some
   // escaped characters that we will need to handle.
   while (!reached_final_token) {
-    std::vector<Token> tokens = token_itr->GetTokens();
+    token_itr->GetTokens(&tokens);
     if (tokens.size() > 1) {
       // The tokenizer iterator iterates between token groups. In practice,
       // the tokenizer used with QueryVisitor (PlainTokenizer) will always
@@ -537,8 +617,9 @@ QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
           raw_token, string_util::FindEscapedToken(raw_text, token.text));
     }
     normalized_term = normalizer_.NormalizeTerm(token.text);
-    QueryTerm term_value{std::move(normalized_term), raw_token,
-                         reached_final_token && text_value.is_prefix_val};
+    bool should_prefix_match = reached_final_token && text_value.is_prefix_val;
+    QueryTerm term_value{std::move(normalized_term.text), raw_token,
+                         should_prefix_match};
     ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
                            CreateTermIterator(std::move(term_value)));
     iterators.push_back(std::move(iterator));
@@ -659,7 +740,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessAndOperator(
   ICING_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators,
       PopAllPendingIterators());
-  return PendingValue(CreateAndIterator(std::move(iterators)));
+  return PendingValue(query_optimization_util::OptimizeAndIteratorsIfPossible(
+      std::move(iterators), feature_flags_));
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessOrOperator(

@@ -18,7 +18,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -26,12 +25,14 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
-#include "icing/join/doc-join-info.h"
 #include "icing/join/document-id-to-join-info.h"
+#include "icing/join/document-join-id-pair.h"
+#include "icing/join/qualified-id.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -48,9 +49,42 @@ class QualifiedIdJoinIndex : public PersistentStorage {
 
     virtual libtextclassifier3::Status Advance() = 0;
 
-    virtual const DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>&
-    GetCurrent() const = 0;
+    virtual const DocumentIdToJoinInfo<NamespaceIdFingerprint>& GetCurrent()
+        const = 0;
   };
+
+  // An STL style array view object of DocumentJoinIdPairs for a given parent
+  // document id. This is only used in V3.
+  class DocumentJoinIdPairArrayView {
+   public:
+    using value_type = DocumentJoinIdPair;
+    using iterator = const DocumentJoinIdPair*;
+    using const_iterator = const DocumentJoinIdPair*;
+
+    explicit DocumentJoinIdPairArrayView(const DocumentJoinIdPair* data,
+                                         int size)
+        : data_(data), size_(size) {}
+
+    const DocumentJoinIdPair* data() const { return data_; }
+
+    int size() const { return size_; }
+
+    bool empty() const { return size_ == 0 || data_ == nullptr; }
+
+    iterator begin() { return data_; }
+    iterator end() { return data_ + size_; }
+
+    const_iterator begin() const { return data_; }
+    const_iterator end() const { return data_ + size_; }
+
+    const DocumentJoinIdPair& operator[](int idx) const { return data_[idx]; }
+
+   private:
+    const DocumentJoinIdPair* data_;
+    int size_;
+  };
+
+  enum class Version { kV2, kV3 };
 
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
@@ -68,22 +102,8 @@ class QualifiedIdJoinIndex : public PersistentStorage {
 
   virtual ~QualifiedIdJoinIndex() override = default;
 
-  // (v1 only) Puts a new data into index: DocJoinInfo (DocumentId,
-  // JoinablePropertyId) references to ref_qualified_id_str (the identifier of
-  // another document).
-  //
-  // REQUIRES: ref_qualified_id_str contains no '\0'.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
-  //   - Any KeyMapper errors
-  virtual libtextclassifier3::Status Put(
-      const DocJoinInfo& doc_join_info,
-      std::string_view ref_qualified_id_str) = 0;
-
-  // (v2 only) Puts a list of referenced NamespaceFingerprintIdentifier into
-  // index, given the DocumentId, SchemaTypeId and JoinablePropertyId.
+  // (v2 only) Puts a list of referenced NamespaceIdFingerprint into index,
+  // given the DocumentId, SchemaTypeId and JoinablePropertyId.
   //
   // Returns:
   //   - OK on success
@@ -93,20 +113,31 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::Status Put(
       SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
       DocumentId document_id,
-      std::vector<NamespaceFingerprintIdentifier>&&
-          ref_namespace_fingerprint_ids) = 0;
+      std::vector<NamespaceIdFingerprint>&&
+          ref_namespace_id_uri_fingerprints) = 0;
 
-  // (v1 only) Gets the referenced document's qualified id string by
-  // DocJoinInfo.
+  // (v3 only, deprecated) Puts a new child document and its referenced parent
+  // documents into the join index.
   //
   // Returns:
-  //   - A qualified id string referenced by the given DocJoinInfo (DocumentId,
-  //     JoinablePropertyId) on success
-  //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
-  //   - NOT_FOUND_ERROR if doc_join_info doesn't exist
-  //   - Any KeyMapper errors
-  virtual libtextclassifier3::StatusOr<std::string_view> Get(
-      const DocJoinInfo& doc_join_info) const = 0;
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if child_document_join_id_pair is invalid
+  //   - Any FileBackedVector errors
+  virtual libtextclassifier3::Status Put(
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<DocumentId>&& parent_document_ids) = 0;
+
+  // (v3 only) Puts new join data into the index using qualified ids: adds a new
+  // child document and its referenced parent documents into the join index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if child_document_join_id_pair is invalid
+  //   - Any FileBackedVector or KeyMapper errors
+  virtual libtextclassifier3::Status Put(
+      const DocumentStore* document_store,
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<QualifiedId>&& parent_qualified_ids) = 0;
 
   // (v2 only) Returns a JoinDataIterator for iterating through all join data of
   // the specified (schema_type_id, joinable_property_id).
@@ -119,6 +150,39 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::StatusOr<std::unique_ptr<JoinDataIteratorBase>>
   GetIterator(SchemaTypeId schema_type_id,
               JoinablePropertyId joinable_property_id) const = 0;
+
+  // (v3 only) Gets an array view of all joinable children for the given parent
+  // document id.
+  //
+  // Returns:
+  //   - A DocumentJoinIdPairArrayView object on success. If there is no edge
+  //     for a valid node_id, then an array view with data() == nullptr and
+  //     size() == 0 will be returned
+  //   - Any FileBackedVector errors
+  virtual libtextclassifier3::StatusOr<DocumentJoinIdPairArrayView>
+  GetDocumentJoinIdPairArrayView(DocumentId parent_document_id) const = 0;
+
+  // Migrates existing join data for a parent document from old_document_id to
+  // new_document_id if necessary.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if any document id is invalid
+  //   - Any errors, depending on the implementation
+  virtual libtextclassifier3::Status MigrateParent(
+      DocumentId old_document_id, DocumentId new_document_id) = 0;
+
+  // Migrates existing join data for a parent document from its qualified id to
+  // a new document id. This is used when a document that was previously
+  // referenced as a "missing parent" (by its qualified id) is indexed and
+  // assigned a document id.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_document_id is invalid
+  //   - Any errors, depending on the implementation
+  virtual libtextclassifier3::Status MigrateParent(
+      const QualifiedId& parent_qualified_id, DocumentId new_document_id) = 0;
 
   // Reduces internal file sizes by reclaiming space and ids of deleted
   // documents. Qualified id type joinable index will convert all entries to the
@@ -138,6 +202,7 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   //     an invalid state and the caller should handle it properly (e.g. discard
   //     and rebuild)
   virtual libtextclassifier3::Status Optimize(
+      const DocumentStore* document_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) = 0;
@@ -149,7 +214,7 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   //   - INTERNAL_ERROR on I/O error
   virtual libtextclassifier3::Status Clear() = 0;
 
-  virtual bool is_v2() const = 0;
+  virtual Version version() const = 0;
 
   virtual int32_t size() const = 0;
 

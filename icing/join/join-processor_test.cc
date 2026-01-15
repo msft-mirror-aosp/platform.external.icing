@@ -24,13 +24,15 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/join/join-children-fetcher.h"
-#include "icing/join/qualified-id-join-index-impl-v1.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
+#include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -45,11 +47,12 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
@@ -60,14 +63,24 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
+using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::IsTrue;
+using ::testing::Ne;
+using ::testing::UnorderedElementsAre;
 
 // TODO(b/275121148): remove template after deprecating
-// QualifiedIdJoinIndexImplV1.
+// QualifiedIdJoinIndexImplV2.
 template <typename T>
 class JoinProcessorTest : public ::testing::Test {
  protected:
+  using JOIN_INDEX_TYPE = T;
+
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    fake_clock_.SetSystemTimeMilliseconds(123);
+
     test_dir_ = GetTestTempDir() + "/icing_join_processor_test";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()),
                 IsTrue());
@@ -79,7 +92,7 @@ class JoinProcessorTest : public ::testing::Test {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -92,8 +105,8 @@ class JoinProcessorTest : public ::testing::Test {
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()),
         IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -124,20 +137,47 @@ class JoinProcessorTest : public ::testing::Test {
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
-                                     .SetName("sender")
-                                     .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
                                      .SetName("receiver")
                                      .SetDataTypeJoinableString(
-                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_NONE)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("reporter")
+                                     .SetDataTypeJoinableString(
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("sender")
+                                     .SetDataTypeJoinableString(
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Label")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("text")
+                                     .SetDataTypeString(TERM_MATCH_EXACT,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("object")
+                                     .SetDataTypeJoinableString(
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("softLink")
+                                     .SetDataTypeJoinableString(
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                         DELETE_PROPAGATION_TYPE_NONE)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
 
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()),
@@ -146,11 +186,15 @@ class JoinProcessorTest : public ::testing::Test {
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
             &filesystem_, doc_store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
-            /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
+            /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/true,
             PortableFileBackedProtoLog<
-                DocumentWrapper>::kDeflateCompressionLevel,
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
             /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
@@ -174,38 +218,41 @@ class JoinProcessorTest : public ::testing::Test {
 
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
-  CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV1>() {
-    return QualifiedIdJoinIndexImplV1::Create(
-        filesystem_, qualified_id_join_index_dir_, /*pre_mapping_fbv=*/false,
-        /*use_persistent_hash_map=*/false);
-  }
-
-  template <>
-  libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV2>() {
     return QualifiedIdJoinIndexImplV2::Create(filesystem_,
                                               qualified_id_join_index_dir_,
                                               /*pre_mapping_fbv=*/false);
   }
 
+  template <>
+  libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
+  CreateQualifiedIdJoinIndex<QualifiedIdJoinIndexImplV3>() {
+    return QualifiedIdJoinIndexImplV3::Create(
+        filesystem_, qualified_id_join_index_dir_, *feature_flags_);
+  }
+
   libtextclassifier3::StatusOr<DocumentId> PutAndIndexDocument(
-      const DocumentProto& document) {
-    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
-                           doc_store_->Put(document));
-    DocumentId document_id = put_result.new_document_id;
+      DocumentProto document) {
     ICING_ASSIGN_OR_RETURN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                  document));
+        TokenizedDocument::Create(
+            schema_store_.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+            std::move(document)));
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::PutResult put_result,
+        doc_store_->Put(tokenized_document.document_wrapper()));
 
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
-    ICING_RETURN_IF_ERROR(handler->Handle(tokenized_document, document_id,
-                                          /*recovery_mode=*/false,
-                                          /*put_document_stats=*/nullptr));
-    return document_id;
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
+    ICING_RETURN_IF_ERROR(
+        handler->Handle(tokenized_document, put_result.new_document_id,
+                        put_result.old_document_id, /*recovery_mode=*/false,
+                        /*put_document_stats=*/nullptr));
+    return put_result.new_document_id;
   }
 
   libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>> Join(
@@ -216,14 +263,15 @@ class JoinProcessorTest : public ::testing::Test {
         doc_store_.get(), schema_store_.get(), qualified_id_join_index_.get(),
         /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds());
     ICING_ASSIGN_OR_RETURN(
-        JoinChildrenFetcher join_children_fetcher,
+        std::unique_ptr<JoinChildrenFetcher> join_children_fetcher,
         join_processor.GetChildrenFetcher(
             join_spec, std::move(child_scored_document_hits)));
     return join_processor.Join(join_spec,
                                std::move(parent_scored_document_hits),
-                               join_children_fetcher);
+                               *join_children_fetcher);
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   std::string test_dir_;
   std::string schema_store_dir_;
@@ -239,7 +287,7 @@ class JoinProcessorTest : public ::testing::Test {
 };
 
 using TestTypes =
-    ::testing::Types<QualifiedIdJoinIndexImplV1, QualifiedIdJoinIndexImplV2>;
+    ::testing::Types<QualifiedIdJoinIndexImplV2, QualifiedIdJoinIndexImplV3>;
 TYPED_TEST_SUITE(JoinProcessorTest, TestTypes);
 
 TYPED_TEST(JoinProcessorTest, JoinByQualifiedId_allDocuments) {

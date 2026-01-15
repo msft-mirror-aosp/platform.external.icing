@@ -24,6 +24,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -53,22 +54,23 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
                          const SchemaStore* schema_store,
                          int64_t current_time_ms,
                          const JoinChildrenFetcher* join_children_fetcher,
-                         const EmbeddingQueryResults* embedding_query_results) {
+                         const EmbeddingQueryResults* embedding_query_results,
+                         const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(embedding_query_results);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
-  bool is_descending_order =
-      scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
-
+  double default_score =
+      (scoring_spec.order_by() == ScoringSpecProto::Order::DESC)
+          ? kDefaultScoreInDescendingOrder
+          : kDefaultScoreInAscendingOrder;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
       scorer_factory::Create(
-          scoring_spec,
-          is_descending_order ? kDefaultScoreInDescendingOrder
-                              : kDefaultScoreInAscendingOrder,
-          default_semantic_metric_type, document_store, schema_store,
-          current_time_ms, join_children_fetcher, embedding_query_results));
+          scoring_spec, default_score, default_semantic_metric_type,
+          document_store, schema_store, current_time_ms, join_children_fetcher,
+          embedding_query_results, feature_flags));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
@@ -108,6 +110,15 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
         iterator_call_stats.num_leaf_advance_calls_main_index);
     search_stats->set_num_fetched_hits_integer_index(
         iterator_call_stats.num_leaf_advance_calls_integer_index);
+    search_stats->set_num_unquantized_embeddings_scored(
+        iterator_call_stats.embedding_stats.num_unquantized_embeddings_scored);
+    search_stats->set_num_quantized_embeddings_scored(
+        iterator_call_stats.embedding_stats.num_quantized_embeddings_scored);
+    search_stats->set_num_embedding_shards_read(static_cast<int32_t>(
+        iterator_call_stats.embedding_stats.unquantized_shards_read.size() +
+        iterator_call_stats.embedding_stats.quantized_shards_read.size()));
+    search_stats->set_num_embedding_bytes_read(
+        iterator_call_stats.embedding_stats.num_embedding_bytes_read);
   }
 
   return scored_document_hits;

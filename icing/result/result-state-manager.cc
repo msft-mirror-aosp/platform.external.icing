@@ -14,18 +14,24 @@
 
 #include "icing/result/result-state-manager.h"
 
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -43,7 +49,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
     std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
     const ResultSpecProto& result_spec, const DocumentStore& document_store,
-    const ResultRetrieverV2& result_retriever, int64_t current_time_ms) {
+    const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
+    QueryStatsProto* query_stats) {
   if (ranker == nullptr) {
     return absl_ports::InvalidArgumentError("Should not provide null ranker");
   }
@@ -56,8 +63,9 @@ ResultStateManager::CacheAndRetrieveFirstPage(
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
-  auto [page_result, has_more_results] =
-      result_retriever.RetrieveNextPage(*result_state, current_time_ms);
+  auto [page_result, has_more_results] = result_retriever.RetrieveNextPage(
+      *result_state,
+      /*max_results=*/std::numeric_limits<int32_t>::max(), current_time_ms);
   if (!has_more_results) {
     // No more pages, won't store ResultState, returns directly
     return std::make_pair(kInvalidNextPageToken, std::move(page_result));
@@ -87,7 +95,7 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
                                           current_time_ms);
     // Remove states to make room for this new state.
-    RemoveStatesIfNeeded(num_hits_to_add);
+    RemoveStatesIfNeeded(num_hits_to_add, query_stats);
     // Generate a new unique token and add it into result_state_map_.
     next_page_token = Add(std::move(result_state), current_time_ms);
   }
@@ -107,7 +115,7 @@ uint64_t ResultStateManager::Add(std::shared_ptr<ResultStateV2> result_state,
 }
 
 libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
-ResultStateManager::GetNextPage(uint64_t next_page_token,
+ResultStateManager::GetNextPage(uint64_t next_page_token, int32_t max_results,
                                 const ResultRetrieverV2& result_retriever,
                                 int64_t current_time_ms) {
   std::shared_ptr<ResultStateV2> result_state = nullptr;
@@ -128,8 +136,8 @@ ResultStateManager::GetNextPage(uint64_t next_page_token,
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
-  auto [page_result, has_more_results] =
-      result_retriever.RetrieveNextPage(*result_state, current_time_ms);
+  auto [page_result, has_more_results] = result_retriever.RetrieveNextPage(
+      *result_state, max_results, current_time_ms);
 
   if (!has_more_results) {
     {
@@ -142,6 +150,14 @@ ResultStateManager::GetNextPage(uint64_t next_page_token,
     next_page_token = kInvalidNextPageToken;
   }
   return std::make_pair(next_page_token, std::move(page_result));
+}
+
+int ResultStateManager::GetNumActiveResultStates(int64_t current_time_ms) {
+  absl_ports::unique_lock l(&mutex_);
+
+  InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
+                                        current_time_ms);
+  return result_state_map_.size();
 }
 
 void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {
@@ -181,16 +197,17 @@ uint64_t ResultStateManager::GetUniqueToken() {
   return new_token;
 }
 
-void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
+void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add,
+                                              QueryStatsProto* query_stats) {
   if (result_state_map_.empty() || token_queue_.empty()) {
     return;
   }
 
   // 1. Check if this new result_state would take up the entire result state
-  // manager budget.
+  //    manager budget.
   if (num_hits_to_add > max_total_hits_) {
     // This single result state will exceed our budget. Drop everything else to
-    // accomodate it.
+    // accommodate it.
     InternalInvalidateAllResultStates();
     return;
   }
@@ -204,18 +221,33 @@ void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add) {
   }
 
   // 3. If we're over budget, remove states from oldest to newest until we fit
-  // into our budget.
+  //    into our budget.
+  //
   // Note: num_total_hits_ may not be decremented immediately after invalidating
   // a result state, since other threads may still hold the shared pointer.
   // Thus, we have to check if token_queue_ is empty or not, since it is
   // possible that num_total_hits_ is non-zero and still greater than
   // max_total_hits_ when token_queue_ is empty. Still "eventually" it will be
   // decremented after the last thread releases the shared pointer.
+  int num_states_evicted = 0;
   while (!token_queue_.empty() && num_total_hits_ > max_total_hits_) {
+    ICING_LOG(WARNING) << "Evicting result state from token_queue_ due to "
+                          "budget limit. Current num_total_hits_: "
+                       << num_total_hits_;
+
     InternalInvalidateResultState(token_queue_.front().first);
+    ++num_states_evicted;
     token_queue_.pop();
   }
   invalidated_token_set_.clear();
+  if (num_states_evicted > 0) {
+    ICING_LOG(WARNING) << "Evicted " << num_states_evicted
+                       << " states. After eviction: " << num_total_hits_
+                       << " hits and " << token_queue_.size() << " states.";
+    if (query_stats != nullptr) {
+      query_stats->set_num_result_states_evicted(num_states_evicted);
+    }
+  }
 }
 
 void ResultStateManager::InternalInvalidateResultState(uint64_t token) {

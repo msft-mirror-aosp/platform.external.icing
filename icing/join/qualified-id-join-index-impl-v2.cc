@@ -38,8 +38,9 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-fingerprint-identifier.h"
+#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
@@ -58,24 +59,6 @@ static constexpr int32_t kSchemaJoinableIdToPostingListMapperMaxNumEntries =
     1 << 20;
 static constexpr int32_t kSchemaJoinableIdToPostingListMapperAverageKVByteSize =
     10;
-
-inline DocumentId GetNewDocumentId(
-    const std::vector<DocumentId>& document_id_old_to_new,
-    DocumentId old_document_id) {
-  if (old_document_id >= document_id_old_to_new.size()) {
-    return kInvalidDocumentId;
-  }
-  return document_id_old_to_new[old_document_id];
-}
-
-inline NamespaceId GetNewNamespaceId(
-    const std::vector<NamespaceId>& namespace_id_old_to_new,
-    NamespaceId namespace_id) {
-  if (namespace_id >= namespace_id_old_to_new.size()) {
-    return kInvalidNamespaceId;
-  }
-  return namespace_id_old_to_new[namespace_id];
-}
 
 libtextclassifier3::StatusOr<PostingListIdentifier> GetPostingListIdentifier(
     const KeyMapper<PostingListIdentifier>&
@@ -224,17 +207,16 @@ QualifiedIdJoinIndexImplV2::~QualifiedIdJoinIndexImplV2() {
 libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Put(
     SchemaTypeId schema_type_id, JoinablePropertyId joinable_property_id,
     DocumentId document_id,
-    std::vector<NamespaceFingerprintIdentifier>&&
-        ref_namespace_fingerprint_ids) {
-  std::sort(ref_namespace_fingerprint_ids.begin(),
-            ref_namespace_fingerprint_ids.end());
+    std::vector<NamespaceIdFingerprint>&& ref_namespace_id_uri_fingerprints) {
+  std::sort(ref_namespace_id_uri_fingerprints.begin(),
+            ref_namespace_id_uri_fingerprints.end());
 
   // Dedupe.
-  auto last = std::unique(ref_namespace_fingerprint_ids.begin(),
-                          ref_namespace_fingerprint_ids.end());
-  ref_namespace_fingerprint_ids.erase(last,
-                                      ref_namespace_fingerprint_ids.end());
-  if (ref_namespace_fingerprint_ids.empty()) {
+  auto last = std::unique(ref_namespace_id_uri_fingerprints.begin(),
+                          ref_namespace_id_uri_fingerprints.end());
+  ref_namespace_id_uri_fingerprints.erase(
+      last, ref_namespace_id_uri_fingerprints.end());
+  if (ref_namespace_id_uri_fingerprints.empty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -262,11 +244,11 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Put(
   }
 
   // Prepend join data into posting list.
-  for (const NamespaceFingerprintIdentifier& ref_namespace_fingerprint_id :
-       ref_namespace_fingerprint_ids) {
-    ICING_RETURN_IF_ERROR(pl_accessor->PrependData(
-        DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>(
-            document_id, ref_namespace_fingerprint_id)));
+  for (const NamespaceIdFingerprint& ref_namespace_id_uri_fingerprint :
+       ref_namespace_id_uri_fingerprints) {
+    ICING_RETURN_IF_ERROR(
+        pl_accessor->PrependData(DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+            document_id, ref_namespace_id_uri_fingerprint)));
   }
 
   // Finalize the posting list and update mapper.
@@ -282,7 +264,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Put(
       encoded_schema_type_joinable_property_id_str, result.id));
 
   // Update info.
-  info().num_data += ref_namespace_fingerprint_ids.size();
+  info().num_data += ref_namespace_id_uri_fingerprints.size();
 
   return libtextclassifier3::Status::OK;
 }
@@ -315,6 +297,7 @@ QualifiedIdJoinIndexImplV2::GetIterator(
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
+    const DocumentStore* /*document_store*/,
     const std::vector<DocumentId>& document_id_old_to_new,
     const std::vector<NamespaceId>& namespace_id_old_to_new,
     DocumentId new_last_added_document_id) {
@@ -355,9 +338,9 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
   }
 
   // Reinitialize qualified id join index.
-  if (!filesystem_.PRead(GetMetadataFilePath(working_path_).c_str(),
-                         metadata_buffer_.get(), kMetadataFileSize,
-                         /*offset=*/0)) {
+  if (filesystem_.PRead(GetMetadataFilePath(working_path_).c_str(),
+                        metadata_buffer_.get(), kMetadataFileSize,
+                        /*offset=*/0) != kMetadataFileSize) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
   ICING_ASSIGN_OR_RETURN(
@@ -480,9 +463,9 @@ QualifiedIdJoinIndexImplV2::InitializeExistingFiles(
     bool pre_mapping_fbv) {
   // PRead metadata file.
   auto metadata_buffer = std::make_unique<uint8_t[]>(kMetadataFileSize);
-  if (!filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
-                        metadata_buffer.get(), kMetadataFileSize,
-                        /*offset=*/0)) {
+  if (filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
+                       metadata_buffer.get(), kMetadataFileSize,
+                       /*offset=*/0) != kMetadataFileSize) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
 
@@ -554,20 +537,39 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::TransferIndex(
                            old_pl_accessor->GetNextDataBatch());
     while (!batch_old_join_data.empty()) {
       for (const JoinDataType& old_join_data : batch_old_join_data) {
-        DocumentId new_document_id = GetNewDocumentId(
-            document_id_old_to_new, old_join_data.document_id());
-        NamespaceId new_ref_namespace_id = GetNewNamespaceId(
-            namespace_id_old_to_new, old_join_data.join_info().namespace_id());
+        DocumentId old_document_id = old_join_data.document_id();
+        if (old_document_id < 0 ||
+            old_document_id >= document_id_old_to_new.size()) {
+          // If it happens, then the posting list is corrupted. Return error
+          // and let the caller rebuild everything.
+          return absl_ports::InternalError(
+              "Qualified id join index data document id is out of range. The "
+              "index may have been corrupted.");
+        }
+
+        NamespaceId old_ref_namespace_id =
+            old_join_data.join_info().namespace_id();
+        if (old_ref_namespace_id < 0 ||
+            old_ref_namespace_id >= namespace_id_old_to_new.size()) {
+          // If it happens, then the posting list is corrupted. Return error
+          // and let the caller rebuild everything.
+          return absl_ports::InternalError(
+              "Qualified id join index data ref namespace id is out of range. "
+              "The index may have been corrupted.");
+        }
 
         // Transfer if the document and namespace are not deleted or outdated.
+        DocumentId new_document_id = document_id_old_to_new[old_document_id];
+        NamespaceId new_ref_namespace_id =
+            namespace_id_old_to_new[old_ref_namespace_id];
         if (new_document_id != kInvalidDocumentId &&
             new_ref_namespace_id != kInvalidNamespaceId) {
           // We can reuse the fingerprint from old_join_data, since document uri
           // (and its fingerprint) will never change.
           new_join_data_vec.push_back(JoinDataType(
-              new_document_id, NamespaceFingerprintIdentifier(
-                                   new_ref_namespace_id,
-                                   old_join_data.join_info().fingerprint())));
+              new_document_id,
+              NamespaceIdFingerprint(new_ref_namespace_id,
+                                     old_join_data.join_info().fingerprint())));
         }
       }
       ICING_ASSIGN_OR_RETURN(batch_old_join_data,

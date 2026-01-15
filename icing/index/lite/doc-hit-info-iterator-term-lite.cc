@@ -16,10 +16,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <numeric>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -33,6 +31,7 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
 #include "icing/util/logging.h"
+#include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -153,31 +152,9 @@ void DocHitInfoIteratorTermLitePrefix::SortDocumentIds() {
     // Now indices is a map from sorted index to current index. In other words,
     // the sorted cached_hits_[i] should be the current cached_hits_[indices[i]]
     // for every valid i.
-    std::vector<bool> done(indices.size());
-    // Apply permutation
-    for (int i = 0; i < indices.size(); ++i) {
-      if (done[i]) {
-        continue;
-      }
-      done[i] = true;
-      int curr = i;
-      int next = indices[i];
-      // Since every finite permutation is formed by disjoint cycles, we can
-      // start with the current element, at index i, and swap the element at
-      // this position with whatever element that *should* be here. Then,
-      // continue to swap the original element, at its updated positions, with
-      // the element that should be occupying that position until the original
-      // element has reached *its* correct position. This completes applying the
-      // single cycle in the permutation.
-      while (next != i) {
-        std::swap(cached_hits_[curr], cached_hits_[next]);
-        std::swap(cached_hit_term_frequency_[curr],
-                  cached_hit_term_frequency_[next]);
-        done[next] = true;
-        curr = next;
-        next = indices[next];
-      }
-    }
+
+    math_util::ApplyPermutation(indices, cached_hits_,
+                                cached_hit_term_frequency_);
   }
 }
 
