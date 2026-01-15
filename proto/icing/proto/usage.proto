@@ -57,7 +57,7 @@ message UsageReport {
 }
 
 // Result of a call to IcingSearchEngine.ReportUsage
-// Next tag: 3
+// Next tag: 4
 message ReportUsageResultProto {
   // Status code can be one of:
   //   OK
@@ -69,4 +69,8 @@ message ReportUsageResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 2;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 3;
 }

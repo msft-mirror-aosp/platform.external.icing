@@ -93,6 +93,10 @@ void SetEmbeddingIndexingConfig(MonkeyTestRandomEngine* random,
     property.mutable_embedding_indexing_config()->set_embedding_indexing_type(
         EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH);
   }
+  if (GetRandomBoolean(random)) {
+    property.mutable_embedding_indexing_config()->set_quantization_type(
+        EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT);
+  }
 }
 
 }  // namespace
@@ -224,7 +228,14 @@ void MonkeySchemaGenerator::UpdateProperty(
       index_incompatible = true;
     }
   } else if (property.data_type() == PropertyConfigProto::DataType::VECTOR) {
+    EmbeddingIndexingConfig::QuantizationType::Code old_quantization_type =
+        property.embedding_indexing_config().quantization_type();
     SetEmbeddingIndexingConfig(random_, property, new_indexable);
+    EmbeddingIndexingConfig::QuantizationType::Code new_quantization_type =
+        property.embedding_indexing_config().quantization_type();
+    if (old_quantization_type != new_quantization_type) {
+      index_incompatible = true;
+    }
   }
   if (index_incompatible) {
     result.schema_types_index_incompatible.insert(type_config.schema_type());
