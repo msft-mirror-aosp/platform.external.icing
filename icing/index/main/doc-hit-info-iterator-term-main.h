@@ -15,7 +15,7 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_MAIN_H_
 
-#include <cstdint>
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -70,10 +71,19 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumBlocksInspected() const override {
-    return num_blocks_inspected_;
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
   }
-  int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
+
+  CallStats GetCallStats() const override {
+    return CallStats(
+        /*num_leaf_advance_calls_lite_index_in=*/0,
+        /*num_leaf_advance_calls_main_index_in=*/num_advance_calls_,
+        /*num_leaf_advance_calls_integer_index_in=*/0,
+        /*num_leaf_advance_calls_no_index_in=*/0,
+        /*num_blocks_inspected_in=*/num_blocks_inspected_,
+        /*embedding_stats_in=*/{});
+  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,

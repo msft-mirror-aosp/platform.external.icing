@@ -17,12 +17,16 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
-#include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -30,7 +34,8 @@ namespace lib {
 
 // An iterator that helps filter for DocHitInfos whose schemas define the
 // properties named in target_properties_.
-class DocHitInfoIteratorPropertyInSchema : public DocHitInfoIterator {
+class DocHitInfoIteratorPropertyInSchema
+    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
  public:
   // Does not take any ownership, and all pointers must refer to valid objects
   // that outlive the one constructed. The delegate should be at minimum be
@@ -45,9 +50,11 @@ class DocHitInfoIteratorPropertyInSchema : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumBlocksInspected() const override;
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {&delegate_};
+  }
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
 
   std::string ToString() const override;
 

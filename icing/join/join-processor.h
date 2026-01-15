@@ -16,7 +16,7 @@
 #define ICING_JOIN_JOIN_PROCESSOR_H_
 
 #include <cstdint>
-#include <string>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -44,14 +44,15 @@ class JoinProcessor {
         qualified_id_join_index_(qualified_id_join_index),
         current_time_ms_(current_time_ms) {}
 
-  // Get a JoinChildrenFetcher used to fetch all children documents by a parent
+  // Gets a JoinChildrenFetcher used to fetch all children documents by a parent
   // document id.
   //
   // Returns:
-  //   A JoinChildrenFetcher instance on success.
+  //   std::unique_ptr<JoinChildrenFetcher> instance on success.
   //   UNIMPLEMENTED_ERROR if the join type specified by join_spec is not
   //   supported.
-  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcher(
+  libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+  GetChildrenFetcher(
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& child_scored_document_hits);
 
@@ -61,20 +62,16 @@ class JoinProcessor {
       const JoinChildrenFetcher& join_children_fetcher);
 
  private:
-  // Fetches referenced document id of the given document under the given
-  // property path.
+  // TODO(b/275121148): deprecate v2 after rollout v3.
+
+  // Helper function to construct JoinChildrenFetcher for
+  // QualfiedIdJoinIndexImplV2.
   //
-  // TODO(b/256022027): validate joinable property (and its upper-level) should
-  //                    not have REPEATED cardinality.
-  //
-  // Returns:
-  //   - A valid referenced document id on success
-  //   - kInvalidDocumentId if the given document is not found, doesn't have
-  //     qualified id joinable type for the given property_path, or doesn't have
-  //     joinable value (an optional property)
-  //   - Any other QualifiedIdJoinIndex errors
-  libtextclassifier3::StatusOr<DocumentId> FetchReferencedQualifiedId(
-      const DocumentId& document_id, const std::string& property_path) const;
+  // Note: JoinChildrenFetcherImplDeprecated will be returned.
+  libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+  GetChildrenFetcherV2(
+      const JoinSpecProto& join_spec,
+      std::vector<ScoredDocumentHit>&& child_scored_document_hits);
 
   const DocumentStore* doc_store_;  // Does not own.
   const SchemaStore* schema_store_;  // Does not own.

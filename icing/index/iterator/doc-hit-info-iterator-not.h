@@ -15,11 +15,12 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_NOT_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_NOT_H_
 
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/store/document-id.h"
@@ -30,15 +31,14 @@ namespace lib {
 // Iterator that will return all documents that are *not* specified by the
 // to_be_excluded_iterator.
 //
-// NOTE: The hit_intersect_section_ids_mask is meaningless for this iterator.
+// NOTE: doc_hit_info_.hit_section_ids_mask() is meaningless for this iterator.
 // When this iterator produces a result, it's because the Document was not
 // present in the to_be_excluded_iterator. There is no concept of the Document
 // having been chosen because it's term was in a specific section. Since we
 // don't know anything about the sections for the Document, the
-// hit_intersect_section_ids_mask is always kSectionIdMaskNone. Correspondingly,
-// this means that the doc_hit_info.hit_section_ids_mask will also always be
-// kSectionIdMaskNone.
-class DocHitInfoIteratorNot : public DocHitInfoIterator {
+// doc_hit_info.hit_section_ids_mask() is always kSectionIdMaskNone.
+class DocHitInfoIteratorNot
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   // to_be_excluded_iterator: The results of this iterator will be excluded
   //     from this iterator's results.
@@ -46,7 +46,7 @@ class DocHitInfoIteratorNot : public DocHitInfoIterator {
   //     Document to the DocumentStore
   explicit DocHitInfoIteratorNot(
       std::unique_ptr<DocHitInfoIterator> to_be_excluded_iterator,
-      const DocumentId document_id_limit);
+      DocumentId document_id_limit);
 
   libtextclassifier3::Status Advance() override;
 
@@ -55,9 +55,14 @@ class DocHitInfoIteratorNot : public DocHitInfoIterator {
   // to NOT operator.
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumBlocksInspected() const override;
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  bool CanPassFilterPredicateThrough() const override { return false; }
+
+  CallStats GetCallStats() const override {
+    return to_be_excluded_->GetCallStats() +
+           all_document_id_iterator_.GetCallStats();
+  }
 
   std::string ToString() const override;
 

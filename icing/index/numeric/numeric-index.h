@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_NUMERIC_NUMERIC_INDEX_H_
 #define ICING_INDEX_NUMERIC_NUMERIC_INDEX_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -27,6 +28,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -99,6 +101,10 @@ class NumericIndex : public PersistentStorage {
     virtual libtextclassifier3::Status Advance() = 0;
 
     virtual DocHitInfo GetDocHitInfo() const = 0;
+
+    virtual int32_t GetNumAdvanceCalls() const = 0;
+
+    virtual int32_t GetNumBlocksInspected() const = 0;
 
    protected:
     T key_lower_;
@@ -177,17 +183,20 @@ class NumericIndex : public PersistentStorage {
       : PersistentStorage(filesystem, std::move(working_path),
                           working_path_type) {}
 
-  virtual libtextclassifier3::Status PersistStoragesToDisk(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status PersistStoragesToDisk() override = 0;
 
-  virtual libtextclassifier3::Status PersistMetadataToDisk(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status PersistMetadataToDisk() override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(
-      bool force) override = 0;
+  virtual libtextclassifier3::Status WriteMetadata() override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum()
+      override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> GetInfoChecksum()
+      const override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum()
+      const override = 0;
 
   virtual Crcs& crcs() override = 0;
   virtual const Crcs& crcs() const override = 0;

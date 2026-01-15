@@ -15,10 +15,12 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_NONE_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_NONE_H_
 
-#include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 
@@ -26,7 +28,8 @@ namespace icing {
 namespace lib {
 
 // Iterator that will return no results.
-class DocHitInfoIteratorNone : public DocHitInfoIterator {
+class DocHitInfoIteratorNone
+    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
  public:
   libtextclassifier3::Status Advance() override {
     return absl_ports::ResourceExhaustedError(
@@ -39,9 +42,11 @@ class DocHitInfoIteratorNone : public DocHitInfoIterator {
     return node;
   }
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
+  }
 
-  int32_t GetNumLeafAdvanceCalls() const override { return 0; }
+  CallStats GetCallStats() const override { return CallStats(); }
 
   std::string ToString() const override { return "(NONE)"; }
 };
