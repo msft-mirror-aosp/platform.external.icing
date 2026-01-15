@@ -16,9 +16,9 @@
 #define ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_LOGGING_H_
 
 #include <cassert>
+#include <cstdint>
 #include <string>
 
-#include "icing/text_classifier/lib3/utils/base/integral_types.h"
 #include "icing/text_classifier/lib3/utils/base/logging_levels.h"
 #include "icing/text_classifier/lib3/utils/base/port.h"
 
@@ -45,7 +45,8 @@ inline LoggingStringStream& operator<<(LoggingStringStream& stream,
 template <typename T>
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        T* const entry) {
-  stream.message.append(std::to_string(reinterpret_cast<const uint64>(entry)));
+  stream.message.append(
+      std::to_string(reinterpret_cast<const uint64_t>(entry)));
   return stream;
 }
 

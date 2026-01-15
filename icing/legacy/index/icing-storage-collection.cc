@@ -14,8 +14,11 @@
 
 #include "icing/legacy/index/icing-storage-collection.h"
 
+#include <string>
+
 #include "icing/legacy/core/icing-compat.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -103,10 +106,13 @@ uint64_t IcingStorageCollection::GetDiskUsage() const {
   return total;
 }
 
-void IcingStorageCollection::OnSleep() {
+Crc32 IcingStorageCollection::UpdateCrc() {
+  Crc32 crc32;
   for (size_t i = 0; i < files_.size(); ++i) {
-    files_[i].file->OnSleep();
+    Crc32 this_crc = files_[i].file->UpdateCrc();
+    crc32.Append(std::to_string(this_crc.Get()));
   }
+  return crc32;
 }
 
 void IcingStorageCollection::GetDebugInfo(int verbosity,

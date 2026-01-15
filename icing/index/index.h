@@ -18,12 +18,14 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -35,6 +37,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
@@ -72,20 +75,16 @@ class Index {
   struct Options {
     explicit Options(const std::string& base_dir, uint32_t index_merge_size,
                      bool lite_index_sort_at_indexing,
-                     uint32_t lite_index_sort_size,
-                     bool include_property_existence_metadata_hits = false)
+                     uint32_t lite_index_sort_size)
         : base_dir(base_dir),
           index_merge_size(index_merge_size),
           lite_index_sort_at_indexing(lite_index_sort_at_indexing),
-          lite_index_sort_size(lite_index_sort_size),
-          include_property_existence_metadata_hits(
-              include_property_existence_metadata_hits) {}
+          lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
     bool lite_index_sort_at_indexing;
     int32_t lite_index_sort_size;
-    bool include_property_existence_metadata_hits;
   };
 
   // Creates an instance of Index in the directory pointed by file_dir.
@@ -97,7 +96,8 @@ class Index {
   //   INTERNAL on I/O error
   static libtextclassifier3::StatusOr<std::unique_ptr<Index>> Create(
       const Options& options, const Filesystem* filesystem,
-      const IcingFilesystem* icing_filesystem);
+      const IcingFilesystem* icing_filesystem,
+      const FeatureFlags* feature_flags);
 
   // Reads magic from existing flash (main) index file header. We need this
   // during Icing initialization phase to determine the version.
@@ -131,6 +131,22 @@ class Index {
   libtextclassifier3::Status PersistToDisk() {
     ICING_RETURN_IF_ERROR(lite_index_->PersistToDisk());
     return main_index_->PersistToDisk();
+  }
+
+  // Updates all checksums in the index and returns the combined index checksum.
+  Crc32 UpdateChecksum() {
+    Crc32 lite_crc = lite_index_->UpdateChecksum();
+    Crc32 main_crc = main_index_->UpdateChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
+  }
+
+  // Calculates and returns the combined index checksum.
+  Crc32 GetChecksum() const {
+    Crc32 lite_crc = lite_index_->GetChecksum();
+    Crc32 main_crc = main_index_->GetChecksum();
+    main_crc.Append(std::to_string(lite_crc.Get()));
+    return main_crc;
   }
 
   // Discard parts of the index if they contain data for document ids greater
@@ -176,6 +192,13 @@ class Index {
     *debug_info.mutable_main_index_info() =
         main_index_->GetDebugInfo(verbosity);
     return debug_info;
+  }
+
+  void PublishQueryStats(QueryStatsProto* query_stats) const {
+    query_stats->set_lite_index_hit_buffer_byte_size(
+        lite_index_->GetHitBufferByteSize());
+    query_stats->set_lite_index_hit_buffer_unsorted_byte_size(
+        lite_index_->GetHitBufferUnsortedByteSize());
   }
 
   // Returns the byte size of the all the elements held in the index. This
@@ -241,16 +264,16 @@ class Index {
     // TODO(b/141180665): Add nullptr checks for the raw pointers
     Editor(const TermIdCodec* term_id_codec, LiteIndex* lite_index,
            DocumentId document_id, SectionId section_id,
-           TermMatchType::Code term_match_type, NamespaceId namespace_id)
+           NamespaceId namespace_id)
         : term_id_codec_(term_id_codec),
           lite_index_(lite_index),
           document_id_(document_id),
-          term_match_type_(term_match_type),
           namespace_id_(namespace_id),
           section_id_(section_id) {}
 
     // Buffer the term in seen_tokens_.
-    libtextclassifier3::Status BufferTerm(const char* term);
+    libtextclassifier3::Status BufferTerm(std::string_view term,
+                                          TermMatchType::Code match_type);
     // Index all the terms stored in seen_tokens_.
     libtextclassifier3::Status IndexAllBufferedTerms();
 
@@ -258,18 +281,21 @@ class Index {
     // The Editor is able to store previously seen terms as TermIds. This is
     // is more efficient than a client doing this externally because TermIds are
     // not exposed to clients.
-    std::unordered_map<uint32_t, Hit::TermFrequency> seen_tokens_;
+    struct HitDetails {
+      TermMatchType::Code match_type;
+      Hit::TermFrequency term_frequency;
+    };
+    std::unordered_map<uint32_t, HitDetails> seen_tokens_;
     const TermIdCodec* term_id_codec_;
     LiteIndex* lite_index_;
     DocumentId document_id_;
-    TermMatchType::Code term_match_type_;
     NamespaceId namespace_id_;
     SectionId section_id_;
   };
   Editor Edit(DocumentId document_id, SectionId section_id,
-              TermMatchType::Code term_match_type, NamespaceId namespace_id) {
+              NamespaceId namespace_id) {
     return Editor(term_id_codec_.get(), lite_index_.get(), document_id,
-                  section_id, term_match_type, namespace_id);
+                  section_id, namespace_id);
   }
 
   bool WantsMerge() const { return lite_index_->WantsMerge(); }
@@ -288,7 +314,9 @@ class Index {
     ICING_RETURN_IF_ERROR(main_index_->AddHits(
         *term_id_codec_, std::move(outputs.backfill_map),
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
-    ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
+    if (!feature_flags_.enable_optimize_improvements()) {
+      ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
+    }
     return lite_index_->Reset();
   }
 
@@ -301,9 +329,7 @@ class Index {
   }
 
   // Sorts the LiteIndex HitBuffer.
-  void SortLiteIndex() {
-    lite_index_->SortHits();
-  }
+  void SortLiteIndex() { lite_index_->SortHits(); }
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
   // new_last_added_document_id will be used to update the last added document
@@ -318,14 +344,18 @@ class Index {
       DocumentId new_last_added_document_id);
 
  private:
-  Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
-        std::unique_ptr<LiteIndex> lite_index,
-        std::unique_ptr<MainIndex> main_index, const Filesystem* filesystem)
+  explicit Index(const Options& options,
+                 std::unique_ptr<TermIdCodec> term_id_codec,
+                 std::unique_ptr<LiteIndex> lite_index,
+                 std::unique_ptr<MainIndex> main_index,
+                 const Filesystem* filesystem,
+                 const FeatureFlags* feature_flags)
       : lite_index_(std::move(lite_index)),
         main_index_(std::move(main_index)),
         options_(options),
         term_id_codec_(std::move(term_id_codec)),
-        filesystem_(filesystem) {}
+        filesystem_(filesystem),
+        feature_flags_(*feature_flags) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
       const std::string& prefix,
@@ -336,7 +366,8 @@ class Index {
   std::unique_ptr<MainIndex> main_index_;
   const Options options_;
   std::unique_ptr<TermIdCodec> term_id_codec_;
-  const Filesystem* filesystem_;
+  const Filesystem* filesystem_;       // Does not own.
+  const FeatureFlags& feature_flags_;  // Does not own.
 };
 
 }  // namespace lib
