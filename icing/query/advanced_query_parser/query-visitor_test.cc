@@ -238,7 +238,8 @@ class QueryVisitorTest
                      /*expired_document_purge_threshold_ms=*/0,
                      /*enable_non_existent_qualified_id_join=*/true,
                      /*enable_skip_set_schema_type_equality_check=*/true,
-                     /*enable_embed_query_optimization=*/true));
+                     /*enable_embed_query_optimization=*/true,
+                     /*enable_schema_definition_deduping=*/true));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
