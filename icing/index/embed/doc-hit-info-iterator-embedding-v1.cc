@@ -130,8 +130,7 @@ DocHitInfoIteratorEmbeddingV1::AdvanceToNextEmbeddingHit() {
 libtextclassifier3::Status
 DocHitInfoIteratorEmbeddingV1::AdvanceToNextUnfilteredDocument() {
   if (no_more_hit_ || embedding_hit_accessor_ == nullptr) {
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId, kSectionIdMaskNone);
@@ -204,8 +203,7 @@ DocHitInfoIteratorEmbeddingV1::AdvanceToNextUnfilteredDocument() {
   }
 
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   return libtextclassifier3::Status::OK;
 }
