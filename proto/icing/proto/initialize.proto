@@ -148,7 +148,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 53
+// Next tag: 54
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -481,6 +481,14 @@ message IcingSearchEngineOptions {
   // This allows us to avoid reading and scoring embeddings for documents that
   // don't match the other requirements of the query.
   optional bool enable_embed_query_optimization = 52;
+
+  // Whether to enable deduping schema types's property definitions when
+  // storing SchemaTypeConfigs in the schema store.
+  //
+  // Once enabled, type configs with the same property definitions will be
+  // deduped, and only one of the types will be stored with full property
+  // definitions.
+  optional bool enable_schema_definition_deduping = 53;
 
   reserved 2, 20, 25;
 }

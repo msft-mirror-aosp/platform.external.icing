@@ -114,7 +114,8 @@ libtextclassifier3::Status DocumentValidator::Validate(
           document.namespace_(), ", ", document.uri(),
           ") of type: ", document.schema(), "."));
     }
-    const PropertyConfigProto& property_config = *property_iter->second;
+    const PropertyConfigProto& property_config =
+        *property_iter->second.property_config;
 
     // Get the property value size according to data type.
     int value_size = 0;
