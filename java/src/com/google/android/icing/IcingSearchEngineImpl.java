@@ -186,6 +186,12 @@ public class IcingSearchEngineImpl implements Closeable {
     nativeInvalidateNextPageToken(this, nextPageToken);
   }
 
+  @Nullable
+  public byte[] handleExpiredDocuments() {
+    throwIfClosed();
+    return nativeHandleExpiredDocuments(this);
+  }
+
   @NonNull
   public byte[] openWriteBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
@@ -208,6 +214,18 @@ public class IcingSearchEngineImpl implements Closeable {
   public byte[] commitBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
     return nativeCommitBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] getAllBlobInfos() {
+    throwIfClosed();
+    return nativeGetAllBlobInfos(this);
+  }
+
+  @NonNull
+  public byte[] putBlobInfos(@NonNull byte[] blobProtoBytes) {
+    throwIfClosed();
+    return nativePutBlobInfos(this, blobProtoBytes);
   }
 
   @Nullable
@@ -366,6 +384,8 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
 
+  private static native byte[] nativeHandleExpiredDocuments(IcingSearchEngineImpl instance);
+
   private static native byte[] nativeOpenWriteBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
 
@@ -377,6 +397,11 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeCommitBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeGetAllBlobInfos(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativePutBlobInfos(
+      IcingSearchEngineImpl instance, byte[] blobProtoBytes);
 
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);

@@ -36,8 +36,10 @@ import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.JoinableConfig;
 import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
@@ -68,6 +70,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
+import com.google.common.collect.ImmutableList;
 import com.google.android.icing.protobuf.ByteString;
 import java.io.File;
 import java.io.FileDescriptor;
@@ -457,16 +460,18 @@ public final class IcingSearchEngineTest {
 
     PutDocumentRequest putDocumentRequest = PutDocumentRequest.getDefaultInstance();
     BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+    BatchPutResultProto actualProto =
+        batchPutResultProto.toBuilder().clearVmBinderTransactionLatencyStartTimeMs().build();
 
     BatchPutResultProto expected =
         BatchPutResultProto.newBuilder()
             .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.OK))
             .build();
-    assertThat(batchPutResultProto).isEqualTo(expected);
+    assertThat(actualProto).isEqualTo(expected);
 
     // PersistToDiskResultProto should not be set if persist_type is not set in the
     // PutDocumentRequest.
-    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+    assertThat(actualProto.getPersistToDiskResultProto().getStatus().getCode())
         .isEqualTo(StatusProto.Code.UNKNOWN);
   }
 
@@ -739,6 +744,7 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
+
   @Ignore // b/350530146
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
@@ -752,7 +758,7 @@ public final class IcingSearchEngineTest {
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
-    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] data = generateRandomBytes(100); // 100 Bytes
     byte[] digest = calculateDigest(data);
     PropertyProto.BlobHandleProto blobHandle =
         PropertyProto.BlobHandleProto.newBuilder()
@@ -807,7 +813,7 @@ public final class IcingSearchEngineTest {
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
-    byte[] data = generateRandomBytes(100); // 10 Bytes
+    byte[] data = generateRandomBytes(100); // 100 Bytes
     byte[] digest = calculateDigest(data);
     PropertyProto.BlobHandleProto blobHandle =
         PropertyProto.BlobHandleProto.newBuilder()
@@ -838,6 +844,74 @@ public final class IcingSearchEngineTest {
     // Commit will not found.
     BlobProto commitBlobProto = icing.commitBlob(blobHandle);
     assertThat(commitBlobProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
+  @Ignore // b/350530146
+  @Test
+  public void getAndPutBlobInfo() throws Exception {
+    // 1 Arrange: set up IcingSearchEngine with and blob data
+    File tempDir = temporaryFolder.newFolder();
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertStatusOk(icing.initialize().getStatus());
+
+    byte[] data = generateRandomBytes(100); // 100 Bytes
+    byte[] digest = calculateDigest(data);
+    PropertyProto.BlobHandleProto blobHandle =
+        PropertyProto.BlobHandleProto.newBuilder()
+            .setNamespace("ns")
+            .setDigest(ByteString.copyFrom(digest))
+            .build();
+
+    // 2 Act: write the blob
+    BlobProto openWriteBlobProto = icing.openWriteBlob(blobHandle);
+    assertStatusOk(openWriteBlobProto.getStatus());
+    Field field = FileDescriptor.class.getDeclaredField("fd");
+    field.setAccessible(true); // Make the field accessible
+
+    // Create a new FileDescriptor object
+    FileDescriptor writeFd = new FileDescriptor();
+
+    // Set the file descriptor value using reflection
+    field.setInt(writeFd, openWriteBlobProto.getFileDescriptor());
+
+    try (FileOutputStream outputStream = new FileOutputStream(writeFd)) {
+      outputStream.write(data);
+    }
+
+    // Commit and read the blob.
+    BlobProto commitBlobProto = icing.commitBlob(blobHandle);
+    assertStatusOk(commitBlobProto.getStatus());
+
+    // Get the blob info.
+    BlobProto allBlobInfoProto = icing.getAllBlobInfos();
+    assertStatusOk(allBlobInfoProto.getStatus());
+    assertThat(allBlobInfoProto.getBlobInfoProtosCount()).isEqualTo(1);
+
+    // create a new IcingSearchEngine instance.
+    IcingSearchEngineOptions options2 =
+        IcingSearchEngineOptions.newBuilder()
+            .setBaseDir(tempDir.getCanonicalPath())
+            .setEnableBlobStore(true)
+            .setManageBlobFiles(false)
+            .build();
+    IcingSearchEngine icing2 = new IcingSearchEngine(options2);
+    assertStatusOk(icing2.initialize().getStatus());
+
+    // Put the blob info.
+    BlobProto putBlobInfosProto = icing2.putBlobInfos(allBlobInfoProto);
+    assertStatusOk(putBlobInfosProto.getStatus());
+
+    // 3: Verify the blob info.
+    BlobProto allBlobInfoProto2 = icing2.getAllBlobInfos();
+    assertStatusOk(allBlobInfoProto2.getStatus());
+    assertThat(allBlobInfoProto2.getBlobInfoProtosCount()).isEqualTo(1);
+    assertThat(allBlobInfoProto2.getBlobInfoProtos(0))
+        .isEqualTo(allBlobInfoProto2.getBlobInfoProtos(0));
   }
 
   @Test
@@ -1392,9 +1466,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  @Ignore
-  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
-  // into g3.
   public void throwIfClosed() throws Exception {
     icingSearchEngine.close();
     assertThrows(IllegalStateException.class, () -> icingSearchEngine.initialize());
