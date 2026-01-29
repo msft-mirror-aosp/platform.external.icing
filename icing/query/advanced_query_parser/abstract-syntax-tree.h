@@ -17,13 +17,13 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace icing {
 namespace lib {
 
-class FunctionNameNode;
 class StringNode;
 class TextNode;
 class MemberNode;
@@ -35,7 +35,6 @@ class AbstractSyntaxTreeVisitor {
  public:
   virtual ~AbstractSyntaxTreeVisitor() = default;
 
-  virtual void VisitFunctionName(const FunctionNameNode* node) = 0;
   virtual void VisitString(const StringNode* node) = 0;
   virtual void VisitText(const TextNode* node) = 0;
   virtual void VisitMember(const MemberNode* node) = 0;
@@ -50,39 +49,74 @@ class Node {
   virtual void Accept(AbstractSyntaxTreeVisitor* visitor) const = 0;
 };
 
-class TerminalNode : public Node {
+class StringNode : public Node {
  public:
-  explicit TerminalNode(std::string value) : value_(std::move(value)) {}
+  explicit StringNode(std::string value, std::string_view raw_value,
+                      bool is_prefix = false)
+      : value_(std::move(value)),
+        raw_value_(raw_value),
+        is_prefix_(is_prefix) {}
 
-  const std::string& value() const { return value_; }
+  const std::string& value() const& { return value_; }
+  std::string value() && { return std::move(value_); }
 
- private:
-  std::string value_;
-};
+  bool is_prefix() const { return is_prefix_; }
 
-class FunctionNameNode : public TerminalNode {
- public:
-  explicit FunctionNameNode(std::string value)
-      : TerminalNode(std::move(value)) {}
-  void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
-    visitor->VisitFunctionName(this);
-  }
-};
+  std::string_view raw_value() const { return raw_value_; }
 
-class StringNode : public TerminalNode {
- public:
-  explicit StringNode(std::string value) : TerminalNode(std::move(value)) {}
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitString(this);
   }
+
+ private:
+  std::string value_;
+  std::string_view raw_value_;
+  bool is_prefix_;
 };
 
-class TextNode : public TerminalNode {
+class TextNode : public Node {
  public:
-  explicit TextNode(std::string value) : TerminalNode(std::move(value)) {}
+  explicit TextNode(std::string value, std::string_view raw_value,
+                    bool is_prefix = false)
+      : value_(std::move(value)),
+        raw_value_(raw_value),
+        is_prefix_(is_prefix) {}
+
+  const std::string& value() const& { return value_; }
+  std::string value() && { return std::move(value_); }
+
+  bool is_prefix() const { return is_prefix_; }
+
+  std::string_view raw_value() const { return raw_value_; }
+
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitText(this);
   }
+
+ private:
+  std::string value_;
+  std::string_view raw_value_;
+  bool is_prefix_;
+};
+
+class FunctionNode : public Node {
+ public:
+  explicit FunctionNode(std::string function_name)
+      : FunctionNode(std::move(function_name), {}) {}
+  explicit FunctionNode(std::string function_name,
+                        std::vector<std::unique_ptr<Node>> args)
+      : function_name_(std::move(function_name)),
+        args_(std::move(args)) {}
+
+  void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
+    visitor->VisitFunction(this);
+  }
+  const std::string& function_name() const { return function_name_; }
+  const std::vector<std::unique_ptr<Node>>& args() const { return args_; }
+
+ private:
+  std::string function_name_;
+  std::vector<std::unique_ptr<Node>> args_;
 };
 
 class MemberNode : public Node {
@@ -104,25 +138,6 @@ class MemberNode : public Node {
   // This is nullable. When it is not nullptr, this class will represent a
   // function call.
   std::unique_ptr<FunctionNode> function_;
-};
-
-class FunctionNode : public Node {
- public:
-  explicit FunctionNode(std::unique_ptr<FunctionNameNode> function_name)
-      : FunctionNode(std::move(function_name), {}) {}
-  explicit FunctionNode(std::unique_ptr<FunctionNameNode> function_name,
-                        std::vector<std::unique_ptr<Node>> args)
-      : function_name_(std::move(function_name)), args_(std::move(args)) {}
-
-  void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
-    visitor->VisitFunction(this);
-  }
-  const FunctionNameNode* function_name() const { return function_name_.get(); }
-  const std::vector<std::unique_ptr<Node>>& args() const { return args_; }
-
- private:
-  std::unique_ptr<FunctionNameNode> function_name_;
-  std::vector<std::unique_ptr<Node>> args_;
 };
 
 class UnaryOperatorNode : public Node {

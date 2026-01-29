@@ -12,33 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
+#include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scoring-processor.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
 
 // This is an overall benchmark for ScoringProcessor, Scorer, and Ranker. It
 // shows how performance varies when we score different numbers of document
@@ -78,6 +87,12 @@ SchemaProto CreateSchemaWithEmailType() {
   return schema;
 }
 
+DocumentWrapper CreateDocumentWrapper(DocumentProto document,
+                                      int32_t num_string_tokens) {
+  document.mutable_internal_fields()->set_length_in_tokens(num_string_tokens);
+  return document_util::CreateDocumentWrapper(std::move(document));
+}
+
 DocumentProto CreateEmailDocument(int id, int document_score,
                                   uint64_t creation_timestamp_ms) {
   return DocumentBuilder()
@@ -89,7 +104,23 @@ DocumentProto CreateEmailDocument(int id, int document_score,
       .Build();
 }
 
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store, &feature_flags,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
+      /*initialize_stats=*/nullptr);
+}
+
 void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -97,30 +128,37 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem, document_store_dir, &clock,
-                            schema_store.get()));
+      CreateDocumentStore(&filesystem, document_store_dir, &clock,
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
-
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results, &feature_flags));
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
 
@@ -132,10 +170,12 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
-        document_store->Put(CreateEmailDocument(
-            /*id=*/i, /*document_score=*/distribution(random_generator),
-            /*creation_timestamp_ms=*/1)));
+        DocumentStore::PutResult put_result,
+        document_store->Put(
+            document_util::CreateDocumentWrapper(CreateEmailDocument(
+                /*id=*/i, /*document_score=*/distribution(random_generator),
+                /*creation_timestamp_ms=*/1))));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -160,7 +200,6 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
         PopTopResultsFromHeap(&scored_document_hits, /*num_results=*/20,
                               scored_document_hit_comparator);
   }
-
   // Clean up
   document_store.reset();
   schema_store.reset();
@@ -193,6 +232,7 @@ BENCHMARK(BM_ScoreAndRankDocumentHitsByDocumentScore)
     ->ArgPair(10000, 20000);
 
 void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -200,30 +240,38 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem, document_store_dir, &clock,
-                            schema_store.get()));
+      CreateDocumentStore(&filesystem, document_store_dir, &clock,
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results, &feature_flags));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -236,10 +284,12 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
-        document_store->Put(CreateEmailDocument(
-            /*id=*/i, /*document_score=*/1,
-            /*creation_timestamp_ms=*/distribution(random_generator))));
+        DocumentStore::PutResult put_result,
+        document_store->Put(
+            document_util::CreateDocumentWrapper(CreateEmailDocument(
+                /*id=*/i, /*document_score=*/1,
+                /*creation_timestamp_ms=*/distribution(random_generator)))));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -297,6 +347,7 @@ BENCHMARK(BM_ScoreAndRankDocumentHitsByCreationTime)
     ->ArgPair(10000, 20000);
 
 void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -304,29 +355,37 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem, document_store_dir, &clock,
-                            schema_store.get()));
+      CreateDocumentStore(&filesystem, document_store_dir, &clock,
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results, &feature_flags));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -335,9 +394,11 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   std::vector<DocHitInfo> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
-        document_store->Put(CreateEmailDocument(/*id=*/i, /*document_score=*/1,
-                                                /*creation_timestamp_ms=*/1)));
+        DocumentStore::PutResult put_result,
+        document_store->Put(document_util::CreateDocumentWrapper(
+            CreateEmailDocument(/*id=*/i, /*document_score=*/1,
+                                /*creation_timestamp_ms=*/1))));
+    DocumentId document_id = put_result.new_document_id;
     doc_hit_infos.emplace_back(document_id);
   }
 
@@ -395,6 +456,7 @@ BENCHMARK(BM_ScoreAndRankDocumentHitsNoScoring)
     ->ArgPair(10000, 20000);
 
 void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
+  FeatureFlags feature_flags = GetTestFeatureFlags();
   const std::string base_dir = GetTestTempDir() + "/score_and_rank_benchmark";
   const std::string document_store_dir = base_dir + "/document_store";
   const std::string schema_store_dir = base_dir + "/schema_store";
@@ -402,29 +464,37 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
+                             SchemaStore::Create(&filesystem, schema_store_dir,
+                                                 &clock, &feature_flags));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem, document_store_dir, &clock,
-                            schema_store.get()));
+      CreateDocumentStore(&filesystem, document_store_dir, &clock,
+                          schema_store.get(), feature_flags));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(
+      schema_store->SetSchema(CreateSchemaWithEmailType(),
+                              /*ignore_errors_and_delete_documents=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  EmbeddingQueryResults empty_embedding_query_results;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+      ScoringProcessor::Create(
+          scoring_spec, /*default_semantic_metric_type=*/
+          SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          document_store.get(), schema_store.get(),
+          clock.GetSystemTimeMilliseconds(), /*join_children_fetcher=*/nullptr,
+          &empty_embedding_query_results, &feature_flags));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -440,11 +510,12 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentId document_id,
-        document_store->Put(CreateEmailDocument(
-                                /*id=*/i, /*document_score=*/1,
+        DocumentStore::PutResult put_result,
+        document_store->Put(CreateDocumentWrapper(
+            CreateEmailDocument(/*id=*/i, /*document_score=*/1,
                                 /*creation_timestamp_ms=*/1),
-                            /*num_tokens=*/10));
+            /*num_string_tokens=*/10)));
+    DocumentId document_id = put_result.new_document_id;
     DocHitInfoTermFrequencyPair doc_hit =
         DocHitInfo(document_id, section_id_mask);
     // Set five matches for term "foo" for each document hit.

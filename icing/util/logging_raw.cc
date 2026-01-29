@@ -50,7 +50,7 @@ int GetAndroidLogLevel(LogSeverity::Code severity) {
 }  // namespace
 
 void LowLevelLogging(LogSeverity::Code severity, const std::string& tag,
-                     const std::string& message) {
+                     const std::string& message, const bool force_debug_logs) {
   const int android_log_level = GetAndroidLogLevel(severity);
 #if __ANDROID_API__ >= 30
   if (!__android_log_is_loggable(android_log_level, tag.c_str(),
@@ -58,7 +58,28 @@ void LowLevelLogging(LogSeverity::Code severity, const std::string& tag,
     return;
   }
 #endif  // __ANDROID_API__ >= 30
-  __android_log_write(android_log_level, tag.c_str(), message.c_str());
+  // TODO(b/401363381): Remove this once we have a better way to log to
+  // /dev/hvc2 in isolated storage.
+  if (force_debug_logs) {
+    // When isolated icing storage is enabled, the VM debug level determines
+    // whether icing debug logs are delivered. We want the icing debug logs
+    // to always be present. Thus force logging to /dev/hvc2.
+    const char* file_logger_path = "/dev/hvc2";
+    // "e" opens the file with the O_CLOEXEC flag. Icing should not be starting
+    // any other processes, but it is added as a precaution.
+    static FILE* stream = [&file_logger_path]() {
+      FILE* f = fopen(file_logger_path, "ae");
+      if (f != nullptr) {
+        return f;
+      }
+      fprintf(stderr, "Failed to open /dev/hvc2 for logging. "
+                      "Falling back to stderr.\n");
+      return stderr;
+    }();
+    fprintf(stream, "%s: %s\n", tag.c_str(), message.c_str());
+  } else {
+    __android_log_write(android_log_level, tag.c_str(), message.c_str());
+  }
 }
 
 }  // namespace lib
@@ -91,7 +112,7 @@ const char *LogSeverityToString(LogSeverity::Code severity) {
 }  // namespace
 
 void LowLevelLogging(LogSeverity::Code severity, const std::string &tag,
-                     const std::string &message) {
+                     const std::string &message, const bool force_debug_logs) {
   // TODO(b/146903474) Do not log to stderr for logs other than FATAL and ERROR.
   fprintf(stderr, "[%s] %s : %s\n", LogSeverityToString(severity), tag.c_str(),
           message.c_str());

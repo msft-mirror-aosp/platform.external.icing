@@ -15,11 +15,16 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
 
-#include <cstdint>
+#include <array>
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/lite-index.h"
 #include "icing/index/term-id-codec.h"
@@ -33,9 +38,13 @@ class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
   explicit DocHitInfoIteratorTermLite(const TermIdCodec* term_id_codec,
                                       LiteIndex* lite_index,
                                       const std::string& term,
+                                      int term_start_index,
+                                      int unnormalized_term_length,
                                       SectionIdMask section_restrict_mask,
                                       bool need_hit_term_frequency)
       : term_(term),
+        term_start_index_(term_start_index),
+        unnormalized_term_length_(unnormalized_term_length),
         lite_index_(lite_index),
         cached_hits_idx_(-1),
         term_id_codec_(term_id_codec),
@@ -45,8 +54,21 @@ class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override { return 0; }
-  int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
+  }
+
+  CallStats GetCallStats() const override {
+    return CallStats(
+        /*num_leaf_advance_calls_lite_index_in=*/num_advance_calls_,
+        /*num_leaf_advance_calls_main_index_in=*/0,
+        /*num_leaf_advance_calls_integer_index_in=*/0,
+        /*num_leaf_advance_calls_no_index_in=*/0,
+        /*num_blocks_inspected_in=*/0,
+        /*embedding_stats_in=*/{});
+  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,
@@ -91,6 +113,10 @@ class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
   virtual libtextclassifier3::Status RetrieveMoreHits() = 0;
 
   const std::string term_;
+  // The start index of the given term in the search query
+  int term_start_index_;
+  // The length of the given unnormalized term in the search query
+  int unnormalized_term_length_;
   LiteIndex* const lite_index_;
   // Stores hits retrieved from the index. This may only be a subset of the hits
   // that are present in the index. Current value pointed to by the Iterator is
@@ -111,9 +137,12 @@ class DocHitInfoIteratorTermLiteExact : public DocHitInfoIteratorTermLite {
   explicit DocHitInfoIteratorTermLiteExact(const TermIdCodec* term_id_codec,
                                            LiteIndex* lite_index,
                                            const std::string& term,
+                                           int term_start_index,
+                                           int unnormalized_term_length,
                                            SectionIdMask section_id_mask,
                                            bool need_hit_term_frequency)
       : DocHitInfoIteratorTermLite(term_id_codec, lite_index, term,
+                                   term_start_index, unnormalized_term_length,
                                    section_id_mask, need_hit_term_frequency) {}
 
   std::string ToString() const override;
@@ -127,9 +156,12 @@ class DocHitInfoIteratorTermLitePrefix : public DocHitInfoIteratorTermLite {
   explicit DocHitInfoIteratorTermLitePrefix(const TermIdCodec* term_id_codec,
                                             LiteIndex* lite_index,
                                             const std::string& term,
+                                            int term_start_index,
+                                            int unnormalized_term_length,
                                             SectionIdMask section_id_mask,
                                             bool need_hit_term_frequency)
       : DocHitInfoIteratorTermLite(term_id_codec, lite_index, term,
+                                   term_start_index, unnormalized_term_length,
                                    section_id_mask, need_hit_term_frequency) {}
 
   std::string ToString() const override;

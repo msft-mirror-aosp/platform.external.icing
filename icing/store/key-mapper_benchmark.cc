@@ -35,6 +35,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::IsTrue;
 using ::testing::Not;
 
 class KeyMapperBenchmark {
@@ -78,9 +79,11 @@ class KeyMapperBenchmark {
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<int>>>
   CreateKeyMapper<PersistentHashMapKeyMapper<int>>(int max_num_entries) {
+    std::string working_path =
+        absl_ports::StrCat(base_dir, "/", "key_mapper_dir");
     return PersistentHashMapKeyMapper<int>::Create(
-        filesystem, base_dir, max_num_entries,
-        /*average_kv_byte_size=*/kKeyLength + 1 + sizeof(int),
+        filesystem, std::move(working_path), /*pre_mapping_fbv=*/true,
+        max_num_entries, /*average_kv_byte_size=*/kKeyLength + 1 + sizeof(int),
         /*max_load_factor_percent=*/100);
   }
 
@@ -109,6 +112,7 @@ void BM_PutMany(benchmark::State& state) {
     state.PauseTiming();
     benchmark.filesystem.DeleteDirectoryRecursively(benchmark.base_dir.c_str());
     DestructibleDirectory ddir(&benchmark.filesystem, benchmark.base_dir);
+    ASSERT_THAT(ddir.is_valid(), IsTrue());
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<KeyMapper<int>> key_mapper,
         benchmark.CreateKeyMapper<KeyMapperType>(num_keys));
@@ -166,6 +170,7 @@ void BM_Put(benchmark::State& state) {
   KeyMapperBenchmark benchmark;
   benchmark.filesystem.DeleteDirectoryRecursively(benchmark.base_dir.c_str());
   DestructibleDirectory ddir(&benchmark.filesystem, benchmark.base_dir);
+  ASSERT_THAT(ddir.is_valid(), IsTrue());
 
   // The overhead of state.PauseTiming is too large and affects the benchmark
   // result a lot, so pre-generate enough kvps to avoid calling too many times
@@ -206,6 +211,7 @@ void BM_Get(benchmark::State& state) {
   KeyMapperBenchmark benchmark;
   benchmark.filesystem.DeleteDirectoryRecursively(benchmark.base_dir.c_str());
   DestructibleDirectory ddir(&benchmark.filesystem, benchmark.base_dir);
+  ASSERT_THAT(ddir.is_valid(), IsTrue());
 
   // Create a key mapper with num_keys entries.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -260,6 +266,7 @@ void BM_Iterator(benchmark::State& state) {
   KeyMapperBenchmark benchmark;
   benchmark.filesystem.DeleteDirectoryRecursively(benchmark.base_dir.c_str());
   DestructibleDirectory ddir(&benchmark.filesystem, benchmark.base_dir);
+  ASSERT_THAT(ddir.is_valid(), IsTrue());
 
   // Create a key mapper with num_keys entries.
   ICING_ASSERT_OK_AND_ASSIGN(

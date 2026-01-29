@@ -16,30 +16,32 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
+#include <utility>
 #include <vector>
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/mutex.h"
+#include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
-#include "icing/portable/equals-proto.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/snippet-context.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 
@@ -47,25 +49,10 @@ namespace icing {
 namespace lib {
 namespace {
 
-using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
-
-SearchSpecProto CreateSearchSpec(TermMatchType::Code match_type) {
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(match_type);
-  return search_spec;
-}
-
-ScoringSpecProto CreateScoringSpec(bool is_descending_order) {
-  ScoringSpecProto scoring_spec;
-  scoring_spec.set_order_by(is_descending_order ? ScoringSpecProto::Order::DESC
-                                                : ScoringSpecProto::Order::ASC);
-  return scoring_spec;
-}
 
 ResultSpecProto CreateResultSpec(
     int num_per_page, ResultSpecProto::ResultGroupingType result_group_type) {
@@ -78,21 +65,34 @@ ResultSpecProto CreateResultSpec(
 class ResultStateV2Test : public ::testing::Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     schema_store_base_dir_ = GetTestTempDir() + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_base_dir_.c_str());
+
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_base_dir_, &clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_base_dir_,
+                                           &clock_, feature_flags_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
     doc_store_base_dir_ = GetTestTempDir() + "/document_store";
     filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, doc_store_base_dir_, &clock_,
-                              schema_store_.get()));
+        DocumentStore::Create(
+            &filesystem_, doc_store_base_dir_, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     num_total_hits_ = 0;
@@ -108,7 +108,11 @@ class ResultStateV2Test : public ::testing::Test {
     document.set_namespace_("namespace");
     document.set_uri(std::to_string(document_id));
     document.set_schema("Document");
-    document_store_->Put(std::move(document));
+
+    DocumentWrapper document_wrapper;
+    *document_wrapper.mutable_document() = std::move(document);
+
+    document_store_->Put(document_wrapper);
     return ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1);
   }
 
@@ -119,6 +123,7 @@ class ResultStateV2Test : public ::testing::Test {
   const std::atomic<int>& num_total_hits() const { return num_total_hits_; }
 
  private:
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   std::string doc_store_base_dir_;
   std::string schema_store_base_dir_;
@@ -132,15 +137,15 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
   ResultSpecProto result_spec =
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.set_num_total_bytes_per_page_threshold(4096);
+  result_spec.set_max_joined_children_per_parent_to_return(2048);
 
+  // Adjustment info is not important in this test.
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-          std::vector<ScoredDocumentHit>(),
-          /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      document_store());
+          std::vector<ScoredDocumentHit>(), /*is_descending=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, document_store());
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -148,6 +153,8 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
   EXPECT_THAT(result_state.num_per_page(), Eq(result_spec.num_per_page()));
   EXPECT_THAT(result_state.num_total_bytes_per_page_threshold(),
               Eq(result_spec.num_total_bytes_per_page_threshold()));
+  EXPECT_THAT(result_state.max_joined_children_per_parent_to_return(),
+              Eq(result_spec.max_joined_children_per_parent_to_return()));
 }
 
 TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
@@ -156,14 +163,14 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
   ASSERT_THAT(default_result_spec.num_total_bytes_per_page_threshold(),
               Eq(std::numeric_limits<int32_t>::max()));
 
+  // Adjustment info is not important in this test.
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), default_result_spec,
-      document_store());
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      default_result_spec, document_store());
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -172,138 +179,37 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
               Eq(default_result_spec.num_per_page()));
   EXPECT_THAT(result_state.num_total_bytes_per_page_threshold(),
               Eq(default_result_spec.num_total_bytes_per_page_threshold()));
-}
-
-TEST_F(ResultStateV2Test, ShouldReturnSnippetContextAccordingToSpecs) {
-  ResultSpecProto result_spec =
-      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
-  result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
-  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
-  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
-
-  SectionRestrictQueryTermsMap query_terms_map;
-  query_terms_map.emplace("term1", std::unordered_set<std::string>());
-
-  ResultStateV2 result_state(
-      std::make_unique<
-          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-          std::vector<ScoredDocumentHit>(),
-          /*is_descending=*/true),
-      query_terms_map, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      document_store());
-
-  absl_ports::shared_lock l(&result_state.mutex);
-
-  const SnippetContext snippet_context = result_state.snippet_context();
-
-  // Snippet context should be derived from the specs above.
-  EXPECT_TRUE(snippet_context.query_terms.find("term1") !=
-              snippet_context.query_terms.end());
-  EXPECT_THAT(snippet_context.snippet_spec,
-              EqualsProto(result_spec.snippet_spec()));
-  EXPECT_THAT(snippet_context.match_type, Eq(TermMatchType::EXACT_ONLY));
-
-  // The same copy can be fetched multiple times.
-  const SnippetContext snippet_context2 = result_state.snippet_context();
-  EXPECT_TRUE(snippet_context2.query_terms.find("term1") !=
-              snippet_context2.query_terms.end());
-  EXPECT_THAT(snippet_context2.snippet_spec,
-              EqualsProto(result_spec.snippet_spec()));
-  EXPECT_THAT(snippet_context2.match_type, Eq(TermMatchType::EXACT_ONLY));
-}
-
-TEST_F(ResultStateV2Test, NoSnippetingShouldReturnNull) {
-  ResultSpecProto result_spec =
-      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
-  // Setting num_to_snippet to 0 so that snippeting info won't be
-  // stored.
-  result_spec.mutable_snippet_spec()->set_num_to_snippet(0);
-  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
-  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
-
-  SectionRestrictQueryTermsMap query_terms_map;
-  query_terms_map.emplace("term1", std::unordered_set<std::string>());
-
-  ResultStateV2 result_state(
-      std::make_unique<
-          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-          std::vector<ScoredDocumentHit>(),
-          /*is_descending=*/true),
-      query_terms_map, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      document_store());
-
-  absl_ports::shared_lock l(&result_state.mutex);
-
-  const SnippetContext snippet_context = result_state.snippet_context();
-  EXPECT_THAT(snippet_context.query_terms, IsEmpty());
   EXPECT_THAT(
-      snippet_context.snippet_spec,
-      EqualsProto(ResultSpecProto::SnippetSpecProto::default_instance()));
-  EXPECT_THAT(snippet_context.match_type, TermMatchType::UNKNOWN);
-}
-
-TEST_F(ResultStateV2Test, ShouldConstructProjectionTreeMapAccordingToSpecs) {
-  // Create a ResultSpec with type property mask.
-  ResultSpecProto result_spec =
-      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
-  TypePropertyMask* email_type_property_mask =
-      result_spec.add_type_property_masks();
-  email_type_property_mask->set_schema_type("Email");
-  email_type_property_mask->add_paths("sender.name");
-  email_type_property_mask->add_paths("sender.emailAddress");
-  TypePropertyMask* phone_type_property_mask =
-      result_spec.add_type_property_masks();
-  phone_type_property_mask->set_schema_type("Phone");
-  phone_type_property_mask->add_paths("caller");
-  TypePropertyMask* wildcard_type_property_mask =
-      result_spec.add_type_property_masks();
-  wildcard_type_property_mask->set_schema_type(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
-  wildcard_type_property_mask->add_paths("wild.card");
-
-  ResultStateV2 result_state(
-      std::make_unique<
-          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-          std::vector<ScoredDocumentHit>(),
-          /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      document_store());
-
-  absl_ports::shared_lock l(&result_state.mutex);
-
-  const std::unordered_map<std::string, ProjectionTree>& projection_tree_map =
-      result_state.projection_tree_map();
-  EXPECT_THAT(projection_tree_map,
-              UnorderedElementsAre(
-                  Pair("Email", ProjectionTree(*email_type_property_mask)),
-                  Pair("Phone", ProjectionTree(*phone_type_property_mask)),
-                  Pair(std::string(ProjectionTree::kSchemaTypeWildcard),
-                       ProjectionTree(*wildcard_type_property_mask))));
+      result_state.max_joined_children_per_parent_to_return(),
+      Eq(default_result_spec.max_joined_children_per_parent_to_return()));
 }
 
 TEST_F(ResultStateV2Test,
        ShouldConstructNamespaceGroupIdMapAndGroupResultLimitsAccordingToSpecs) {
   // Create 3 docs under namespace1, namespace2, namespace3.
-  DocumentProto document1;
-  document1.set_namespace_("namespace1");
-  document1.set_uri("uri/1");
-  document1.set_schema("Document");
-  ICING_ASSERT_OK(document_store().Put(std::move(document1)));
+  DocumentWrapper document_wrapper1;
+  *document_wrapper1.mutable_document() = DocumentBuilder()
+                                              .SetNamespace("namespace1")
+                                              .SetUri("uri/1")
+                                              .SetSchema("Document")
+                                              .Build();
+  ICING_ASSERT_OK(document_store().Put(document_wrapper1));
 
-  DocumentProto document2;
-  document2.set_namespace_("namespace2");
-  document2.set_uri("uri/2");
-  document2.set_schema("Document");
-  ICING_ASSERT_OK(document_store().Put(std::move(document2)));
+  DocumentWrapper document_wrapper2;
+  *document_wrapper2.mutable_document() = DocumentBuilder()
+                                              .SetNamespace("namespace2")
+                                              .SetUri("uri/2")
+                                              .SetSchema("Document")
+                                              .Build();
+  ICING_ASSERT_OK(document_store().Put(document_wrapper2));
 
-  DocumentProto document3;
-  document3.set_namespace_("namespace3");
-  document3.set_uri("uri/3");
-  document3.set_schema("Document");
-  ICING_ASSERT_OK(document_store().Put(std::move(document3)));
+  DocumentWrapper document_wrapper3;
+  *document_wrapper3.mutable_document() = DocumentBuilder()
+                                              .SetNamespace("namespace3")
+                                              .SetUri("uri/3")
+                                              .SetSchema("Document")
+                                              .Build();
+  ICING_ASSERT_OK(document_store().Put(document_wrapper3));
 
   // Create a ResultSpec that limits "namespace1" to 3 results and limits
   // "namespace2"+"namespace3" to a total of 2 results. Also add
@@ -332,24 +238,24 @@ TEST_F(ResultStateV2Test,
   entry->set_namespace_("nonexistentNamespace1");
 
   // Get entry ids.
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       int32_t entry_id1, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       int32_t entry_id2, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace2", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       int32_t entry_id3, document_store().GetResultGroupingEntryId(
                              result_grouping_type, "namespace3", "Document"));
 
+  // Adjustment info is not important in this test.
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      document_store());
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, document_store());
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -374,14 +280,14 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHits) {
       AddScoredDocument(/*document_id=*/4),
       AddScoredDocument(/*document_id=*/3)};
 
+  // Adjustment info is not important in this test.
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
       document_store());
 
@@ -408,14 +314,14 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
 
   num_total_hits() = 2;
   {
+    // Adjustment info is not important in this test.
     // Creates a ResultState with 5 ScoredDocumentHits.
     ResultStateV2 result_state1(
         std::make_unique<
             PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
             std::move(scored_document_hits1),
             /*is_descending=*/true),
-        /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-        CreateScoringSpec(/*is_descending_order=*/true),
+        /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
         CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
         document_store());
 
@@ -425,14 +331,14 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
     ASSERT_THAT(num_total_hits(), Eq(7));
 
     {
+      // Adjustment info is not important in this test.
       // Creates another ResultState with 2 ScoredDocumentHits.
       ResultStateV2 result_state2(
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
-          /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-          CreateScoringSpec(/*is_descending_order=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
           document_store());
 
@@ -457,13 +363,13 @@ TEST_F(ResultStateV2Test, ShouldNotUpdateNumTotalHitsWhenNotRegistered) {
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   {
+    // Adjustment info is not important in this test.
     ResultStateV2 result_state(
         std::make_unique<
             PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
             std::move(scored_document_hits),
             /*is_descending=*/true),
-        /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-        CreateScoringSpec(/*is_descending_order=*/true),
+        /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
         CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
         document_store());
 
@@ -488,14 +394,14 @@ TEST_F(ResultStateV2Test, ShouldDecrementOriginalNumTotalHitsWhenReregister) {
       AddScoredDocument(/*document_id=*/4),
       AddScoredDocument(/*document_id=*/3)};
 
+  // Adjustment info is not important in this test.
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
       document_store());
 

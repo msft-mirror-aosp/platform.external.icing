@@ -15,83 +15,171 @@
 #include "icing/join/join-processor.h"
 
 #include <algorithm>
-#include <functional>
-#include <string>
+#include <memory>
+#include <optional>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/join/aggregation-scorer.h"
-#include "icing/join/qualified-id.h"
+#include "icing/join/join-children-fetcher-impl-deprecated.h"
+#include "icing/join/join-children-fetcher-impl-v3.h"
+#include "icing/join/join-children-fetcher.h"
+#include "icing/join/qualified-id-join-index.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
-#include "icing/util/snippet-helpers.h"
+#include "icing/store/namespace-id-fingerprint.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
+libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+JoinProcessor::GetChildrenFetcher(
+    const JoinSpecProto& join_spec,
+    std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
+  if (join_spec.parent_property_expression() != kQualifiedIdExpr) {
+    // TODO(b/256022027): So far we only support kQualifiedIdExpr for
+    // parent_property_expression, we could support more.
+    return absl_ports::UnimplementedError(absl_ports::StrCat(
+        "Parent property expression must be ", kQualifiedIdExpr));
+  }
+
+  switch (qualified_id_join_index_->version()) {
+    case QualifiedIdJoinIndex::Version::kV2:
+      return GetChildrenFetcherV2(join_spec,
+                                  std::move(child_scored_document_hits));
+    case QualifiedIdJoinIndex::Version::kV3:
+      return JoinChildrenFetcherImplV3::Create(
+          join_spec, schema_store_, doc_store_, qualified_id_join_index_,
+          current_time_ms_, std::move(child_scored_document_hits));
+  }
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
+JoinProcessor::GetChildrenFetcherV2(
+    const JoinSpecProto& join_spec,
+    std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
+  // Step 1a: sort child ScoredDocumentHits in document id descending order.
+  std::sort(child_scored_document_hits.begin(),
+            child_scored_document_hits.end(),
+            [](const ScoredDocumentHit& lhs, const ScoredDocumentHit& rhs) {
+              return lhs.document_id() > rhs.document_id();
+            });
+
+  // Step 1b: group all child ScoredDocumentHits by the document's
+  //          schema_type_id.
+  std::unordered_map<SchemaTypeId, std::vector<ScoredDocumentHit>>
+      schema_to_child_scored_doc_hits_map;
+  for (const ScoredDocumentHit& child_scored_document_hit :
+       child_scored_document_hits) {
+    std::optional<DocumentFilterData> child_doc_filter_data =
+        doc_store_->GetAliveDocumentFilterData(
+            child_scored_document_hit.document_id(), current_time_ms_);
+    if (!child_doc_filter_data) {
+      continue;
+    }
+
+    schema_to_child_scored_doc_hits_map[child_doc_filter_data->schema_type_id()]
+        .push_back(child_scored_document_hit);
+  }
+
+  // Step 1c: for each schema_type_id, lookup QualifiedIdJoinIndexImplV2 to
+  //          fetch all child join data from posting list(s). Convert all
+  //          child join data to referenced parent document ids and bucketize
+  //          child ScoredDocumentHits by it.
+  std::unordered_map<DocumentId, std::vector<ScoredDocumentHit>>
+      parent_to_child_docs_map;
+  for (auto& [schema_type_id, grouped_child_scored_doc_hits] :
+       schema_to_child_scored_doc_hits_map) {
+    // Get joinable_property_id of this schema.
+    ICING_ASSIGN_OR_RETURN(
+        const JoinablePropertyMetadata* metadata,
+        schema_store_->GetJoinablePropertyMetadata(
+            schema_type_id, join_spec.child_property_expression()));
+    if (metadata == nullptr ||
+        metadata->value_type != JoinableConfig::ValueType::QUALIFIED_ID) {
+      // Currently we only support qualified id, so skip other types.
+      continue;
+    }
+
+    // Lookup QualifiedIdJoinIndexImplV2.
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<QualifiedIdJoinIndex::JoinDataIteratorBase>
+            join_index_iter,
+        qualified_id_join_index_->GetIterator(
+            schema_type_id, /*joinable_property_id=*/metadata->id));
+
+    // - Join index contains all join data of schema_type_id and
+    //   join_index_iter will return all of them in (child) document id
+    //   descending order.
+    // - But we only need join data of child document ids which appear in
+    //   grouped_child_scored_doc_hits. Also grouped_child_scored_doc_hits
+    //   contain ScoredDocumentHits in (child) document id descending order.
+    // - Therefore, we advance 2 iterators to intersect them and get desired
+    //   join data.
+    auto child_scored_doc_hits_iter = grouped_child_scored_doc_hits.cbegin();
+    while (join_index_iter->Advance().ok() &&
+           child_scored_doc_hits_iter != grouped_child_scored_doc_hits.cend()) {
+      // Advance child_scored_doc_hits_iter until it points to a
+      // ScoredDocumentHit with document id <= the one pointed by
+      // join_index_iter.
+      while (child_scored_doc_hits_iter !=
+                 grouped_child_scored_doc_hits.cend() &&
+             child_scored_doc_hits_iter->document_id() >
+                 join_index_iter->GetCurrent().document_id()) {
+        ++child_scored_doc_hits_iter;
+      }
+
+      if (child_scored_doc_hits_iter != grouped_child_scored_doc_hits.cend() &&
+          child_scored_doc_hits_iter->document_id() ==
+              join_index_iter->GetCurrent().document_id()) {
+        // We get a join data whose child document id exists in both join
+        // index and grouped_child_scored_doc_hits. Convert its join info to
+        // referenced parent document ids and bucketize ScoredDocumentHits by
+        // it (putting into parent_to_child_docs_map).
+        const NamespaceIdFingerprint& ref_doc_nsid_uri_fingerprint =
+            join_index_iter->GetCurrent().join_info();
+        libtextclassifier3::StatusOr<DocumentId> ref_parent_doc_id_or =
+            doc_store_->GetDocumentId(ref_doc_nsid_uri_fingerprint);
+        if (ref_parent_doc_id_or.ok()) {
+          parent_to_child_docs_map[std::move(ref_parent_doc_id_or).ValueOrDie()]
+              .push_back(*child_scored_doc_hits_iter);
+        }
+      }
+    }
+  }
+
+  // Step 1d: finally, sort each parent's joined child ScoredDocumentHits by
+  //          score.
+  ScoredDocumentHitComparator score_comparator(
+      /*is_descending=*/join_spec.nested_spec().scoring_spec().order_by() ==
+      ScoringSpecProto::Order::DESC);
+  for (auto& [parent_doc_id, bucketized_child_scored_hits] :
+       parent_to_child_docs_map) {
+    std::sort(bucketized_child_scored_hits.begin(),
+              bucketized_child_scored_hits.end(), score_comparator);
+  }
+
+  return JoinChildrenFetcherImplDeprecated::Create(
+      join_spec, std::move(parent_to_child_docs_map));
+}
 
 libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
 JoinProcessor::Join(
     const JoinSpecProto& join_spec,
     std::vector<ScoredDocumentHit>&& parent_scored_document_hits,
-    std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
-  std::sort(
-      child_scored_document_hits.begin(), child_scored_document_hits.end(),
-      ScoredDocumentHitComparator(
-          /*is_descending=*/join_spec.nested_spec().scoring_spec().order_by() ==
-          ScoringSpecProto::Order::DESC));
-
-  // TODO(b/256022027):
-  // - Optimization
-  //   - Cache property to speed up property retrieval.
-  //   - If there is no cache, then we still have the flexibility to fetch it
-  //     from actual docs via DocumentStore.
-
-  // Step 1: group child documents by parent documentId. Currently we only
-  //         support QualifiedId joining, so fetch the qualified id content of
-  //         child_property_expression, break it down into namespace + uri, and
-  //         lookup the DocumentId.
-  // The keys of this map are the DocumentIds of the parent docs the child
-  // ScoredDocumentHits refer to. The values in this map are vectors of child
-  // ScoredDocumentHits that refer to a parent DocumentId.
-  std::unordered_map<DocumentId, std::vector<ScoredDocumentHit>>
-      parent_id_to_child_map;
-  for (const ScoredDocumentHit& child : child_scored_document_hits) {
-    std::string property_content = FetchPropertyExpressionValue(
-        child.document_id(), join_spec.child_property_expression());
-
-    // Parse qualified id.
-    libtextclassifier3::StatusOr<QualifiedId> qualified_id_or =
-        QualifiedId::Parse(property_content);
-    if (!qualified_id_or.ok()) {
-      ICING_VLOG(2) << "Skip content with invalid format of QualifiedId";
-      continue;
-    }
-    QualifiedId qualified_id = std::move(qualified_id_or).ValueOrDie();
-
-    // Lookup parent DocumentId.
-    libtextclassifier3::StatusOr<DocumentId> parent_doc_id_or =
-        doc_store_->GetDocumentId(qualified_id.name_space(),
-                                  qualified_id.uri());
-    if (!parent_doc_id_or.ok()) {
-      // Skip the document if getting errors.
-      continue;
-    }
-    DocumentId parent_doc_id = std::move(parent_doc_id_or).ValueOrDie();
-
-    // Since we've already sorted child_scored_document_hits, just simply omit
-    // if the parent_id_to_child_map[parent_doc_id].size() has reached max
-    // joined child count.
-    if (parent_id_to_child_map[parent_doc_id].size() <
-        join_spec.max_joined_child_count()) {
-      parent_id_to_child_map[parent_doc_id].push_back(child);
-    }
-  }
-
+    const JoinChildrenFetcher& join_children_fetcher) {
   std::unique_ptr<AggregationScorer> aggregation_scorer =
       AggregationScorer::Create(join_spec);
 
@@ -100,23 +188,11 @@ JoinProcessor::Join(
 
   // Step 2: iterate through all parent documentIds and construct
   //         JoinedScoredDocumentHit for each by looking up
-  //         parent_id_to_child_map.
+  //         join_children_fetcher.
   for (ScoredDocumentHit& parent : parent_scored_document_hits) {
-    DocumentId parent_doc_id = kInvalidDocumentId;
-    if (join_spec.parent_property_expression() == kQualifiedIdExpr) {
-      parent_doc_id = parent.document_id();
-    } else {
-      // TODO(b/256022027): So far we only support kQualifiedIdExpr for
-      // parent_property_expression, we could support more.
-      return absl_ports::UnimplementedError(absl_ports::StrCat(
-          "Parent property expression must be ", kQualifiedIdExpr));
-    }
-
-    std::vector<ScoredDocumentHit> children;
-    if (auto iter = parent_id_to_child_map.find(parent_doc_id);
-        iter != parent_id_to_child_map.end()) {
-      children = std::move(iter->second);
-    }
+    ICING_ASSIGN_OR_RETURN(
+        std::vector<ScoredDocumentHit> children,
+        join_children_fetcher.GetChildren(parent.document_id()));
 
     double final_score = aggregation_scorer->GetScore(parent, children);
     joined_scored_document_hits.emplace_back(final_score, std::move(parent),
@@ -124,22 +200,6 @@ JoinProcessor::Join(
   }
 
   return joined_scored_document_hits;
-}
-
-std::string JoinProcessor::FetchPropertyExpressionValue(
-    const DocumentId& document_id,
-    const std::string& property_expression) const {
-  // TODO(b/256022027): Add caching of document_id -> {expression -> value}
-  libtextclassifier3::StatusOr<DocumentProto> document_or =
-      doc_store_->Get(document_id);
-  if (!document_or.ok()) {
-    // Skip the document if getting errors.
-    return "";
-  }
-
-  DocumentProto document = std::move(document_or).ValueOrDie();
-
-  return std::string(GetString(&document, property_expression));
 }
 
 }  // namespace lib

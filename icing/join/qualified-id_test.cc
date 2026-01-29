@@ -135,6 +135,61 @@ TEST(QualifiedIdTest, InvalidQualifiedIdWithWrongNumberOfSeparators) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
+TEST(QualifiedIdTest, InvalidQualifiedIdWithStringTerminator) {
+  const char invalid_qualified_id1[] = "names\0pace#uri";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id1, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  const char invalid_qualified_id2[] = "namespace#ur\0i";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id2, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  const char invalid_qualified_id3[] = "\0namespace#uri";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id3, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  const char invalid_qualified_id4[] = "namespace#uri\0";
+  EXPECT_THAT(QualifiedId::Parse(std::string_view(invalid_qualified_id4, 14)),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(QualifiedIdTest, ToStringAndParse) {
+  // "namespace" + "uri" -> "namespace#uri"
+  QualifiedId id1("namespace", "uri");
+  std::string str1 = id1.ToString();
+  EXPECT_THAT(str1, Eq("namespace#uri"));
+  ICING_ASSERT_OK_AND_ASSIGN(QualifiedId parsed_id1, QualifiedId::Parse(str1));
+  EXPECT_THAT(parsed_id1, Eq(id1));
+
+  // "namespace\" + "uri" -> "namespace\\#uri"
+  QualifiedId id2("namespace\\", "uri");
+  std::string str2 = id2.ToString();
+  EXPECT_THAT(str2, Eq("namespace\\\\#uri"));
+  ICING_ASSERT_OK_AND_ASSIGN(QualifiedId parsed_id2, QualifiedId::Parse(str2));
+  EXPECT_THAT(parsed_id2, Eq(id2));
+
+  // "namespace#" + "uri" -> "namespace\##uri"
+  QualifiedId id3("namespace#", "uri");
+  std::string str3 = id3.ToString();
+  EXPECT_THAT(str3, Eq("namespace\\##uri"));
+  ICING_ASSERT_OK_AND_ASSIGN(QualifiedId parsed_id3, QualifiedId::Parse(str3));
+  EXPECT_THAT(parsed_id3, Eq(id3));
+
+  // "namespace" + "#uri" -> "namespace#\#uri"
+  QualifiedId id4("namespace", "#uri");
+  std::string str4 = id4.ToString();
+  EXPECT_THAT(str4, Eq("namespace#\\#uri"));
+  ICING_ASSERT_OK_AND_ASSIGN(QualifiedId parsed_id4, QualifiedId::Parse(str4));
+  EXPECT_THAT(parsed_id4, Eq(id4));
+
+  // "namespace\#" + "#\uri" -> "namespace\\\##\#\\uri"
+  QualifiedId id5("namespace\\#", "#\\uri");
+  std::string str5 = id5.ToString();
+  EXPECT_THAT(str5, Eq("namespace\\\\\\##\\#\\\\uri"));
+  ICING_ASSERT_OK_AND_ASSIGN(QualifiedId parsed_id5, QualifiedId::Parse(str5));
+  EXPECT_THAT(parsed_id5, Eq(id5));
+}
+
 }  // namespace
 
 }  // namespace lib

@@ -16,14 +16,19 @@
 #define ICING_SCORING_BM25F_CALCULATOR_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
-#include <unordered_set>
-#include <vector>
+#include <string_view>
+#include <unordered_map>
 
+#include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/scoring/section-weights.h"
 #include "icing/store/corpus-id.h"
+#include "icing/store/document-associated-score-data.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -63,8 +68,9 @@ namespace lib {
 // see: glossary/bm25
 class Bm25fCalculator {
  public:
-  explicit Bm25fCalculator(const DocumentStore *document_store_,
-                           std::unique_ptr<SectionWeights> section_weights_);
+  explicit Bm25fCalculator(const DocumentStore *document_store,
+                           SectionWeights *section_weights,
+                           int64_t current_time_ms);
 
   // Precompute and cache statistics relevant to BM25F.
   // Populates term_id_map_ and corpus_nqi_map_ for use while scoring other
@@ -91,13 +97,13 @@ class Bm25fCalculator {
   // Compact representation of <CorpusId, TermId> for use as a key in a
   // hash_map.
   struct CorpusTermInfo {
-    // Layout bits: 16 bit CorpusId + 16 bit TermId
-    using Value = uint32_t;
+    // Layout bits: 16 bit padding + 32 bit CorpusId + 16 bit TermId
+    using Value = uint64_t;
 
     Value value;
 
-    static constexpr int kCorpusIdBits = sizeof(CorpusId);
-    static constexpr int kTermIdBits = sizeof(TermId);
+    static constexpr int kCorpusIdBits = sizeof(CorpusId) * 8;
+    static constexpr int kTermIdBits = sizeof(TermId) * 8;
 
     explicit CorpusTermInfo(CorpusId corpus_id, TermId term_id) : value(0) {
       BITFIELD_OR(value, kTermIdBits, kCorpusIdBits,
@@ -145,7 +151,7 @@ class Bm25fCalculator {
 
   // Used for accessing normalized section weights when computing the weighted
   // term frequency.
-  std::unique_ptr<SectionWeights> section_weights_;
+  SectionWeights &section_weights_;
 
   // Map from query term to compact term ID.
   // Necessary as a key to the other maps.
@@ -166,6 +172,8 @@ class Bm25fCalculator {
 
   // Map from <corpus ID, term ID> to IDF(q_i) (inverse document frequency).
   std::unordered_map<CorpusTermInfo::Value, float> corpus_idf_map_;
+
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

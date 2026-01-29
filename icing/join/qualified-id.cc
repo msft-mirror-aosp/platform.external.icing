@@ -14,8 +14,10 @@
 
 #include "icing/join/qualified-id.h"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -33,6 +35,19 @@ bool IsSpecialCharacter(char c) {
          c == QualifiedId::kNamespaceUriSeparator;
 }
 
+// Helper function to escape the content.
+std::string Escape(std::string_view content) {
+  std::string escaped_content;
+  escaped_content.reserve(content.length());
+  for (char c : content) {
+    if (IsSpecialCharacter(c)) {
+      escaped_content += QualifiedId::kEscapeChar;
+    }
+    escaped_content += c;
+  }
+  return escaped_content;
+}
+
 // Helper function to verify the format (check the escape format and make sure
 // number of separator '#' is 1) and find the position of the unique separator.
 //
@@ -40,9 +55,14 @@ bool IsSpecialCharacter(char c) {
 //   A valid index of the separator on success.
 //   std::string::npos if the escape format of content is incorrect.
 //   std::string::npos if the content contains 0 or more than 1 separators.
+//   std::string::npos if the content contains '\0'.
 size_t VerifyFormatAndGetSeparatorPosition(std::string_view content) {
   size_t separator_pos = std::string::npos;
   for (size_t i = 0; i < content.length(); ++i) {
+    if (content[i] == '\0') {
+      return std::string::npos;
+    }
+
     if (content[i] == QualifiedId::kEscapeChar) {
       // Advance to the next character.
       ++i;
@@ -99,6 +119,10 @@ libtextclassifier3::StatusOr<std::string> Unescape(std::string_view content) {
   ICING_ASSIGN_OR_RETURN(std::string uri,
                          Unescape(qualified_id_str.substr(separator_pos + 1)));
   return QualifiedId(std::move(name_space), std::move(uri));
+}
+
+std::string QualifiedId::ToString() const {
+  return Escape(name_space_) + kNamespaceUriSeparator + Escape(uri_);
 }
 
 }  // namespace lib
