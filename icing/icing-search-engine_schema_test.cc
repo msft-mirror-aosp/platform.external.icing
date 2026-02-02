@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -132,6 +133,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_schema_database(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_scorable_properties(true);
   return icing_options;
 }
 
@@ -411,10 +413,13 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
 
     SetSchemaResultProto set_schema_result = icing.SetSchema(schema);
     // Ignore latency numbers. They're covered elsewhere.
-    set_schema_result.clear_latency_ms();
+    set_schema_result.clear_set_schema_stats();
+    set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+    expected_set_schema_result.set_needs_persist_type(
+        PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
     EXPECT_THAT(icing.GetSchema().schema().types(0).version(), Eq(1));
@@ -441,11 +446,14 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     // 3. SetSchema should succeed and the version number should be updated.
     SetSchemaResultProto set_schema_result = icing.SetSchema(schema, true);
     // Ignore latency numbers. They're covered elsewhere.
-    set_schema_result.clear_latency_ms();
+    set_schema_result.clear_set_schema_stats();
+    set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_fully_compatible_changed_schema_types()
         ->Add("Email");
+    expected_set_schema_result.set_needs_persist_type(
+        PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
     EXPECT_THAT(icing.GetSchema().schema().types(0).version(), Eq(2));
@@ -665,12 +673,20 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
   SetSchemaResultProto set_schema_result = icing.SetSchema(invalid_schema);
   EXPECT_THAT(set_schema_result.status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-  EXPECT_THAT(set_schema_result.latency_ms(), Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
 
   // Can add an document of a set schema
   set_schema_result = icing.SetSchema(schema_with_message);
   EXPECT_THAT(set_schema_result.status(), ProtoStatusIs(StatusProto::OK));
-  EXPECT_THAT(set_schema_result.latency_ms(), Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(
+      set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
+      Eq(1000));
+  EXPECT_THAT(set_schema_result.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));  // Flush is not needed for the first
+                                          // SetSchema.
   EXPECT_THAT(icing.Put(message_document).status(), ProtoIsOk());
 
   // Schema with Email doesn't have Message, so would result incompatible
@@ -678,13 +694,21 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
   set_schema_result = icing.SetSchema(schema_with_email);
   EXPECT_THAT(set_schema_result.status(),
               ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(set_schema_result.latency_ms(), Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(
+      set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
+      Eq(1000));
 
-  // Can expand the set of schema types and add an document of a new
-  // schema type
+  // Can expand the set of schema types and add an document of a new schema
+  // type.
   set_schema_result = icing.SetSchema(schema_with_email_and_message);
   EXPECT_THAT(set_schema_result.status(), ProtoStatusIs(StatusProto::OK));
-  EXPECT_THAT(set_schema_result.latency_ms(), Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(
+      set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
+      Eq(1000));
 
   EXPECT_THAT(icing.Put(message_document).status(), ProtoIsOk());
   // Can't add an document whose schema isn't set
@@ -702,13 +726,83 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
 TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(1000);
-  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
-                              std::make_unique<Filesystem>(),
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
+  // We need to add 2 dummy types to the schema so that once deleted, both
+  // Person and Email types' schema type ids will change.
   SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("DummyA"))  // schema type id 0
+          .AddType(
+              SchemaTypeConfigBuilder().SetType("DummyB"))  // schema type id 1
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")  // schema type id 2
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")  // schema type id 3
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Set schema with Person and Email types.
+  SetSchemaResultProto set_schema_result1 = icing.SetSchema(schema_one);
+  EXPECT_THAT(set_schema_result1.status(), ProtoStatusIs(StatusProto::OK));
+  EXPECT_THAT(set_schema_result1.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(set_schema_result1.set_schema_stats()
+                  .schema_store_set_schema_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(set_schema_result1.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));  // Flush is not needed for the first
+                                          // SetSchema.
+
+  // Put a person document and an email document.
+  DocumentProto person_document = DocumentBuilder()
+                                      .SetKey("namespace", "person/1")
+                                      .SetSchema("Person")
+                                      .SetCreationTimestampMs(1000)
+                                      .AddStringProperty("name", "John")
+                                      .AddInt64Property("age", 20)
+                                      .Build();
+  DocumentProto email_document =
+      DocumentBuilder()
+          .SetKey("namespace", "email/1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject", "subject")
+          .AddStringProperty("sender", "namespace#person/1")
+          .Build();
+  EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
+
+  // SetSchema again with both the dummy schema types deleted.
+  // - This will cause the schema type ids of both Person and Email types to be
+  //   shifted up.
+  //
+  // This should succeed and all search features should still work after the
+  // schema id change.
+  SchemaProto schema_two =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Person")  // schema type id 0
@@ -734,64 +828,24 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
                                             JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                         .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
-
-  // Set schema with Person and Email types.
-  SetSchemaResultProto set_schema_result1 = icing.SetSchema(schema_one);
-  EXPECT_THAT(set_schema_result1.status(), ProtoStatusIs(StatusProto::OK));
-  EXPECT_THAT(set_schema_result1.latency_ms(), Eq(1000));
-
-  // Put a person document and an email document.
-  DocumentProto person_document = DocumentBuilder()
-                                      .SetKey("namespace", "person/1")
-                                      .SetSchema("Person")
-                                      .SetCreationTimestampMs(1000)
-                                      .AddStringProperty("name", "John")
-                                      .AddInt64Property("age", 20)
-                                      .Build();
-  DocumentProto email_document =
-      DocumentBuilder()
-          .SetKey("namespace", "email/1")
-          .SetSchema("Email")
-          .SetCreationTimestampMs(1000)
-          .AddStringProperty("subject", "subject")
-          .AddStringProperty("sender", "namespace#person/1")
-          .Build();
-  EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
-
-  // SetSchema again with the schema types reordered. Schema type id will
-  // change. This should succeed and all search features should still work after
-  // schema id changed.
-  SchemaProto schema_two =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")  // schema type id 0
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("subject")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("sender")
-                                        .SetDataTypeJoinableString(
-                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                        .SetCardinality(CARDINALITY_REQUIRED)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Person")  // schema type id 1
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("age")
-                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-
-          .Build();
-  SetSchemaResultProto set_schema_result2 = icing.SetSchema(schema_two);
+  SetSchemaResultProto set_schema_result2 =
+      icing.SetSchema(schema_two, /*ignore_errors_and_delete_documents=*/true);
   EXPECT_THAT(set_schema_result2.status(), ProtoStatusIs(StatusProto::OK));
-  EXPECT_THAT(set_schema_result2.latency_ms(), Eq(1000));
+  EXPECT_THAT(set_schema_result2.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(set_schema_result2.set_schema_stats()
+                  .schema_store_set_schema_latency_ms(),
+              Eq(1000));
+  // Since the schema types have been changed, derived files were changed. So
+  // we need to do a recovery proof flush.
+  EXPECT_THAT(set_schema_result2.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
+  // This will trigger join index restoration for JoinIndex V1 and V2.
+  if (options.enable_qualified_id_join_index_v3()) {
+    EXPECT_FALSE(set_schema_result2.has_qualified_id_join_index_restored());
+  } else {
+    EXPECT_TRUE(set_schema_result2.has_qualified_id_join_index_restored());
+  }
 
   ResultSpecProto result_spec = ResultSpecProto::default_instance();
   result_spec.set_max_joined_children_per_parent_to_return(
@@ -866,8 +920,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   // - 'b': int64 type, indexed.
   SchemaTypeConfigProto db1_type =
       SchemaTypeConfigBuilder()
-          .SetType("db1_type")
-          .SetDatabase("db1")
+          .SetType("db1/type")
+          .SetDatabase("db1/")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("a")
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -880,18 +934,20 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(CreateSetSchemaRequestProto(
-          db1_schema, "db1", /*ignore_errors_and_delete_documents=*/false));
+          db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto db1_document =
       DocumentBuilder()
           .SetKey("namespace", "uri1")
-          .SetSchema("db1_type")
+          .SetSchema("db1/type")
           .AddStringProperty("a", "message body")
           .AddInt64Property("b", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -930,8 +986,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   // - 'c': int64 type, indexed.
   SchemaTypeConfigProto db2_type =
       SchemaTypeConfigBuilder()
-          .SetType("db2_type")
-          .SetDatabase("db2")
+          .SetType("db2/type")
+          .SetDatabase("db2/")
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("a")
@@ -944,18 +1000,22 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
           .Build();
   SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
   set_schema_result = icing.SetSchema(CreateSetSchemaRequestProto(
-      db2_schema, "db2", /*ignore_errors_and_delete_documents=*/false));
+      db2_schema, "db2/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto db2_document =
       DocumentBuilder()
           .SetKey("namespace", "uri2")
-          .SetSchema("db2_type")
+          .SetSchema("db2/type")
           .AddStringProperty("a", "message body")
           .AddInt64Property("c", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -999,7 +1059,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   expected_get_schema_result_proto_db1_full.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db1_full.mutable_schema() = db1_schema;
-  EXPECT_THAT(icing.GetSchema("db1"),
+  EXPECT_THAT(icing.GetSchema("db1/"),
               EqualsProto(expected_get_schema_result_proto_db1_full));
 
   // Get db2 schema
@@ -1007,7 +1067,188 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   expected_get_schema_result_proto_db2_full.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db2_full.mutable_schema() = db2_schema;
-  EXPECT_THAT(icing.GetSchema("db2"),
+  EXPECT_THAT(icing.GetSchema("db2/"),
+              EqualsProto(expected_get_schema_result_proto_db2_full));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       SetSchemaWithEmptyDatabaseResetsFullSchema) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create and set schema in db1 with 2 properties:
+  // - 'a': string type, indexed.
+  // - 'b': int64 type, indexed.
+  SchemaTypeConfigProto db1_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/type")
+          .SetDatabase("db1/")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("a")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("b")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(CreateSetSchemaRequestProto(
+          db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto db1_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("db1/type")
+          .AddStringProperty("a", "message body")
+          .AddInt64Property("b", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(db1_document).status(), ProtoIsOk());
+
+  SearchResultProto expected_search_result_proto_db1;
+  expected_search_result_proto_db1.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto_db1.mutable_results()
+       ->Add()
+       ->mutable_document() = db1_document;
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_db1));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("b == 123");
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_db1));
+
+  // Reset the full schema. Add a type each for db1 and db2.
+  SchemaTypeConfigProto db1_type_2 =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/type_2")
+          .SetDatabase("db1/")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("d")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaTypeConfigProto db2_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db2/type")
+          .SetDatabase("db2/")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("c")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+  SchemaProto full_schema = SchemaBuilder()
+                                .AddType(db1_type)
+                                .AddType(db1_type_2)
+                                .AddType(db2_type)
+                                .Build();
+
+  // Set the full schema using an empty database.
+  SetSchemaRequestProto set_schema_request;
+  *set_schema_request.mutable_schema() = full_schema;
+  set_schema_request.set_ignore_errors_and_delete_documents(false);
+  set_schema_request.clear_database();
+  set_schema_result = icing.SetSchema(std::move(set_schema_request));
+  std::sort(set_schema_result.mutable_new_schema_types()->begin(),
+            set_schema_result.mutable_new_schema_types()->end());
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type_2");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto db2_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("db2/type")
+          .AddStringProperty("a", "message body")
+          .AddInt64Property("c", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  EXPECT_THAT(icing.Put(db2_document).status(), ProtoIsOk());
+
+  SearchResultProto expected_search_result_proto_both_docs;
+  expected_search_result_proto_both_docs.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_search_result_proto_both_docs.mutable_results()
+       ->Add()
+       ->mutable_document() = db2_document;
+  *expected_search_result_proto_both_docs.mutable_results()
+       ->Add()
+       ->mutable_document() = db1_document;
+
+  // Verify term search: will get both documents for query "a:message".
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_both_docs));
+
+  // Verify numeric (integer) search: will only get first document for query
+  // "b == 123".
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto_db1));
+
+  // Get full schema
+  GetSchemaResultProto expected_get_schema_result_proto_full;
+  expected_get_schema_result_proto_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_full.mutable_schema() = full_schema;
+  EXPECT_THAT(icing.GetSchema(),
+              EqualsProto(expected_get_schema_result_proto_full));
+
+  // Get db1 schema
+  GetSchemaResultProto expected_get_schema_result_proto_db1_full;
+  expected_get_schema_result_proto_db1_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db1_full.mutable_schema() =
+      SchemaBuilder().AddType(db1_type).AddType(db1_type_2).Build();
+  EXPECT_THAT(icing.GetSchema("db1/"),
+              EqualsProto(expected_get_schema_result_proto_db1_full));
+
+  // Get db2 schema
+  GetSchemaResultProto expected_get_schema_result_proto_db2_full;
+  expected_get_schema_result_proto_db2_full.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_get_schema_result_proto_db2_full.mutable_schema() =
+      SchemaBuilder().AddType(db2_type).Build();
+  EXPECT_THAT(icing.GetSchema("db2/"),
               EqualsProto(expected_get_schema_result_proto_db2_full));
 }
 
@@ -1020,8 +1261,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   // - 'c': int64 type, indexed.
   SchemaTypeConfigProto db1_type =
       SchemaTypeConfigBuilder()
-          .SetType("db1_type")
-          .SetDatabase("db1")
+          .SetType("db1/type")
+          .SetDatabase("db1/")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("b")
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -1034,12 +1275,14 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(CreateSetSchemaRequestProto(
-          db1_schema, "db1", /*ignore_errors_and_delete_documents=*/false));
+          db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add a schema for db2:
@@ -1047,8 +1290,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   // - 'd': int64 type, indexed.
   SchemaTypeConfigProto db2_type =
       SchemaTypeConfigBuilder()
-          .SetType("db2_type")
-          .SetDatabase("db2")
+          .SetType("db2/type")
+          .SetDatabase("db2/")
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("b")
@@ -1061,19 +1304,23 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
           .Build();
   SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
   set_schema_result = icing.SetSchema(CreateSetSchemaRequestProto(
-      db2_schema, "db2", /*ignore_errors_and_delete_documents=*/false));
+      db2_schema, "db2/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add documents
   DocumentProto db1_document1 =
       DocumentBuilder()
           .SetKey("namespace", "uri1")
-          .SetSchema("db1_type")
+          .SetSchema("db1/type")
           .AddStringProperty("b", "message body")
           .AddInt64Property("c", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -1081,7 +1328,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   DocumentProto db2_document =
       DocumentBuilder()
           .SetKey("namespace", "uri2")
-          .SetSchema("db2_type")
+          .SetSchema("db2/type")
           .AddStringProperty("b", "message body")
           .AddInt64Property("d", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -1138,20 +1385,28 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
           .Build());
   db1_schema = SchemaBuilder().AddType(db1_type).Build();
   set_schema_result = icing.SetSchema(CreateSetSchemaRequestProto(
-      db1_schema, "db1", /*ignore_errors_and_delete_documents=*/false));
+      db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
-      ->Add("db1_type");
+      ->Add("db1/type");
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add new document
   DocumentProto db1_document2 =
       DocumentBuilder()
           .SetKey("namespace", "uri3")
-          .SetSchema("db1_type")
+          .SetSchema("db1/type")
           .AddStringProperty("a", "message body")
           .AddStringProperty("b", "string value")
           .AddInt64Property("c", 123)
@@ -1214,7 +1469,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_get_schema_result_proto_db1_full.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db1_full.mutable_schema() = db1_schema;
-  EXPECT_THAT(icing.GetSchema("db1"),
+  EXPECT_THAT(icing.GetSchema("db1/"),
               EqualsProto(expected_get_schema_result_proto_db1_full));
 
   // Get db2 schema
@@ -1222,12 +1477,13 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_get_schema_result_proto_db2_full.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db2_full.mutable_schema() = db2_schema;
-  EXPECT_THAT(icing.GetSchema("db2"),
+  EXPECT_THAT(icing.GetSchema("db2/"),
               EqualsProto(expected_get_schema_result_proto_db2_full));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   // Create and set schema in db1 with 2 properties:
@@ -1235,8 +1491,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   // - 'c': int64 type, indexed.
   SchemaTypeConfigProto db1_type =
       SchemaTypeConfigBuilder()
-          .SetType("db1_type")
-          .SetDatabase("db1")
+          .SetType("db1/type")
+          .SetDatabase("db1/")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("b")
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -1249,12 +1505,14 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(CreateSetSchemaRequestProto(
-          db1_schema, "db1", /*ignore_errors_and_delete_documents=*/true));
+          db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/true));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add a schema for db2:
@@ -1262,8 +1520,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   // - 'd': int64 type, indexed.
   SchemaTypeConfigProto db2_type =
       SchemaTypeConfigBuilder()
-          .SetType("db2_type")
-          .SetDatabase("db2")
+          .SetType("db2/type")
+          .SetDatabase("db2/")
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("b")
@@ -1276,19 +1534,23 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
           .Build();
   SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
   set_schema_result = icing.SetSchema(CreateSetSchemaRequestProto(
-      db2_schema, "db2", /*ignore_errors_and_delete_documents=*/true));
+      db2_schema, "db2/", /*ignore_errors_and_delete_documents=*/true));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // SetSchema db operation will preserve the existing schema type ids as much
+  // as possible. In this case, since "db1/type"'s id is unchanged, the document
+  // store and index are not updated. Therefore, no need to flush.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add documents
   DocumentProto db1_document1 =
       DocumentBuilder()
           .SetKey("namespace", "uri1")
-          .SetSchema("db1_type")
+          .SetSchema("db1/type")
           .AddStringProperty("b", "message body")
           .AddInt64Property("c", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -1296,7 +1558,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   DocumentProto db2_document =
       DocumentBuilder()
           .SetKey("namespace", "uri2")
-          .SetSchema("db2_type")
+          .SetSchema("db2/type")
           .AddStringProperty("b", "message body")
           .AddInt64Property("d", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
@@ -1344,19 +1606,31 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   //   - 'd': int64 type, indexed.
   db1_schema = SchemaProto();
   set_schema_result = icing.SetSchema(CreateSetSchemaRequestProto(
-      db1_schema, "db1", /*ignore_errors_and_delete_documents=*/true));
+      db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/true));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_deleted_schema_types()->Add("db1_type");
+  expected_set_schema_result.mutable_deleted_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(1);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  // Deleting db1_schema results in a schema type id reassignment, which would
+  // trigger join index restoration if using join index v1 and v2.
+  if (!options.enable_qualified_id_join_index_v3()) {
+    expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+    expected_set_schema_result.set_has_term_index_restored(false);
+    expected_set_schema_result.set_has_integer_index_restored(false);
+    expected_set_schema_result.set_has_embedding_index_restored(false);
+  }
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Adding new document fails because db1_type is deleted.
   DocumentProto db1_document2 =
       DocumentBuilder()
           .SetKey("namespace", "uri3")
-          .SetSchema("db1_type")
+          .SetSchema("db1/type")
           .AddStringProperty("a", "message body")
           .AddStringProperty("b", "string value")
           .AddInt64Property("c", 123)
@@ -1405,7 +1679,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
               EqualsProto(expected_get_schema_result_proto_full));
 
   // Get db1 schema should return NOT_FOUND.
-  EXPECT_THAT(icing.GetSchema("db1").status(),
+  EXPECT_THAT(icing.GetSchema("db1/").status(),
               ProtoStatusIs(StatusProto::NOT_FOUND));
 
   // Get db2 schema
@@ -1413,7 +1687,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   expected_get_schema_result_proto_db2_full.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db2_full.mutable_schema() = db2_schema;
-  EXPECT_THAT(icing.GetSchema("db2"),
+  EXPECT_THAT(icing.GetSchema("db2/"),
               EqualsProto(expected_get_schema_result_proto_db2_full));
 }
 
@@ -1442,10 +1716,13 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -1505,11 +1782,20 @@ TEST_F(IcingSearchEngineSchemaTest,
   // restoration should use new section ids to rebuild.
   set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Schema");
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search: will get document now.
@@ -1551,10 +1837,13 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -1610,11 +1899,20 @@ TEST_F(IcingSearchEngineSchemaTest,
   // restoration should use new section ids to rebuild.
   set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Schema");
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search: will still get document.
@@ -1839,13 +2137,22 @@ TEST_F(
   // restoration should use new section ids to rebuild.
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Person");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search:
@@ -1925,11 +2232,14 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -2027,11 +2337,20 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   set_schema_result = icing.SetSchema(no_nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -2145,11 +2464,14 @@ TEST_F(
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto document =
@@ -2317,11 +2639,20 @@ TEST_F(
 
   set_schema_result = icing.SetSchema(nested_schema_with_less_props);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -2380,11 +2711,14 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Message");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto person1 =
@@ -2496,11 +2830,20 @@ TEST_F(IcingSearchEngineSchemaTest,
   // index restoration should use new joinable property ids to rebuild.
   set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Message");
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -2658,10 +3001,13 @@ TEST_F(
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(email_with_body_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Create a document with only subject and timestamp2 property.
@@ -2733,12 +3079,22 @@ TEST_F(
   set_schema_result = icing.SetSchema(
       email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -2799,11 +3155,14 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(email_with_receiver_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto person = DocumentBuilder()
@@ -2899,12 +3258,22 @@ TEST_F(IcingSearchEngineSchemaTest,
       icing.SetSchema(email_without_receiver_schema,
                       /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -2949,10 +3318,13 @@ TEST_F(
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(email_with_body_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Create a document with only subject and timestamp property.
@@ -3030,12 +3402,22 @@ TEST_F(
   set_schema_result = icing.SetSchema(
       email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify term search
@@ -3097,11 +3479,14 @@ TEST_F(
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(email_with_body_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   DocumentProto person = DocumentBuilder()
@@ -3199,12 +3584,22 @@ TEST_F(
   set_schema_result = icing.SetSchema(
       email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Verify join search: join a query for `name:person` with a child query for
@@ -3255,11 +3650,14 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Create two documents - a person document and an email document - both docs
@@ -3312,7 +3710,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   set_schema_result = icing.SetSchema(
       nested_schema, /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
@@ -3321,6 +3720,15 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(2);
+  expected_set_schema_result.set_has_term_index_restored(true);
+  expected_set_schema_result.set_has_integer_index_restored(true);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
+  expected_set_schema_result.set_has_embedding_index_restored(true);
+  // Since it is an index incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Both documents should be deleted now.
@@ -3331,6 +3739,141 @@ TEST_F(IcingSearchEngineSchemaTest,
   get_result =
       icing.Get("namespace1", "uri2", GetResultSpecProto::default_instance());
   EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    SetSchemaAddDeletePropagationTriggersIndexRestorationAndRevalidatesDependency) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Email" schema with a joinable property "senderQualifiedId" and
+  // delete propagation disabled.
+  SchemaProto schema1 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                            DELETE_PROPAGATION_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(10000)  // Expire at t = 10010.
+                             .AddStringProperty("name", "person")
+                             .Build();
+  // Create an email document.
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .SetTtlMs(0)  // Never expire.
+          .AddStringProperty("subject", "test")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .Build();
+
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Now update the schema to enable delete propagation for "senderQualifiedId".
+  // It is:
+  // - Schema compatible.
+  // - Join incompatible. This will trigger index restoration, and revalidation
+  //   of dependency. If any child documents are referring to a non-alive
+  //   parent, then they will be deleted.
+  SchemaProto schema2 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("senderQualifiedId")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Adjust the timestamp to t = 20000 so that the person document is expired
+  // during the schema update.
+  fake_clock_ptr->SetSystemTimeMilliseconds(20000);
+  set_schema_result = icing.SetSchema(schema2);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Attempt to get the email document. It should be deleted due to the
+  // dependency on the expired person document.
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace, email) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "email", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
@@ -3381,14 +3924,14 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(schema_with_required_subject);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result_proto;
   expected_set_schema_result_proto.mutable_status()->set_code(
       StatusProto::FAILED_PRECONDITION);
   expected_set_schema_result_proto.mutable_status()->set_message(
       "Schema is incompatible.");
   expected_set_schema_result_proto.add_incompatible_schema_types("email");
-
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
 
   // Force set it
@@ -3396,9 +3939,14 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
       icing.SetSchema(schema_with_required_subject,
                       /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_set_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result_proto.mutable_status()->clear_message();
+  expected_set_schema_result_proto.set_deleted_document_count(1);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_set_schema_result_proto.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
 
   GetResultProto expected_get_result_proto;
@@ -3458,7 +4006,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {
   // Can't set the schema since it's incompatible
   SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_result;
   expected_result.mutable_status()->set_code(StatusProto::FAILED_PRECONDITION);
   expected_result.mutable_status()->set_message("Schema is incompatible.");
@@ -3471,9 +4020,13 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {
       icing.SetSchema(new_schema,
                       /*ignore_errors_and_delete_documents=*/true);
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   expected_result.mutable_status()->set_code(StatusProto::OK);
   expected_result.mutable_status()->clear_message();
+  expected_result.set_deleted_document_count(1);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_result.set_needs_persist_type(PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_result));
 
   // "email" document is still there
@@ -3523,8 +4076,8 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   // Add a schema for db1:
   SchemaTypeConfigProto db1_type =
       SchemaTypeConfigBuilder()
-          .SetType("db1_type")
-          .SetDatabase("db1")
+          .SetType("db1/type")
+          .SetDatabase("db1/")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("a")
                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -3538,19 +4091,21 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   SchemaProto db1_schema = SchemaBuilder().AddType(db1_type).Build();
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(CreateSetSchemaRequestProto(
-          db1_schema, "db1", /*ignore_errors_and_delete_documents=*/false));
+          db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Add a schema for db2:
   SchemaTypeConfigProto db2_type =
       SchemaTypeConfigBuilder()
-          .SetType("db2_type")
-          .SetDatabase("db2")
+          .SetType("db2/type")
+          .SetDatabase("db2/")
           .AddProperty(
               PropertyConfigBuilder()
                   .SetName("a")
@@ -3564,12 +4119,17 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
 
   SchemaProto db2_schema = SchemaBuilder().AddType(db2_type).Build();
   set_schema_result = icing.SetSchema(CreateSetSchemaRequestProto(
-      db2_schema, "db2", /*ignore_errors_and_delete_documents=*/false));
+      db2_schema, "db2/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db2_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  // No need to flush since:
+  // - Schema type id is not changed.
+  // - No document is deleted.
+  // - Only a new schema type is added and indices are not rebuilt.
+  expected_set_schema_result.set_needs_persist_type(PersistType::UNKNOWN);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // GetSchema per database
@@ -3577,13 +4137,13 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   expected_get_schema_result_proto_db1.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db1.mutable_schema() = db1_schema;
-  EXPECT_THAT(icing.GetSchema("db1"),
+  EXPECT_THAT(icing.GetSchema("db1/"),
               EqualsProto(expected_get_schema_result_proto_db1));
   GetSchemaResultProto expected_get_schema_result_proto_db2;
   expected_get_schema_result_proto_db2.mutable_status()->set_code(
       StatusProto::OK);
   *expected_get_schema_result_proto_db2.mutable_schema() = db2_schema;
-  EXPECT_THAT(icing.GetSchema("db2"),
+  EXPECT_THAT(icing.GetSchema("db2/"),
               EqualsProto(expected_get_schema_result_proto_db2));
 
   // Get full schema
@@ -3611,8 +4171,8 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
   SchemaProto db1_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("db1_type")
-                       .SetDatabase("db1")
+                       .SetType("db1/type")
+                       .SetDatabase("db1/")
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("a")
                                         .SetDataTypeString(TERM_MATCH_EXACT,
@@ -3625,12 +4185,15 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
           .Build();
   SetSchemaResultProto set_schema_result =
       icing.SetSchema(CreateSetSchemaRequestProto(
-          db1_schema, "db1", /*ignore_errors_and_delete_documents=*/false));
+          db1_schema, "db1/", /*ignore_errors_and_delete_documents=*/false));
   // Ignore latency numbers. They're covered elsewhere.
-  set_schema_result.clear_latency_ms();
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("db1_type");
+  expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   get_schema_result_proto = icing.GetSchema("nonexistent_db");
@@ -3703,7 +4266,11 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaTypeOk) {
       StatusProto::OK);
   *expected_get_schema_type_result_proto.mutable_schema_type_config() =
       schema_type_config;
-  EXPECT_THAT(icing.GetSchemaType("SchemaType"),
+  GetSchemaTypeResultProto actual_get_schema_type_result_proto =
+      icing.GetSchemaType("SchemaType");
+  actual_get_schema_type_result_proto
+      .clear_vm_binder_transaction_latency_start_time_ms();
+  EXPECT_THAT(actual_get_schema_type_result_proto,
               EqualsProto(expected_get_schema_type_result_proto));
 }
 
@@ -3790,7 +4357,6 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCanDetectPreviousSchemaWasLost) {
   // Setting the new, different schema will remove incompatible documents
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(incompatible_schema).status(), ProtoIsOk());
 
   // Can't retrieve by namespace/uri
   GetResultProto expected_get_result_proto;
@@ -4150,6 +4716,113 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaShouldCreateMarkerFile) {
       MarkerFile::Postmortem(*filesystem(), marker_file_path);
   EXPECT_THAT(marker_proto->operation_type(),
               Eq(IcingSearchEngineMarkerProto::OperationType::SET_SCHEMA));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto message_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("indexableInteger")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SetSchemaRequestProto set_schema_request =
+      CreateSetSchemaRequestProto(message_schema, /*database=*/"",
+                                  /*ignore_errors_and_delete_documents=*/false);
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(std::move(set_schema_request));
+  EXPECT_THAT(set_schema_result.status(), ProtoStatusIs(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(
+      set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
+      Eq(1000));
+
+  // Put a document to trigger index restoration later.
+  DocumentProto message_document =
+      DocumentBuilder()
+          .SetKey("namespace", "message")
+          .SetSchema("Message")
+          .AddStringProperty("body", "test body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  EXPECT_THAT(icing.Put(message_document).status(),
+              ProtoStatusIs(StatusProto::OK));
+
+  // This schema update will trigger and set latencies for index restoration and
+  // scorable property cache regeneration.
+  SchemaProto updated_schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("body")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("indexableInteger")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                   .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("score")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("senderQualifiedId")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  SetSchemaRequestProto set_schema_request2 =
+      CreateSetSchemaRequestProto(updated_schema, /*database=*/"",
+                                  /*ignore_errors_and_delete_documents=*/false);
+  set_schema_result = icing.SetSchema(std::move(set_schema_request2));
+  EXPECT_THAT(set_schema_result.status(), ProtoStatusIs(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(
+      set_schema_result.set_schema_stats().index_restoration_latency_ms(),
+      Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats()
+                  .scorable_property_cache_regeneration_latency_ms(),
+              Eq(1000));
+
+  // Clear schema -- this should trigger and update document store and set
+  // latencies for document store update schema
+  SchemaProto empty_schema = SchemaBuilder().Build();
+  SetSchemaRequestProto set_schema_request3 =
+      CreateSetSchemaRequestProto(empty_schema, /*database=*/"",
+                                  /*ignore_errors_and_delete_documents=*/true);
+  set_schema_result = icing.SetSchema(std::move(set_schema_request3));
+  EXPECT_THAT(set_schema_result.status(), ProtoStatusIs(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.set_schema_stats().overall_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(
+      set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
+      Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats()
+                  .document_store_optimized_update_schema_latency_ms(),
+              Eq(1000));
 }
 
 }  // namespace

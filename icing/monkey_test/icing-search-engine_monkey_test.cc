@@ -33,7 +33,8 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
       /*num_types=*/30,
       /*num_namespaces=*/100,
       /*num_uris=*/1000,
-      /*index_merge_size=*/1024 * 1024);
+      /*index_merge_size=*/1024 * 1024,
+      /*initialize_by_existing_data=*/false);
   config.possible_num_properties = {0,
                                     1,
                                     2,
@@ -45,8 +46,8 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
                                     kTotalNumSections + 1,
                                     kTotalNumSections * 2};
   config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
-  config.possible_num_vectors = {0, 1, 4};
-  config.possible_vector_dimensions = {128, 512, 768};
+  config.possible_num_vectors = {0, 1, 4, 8};
+  config.possible_vector_dimensions = {8, 16, 128, 512, 768};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
       {&IcingMonkeyTestRunner::DoSearch, 200},
@@ -71,7 +72,8 @@ TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
       /*num_types=*/30,
       /*num_namespaces=*/200,
       /*num_uris=*/100000,
-      /*index_merge_size=*/1024 * 1024);
+      /*index_merge_size=*/1024 * 1024,
+      /*initialize_by_existing_data=*/false);
 
   // Due to the large amount of documents, we need to make each document smaller
   // to finish the test.

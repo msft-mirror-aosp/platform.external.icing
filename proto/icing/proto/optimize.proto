@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/persist.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -23,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Optimize
-// Next tag: 4
+// Next tag: 6
 message OptimizeResultProto {
   // Status code can be one of:
   //   OK
@@ -43,10 +44,17 @@ message OptimizeResultProto {
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.GetOptimizeInfo
-// Next tag: 7
+// Next tag: 9
 message GetOptimizeInfoResultProto {
   // Status code can be one of:
   //   OK
@@ -78,9 +86,16 @@ message GetOptimizeInfoResultProto {
   // pagination, unless the last optimize run was a long time ago which exceeds
   // the threshold.
   optional int32 num_active_result_states = 6;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 7;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 8;
 }
 
-// Next tag: 14
+// Next tag: 16
 message OptimizeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -128,4 +143,10 @@ message OptimizeStatsProto {
 
   // Number of namespaces deleted.
   optional int32 num_deleted_namespaces = 12;
+
+  // Stats of the PersistToDisk call before optimization.
+  optional PersistToDiskStatsProto before_optimize_persist_stats = 14;
+
+  // Stats of the PersistToDisk call after optimization.
+  optional PersistToDiskStatsProto after_optimize_persist_stats = 15;
 }
