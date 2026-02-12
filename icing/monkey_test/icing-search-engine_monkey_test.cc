@@ -46,8 +46,8 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
                                     kTotalNumSections + 1,
                                     kTotalNumSections * 2};
   config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
-  config.possible_num_vectors = {0, 1, 4};
-  config.possible_vector_dimensions = {128, 512, 768};
+  config.possible_num_vectors = {0, 1, 4, 8};
+  config.possible_vector_dimensions = {8, 16, 128, 512, 768};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
       {&IcingMonkeyTestRunner::DoSearch, 200},

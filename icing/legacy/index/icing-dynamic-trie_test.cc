@@ -1530,68 +1530,68 @@ TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForExistingTerms) {
   uint32_t value = 1;
 
   ASSERT_THAT(trie.Insert("", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ab", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ac", &value), IsOk());
   // "" is a prefix of "ab" and "ac", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ba", &value), IsOk());
   // "" now branches to "ba"
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("a", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
   // "a" branches to "ab" and "ac"
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abc", &value), IsOk());
   ASSERT_THAT(trie.Insert("acd", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" is a prefix of "abc", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
   // "ac" is a prefix of "acd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("acd").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abcd", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" is a prefix of "abc" and "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
   // "abc" is a prefix of "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("acd").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abcd").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abd", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" branches to "abc" and "abd"
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abd"));
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("acd").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abcd").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abd").ValueOrDie());
 }
 
 TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForNonExistingTerms) {
@@ -1603,58 +1603,58 @@ TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForNonExistingTerms) {
 
   uint32_t value = 1;
 
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("aa", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ac", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
   // "a" does not exist in the trie, but now it branches to "aa" and "ac".
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ad", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abcd", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abd", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" does not exist in the trie, but now it branches to "abcd" and "abd".
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abce", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
   // "abc" does not exist in the trie, but now it branches to "abcd" and "abce".
-  EXPECT_TRUE(trie.IsBranchingTerm("abc"));
+  EXPECT_TRUE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abc_suffix", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_TRUE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_s"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_su"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_suffi"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc_s").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc_su").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc_suffi").ValueOrDie());
 }
 
 }  // namespace lib

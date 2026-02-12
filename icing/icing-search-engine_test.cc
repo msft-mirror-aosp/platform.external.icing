@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,7 +26,9 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
@@ -62,6 +65,7 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::Ne;
 using ::testing::Return;
 using ::testing::SizeIs;
 using ::testing::StrEq;
@@ -577,6 +581,52 @@ TEST_F(IcingSearchEngineTest, BatchGetDocumentResultSizeLimitInvalidValue) {
   get_result_spec.set_num_total_document_bytes_to_return(-1);
   ASSERT_THAT(icing.BatchGet(std::move(get_result_spec)),
               EqualsProto(expected_batch_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, BatchGetNotInitialized) {
+  // Declare but don't initialize icing
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  GetResultSpecProto get_result_spec;
+  get_result_spec.set_namespace_requested("namespace");
+  get_result_spec.add_ids("uri1");
+  get_result_spec.add_ids("uri2");
+  get_result_spec.set_num_total_document_bytes_to_return(1000);
+
+  BatchGetResultProto result = icing.BatchGet(std::move(get_result_spec));
+  EXPECT_THAT(result.status(), ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(result.get_result_protos(), SizeIs(2));
+  for (const auto& get_result : result.get_result_protos()) {
+    EXPECT_THAT(get_result.status(),
+                ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  }
+}
+
+TEST_F(IcingSearchEngineTest, BatchPutNotInitialized) {
+  // Declare but don't initialize icing
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  PutDocumentRequest put_document_request;
+  *put_document_request.mutable_documents()->Add() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject", "subject1")
+          .Build();
+  *put_document_request.mutable_documents()->Add() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject", "subject2")
+          .Build();
+
+  BatchPutResultProto result = icing.BatchPut(std::move(put_document_request));
+  EXPECT_THAT(result.status(), ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(result.put_result_protos(), SizeIs(2));
+  for (const auto& put_result : result.put_result_protos()) {
+    EXPECT_THAT(put_result.status(),
+                ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  }
 }
 
 TEST_F(IcingSearchEngineTest, GetDocumentWithBadString) {
@@ -1444,8 +1494,13 @@ TEST_F(IcingSearchEngineTest, PersistToDiskLogging) {
   EXPECT_THAT(persist_stats.embedding_index_persist_latency_ms(), Eq(10));
 }
 
-TEST_F(IcingSearchEngineTest, NoPersistToDiskLosesAllDocumentsAndIndex) {
-  IcingSearchEngine icing1(GetDefaultIcingOptions(), GetTestJniCache());
+TEST_F(
+    IcingSearchEngineTest,
+    NoPersistToDisk_protoLogNewHeaderFormatFlagOffLosesAllDocumentsAndIndex) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_proto_log_new_header_format(false);
+  IcingSearchEngine icing1(icing_options, GetTestJniCache());
+
   EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
   EXPECT_THAT(icing1.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
   DocumentProto document = CreateMessageDocument("namespace", "uri");
@@ -1491,6 +1546,261 @@ TEST_F(IcingSearchEngineTest, NoPersistToDiskLosesAllDocumentsAndIndex) {
                     ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineTest,
+    NoPersistToDisk_protoLogNewHeaderFormatFlagOnWithImplicitFlushKeepsDocumentsAndRebuildIndex) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_proto_log_new_header_format(true);
+  IcingSearchEngine icing1(icing_options, GetTestJniCache());
+
+  EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing1.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  DocumentProto document = CreateMessageDocument("namespace", "uri");
+  EXPECT_THAT(icing1.Put(document).status(), ProtoIsOk());
+  EXPECT_THAT(
+      icing1.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document));
+
+  // It's intentional that no PersistToDisk call is made before initializing a
+  // second instance of icing. We won't lose ground truth, but we will get IO
+  // errors (due to mismatch checksums) for derived files and rebuild them.
+
+  IcingSearchEngine icing2(icing_options, GetTestJniCache());
+  InitializeResultProto init_result = icing2.Initialize();
+  EXPECT_THAT(init_result.status(), ProtoIsOk());
+  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+
+  // The document can still be retrieved.
+  EXPECT_THAT(
+      icing2.Get("namespace", "uri", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document));
+
+  // Searching also should get the document since index is rebuilt.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");  // Content in the Message document.
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  SearchResultProto actual_results =
+      icing2.Search(search_spec, GetDefaultScoringSpec(),
+                    ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineTest,
+    NoPersistToDisk_protoLogNewHeaderFormatFlagOnWithoutImplicitFlushLosesNewDocumentsAndIndex) {
+  // Mock the filesystem for document_log to avoid implicit flush when writing,
+  // and only DataSync will do the actual write and flush.
+  std::string mock_file_buffer;
+  off_t document_log_fd_offset = -1;
+  int document_log_fd = -1;
+
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  MockFilesystem* mock_filesystem_ptr = mock_filesystem.get();
+  ON_CALL(*mock_filesystem, OpenForAppend(HasSubstr("document_log")))
+      .WillByDefault([mock_filesystem_ptr, &mock_file_buffer, &document_log_fd,
+                      &document_log_fd_offset](const char* file_name) -> int {
+        // Call the real OpenForAppend() get the file descriptor, and capture it
+        // in the test fixture.
+        document_log_fd =
+            mock_filesystem_ptr->Filesystem::OpenForAppend(file_name);
+        int64_t file_size =
+            mock_filesystem_ptr->Filesystem::GetFileSize(document_log_fd);
+        document_log_fd_offset = file_size;
+
+        // Load data from disk to the mock file buffer.
+        mock_file_buffer.resize(file_size);
+        mock_filesystem_ptr->Filesystem::PRead(
+            document_log_fd, mock_file_buffer.data(), file_size,
+            /*offset=*/0);
+        return document_log_fd;
+      });
+  ON_CALL(*mock_filesystem, GetCurrentPosition(_))
+      .WillByDefault([mock_filesystem_ptr, &document_log_fd,
+                      &document_log_fd_offset](int fd) -> int64_t {
+        if (fd != document_log_fd) {
+          return mock_filesystem_ptr->Filesystem::GetCurrentPosition(fd);
+        }
+
+        return document_log_fd_offset;
+      });
+  ON_CALL(*mock_filesystem, Read(A<int>(), _, _))
+      .WillByDefault([mock_filesystem_ptr, &mock_file_buffer, &document_log_fd,
+                      &document_log_fd_offset](int fd, void* buf,
+                                               size_t buf_size) -> ssize_t {
+        if (fd != document_log_fd) {
+          return mock_filesystem_ptr->Filesystem::Read(fd, buf, buf_size);
+        }
+
+        memcpy(buf, mock_file_buffer.data() + document_log_fd_offset, buf_size);
+        document_log_fd_offset += buf_size;
+        return buf_size;
+      });
+  ON_CALL(*mock_filesystem, Write(A<int>(), _, _))
+      .WillByDefault([mock_filesystem_ptr, &mock_file_buffer, &document_log_fd,
+                      &document_log_fd_offset](int fd, const void* data,
+                                               size_t size) -> bool {
+        if (fd != document_log_fd) {
+          return mock_filesystem_ptr->Filesystem::Write(fd, data, size);
+        }
+
+        // Extend the buffer if needed.
+        if (document_log_fd_offset + size > mock_file_buffer.size()) {
+          mock_file_buffer.resize(document_log_fd_offset + size);
+        }
+
+        // Write to the mock file buffer and adjust the fd offset.
+        memcpy(mock_file_buffer.data() + document_log_fd_offset, data, size);
+        document_log_fd_offset += size;
+        return true;
+      });
+  ON_CALL(*mock_filesystem, PRead(A<int>(), _, _, _))
+      .WillByDefault(
+          [mock_filesystem_ptr, &mock_file_buffer, &document_log_fd](
+              int fd, void* buf, size_t buf_size, off_t offset) -> ssize_t {
+            if (fd != document_log_fd) {
+              return mock_filesystem_ptr->Filesystem::PRead(fd, buf, buf_size,
+                                                            offset);
+            }
+
+            memcpy(buf, mock_file_buffer.data() + offset, buf_size);
+            return buf_size;
+          });
+  ON_CALL(*mock_filesystem, PWrite(A<int>(), _, _, _))
+      .WillByDefault([mock_filesystem_ptr, &mock_file_buffer, &document_log_fd](
+                         int fd, off_t offset, const void* data,
+                         size_t data_size) -> bool {
+        if (fd != document_log_fd) {
+          return mock_filesystem_ptr->Filesystem::PWrite(fd, offset, data,
+                                                         data_size);
+        }
+
+        // Extend the buffer if needed.
+        if (offset + data_size > mock_file_buffer.size()) {
+          mock_file_buffer.resize(offset + data_size);
+        }
+        // Write to the mock file buffer.
+        memcpy(mock_file_buffer.data() + offset, data, data_size);
+        return true;
+      });
+  ON_CALL(*mock_filesystem, DataSync(_))
+      .WillByDefault([mock_filesystem_ptr, &mock_file_buffer,
+                      &document_log_fd](int fd) -> bool {
+        if (fd != document_log_fd) {
+          return mock_filesystem_ptr->Filesystem::DataSync(fd);
+        }
+
+        mock_filesystem_ptr->Filesystem::PWrite(
+            fd, /*offset=*/0, mock_file_buffer.data(), mock_file_buffer.size());
+        return mock_filesystem_ptr->Filesystem::DataSync(fd);
+      });
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_proto_log_new_header_format(true);
+  TestIcingSearchEngine icing1(icing_options, std::move(mock_filesystem),
+                               std::make_unique<IcingFilesystem>(),
+                               std::make_unique<FakeClock>(),
+                               GetTestJniCache());
+
+  EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
+  // After initialization, document log fd should be captured.
+  ASSERT_THAT(document_log_fd, Ne(-1));
+
+  EXPECT_THAT(icing1.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+
+  // Put document1 and PersistToDisk to flush it to disk.
+  EXPECT_THAT(icing1.Put(document1).status(), ProtoIsOk());
+  EXPECT_THAT(icing1.PersistToDisk(PersistType::LITE).status(), ProtoIsOk());
+
+  // Put document2 and document3 without flushing.
+  EXPECT_THAT(icing1.Put(document2).status(), ProtoIsOk());
+  EXPECT_THAT(icing1.Put(document3).status(), ProtoIsOk());
+
+  // Sanity check that document1, document2 and document3 are present.
+  EXPECT_THAT(
+      icing1.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document1));
+  EXPECT_THAT(
+      icing1.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document2));
+  EXPECT_THAT(
+      icing1.Get("namespace", "uri3", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document3));
+
+  // When writing a document, we separate it into several steps:
+  // - Write document content to document_log (unsynced tail).
+  // - Compute unsynced tail checksum and header checksum.
+  // - PWrite the header.
+  //
+  // Let's simulate the following scenario by only flushing contents to disk:
+  // - document2 and document3 contents are flushed into disk.
+  // - But before the checksums are computed, there is a power loss and the new
+  //   checksums are never written.
+
+  int64_t content_offset =
+      PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes;
+  ASSERT_TRUE(filesystem()->PWrite(document_log_fd, content_offset,
+                                   mock_file_buffer.data() + content_offset,
+                                   mock_file_buffer.size() - content_offset));
+  ASSERT_TRUE(filesystem()->DataSync(document_log_fd));
+
+  // Create a second instance of icing.
+  // - Document2 and document3 contents are in the file.
+  // - But unsynced tail checksum doesn't match.
+  //
+  // Therefore, document log will rewound to document1 and discard document2 +
+  // document3.
+  IcingSearchEngine icing2(icing_options, GetTestJniCache());
+  InitializeResultProto init_result = icing2.Initialize();
+  EXPECT_THAT(init_result.status(), ProtoIsOk());
+  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::PARTIAL_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+              Eq(InitializeStatsProto::DATA_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+
+  // document1 can still be retrieved.
+  EXPECT_THAT(
+      icing2.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(document1));
+
+  // document2 and document3 are lost.
+  EXPECT_THAT(
+      icing2.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::NOT_FOUND));
+  EXPECT_THAT(
+      icing2.Get("namespace", "uri3", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
 TEST_F(IcingSearchEngineTest, PersistToDiskLiteSavesGroundTruth) {

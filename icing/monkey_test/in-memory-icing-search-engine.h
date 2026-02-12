@@ -164,6 +164,9 @@ class InMemoryIcingSearchEngine {
     // The term match type if the property is of type string.
     TermMatchType::Code term_match_type =
         TermMatchType::Code::TermMatchType_Code_UNKNOWN;
+    // The quantization type if the property is of type vector.
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+        EmbeddingIndexingConfig::QuantizationType::NONE;
   };
   libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
       const std::string &schema_type,

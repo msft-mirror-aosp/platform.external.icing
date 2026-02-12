@@ -512,9 +512,10 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
     CharacterIterator start_itr(value);
     CharacterIterator end_itr(value);
     CharacterIterator reset_itr(value);
+    std::vector<Token> batch_tokens;
     bool encountered_error = false;
     while (iterator->Advance()) {
-      std::vector<Token> batch_tokens = iterator->GetTokens();
+      iterator->GetTokens(&batch_tokens);
       if (batch_tokens.empty()) {
         continue;
       }

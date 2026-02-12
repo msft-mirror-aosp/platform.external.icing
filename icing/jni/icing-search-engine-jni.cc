@@ -354,8 +354,18 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
       GetIcingSearchEnginePointer(env, object);
 
   icing->InvalidateNextPageToken(next_page_token);
+}
 
-  return;
+// TODO(b/384947619) - pre-register this method.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeHandleExpiredDocuments(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::HandleExpiredDocumentsResultProto result_proto =
+      icing->HandleExpiredDocuments();
+  return SerializeProtoToJniByteArray(env, result_proto);
 }
 
 // TODO(b/273591938): Change this API back to the pre-registered API.
@@ -423,6 +433,41 @@ jbyteArray nativeCommitBlob(JNIEnv* env, jclass clazz, jobject object,
   }
 
   icing::lib::BlobProto blob_result_proto = icing->CommitBlob(blob_handle);
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeGetAllBlobInfos(JNIEnv* env, jclass clazz,
+                                                  jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::BlobProto blob_result_proto = icing->GetAllBlobInfos();
+
+  return SerializeProtoToJniByteArray(env, blob_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativePutBlobInfos(JNIEnv* env, jclass clazz,
+                                                jobject object,
+                                                jbyteArray blob_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::BlobProto blob_proto;
+  if (!ParseProtoFromJniByteArray(env, blob_bytes, &blob_proto)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse BlobInfo in nativePutBlobInfos";
+    return nullptr;
+  }
+
+  icing::lib::BlobProto blob_result_proto =
+      icing->PutBlobInfos(std::move(blob_proto));
 
   return SerializeProtoToJniByteArray(env, blob_result_proto);
 }
