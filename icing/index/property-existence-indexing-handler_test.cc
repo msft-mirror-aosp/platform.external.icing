@@ -224,7 +224,8 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   // Create a document with every property.
   DocumentProto document0 =
@@ -332,7 +333,8 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   // Create a complex nested root_document with the following property paths.
   // - name
@@ -473,7 +475,8 @@ TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   // Create a document with one empty body.
   DocumentProto document0 =

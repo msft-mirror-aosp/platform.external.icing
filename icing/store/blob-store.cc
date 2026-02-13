@@ -141,9 +141,11 @@ BlobProto CreateBlobProtoFromFileDescriptor(int file_descriptor) {
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
     const Filesystem* filesystem, std::string base_dir, const Clock* clock,
     int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-    int32_t compression_mem_level, bool manage_blob_files) {
+    int32_t compression_mem_level, bool manage_blob_files,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   // Make sure the blob file directory exists.
   if (!filesystem->CreateDirectoryRecursively(
@@ -172,10 +174,14 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
       PortableFileBackedProtoLog<BlobInfoProto>::CreateResult log_create_result,
       PortableFileBackedProtoLog<BlobInfoProto>::Create(
           filesystem, blob_info_proto_file_name,
-          PortableFileBackedProtoLog<BlobInfoProto>::Options( 
+          PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
               /*compression_threshold_bytes=*/0, compression_mem_level,
-              /*enable_smaller_decompression_buffer_size_in=*/false)));
+              /*enable_smaller_decompression_buffer_size_in=*/false,
+              /*enable_proto_log_new_header_format_in=*/
+              true, feature_flags->enable_reusable_decompression_buffer())));
+  // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
+  //   It is a remaining task to rollout new header format for proto log.
 
   std::unordered_map<std::string, int> blob_handle_to_offset;
   ICING_ASSIGN_OR_RETURN(
@@ -384,7 +390,7 @@ BlobProto BlobStore::CommitBlob(
     while (prev_total_read_size < file_size) {
       int32_t size_to_read =
           std::min<int32_t>(kReadBufferSize, file_size - prev_total_read_size);
-      if (!filesystem_.Read(sfd.get(), buffer, size_to_read)) {
+      if (filesystem_.Read(sfd.get(), buffer, size_to_read) != size_to_read) {
         return CreateBlobProtoFromError(absl_ports::InternalError(
             absl_ports::StrCat("Failed to read blob file for handle: ",
                                blob_handle.digest())));
@@ -414,6 +420,50 @@ BlobProto BlobStore::CommitBlob(
   ICING_RETURN_EXPRESSION_IF_ERROR(CommitBlobMetadata(blob_handle),
                                    CreateBlobProtoFromError(_));
   return blob_proto;
+}
+
+BlobProto BlobStore::GetAllBlobInfos() {
+  BlobProto blob_proto;
+  blob_proto.mutable_status()->set_code(StatusProto::OK);
+  for (auto itr = blob_handle_to_offset_.begin();
+       itr != blob_handle_to_offset_.end(); ++itr) {
+    auto blob_info_proto_or = blob_info_log_->ReadProto(itr->second);
+    if (!blob_info_proto_or.ok()) {
+      continue;
+    }
+    *blob_proto.add_blob_info_protos() =
+        std::move(blob_info_proto_or).ValueOrDie();
+  }
+  return blob_proto;
+}
+
+BlobProto BlobStore::PutBlobInfos(const BlobProto& blob_proto) {
+  if (manage_blob_files_) {
+    ICING_LOG(ERROR)
+        << "Cannot put blob infos to blob store that manages blob files.";
+    return CreateBlobProtoFromError(absl_ports::FailedPreconditionError(
+        "Cannot put blob infos to blob store that manages blob files."));
+  }
+  BlobProto result_blob_proto;
+  result_blob_proto.mutable_status()->set_code(StatusProto::OK);
+  for (const auto& blob_info_proto : blob_proto.blob_info_protos()) {
+    std::string blob_handle_str =
+        BuildBlobHandleStr(blob_info_proto.blob_handle());
+    auto itr = blob_handle_to_offset_.find(blob_handle_str);
+    if (itr != blob_handle_to_offset_.end()) {
+      // The blob info proto already exists in the blob store.
+      continue;
+    }
+
+    auto blob_info_offset_or = blob_info_log_->WriteProto(blob_info_proto);
+    if (!blob_info_offset_or.ok()) {
+      ICING_LOG(ERROR) << blob_info_offset_or.status().error_message()
+                       << "Failed to write blob info";
+      return CreateBlobProtoFromError(blob_info_offset_or.status());
+    }
+    blob_handle_to_offset_[blob_handle_str] = blob_info_offset_or.ValueOrDie();
+  }
+  return result_blob_proto;
 }
 
 libtextclassifier3::Status BlobStore::PersistToDisk() {
@@ -485,7 +535,8 @@ BlobStore::GetPotentiallyOptimizableBlobHandles() const {
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
-    const std::unordered_set<std::string>& dead_blob_handles) {
+    const std::unordered_set<std::string>& dead_blob_handles,
+    const FeatureFlags* feature_flags) {
   std::vector<std::string> blob_file_names_to_remove;
   blob_file_names_to_remove.reserve(dead_blob_handles.size());
 
@@ -506,7 +557,11 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
               compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false)));
+              /*enable_smaller_decompression_buffer_size_in=*/false,
+              /*enable_proto_log_new_header_format=*/true,
+              feature_flags->enable_reusable_decompression_buffer())));
+  // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
+  //   It is a remaining task to rollout new header format for proto log.
   std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
       std::move(temp_log_create_result.proto_log);
 
@@ -571,7 +626,11 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
               compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false)));
+              /*enable_smaller_decompression_buffer_size_in=*/false,
+              /*enable_proto_log_new_header_format=*/true,
+              feature_flags->enable_reusable_decompression_buffer())));
+  // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
+  //   It is a remaining task to rollout new header format for proto log.
   blob_info_log_ = std::move(log_create_result.proto_log);
   blob_handle_to_offset_ = std::move(new_blob_handle_to_offset);
   return blob_file_names_to_remove;

@@ -30,6 +30,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
@@ -156,6 +157,8 @@ class SchemaStore {
       serialized_header_.min_overlay_version_compatibility =
           min_overlay_version_compatibility;
     }
+
+    void SetSwappedFilepath(std::string path) { path_ = std::move(path); }
 
    private:
     explicit Header(SerializedHeader serialized_header, std::string path,
@@ -580,6 +583,26 @@ class SchemaStore {
       const google::protobuf::RepeatedPtrField<TypePropertyMask>& type_property_masks)
       const;
 
+  // Returns the hash of a schema name.
+  static uint32_t GetSchemaNameHash(std::string_view schema_name) {
+    return Crc32(schema_name).Get();
+  }
+
+  // Returns the hash of the schema name for the given schema type id.
+  //
+  // Returns:
+  //   - The hash value on success.
+  //   - INVALID_ARGUMENT_ERROR if schema_type_id is invalid.
+  libtextclassifier3::StatusOr<uint32_t> GetSchemaNameHash(
+      SchemaTypeId schema_type_id) const {
+    auto it = reverse_schema_type_mapper_hash_.find(schema_type_id);
+    if (it == reverse_schema_type_mapper_hash_.end()) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Invalid SchemaTypeId ", std::to_string(schema_type_id)));
+    }
+    return it->second;
+  }
+
  private:
   // Factory function to create a SchemaStore and set its schema. The created
   // instance does not take ownership of any input components and all pointers
@@ -808,6 +831,59 @@ class SchemaStore {
       const SchemaProto& new_schema, const std::string& database) const;
 
   // Returns a SchemaProto representing the full schema, which is a combination
+  // of the existing schema and the input database schema. The returned
+  // SchemaProto is optimized to preserve as many type ids as possible.
+  //
+  // Note that `database_to_update` could also be the empty string, which means
+  // that the entire schema is being updated. In this case,
+  // `input_database_schema` must contain all types in the full schema. Any
+  // preexisting type not in `input_database_schema` will be deleted.
+  //
+  // For database_to_update, we replace the existing types with the input
+  //   types. Any existing type not included in input_database_schema is
+  //   deleted.
+  // - When possible, existing types are added in the position in which they
+  //   appear in the existing schema so as to preserve the type-ids of
+  //   existing types.
+  // - If there are more input types than existing types for
+  //   database_to_update, added input types are appended to the end of the
+  //   full_schema.
+  // - If there are fewer input types than existing types for
+  //   database_to_update, we use the last few input types to replace the
+  //   deleted existing types, so as to preserve as many old type-ids as
+  //   possible.
+  // - For existing types from other databases, we preserve the existing order
+  //   after adding to full_schema. Note that the type-ids of existing types
+  //   might still change if some types are deleted in the database_to_update
+  //   as this will cause all subsequent types ids to shift forward.
+  // - This means that:
+  //   - When adding types to a database, the type-ids of existing types will
+  //     not change.
+  //   - When types are deleted, we fill their original slots with the last
+  //     valid types in the schema to preserve as many type-ids as possible.
+  // - If input_database_schema is an empty proto, then all types from
+  //   database_to_update are deleted.
+  //
+  // Requires:
+  //   - input_database_schema is valid according to `ValidateSchemaDatabase`.
+  //
+  // Returns:
+  //   - SchemaProto on success
+  //   - INTERNAL_ERROR on any IO errors, or if the schema store was not
+  //     previously initialized properly.
+  //   - INVALID_ARGUMENT_ERROR if the input schema does not match
+  //     database_to_update.
+  libtextclassifier3::StatusOr<SchemaProto> GetFullOptimizedSchemaProto(
+      SchemaProto input_database_schema,
+      const std::string& database_to_update) const;
+
+  // TODO: b/434218554 - Remove this method once schema type id optimization is
+  // fully rolled out.
+  //
+  // This method should only be called when
+  // `feature_flags_->enable_schema_type_id_optimization` is false.
+  //
+  // Returns a SchemaProto representing the full schema, which is a combination
   // of the existing schema and the input database schema. Deletes all types
   // belonging to the specified database if input_database_schema is an empty
   // proto.
@@ -936,6 +1012,12 @@ class SchemaStore {
   // Maps schema type ids to the corresponding schema type. This is an inverse
   // map of schema_type_mapper_.
   std::unordered_map<SchemaTypeId, std::string> reverse_schema_type_mapper_;
+
+  // Maps schema type ids to the hash value of the corresponding schema type
+  // name.
+  // TODO(b/436237337): Consider merging this with reverse_schema_type_mapper_
+  // to save memory.
+  std::unordered_map<SchemaTypeId, uint32_t> reverse_schema_type_mapper_hash_;
 
   // A hash map of (database -> vector of type config names in the database).
   //

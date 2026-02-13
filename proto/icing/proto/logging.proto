@@ -24,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 17
+// Next tag: 21
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -150,6 +150,79 @@ message InitializeStatsProto {
 
   // Number of documents that failed to be reindexed during index restoration.
   optional int32 num_failed_reindexed_documents = 16;
+
+  // A number indicating which stage of initialization failed.
+  message FailureStage {
+    enum Code {
+      NONE = 0;
+
+      OPTIONS_VALIDATION = 1;
+
+      BASE_DIRECTORY_CREATION = 2;
+
+      INIT_MARKER_FILE = 3;
+
+      READ_VERSION_FILE = 4;
+
+      MIGRATE_SCHEMA = 5;
+
+      DISCARD_DERIVED_FILES = 6;
+
+      WRITE_VERSION_FILE = 7;
+
+      SCHEMA_STORE_DIRECTORY_CREATION = 8;
+
+      SCHEMA_STORE_INSTANTIATION = 9;
+
+      LANGUAGE_SEGMENTER_CREATION = 10;
+
+      NORMALIZER_CREATION = 11;
+
+      // Discard any components, including delete the directory or call discard
+      // function of an index.
+      DISCARD_COMPONENTS = 12;
+
+      BLOB_STORE_INSTANTIATION = 13;
+
+      DOCUMENT_STORE_DIRECTORY_CREATION = 14;
+
+      DOCUMENT_STORE_INSTANTIATION = 15;
+
+      TERM_INDEX_DIRECTORY = 16;
+
+      TERM_INDEX_INSTANTIATION = 17;
+
+      INTEGER_INDEX_DIRECTORY = 18;
+
+      INTEGER_INDEX_INSTANTIATION = 19;
+
+      QUALIFIED_ID_JOIN_INDEX_DIRECTORY = 20;
+
+      QUALIFIED_ID_JOIN_INDEX_INSTANTIATION = 21;
+
+      EMBEDDING_INDEX_DIRECTORY = 22;
+
+      EMBEDDING_INDEX_INSTANTIATION = 23;
+
+      RESTORE_INDEX = 24;
+    }
+  }
+  optional FailureStage.Code failure_stage = 17;
+
+  // Status of the attempt to create the IcuLanguageSegmenter.
+  // This is only set if the ICU segmenter is enabled. Possible status codes:
+  // - OK: IcuLanguageSegmenter created successfully.
+  // - ABORTED: Failed to create the ICU break iterator.
+  optional StatusProto icu_segmenter_creation_status = 18;
+
+  // Status of the attempt to create the IcuNormalizer.
+  // This is only set if the ICU normalizer is enabled. Possible status codes:
+  // - OK: IcuNormalizer created successfully.
+  // - INTERNAL: Failed to create the ICU Transliterator.
+  optional StatusProto icu_normalizer_creation_status = 19;
+
+  // The expiration timestamp (in milliseconds) of the next expired document.
+  optional int64 next_expiration_timestamp_ms = 20;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
@@ -288,7 +361,7 @@ message QueryStatsProto {
   optional bool is_join_query = 23;
 
   // Stats of the search. Only valid for first page.
-  // Next tag: 16
+  // Next tag: 20
   message SearchStats {
     // The UTF-8 length of the query string
     optional int32 query_length = 1;
@@ -335,6 +408,18 @@ message QueryStatsProto {
 
     // Time used in QueryVisitor to visit and build (nested) DocHitInfoIterator.
     optional int32 query_processor_query_visitor_latency_ms = 15;
+
+    // Number of unquantized embeddings scored.
+    optional int32 num_unquantized_embeddings_scored = 16;
+
+    // Number of quantized embeddings scored.
+    optional int32 num_quantized_embeddings_scored = 17;
+
+    // Number of shards read from the embedding index.
+    optional int32 num_embedding_shards_read = 18;
+
+    // Number of raw embedding bytes read from the embedding index.
+    optional int64 num_embedding_bytes_read = 19;
   }
 
   // Search stats for parent. Only valid for first page.

@@ -80,7 +80,7 @@ libtextclassifier3::Status DocumentValidator::Validate(
   auto type_config_or = schema_store_->GetSchemaTypeConfig(document.schema());
   if (!type_config_or.ok()) {
     ICING_LOG(ERROR) << type_config_or.status().error_message()
-                     << "Error while validating document ("
+                     << " Error while validating document ("
                      << document.namespace_() << ", " << document.uri() << ")";
     return type_config_or.status();
   }
@@ -114,7 +114,8 @@ libtextclassifier3::Status DocumentValidator::Validate(
           document.namespace_(), ", ", document.uri(),
           ") of type: ", document.schema(), "."));
     }
-    const PropertyConfigProto& property_config = *property_iter->second;
+    const PropertyConfigProto& property_config =
+        *property_iter->second.property_config;
 
     // Get the property value size according to data type.
     int value_size = 0;

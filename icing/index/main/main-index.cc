@@ -343,8 +343,9 @@ MainIndex::AddBackfillBranchPoints(const IcingDynamicTrie& other_lexicon) {
        other_term_itr.IsValid(); other_term_itr.Advance()) {
     // If term were inserted in the main lexicon, what new branching would it
     // create? (It always creates at most one.)
-    int prefix_len = main_lexicon_->FindNewBranchingPrefixLength(
-        other_term_itr.GetKey(), /*utf8=*/true);
+    ICING_ASSIGN_OR_RETURN(int prefix_len,
+                           main_lexicon_->FindNewBranchingPrefixLength(
+                               other_term_itr.GetKey(), /*utf8=*/true));
     if (prefix_len <= 0) {
       continue;
     }
@@ -449,8 +450,9 @@ MainIndex::AddBranchPoints(const IcingDynamicTrie& other_lexicon,
 
     // Get prefixes where there is already a branching point in the main
     // lexicon. We skip prefixes which don't already have a branching point.
-    std::vector<int> prefix_lengths = main_lexicon_->FindBranchingPrefixLengths(
-        other_term_itr.GetKey(), /*utf8=*/true);
+    ICING_ASSIGN_OR_RETURN(std::vector<int> prefix_lengths,
+                           main_lexicon_->FindBranchingPrefixLengths(
+                               other_term_itr.GetKey(), /*utf8=*/true));
 
     int buf_start = outputs.prefix_tvis_buf.size();
     // Add prefixes.
@@ -592,7 +594,8 @@ libtextclassifier3::Status MainIndex::AddHits(
     PostingListAccessor::FinalizeResult result =
         std::move(*hit_accum).Finalize();
     if (result.id.is_valid()) {
-      main_lexicon_->SetValueAtIndex(other_tvi_main_tvi_pair.first, &result.id);
+      ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(
+          other_tvi_main_tvi_pair.first, &result.id));
     }
   }
   flash_index_storage_->set_last_indexed_docid(last_added_document_id);
@@ -648,7 +651,7 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   PostingListAccessor::FinalizeResult result =
       std::move(*pl_accessor).Finalize();
   if (result.id.is_valid()) {
-    main_lexicon_->SetValueAtIndex(tvi, &result.id);
+    ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(tvi, &result.id));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -803,8 +806,9 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
   // A term without exact hits indicates that it is a purely backfill term. If
   // the term is not branching in the new trie, it means backfilling is no
   // longer necessary, so that we can skip.
-  if (new_hits.empty() ||
-      (has_no_exact_hits && !new_index->main_lexicon_->IsBranchingTerm(term))) {
+  ICING_ASSIGN_OR_RETURN(bool is_branching_term,
+                         new_index->main_lexicon_->IsBranchingTerm(term));
+  if (new_hits.empty() || (has_no_exact_hits && !is_branching_term)) {
     return largest_document_id;
   }
 

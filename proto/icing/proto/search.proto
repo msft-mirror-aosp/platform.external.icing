@@ -382,7 +382,7 @@ message SnippetProto {
 }
 
 // Icing lib-supplied results from a search results.
-// Next tag: 7
+// Next tag: 9
 message SearchResultProto {
   // Status code can be one of:
   //   OK
@@ -450,6 +450,13 @@ message SearchResultProto {
   // of result documents (as their ground truth), then they should restart the
   // query via Search API when this field is true.
   optional bool page_token_not_found = 6;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 7;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 8;
 }
 
 // Next tag: 3
@@ -560,7 +567,7 @@ message NamespaceDocumentUriGroup {
   repeated string document_uris = 2;
 }
 
-// Next tag: 3
+// Next tag: 5
 message SuggestionResponse {
   message Suggestion {
     // The suggested query string for client to search for.
@@ -576,6 +583,13 @@ message SuggestionResponse {
   optional StatusProto status = 1;
 
   repeated Suggestion suggestions = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Specification for a left outer join.
@@ -645,4 +659,24 @@ message JoinSpecProto {
     }
   }
   optional AggregationScoringStrategy.Code aggregation_scoring_strategy = 5;
+}
+
+// Next tag: 3
+message GetNextPageRequestProto {
+  // REQUIRED: The next page token to use for retrieving the next page of
+  // results.
+  //
+  // This is a token returned from a previous Search or GetNextPage
+  // call. The retrieved SearchResultProto will be empty if this token is
+  // invalid (value of 0, or previously invalidated by Icing)
+  optional int64 next_page_token = 1;
+
+  // The max number of results to return from the page.
+  //
+  // This is only an upper limit on the number of results to fetch from the
+  // page. Fewer results may be returned if there are not enough results
+  // remaining in the page, or if other limits (e.g. page size limit) are
+  // reached.
+  optional int32 max_results_to_retrieve_from_page = 2
+      [default = 2147483647];  // INT_MAX
 }
