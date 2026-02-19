@@ -24,10 +24,12 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/index/iterator/section-restrict-data.h"
@@ -69,33 +71,74 @@ class DocHitInfoIteratorEmbeddingV2
          const DocumentStore* document_store, const SchemaStore* schema_store,
          int64_t current_time_ms);
 
+  bool CanAdoptDelegate() const override { return true; }
+
+  void AdoptDelegate(std::unique_ptr<DocHitInfoIterator> delegate,
+                     bool delegate_node_is_right_most) override {
+    delegate_ = std::move(delegate);
+    delegate_node_is_right_most_ = delegate_node_is_right_most;
+  }
+
+  bool HandleSectionRestriction(SectionRestrictData* other_data) override {
+    // Apply section restriction to delegate if we have one.
+    if (delegate_ != nullptr) {
+      delegate_ = DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
+          std::move(delegate_), other_data);
+    }
+    return DocHitInfoIteratorHandlingSectionRestrict::HandleSectionRestriction(
+        other_data);
+  }
+
   libtextclassifier3::Status Advance() override;
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
+    if (delegate_ != nullptr && !delegate_node_is_right_most_) {
+      return std::move(*delegate_).TrimRightMostNode();
+    }
     return absl_ports::InvalidArgumentError(
         "Query suggestions for the semanticSearch function are not supported");
   }
 
   std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    if (delegate_ != nullptr) {
+      return {&delegate_};
+    }
     return {};
   }
 
   CallStats GetCallStats() const override {
-    return CallStats(
+    CallStats call_stats(
         /*num_leaf_advance_calls_lite_index_in=*/num_advance_calls_,
         /*num_leaf_advance_calls_main_index_in=*/0,
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/0,
         /*num_blocks_inspected_in=*/0,
-        embedding_hit_accessor_->GetEmbeddingStats());
+        embedding_hit_accessor_ != nullptr
+            ? embedding_hit_accessor_->GetEmbeddingStats()
+            : CallStats::EmbeddingStats{});
+    if (delegate_ != nullptr) {
+      call_stats += delegate_->GetCallStats();
+    }
+    return call_stats;
   }
 
-  std::string ToString() const override { return "embedding_iterator"; }
+  std::string ToString() const override {
+    if (delegate_ != nullptr) {
+      return absl_ports::StrCat("embedding_iterator with delegate (",
+                                delegate_->ToString(), ")");
+    }
+    return "embedding_iterator";
+  }
 
   // PopulateMatchedTermsStats is not applicable to embedding search.
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,
-      SectionIdMask filtering_section_mask) const override {}
+      SectionIdMask filtering_section_mask) const override {
+    if (delegate_ != nullptr) {
+      delegate_->PopulateMatchedTermsStats(matched_terms_stats,
+                                           filtering_section_mask);
+    }
+  }
 
  private:
   struct HitWithScore {
@@ -170,6 +213,11 @@ class DocHitInfoIteratorEmbeddingV2
   //   - Any error from posting lists.
   libtextclassifier3::Status AdvanceToNextUnfilteredDocument();
 
+  std::unique_ptr<DocHitInfoIterator> delegate_;
+  // Whether the delegate is a node to the right of the current node. This
+  // affects the behavior of TrimRightMostNode.
+  bool delegate_node_is_right_most_;
+
   // Query information
   const PropertyProto::VectorProto& query_;  // Does not own
 
@@ -188,10 +236,12 @@ class DocHitInfoIteratorEmbeddingV2
 
   // Access to embeddings index data
   const EmbeddingIndex& embedding_index_;
-  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor_;
+  std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>
+      embedding_hit_accessor_;  // Nullable.
 
   // Cached data from the embeddings index
   std::vector<HitWithScore> cached_hit_scores_;
+  std::vector<SectionIdMask> cached_section_id_masks_;
   int cached_hit_scores_idx_;
   bool no_more_hit_;
 

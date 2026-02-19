@@ -13,11 +13,13 @@
 // limitations under the License.
 
 #include <algorithm>
+#include <chrono>  // NOLINT
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>  // NOLINT
 #include <tuple>
 #include <unordered_set>
 #include <utility>
@@ -262,10 +264,12 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_embedding_quantization(true);
   icing_options.set_enable_blob_store(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_delete_propagation_from(false);
   icing_options.set_enable_marker_file_for_optimize(true);
   icing_options.set_enable_proto_log_new_header_format(true);
   icing_options.set_embedding_index_num_shards(32);
+  icing_options.set_enable_non_existent_qualified_id_join(true);
   return icing_options;
 }
 
@@ -504,6 +508,7 @@ TEST_F(IcingSearchEngineInitializationTest,
        DeletePropagationEnabledAndJoinIndexV3DisabledReturnsInvalidArgument) {
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
   icing_options.set_enable_qualified_id_join_index_v3(false);
+  icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_delete_propagation_from(true);
 
   IcingSearchEngine icing(icing_options, GetTestJniCache());
@@ -512,7 +517,24 @@ TEST_F(IcingSearchEngineInitializationTest,
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
   EXPECT_THAT(initialize_result_proto.status().message(),
               HasSubstr("Delete propagation is enabled but qualified id join "
-                        "index v3 is not enabled."));
+                        "index v3 or soft index restoration is not enabled."));
+}
+
+TEST_F(
+    IcingSearchEngineInitializationTest,
+    DeletePropagationEnabledAndSoftIndexRestorationDisabledReturnsInvalidArgument) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_soft_index_restoration(false);
+  icing_options.set_enable_delete_propagation_from(true);
+
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  EXPECT_THAT(initialize_result_proto.status().message(),
+              HasSubstr("Delete propagation is enabled but qualified id join "
+                        "index v3 or soft index restoration is not enabled."));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, GoodCompressionLevelReturnsOk) {
@@ -4864,6 +4886,496 @@ TEST_F(IcingSearchEngineInitializationTest,
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
+       InitializeShouldPurgeDocumentsThatExpiredDuringOffline) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("body")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .AddStringProperty("name", "person")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(10000)  // Expire at 10010 ms.
+                             .Build();
+  DocumentProto message = DocumentBuilder()
+                              .SetKey("namespace", "message/1")
+                              .SetSchema("Message")
+                              .AddStringProperty("body", "message body")
+                              .AddStringProperty("sender", "namespace#person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(0)  // Never expire.
+                              .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  {
+    // Initialize Icing and put person and message documents. Destruct Icing.
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message).status(), ProtoIsOk());
+  }
+
+  // Initialize Icing again with a fake clock and t = 20000 ms. Initialization
+  // should purge the person document (since it expired at t = 10010 ms) and
+  // apply delete propagation to the message document.
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(20000);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+
+  // Verify that person and message documents are purged.
+  // - At t = 20000 ms, the person document is expired, but DocumentFilterData
+  //   has already filtered it out, so we're unsure whether it is purged or not.
+  // - But the message document never expires and DocumentFilterData doesn't
+  //   filter it out. If Initialize() had not handled expired documents
+  //   correctly, then expiration propagation would have not been triggered and
+  //   the message document would've been alive. Therefore, we can verify it by
+  //   checking the message document.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, person) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "person", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
+      "Document (namespace, message/1) not found.");
+  EXPECT_THAT(icing.Get("namespace", "message/1",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
+}
+
+TEST_F(
+    IcingSearchEngineInitializationTest,
+    Initialize_taskSchedulerEnabled_shouldSchedulePurgingExpiredDocumentsTask) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("body")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person1 = DocumentBuilder()
+                              .SetKey("namespace", "person1")
+                              .SetSchema("Person")
+                              .AddStringProperty("name", "person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(10000)  // Expire at 10010 ms.
+                              .Build();
+  DocumentProto person2 = DocumentBuilder()
+                              .SetKey("namespace", "person2")
+                              .SetSchema("Person")
+                              .AddStringProperty("name", "person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(21000)  // Expire at 21010 ms.
+                              .Build();
+  DocumentProto message1 = DocumentBuilder()
+                               .SetKey("namespace", "message/1")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddStringProperty("sender", "namespace#person1")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(0)  // Never expire.
+                               .Build();
+  DocumentProto message2 = DocumentBuilder()
+                               .SetKey("namespace", "message/2")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddStringProperty("sender", "namespace#person2")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(0)  // Never expire.
+                               .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(true);
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  {
+    // Initialize Icing and put all documents. Destruct Icing.
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message2).status(), ProtoIsOk());
+  }
+
+  // Initialize Icing again with a fake clock and t = 20000 ms. Initialization
+  // should purge person1 (since it expired at t = 10010 ms) and apply delete
+  // propagation to message1. Also it should schedule the puring expired
+  // documents task for the next expiration event.
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  fake_clock->SetSystemTimeMilliseconds(20000);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  // Next expiration timestamp should be set correctly.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().next_expiration_timestamp_ms(),
+      Eq(21010));
+
+  // Sanity check: person2 and message2 are still alive.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto1.mutable_document() = person2;
+  EXPECT_THAT(
+      icing.Get("namespace", "person2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = message2;
+  EXPECT_THAT(icing.Get("namespace", "message/2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
+
+  // Adjust the clock to 21010 ms and sleep for 1010 ms. The purging expiration
+  // task should execute and purge person2 and message2.
+  // - At t = 21010 ms, person2 is expired, but DocumentFilterData has already
+  //   filtered it out, so we're unsure whether it is purged or not.
+  // - But message2 never expires and DocumentFilterData doesn't filter it out.
+  //   If Initialize() had not scheduled the purging expired documents task
+  //   correctly for the next expiration event (i.e. for person2), then
+  //   expiration propagation would have not been triggered and message2
+  //   would've been alive. Therefore, we can verify it by checking message2
+  fake_clock_ptr->SetSystemTimeMilliseconds(21010);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1010));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto3.mutable_status()->set_message(
+      "Document (namespace, person2) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "person2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
+
+  GetResultProto expected_get_result_proto4;
+  expected_get_result_proto4.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto4.mutable_status()->set_message(
+      "Document (namespace, message/2) not found.");
+  EXPECT_THAT(icing.Get("namespace", "message/2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_proto4));
+}
+
+TEST_F(
+    IcingSearchEngineInitializationTest,
+    Initialize_taskSchedulerDisabled_shouldPurgeExpiredDocumentsButNoRescheduling) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("body")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person1 = DocumentBuilder()
+                              .SetKey("namespace", "person1")
+                              .SetSchema("Person")
+                              .AddStringProperty("name", "person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(10000)  // Expire at 10010 ms.
+                              .Build();
+  DocumentProto person2 = DocumentBuilder()
+                              .SetKey("namespace", "person2")
+                              .SetSchema("Person")
+                              .AddStringProperty("name", "person")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(21000)  // Expire at 21010 ms.
+                              .Build();
+  DocumentProto message1 = DocumentBuilder()
+                               .SetKey("namespace", "message/1")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddStringProperty("sender", "namespace#person1")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(0)  // Never expire.
+                               .Build();
+  DocumentProto message2 = DocumentBuilder()
+                               .SetKey("namespace", "message/2")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddStringProperty("sender", "namespace#person2")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(0)  // Never expire.
+                               .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_background_task_scheduler(false);
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  {
+    // Initialize Icing and put all documents. Destruct Icing.
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message2).status(), ProtoIsOk());
+  }
+
+  // Initialize Icing again with a fake clock and t = 20000 ms.
+  // - Initialization should purge person1 (since it expired at t = 10010 ms)
+  //   and apply delete propagation to message1.
+  // - Since the task scheduler is disabled, it should NOT schedule the puring
+  //   expired documents task for the next expiration event.
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  fake_clock->SetSystemTimeMilliseconds(20000);
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  // Next expiration timestamp should be set correctly.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().next_expiration_timestamp_ms(),
+      Eq(21010));
+
+  // Sanity check: person2 and message2 are still alive.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto1.mutable_document() = person2;
+  EXPECT_THAT(
+      icing.Get("namespace", "person2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = message2;
+  EXPECT_THAT(icing.Get("namespace", "message/2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
+
+  // Adjust the clock to 21010 ms and sleep for 1010 ms. message2 should still
+  // be present.
+  fake_clock_ptr->SetSystemTimeMilliseconds(21010);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1010));
+  EXPECT_THAT(icing.Get("namespace", "message/2",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       IndexRecovery_failingDocumentShouldPropagateDeletionToChildDocuments) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Message")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("body")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_REQUIRED))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person1")
+                             .SetSchema("Person")
+                             .AddStringProperty("name", "person")
+                             .AddInt64Property("timestamp", 1024)
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(10000)  // Expire at 10010 ms.
+                             .Build();
+  DocumentProto message = DocumentBuilder()
+                              .SetKey("namespace", "message/1")
+                              .SetSchema("Message")
+                              .AddStringProperty("body", "message body")
+                              .AddStringProperty("sender", "namespace#person1")
+                              .SetCreationTimestampMs(10)
+                              .SetTtlMs(0)  // Never expire.
+                              .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  {
+    // Initialize Icing and put all documents. Destruct Icing.
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message).status(), ProtoIsOk());
+  }
+
+  // 2. Delete integer index to trigger index restoration.
+  ASSERT_TRUE(
+      filesystem()->DeleteDirectoryRecursively(GetIntegerIndexDir().c_str()));
+
+  // 3. Mock filesystem to fail creating "timestamp" integer index storage.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem,
+          CreateDirectory(HasSubstr(GetIntegerIndexDir() + "/timestamp")))
+      .WillByDefault(Return(false));
+
+  // 4. Initialize IcingSearchEngine again with the mock filesystem. When
+  //    indexing document "person1", it will fail to create "timestamp" integer
+  //    index storage, but soft index restoration mechanism should skip the
+  //    error and delete the document without failing initialization.
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(),
+              ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+
+  EXPECT_THAT(
+      initialize_result.initialize_stats().document_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  // Indices should be restored. "person1" should fail to be reindexed.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().index_restoration_latency_ms(),
+      Eq(10));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().num_failed_reindexed_documents(),
+      Eq(1));
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+  EXPECT_THAT(initialize_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  // needs_persist_type should be set to RECOVERY_PROOF.
+  EXPECT_THAT(initialize_result.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
+
+  // ("namespace", "person1") should be deleted.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, person1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "person1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  // ("namespace", "message/1") should be deleted. Although this document should
+  // successfully be reindexed, when "person1" fails to be reindexed, all
+  // of its child documents should be deleted.
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
+      "Document (namespace, message/1) not found.");
+  EXPECT_THAT(icing.Get("namespace", "message/1",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_google::protobuf));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
        InitializeShouldLogFunctionLatency) {
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(10);
@@ -6467,6 +6979,247 @@ TEST_F(IcingSearchEngineInitializationTest,
       ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
+TEST_F(IcingSearchEngineInitializationTest,
+       DeletePropagationFrom_switchFlagOffToOnShouldRevalidateDependency) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Label").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("target")
+                  .SetDataTypeJoinableString(
+                      JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                      DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Create 3 label documents with the following relationship:
+  // label1 -> label2 -> label3
+  DocumentProto label1 = DocumentBuilder()
+                             .SetKey("namespace", "label/1")
+                             .SetSchema("Label")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(10000)  // Expire at t = 10010 ms
+                             .Build();
+  DocumentProto label2 = DocumentBuilder()
+                             .SetKey("namespace", "label/2")
+                             .SetSchema("Label")
+                             .AddStringProperty("target", "namespace#label/1")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(0)  // Never expire.
+                             .Build();
+  DocumentProto label3 = DocumentBuilder()
+                             .SetKey("namespace", "label/3")
+                             .SetSchema("Label")
+                             .AddStringProperty("target", "namespace#label/2")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(0)  // Never expire.
+                             .Build();
+
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_qualified_id_join_index_v3(true);
+    options.set_enable_soft_index_restoration(true);
+    options.set_enable_delete_propagation_from(false);
+    options.set_expired_document_purge_threshold_ms(0);
+
+    // Initialize Icing instance with the flag off and put all label documents.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(10);
+
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(label1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(label2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(label3).status(), ProtoIsOk());
+  }
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(20000);
+
+  // Initialize Icing instance again with the flag on, at t = 20000 ms.
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+
+  // Join index should be rebuilt due to the flag change.
+  // - Label1 is expired at this moment.
+  // - Label2 is not expired, but delete propagation flag is enabled now and its
+  //   parent (label1) is expired, so when re-indexing it, it should fail and be
+  //   deleted.
+  // - Label3 is not expired and its parent (label2) is alive originally, so
+  //   when re-indexing it, it should succeed. But since label2 failed to be
+  //   re-indexed, Icing should delete label2 and propagate the deletion to
+  //   label3.
+  EXPECT_THAT(initialize_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::FEATURE_FLAG_CHANGED));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().num_failed_reindexed_documents(),
+      Eq(1));  // Label2 failed to be re-indexed.
+
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, label/1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "label/1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
+      "Document (namespace, label/2) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "label/2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto3.mutable_status()->set_message(
+      "Document (namespace, label/3) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "label/3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       DeletePropagationFrom_switchflagOnToOffShouldNotRevalidateDependency) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Label").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("target")
+                  .SetDataTypeJoinableString(
+                      JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                      DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Create 3 label documents with the following relationship:
+  // label1 -> label2 -> label3
+  DocumentProto label1 = DocumentBuilder()
+                             .SetKey("namespace", "label/1")
+                             .SetSchema("Label")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(10000)  // Expire at t = 10010 ms
+                             .Build();
+  DocumentProto label2 = DocumentBuilder()
+                             .SetKey("namespace", "label/2")
+                             .SetSchema("Label")
+                             .AddStringProperty("target", "namespace#label/1")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(0)  // Never expire.
+                             .Build();
+  DocumentProto label3 = DocumentBuilder()
+                             .SetKey("namespace", "label/3")
+                             .SetSchema("Label")
+                             .AddStringProperty("target", "namespace#label/2")
+                             .SetCreationTimestampMs(10)
+                             .SetTtlMs(0)  // Never expire.
+                             .Build();
+
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_qualified_id_join_index_v3(true);
+    options.set_enable_soft_index_restoration(true);
+    options.set_enable_delete_propagation_from(true);
+    options.set_expired_document_purge_threshold_ms(0);
+
+    // Initialize Icing instance with the flag on and put all label documents.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(10);
+
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(label1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(label2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(label3).status(), ProtoIsOk());
+  }
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(false);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(20000);
+
+  // Initialize Icing instance again with the flag off, at t = 20000 ms.
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+
+  // Join index should be rebuilt due to the flag change.
+  // - Label1 is expired at this moment.
+  // - Label2 is not expired. Although the schema sets delete propagation for
+  //   the joinable property, since the flag is off, we won't check the
+  //   dependency and it will be re-indexed successfully.
+  // - Label3 is re-indexed successfully.
+  EXPECT_THAT(initialize_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::FEATURE_FLAG_CHANGED));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().embedding_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().num_failed_reindexed_documents(),
+      Eq(0));
+
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, label/1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "label/1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = label2;
+  EXPECT_THAT(
+      icing.Get("namespace", "label/2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto3.mutable_document() = label3;
+  EXPECT_THAT(
+      icing.Get("namespace", "label/3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
+}
+
 struct IcingSearchEngineInitializationVersionChangeTestParam {
   version_util::VersionInfo existing_version_info;
   std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
@@ -6646,7 +7399,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
         std::unique_ptr<QualifiedIdJoinIndexingHandler>
             qualified_id_join_indexing_handler,
         QualifiedIdJoinIndexingHandler::Create(
-            &fake_clock, document_store.get(), qualified_id_join_index.get()));
+            &fake_clock, document_store.get(), qualified_id_join_index.get(),
+            feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<EmbeddingIndexingHandler> embedding_indexing_handler,
         EmbeddingIndexingHandler::Create(&fake_clock, embedding_index.get(),
@@ -8042,6 +8796,160 @@ TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
 INSTANTIATE_TEST_SUITE_P(
     IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
     IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
+    testing::Values(std::vector<bool>{false, true, false, true, false, true},
+                    std::vector<bool>{true, false, true, false, true, false},
+                    std::vector<bool>{false, true, true, true, false, true},
+                    std::vector<bool>{true, false, false, false, true, false},
+                    std::vector<bool>{true, true, true, true},
+                    std::vector<bool>{false, false, false, false}));
+
+class IcingSearchEngineInitializationChangeNonExistentQualifiedIdJoinFlagTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<std::vector<bool>> {};
+TEST_P(IcingSearchEngineInitializationChangeNonExistentQualifiedIdJoinFlagTest,
+       ChangeNonExistentQualifiedIdJoinFlagTest) {
+  std::vector<bool> enable_non_existent_qualified_id_join_flags = GetParam();
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("namespace", "person")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto message =
+      DocumentBuilder()
+          .SetKey("namespace", "message/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_non_existent_qualified_id_join(
+        enable_non_existent_qualified_id_join_flags.at(0));
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(message).status(), ProtoIsOk());
+  }
+
+  // Create icing multiple times with different
+  // enable_non_existent_qualified_id_join flags.
+  for (int i = 1; i < enable_non_existent_qualified_id_join_flags.size(); ++i) {
+    bool flag_changed = enable_non_existent_qualified_id_join_flags[i] !=
+                        enable_non_existent_qualified_id_join_flags[i - 1];
+
+    // Ensure that the qualified id join index is rebuilt if the flag is
+    // changed.
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_enable_non_existent_qualified_id_join(
+        enable_non_existent_qualified_id_join_flags[i]);
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+
+    // Qualified id join index recovery cause should be FEATURE_FLAG_CHANGED if
+    // flag is changed.
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
+                                : InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.needs_persist_type(),
+        Eq(flag_changed ? PersistType::RECOVERY_PROOF : PersistType::UNKNOWN));
+
+    // Schema store, document store and all other indices should be unaffected.
+    EXPECT_THAT(
+        initialize_result.initialize_stats().schema_store_recovery_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().document_store_recovery_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .embedding_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Prepare join search spec to join a query for `name:person` with a child
+    // query for `body:message` based on the child's `senderQualifiedId` field.
+    //
+    // No matter what the flag value is, the join API should always return the
+    // expected result.
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    search_spec.set_query("name:person");
+    JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+    join_spec->set_parent_property_expression(
+        std::string(JoinProcessor::kQualifiedIdExpr));
+    join_spec->set_child_property_expression("senderQualifiedId");
+    join_spec->set_aggregation_scoring_strategy(
+        JoinSpecProto::AggregationScoringStrategy::COUNT);
+    JoinSpecProto::NestedSpecProto* nested_spec =
+        join_spec->mutable_nested_spec();
+    SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+    nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+    nested_search_spec->set_query("body:message");
+    *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+    *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+    ResultSpecProto result_spec = ResultSpecProto::default_instance();
+    result_spec.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto expected_search_result_proto;
+    expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+    SearchResultProto::ResultProto* result_proto =
+        expected_search_result_proto.mutable_results()->Add();
+    *result_proto->mutable_document() = person;
+    *result_proto->mutable_joined_results()->Add()->mutable_document() =
+        message;
+
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                         expected_search_result_proto));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationChangeNonExistentQualifiedIdJoinFlagTest,
+    IcingSearchEngineInitializationChangeNonExistentQualifiedIdJoinFlagTest,
     testing::Values(std::vector<bool>{false, true, false, true, false, true},
                     std::vector<bool>{true, false, true, false, true, false},
                     std::vector<bool>{false, true, true, true, false, true},
