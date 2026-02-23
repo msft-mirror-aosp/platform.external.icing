@@ -14,8 +14,13 @@
 
 #include "icing/util/crc32.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
+#include <string_view>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/portable/zlib.h"
@@ -25,7 +30,9 @@ namespace icing {
 namespace lib {
 
 namespace {
+
 using ::testing::Eq;
+using ::testing::Ne;
 
 void UpdateAtRandomOffset(std::string* buf, uint32_t* update_xor, int* offset) {
   // The max value of rand() is 2^31 - 1 (2147483647) but the max value of
@@ -74,6 +81,60 @@ TEST(Crc32Test, Append) {
   EXPECT_THAT(crc32_foo_and_bar.Get(), Eq(crc32_foobar.Get()));
 }
 
+TEST(Crc32Test, Combine) {
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+
+  Crc32 crc32_barbaz;
+  crc32_barbaz.Append("barbaz");
+
+  Crc32 crc32_foobarbaz;
+  crc32_foobarbaz.Append("foobarbaz");
+
+  EXPECT_THAT(crc32_foo.Combine(crc32_barbaz, 6), Eq(crc32_foobarbaz.Get()));
+  EXPECT_THAT(crc32_foo.Get(), Eq(crc32_foobarbaz.Get()));
+}
+
+TEST(Crc32Test, Combine_incorrectResultWithWrongSize) {
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+
+  Crc32 crc32_barbaz;
+  crc32_barbaz.Append("barbaz");
+
+  Crc32 crc32_foobarbaz;
+  crc32_foobarbaz.Append("foobarbaz");
+
+  int wrong_size = 5;
+  EXPECT_THAT(crc32_foo.Combine(crc32_barbaz, wrong_size),
+              Ne(crc32_foobarbaz.Get()));
+  EXPECT_THAT(crc32_foo.Get(), Ne(crc32_foobarbaz.Get()));
+}
+
+TEST(Crc32Test, Combine_withEmptyString) {
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+  uint32_t crc_foo_val = crc32_foo.Get();
+
+  Crc32 crc32_empty;
+  crc32_empty.Append("");
+
+  EXPECT_THAT(crc32_foo.Combine(crc32_empty, 0), Eq(crc_foo_val));
+  EXPECT_THAT(crc32_foo.Get(), Eq(crc_foo_val));
+}
+
+TEST(Crc32Test, Combine_toEmptyString) {
+  Crc32 crc32_empty;
+  crc32_empty.Append("");
+
+  Crc32 crc32_foo;
+  crc32_foo.Append("foo");
+  uint32_t crc_foo_val = crc32_foo.Get();
+
+  EXPECT_THAT(crc32_empty.Combine(crc32_foo, 3), Eq(crc_foo_val));
+  EXPECT_THAT(crc32_empty.Get(), Eq(crc_foo_val));
+}
+
 TEST(Crc32Test, UpdateAtPosition) {
   std::string buf;
   buf.resize(1000);
@@ -100,6 +161,19 @@ TEST(Crc32Test, UpdateAtPosition) {
   // Wrong string length
   EXPECT_THAT(crc32_test.UpdateWithXor("12345", buf.size(), buf.size() - 1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(Crc32Test, InvalidParameters) {
+  Crc32 crc32_test{};
+  EXPECT_THAT(
+      crc32_test.UpdateWithXor("12345", /*full_data_size=*/-1, /*position=*/0),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      crc32_test.UpdateWithXor("12345", /*full_data_size=*/2, /*position=*/-1),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      crc32_test.UpdateWithXor("", /*full_data_size=*/-10, /*position=*/-10),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace

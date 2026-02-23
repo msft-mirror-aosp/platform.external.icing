@@ -52,7 +52,7 @@ class InMemoryIcingSearchEngine {
 
   const SchemaProto *GetSchema() const { return schema_.get(); }
 
-  void SetSchema(SchemaProto &&schema);
+  void SetSchema(SchemaProto schema);
 
   // Randomly pick a document from the in-memory Icing for monkey testing.
   //
@@ -164,6 +164,9 @@ class InMemoryIcingSearchEngine {
     // The term match type if the property is of type string.
     TermMatchType::Code term_match_type =
         TermMatchType::Code::TermMatchType_Code_UNKNOWN;
+    // The quantization type if the property is of type vector.
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+        EmbeddingIndexingConfig::QuantizationType::NONE;
   };
   libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
       const std::string &schema_type,

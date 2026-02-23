@@ -35,23 +35,21 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/legacy/core/icing-compat.h"
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
 #include "icing/util/crc32.h"
-#include "icing/util/i18n-utils.h"
 #include "unicode/utf8.h"
 
 namespace icing {
@@ -284,6 +282,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // Number of keys in trie.
   uint32_t size() const;
 
+  bool empty() const;
+
   // Collecting stats.
   void CollectStats(Stats *stats) const;
 
@@ -297,15 +297,15 @@ class IcingDynamicTrie : public IIcingStorage {
   // Empty out the trie without closing or removing.
   void Clear();
 
-  // Clears the suffix and value at the given index. Returns true on success.
-  bool ClearSuffixAndValue(uint32_t suffix_value_index);
+  // Clears the suffix and value at the given index. Returns OK on success.
+  libtextclassifier3::Status ClearSuffixAndValue(uint32_t suffix_value_index);
 
   // Resets the next at the given index so that it points to no node.
-  // Returns true on success.
-  bool ResetNext(uint32_t next_index);
+  // Returns OK on success.
+  libtextclassifier3::Status ResetNext(uint32_t next_index);
 
-  // Sorts the next array of the node. Returns true on success.
-  bool SortNextArray(const Node *node);
+  // Sorts the next array of the node. Returns OK on success.
+  libtextclassifier3::Status SortNextArray(const Node *node);
 
   // Sync to disk.
   bool Sync() override;
@@ -346,7 +346,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // value.
   //
   // REQUIRES: value a buffer of size value_size()
-  void SetValueAtIndex(uint32_t value_index, const void *value);
+  libtextclassifier3::Status SetValueAtIndex(uint32_t value_index,
+                                             const void *value);
 
   // Returns true if key is found and sets value. If value_index is
   // not NULL, returns value_index (see Insert discussion above).
@@ -382,19 +383,21 @@ class IcingDynamicTrie : public IIcingStorage {
   // Return prefix of any new branches created if key were inserted. If utf8 is
   // true, does not cut key mid-utf8. Returns kNoBranchFound if no branches
   // would be created.
-  int FindNewBranchingPrefixLength(std::string_view key, bool utf8) const;
+  libtextclassifier3::StatusOr<int> FindNewBranchingPrefixLength(
+      std::string_view key, bool utf8) const;
 
   // Find all prefixes of key where the trie branches. Excludes the key
   // itself. If utf8 is true, does not cut key mid-utf8.
-  std::vector<int> FindBranchingPrefixLengths(std::string_view key,
-                                              bool utf8) const;
+  libtextclassifier3::StatusOr<std::vector<int>> FindBranchingPrefixLengths(
+      std::string_view key, bool utf8) const;
 
   // Check if key is a branching term.
   //
   // key is a branching term, if and only if there exists terms s1 and s2 in the
   // trie such that key is the maximum common prefix of s1 and s2, but s1 and s2
   // are not prefixes of each other.
-  bool IsBranchingTerm(std::string_view key) const;
+  libtextclassifier3::StatusOr<bool> IsBranchingTerm(
+      std::string_view key) const;
 
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
@@ -429,8 +432,8 @@ class IcingDynamicTrie : public IIcingStorage {
   bool ClearDeleted(uint32_t value_index);
 
   // Deletes the entry associated with the key. Data can not be recovered after
-  // the deletion. Returns true on success.
-  bool Delete(std::string_view key);
+  // the deletion. Returns OK on success.
+  libtextclassifier3::Status Delete(std::string_view key);
 
   // Clear a specific property id from all values.  For each value that has this
   // property cleared, also check to see if it was the only property set;  if
@@ -615,18 +618,30 @@ class IcingDynamicTrie : public IIcingStorage {
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
+  //
+  // REQUIRES: node is valid.
+  //   - Since we only invalidate Next to remove the edge from the trie and Node
+  //     is not invalidated after deletion, the caller should ensure that it
+  //     traverses correctly to a valid node according to the trie structure.
+  //     Calling this function with an invalid node is undefined behavior since
+  //     it could traverse into a deleted subtree, or invalid memory addresses.
+  //   - This also means storage_->empty() should be checked before calling this
+  //     function with the root node.
   void CollectStatsRecursive(const Node &node, Stats *stats,
                              uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.
-  const Next *GetNextByChar(const Node *node, uint8_t key_char) const;
+  libtextclassifier3::StatusOr<const Next*> GetNextByChar(
+      const Node* node, uint8_t key_char) const;
   const Next *LowerBound(const Next *start, const Next *end, uint8_t key_char,
                          uint32_t node_index = 0) const;
   // Returns the number of valid nexts in the array.
   int GetValidNextsSize(const IcingDynamicTrie::Next *next_array_start,
                         int next_array_length) const;
-  void FindBestNode(std::string_view key, uint32_t *best_node_index,
-                    int *key_offset, bool prefix, bool utf8 = false) const;
+  libtextclassifier3::Status FindBestNode(std::string_view key,
+                                          uint32_t* best_node_index,
+                                          int* key_offset, bool prefix,
+                                          bool utf8 = false) const;
 
   // For value properties.  This truncates the data by clearing it, but leaving
   // the storage intact.

@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -27,6 +28,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-index.h"
@@ -39,6 +41,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -52,16 +55,20 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
 
@@ -78,13 +85,16 @@ using ::testing::UnorderedElementsAre;
 
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store) {
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
   return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store,
+      filesystem, base_dir, clock, schema_store, &feature_flags,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/true, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/true,
-      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
@@ -99,6 +109,7 @@ class QueryProcessorTest : public ::testing::Test {
         embedding_index_dir_(test_dir_ + "/embedding_index") {}
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
@@ -112,17 +123,18 @@ class QueryProcessorTest : public ::testing::Test {
       // setup doesn't do this.
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
+
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         CreateDocumentStore(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
+                            schema_store_.get(), *feature_flags_));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
@@ -130,14 +142,17 @@ class QueryProcessorTest : public ::testing::Test {
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
     // TODO(b/249829533): switch to use persistent numeric index.
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
         DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
-        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_));
+        EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -145,23 +160,26 @@ class QueryProcessorTest : public ::testing::Test {
         language_segmenter_,
         language_segmenter_factory::Create(segmenter_options));
 
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/1000));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         query_processor_,
         QueryProcessor::Create(
             index_.get(), numeric_index_.get(), embedding_index_.get(),
             language_segmenter_.get(), normalizer_.get(), document_store_.get(),
-            schema_store_.get(), &fake_clock_));
+            schema_store_.get(), /*join_children_fetcher=*/nullptr,
+            &fake_clock_, feature_flags_.get()));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
       DocumentId document_id, SectionId section_id,
       TermMatchType::Code term_match_type, const std::string& token) {
     Index::Editor editor = index_->Edit(document_id, section_id,
-                                        term_match_type, /*namespace_id=*/0);
-    auto status = editor.BufferTerm(token.c_str());
+                                        /*namespace_id=*/0);
+    auto status = editor.BufferTerm(token, term_match_type);
     return status.ok() ? editor.IndexAllBufferedTerms() : status;
   }
 
@@ -180,6 +198,7 @@ class QueryProcessorTest : public ::testing::Test {
     schema_store_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
   const std::string store_dir_;
@@ -206,52 +225,63 @@ class QueryProcessorTest : public ::testing::Test {
 
 TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
-      QueryProcessor::Create(/*index=*/nullptr, numeric_index_.get(),
-                             embedding_index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+      QueryProcessor::Create(
+          /*index=*/nullptr, numeric_index_.get(), embedding_index_.get(),
+          language_segmenter_.get(), normalizer_.get(), document_store_.get(),
+          schema_store_.get(), /*join_children_fetcher=*/nullptr, &fake_clock_,
+          feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), /*numeric_index_=*/nullptr,
-                             embedding_index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+      QueryProcessor::Create(
+          index_.get(), /*numeric_index_=*/nullptr, embedding_index_.get(),
+          language_segmenter_.get(), normalizer_.get(), document_store_.get(),
+          schema_store_.get(), /*join_children_fetcher=*/nullptr, &fake_clock_,
+          feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                                     /*embedding_index=*/nullptr,
-                                     language_segmenter_.get(),
-                                     normalizer_.get(), document_store_.get(),
-                                     schema_store_.get(), &fake_clock_),
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(),
+                  /*embedding_index=*/nullptr, language_segmenter_.get(),
+                  normalizer_.get(), document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, &fake_clock_,
+                  feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(QueryProcessor::Create(
                   index_.get(), numeric_index_.get(), embedding_index_.get(),
                   /*language_segmenter=*/nullptr, normalizer_.get(),
-                  document_store_.get(), schema_store_.get(), &fake_clock_),
+                  document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, &fake_clock_,
+                  feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              /*normalizer=*/nullptr, document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+                             schema_store_.get(),
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(
-          index_.get(), numeric_index_.get(), embedding_index_.get(),
-          language_segmenter_.get(), normalizer_.get(),
-          /*document_store=*/nullptr, schema_store_.get(), &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                             embedding_index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             /*schema_store=*/nullptr, &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(), embedding_index_.get(),
+                  language_segmenter_.get(), normalizer_.get(),
+                  /*document_store=*/nullptr, schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, &fake_clock_,
+                  feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), /*clock=*/nullptr),
+                             /*schema_store=*/nullptr,
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(), embedding_index_.get(),
+                  language_segmenter_.get(), normalizer_.get(),
+                  document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr, /*clock=*/nullptr,
+                  feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
@@ -260,14 +290,14 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   SearchSpecProto search_spec;
   search_spec.set_query("()");
   EXPECT_THAT(query_processor_->ParseSearch(
                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                  /*get_embedding_match_info=*/false,
                   fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -278,21 +308,24 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // We don't need to insert anything in the index since the empty query will
@@ -304,6 +337,7 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -319,18 +353,19 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace1", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace1", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -353,6 +388,7 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -380,18 +416,19 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace1", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace1", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -411,6 +448,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -436,18 +474,19 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace1", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace1", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -469,6 +508,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -494,18 +534,19 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace1", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace1", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -525,6 +566,7 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -550,18 +592,19 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace1", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace1", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -581,6 +624,7 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -608,18 +652,19 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -642,6 +687,7 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -669,18 +715,19 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -700,6 +747,7 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -727,18 +775,19 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -761,6 +810,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -789,18 +839,19 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -823,6 +874,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -851,24 +903,27 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -891,6 +946,7 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -927,24 +983,27 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -967,6 +1026,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1003,24 +1063,27 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1042,6 +1105,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1077,24 +1141,27 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
   // Populate the index
   SectionId section_id = 0;
@@ -1133,6 +1200,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // Only Document 1 matches since it has puppy AND dog
@@ -1168,6 +1236,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // Both Document 1 and 2 match since Document 1 has animal AND puppy, and
@@ -1219,6 +1288,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // Only Document 2 matches since it has both kitten and cat
@@ -1250,24 +1320,27 @@ TEST_F(QueryProcessorTest, OneGroup) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1298,6 +1371,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1318,24 +1392,27 @@ TEST_F(QueryProcessorTest, TwoGroups) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1367,6 +1444,7 @@ TEST_F(QueryProcessorTest, TwoGroups) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1389,24 +1467,27 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1437,6 +1518,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1457,24 +1539,27 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1505,6 +1590,7 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1527,24 +1613,27 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
   // last_added_document_id, which will give us the proper exclusion results
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1566,6 +1655,7 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds()));
 
   // We don't know have the section mask to indicate what section "world"
@@ -1583,24 +1673,27 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
   // last_added_document_id, which will give us the proper exclusion results
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
   // Populate the index
   SectionId section_id = 0;
@@ -1621,6 +1714,7 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1637,24 +1731,27 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
   // last_added_document_id, which will give us the proper exclusion results
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1684,6 +1781,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // The query is interpreted as "exclude all documents that have animal,
@@ -1704,6 +1802,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // The query is interpreted as "exclude all documents that have animal,
@@ -1723,24 +1822,27 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
   // last_added_document_id, which will give us the proper exclusion results
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1770,6 +1872,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // We don't have a section mask indicating which sections in this document
@@ -1791,6 +1894,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
         QueryResults results,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            /*get_embedding_match_info=*/false,
             fake_clock_.GetSystemTimeMilliseconds()));
 
     // Descending order of valid DocumentIds
@@ -1812,24 +1916,27 @@ TEST_F(QueryProcessorTest, WithoutTermFrequency) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
   // that the document exists and not filter out the DocumentId as deleted.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -1870,6 +1977,7 @@ TEST_F(QueryProcessorTest, WithoutTermFrequency) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1913,24 +2021,27 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(document_store_->Delete("namespace", "1",
                                       fake_clock_.GetSystemTimeMilliseconds()),
@@ -1962,6 +2073,7 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -1981,24 +2093,27 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace1", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace1", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace2", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace2", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -2028,6 +2143,7 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -2049,24 +2165,27 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
 
   // Populate the index
@@ -2092,6 +2211,7 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -2118,18 +2238,19 @@ TEST_F(QueryProcessorTest, PropertyFilterForOneDocument) {
   // First and only indexed property, so it gets a section_id of 0
   int subject_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -2149,6 +2270,7 @@ TEST_F(QueryProcessorTest, PropertyFilterForOneDocument) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
@@ -2191,24 +2313,27 @@ TEST_F(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
   int email_foo_section_id = 1;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId message_document_id = put_result2.new_document_id;
 
   // Populate the index
@@ -2233,6 +2358,7 @@ TEST_F(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Ordered by descending DocumentId, so message comes first since it was
@@ -2266,24 +2392,27 @@ TEST_F(QueryProcessorTest, PropertyFilterWithinSchemaType) {
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId message_document_id = put_result2.new_document_id;
 
   // Populate the index
@@ -2310,6 +2439,7 @@ TEST_F(QueryProcessorTest, PropertyFilterWithinSchemaType) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Shouldn't include the message document since we're only looking at email
@@ -2359,18 +2489,19 @@ TEST_F(QueryProcessorTest, NestedPropertyFilter) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
 
   // Populate the index
@@ -2391,6 +2522,7 @@ TEST_F(QueryProcessorTest, NestedPropertyFilter) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2424,24 +2556,27 @@ TEST_F(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId message_document_id = put_result2.new_document_id;
 
   // Populate the index
@@ -2469,6 +2604,7 @@ TEST_F(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2489,18 +2625,19 @@ TEST_F(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
 
   // Populate the index
@@ -2521,6 +2658,7 @@ TEST_F(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2547,18 +2685,19 @@ TEST_F(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
 
   // Populate the index
@@ -2579,6 +2718,7 @@ TEST_F(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2608,24 +2748,27 @@ TEST_F(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId message_document_id = put_result2.new_document_id;
 
   // Poplate the index
@@ -2653,6 +2796,7 @@ TEST_F(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Ordered by descending DocumentId, so message comes first since it was
@@ -2674,38 +2818,40 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("message")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   // SectionIds are assigned in ascending order per schema type,
   // alphabetically.
@@ -2716,24 +2862,27 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
   int message_baz_section_id = 1;
   int message_foo_section_id = 2;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId message_document_id = put_result2.new_document_id;
 
   // Poplate the index
@@ -2766,13 +2915,13 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
   search_spec.set_term_match_type(term_match_type);
 
   // email has property filters for foo and baz properties
-  TypePropertyMask *email_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
   email_mask->set_schema_type("email");
   email_mask->add_paths("foo");
   email_mask->add_paths("baz");
 
   // message has property filters for bar and baz properties
-  TypePropertyMask *message_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* message_mask = search_spec.add_type_property_filters();
   message_mask->set_schema_type("message");
   message_mask->add_paths("bar");
   message_mask->add_paths("baz");
@@ -2781,6 +2930,7 @@ TEST_F(QueryProcessorTest, TypePropertyFilter) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Ordered by descending DocumentId, so message comes first since it was
@@ -2803,38 +2953,40 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("message")
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("foo")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("bar")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(
-                  PropertyConfigBuilder()
-                  .SetName("baz")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   // SectionIds are assigned in ascending order per schema type,
   // alphabetically.
@@ -2845,24 +2997,27 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   int message_baz_section_id = 1;
   int message_foo_section_id = 2;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // schema types populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId email_document_id = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("message")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("message")
+                                                   .Build())));
   DocumentId message_document_id = put_result2.new_document_id;
 
   // Poplate the index
@@ -2896,13 +3051,13 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   search_spec.set_term_match_type(term_match_type);
 
   // email has property filters for foo and baz properties
-  TypePropertyMask *email_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
   email_mask->set_schema_type("email");
   email_mask->add_paths("foo");
   email_mask->add_paths("baz");
 
   // message has property filters for bar and baz properties
-  TypePropertyMask *message_mask = search_spec.add_type_property_filters();
+  TypePropertyMask* message_mask = search_spec.add_type_property_filters();
   message_mask->set_schema_type("message");
   message_mask->add_paths("bar");
   message_mask->add_paths("baz");
@@ -2911,6 +3066,7 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   // Only hits in sections allowed by both the property filters and section
@@ -2927,14 +3083,315 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
   EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
+TEST_F(QueryProcessorTest, TypePropertyFilterHybridSearchRestrictTerm) {
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed0")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
+  int email_bar_section_id = 0;
+  int email_foo_section_id = 1;
+  int email_prop_embed0_section_id = 2;
+  int email_prop_embed1_section_id = 3;
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id1 = put_result1.new_document_id;
+
+  // Poplate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email1 has content "animal" in section foo
+  ASSERT_THAT(AddTokenToIndex(email_document_id0, email_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Email2 has content "animal" in section bar
+  ASSERT_THAT(AddTokenToIndex(email_document_id1, email_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Add embedding vectors into different sections for the two documents.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id0),
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id0),
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id1),
+      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id1),
+      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Create an embedding query with semantic scores:
+  // - document 0: -2 (section 0), 6 (section 1)
+  // - document 1: 2 (section 0), -6 (section 1)
+  PropertyProto::VectorProto embedding_query_vector =
+      CreateVector("my_model1", {-1, -1, 1});
+
+  SearchSpecProto search_spec;
+  std::string query = "semanticSearch(getEmbeddingParameter(0), 0) AND animal";
+  search_spec.set_query(query);
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(kListFilterQueryLanguageFeature);
+  *search_spec.add_embedding_query_vectors() =
+      std::move(embedding_query_vector);
+
+  // Add property filters to match both text sections but only the first
+  // embedding section. Therefore, only the second document should be returned.
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
+  email_mask->set_schema_type("email");
+  email_mask->add_paths("foo");
+  email_mask->add_paths("bar");
+  email_mask->add_paths("propEmbed0");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  DocHitInfo expected_doc_hit_info1(email_document_id1);
+  expected_doc_hit_info1.UpdateSection(email_bar_section_id);
+  expected_doc_hit_info1.UpdateSection(email_prop_embed0_section_id);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+
+  // The results should be the same even if the order is flipped.
+  query = "animal AND semanticSearch(getEmbeddingParameter(0), 0)";
+  search_spec.set_query(query);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+}
+
+TEST_F(QueryProcessorTest, TypePropertyFilterHybridSearchRestrictEmbedding) {
+  // Create the schema and document store
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed0")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
+  int email_bar_section_id = 0;
+  int email_foo_section_id = 1;
+  int email_prop_embed0_section_id = 2;
+  int email_prop_embed1_section_id = 3;
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id1 = put_result1.new_document_id;
+
+  // Poplate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email1 has content "animal" in section foo
+  ASSERT_THAT(AddTokenToIndex(email_document_id0, email_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Email2 has content "animal" in section bar
+  ASSERT_THAT(AddTokenToIndex(email_document_id1, email_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Add embedding vectors into different sections for the two documents.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id0),
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id0),
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id1),
+      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id1),
+      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Create an embedding query with semantic scores:
+  // - document 0: -2 (section 0), 6 (section 1)
+  // - document 1: 2 (section 0), -6 (section 1)
+  PropertyProto::VectorProto embedding_query_vector =
+      CreateVector("my_model1", {-1, -1, 1});
+
+  SearchSpecProto search_spec;
+  std::string query = "semanticSearch(getEmbeddingParameter(0), 0) AND animal";
+  search_spec.set_query(query);
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(kListFilterQueryLanguageFeature);
+  *search_spec.add_embedding_query_vectors() =
+      std::move(embedding_query_vector);
+
+  // Add property filters to match both embeddings sections but only the first
+  // text section. Therefore, only the first document should be returned.
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
+  email_mask->set_schema_type("email");
+  email_mask->add_paths("foo");
+  email_mask->add_paths("propEmbed0");
+  email_mask->add_paths("propEmbed1");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  DocHitInfo expected_doc_hit_info1(email_document_id0);
+  expected_doc_hit_info1.UpdateSection(email_foo_section_id);
+  expected_doc_hit_info1.UpdateSection(email_prop_embed1_section_id);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+
+  // The results should be the same even if the order is flipped.
+  query = "animal AND semanticSearch(getEmbeddingParameter(0), 0)";
+  search_spec.set_query(query);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+}
+
 TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // Arbitrary value, just has to be less than the document's creation
@@ -2945,17 +3402,18 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, store_dir_, &fake_clock,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "1")
-                               .SetSchema("email")
-                               .SetCreationTimestampMs(10)
-                               .SetTtlMs(100)
-                               .Build()));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .SetCreationTimestampMs(10)
+                                                   .SetTtlMs(100)
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -2972,7 +3430,9 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get(),
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -2982,6 +3442,7 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
       QueryResults results,
       local_query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds()));
 
   DocHitInfo expectedDocHitInfo(document_id);
@@ -2996,8 +3457,7 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // Arbitrary value, just has to be greater than the document's creation
@@ -3008,17 +3468,18 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, store_dir_, &fake_clock_local,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "1")
-                               .SetSchema("email")
-                               .SetCreationTimestampMs(50)
-                               .SetTtlMs(100)
-                               .Build()));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .SetCreationTimestampMs(50)
+                                                   .SetTtlMs(100)
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -3035,7 +3496,9 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              embedding_index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get(),
+                             /*join_children_fetcher=*/nullptr, &fake_clock_,
+                             feature_flags_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -3045,6 +3508,7 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
       QueryResults results,
       local_query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          /*get_embedding_match_info=*/false,
           fake_clock_local.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
@@ -3069,38 +3533,40 @@ TEST_F(QueryProcessorTest, NumericFilter) {
   SectionId cost_section_id = 0;
   SectionId price_section_id = 1;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "1")
-                               .SetSchema("transaction")
-                               .AddInt64Property("price", 10)
-                               .Build()));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          DocumentBuilder()
+              .SetKey("namespace", "1")
+              .SetSchema("transaction")
+              .AddInt64Property("price", 10)
+              .Build())));
   DocumentId document_one_id = put_result1.new_document_id;
   ICING_ASSERT_OK(
       AddToNumericIndex(document_one_id, "price", price_section_id, 10));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "2")
-                               .SetSchema("transaction")
-                               .AddInt64Property("price", 25)
-                               .Build()));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          DocumentBuilder()
+              .SetKey("namespace", "2")
+              .SetSchema("transaction")
+              .AddInt64Property("price", 25)
+              .Build())));
   DocumentId document_two_id = put_result2.new_document_id;
   ICING_ASSERT_OK(
       AddToNumericIndex(document_two_id, "price", price_section_id, 25));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "3")
-                               .SetSchema("transaction")
-                               .AddInt64Property("cost", 2)
-                               .Build()));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "3")
+                                                   .SetSchema("transaction")
+                                                   .AddInt64Property("cost", 2)
+                                                   .Build())));
   DocumentId document_three_id = put_result3.new_document_id;
   ICING_ASSERT_OK(
       AddToNumericIndex(document_three_id, "cost", cost_section_id, 2));
@@ -3113,6 +3579,7 @@ TEST_F(QueryProcessorTest, NumericFilter) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
@@ -3122,6 +3589,7 @@ TEST_F(QueryProcessorTest, NumericFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
@@ -3131,6 +3599,7 @@ TEST_F(QueryProcessorTest, NumericFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 
@@ -3138,6 +3607,7 @@ TEST_F(QueryProcessorTest, NumericFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
@@ -3147,6 +3617,7 @@ TEST_F(QueryProcessorTest, NumericFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(
       GetDocHitInfos(results.root_iterator.get()),
@@ -3169,17 +3640,17 @@ TEST_F(QueryProcessorTest, NumericFilterWithoutEnablingFeatureFails) {
           .Build();
   SectionId price_section_id = 0;
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "1")
-                               .SetSchema("transaction")
-                               .AddInt64Property("price", 10)
-                               .Build()));
+      document_store_->Put(document_util::CreateDocumentWrapper(
+          DocumentBuilder()
+              .SetKey("namespace", "1")
+              .SetSchema("transaction")
+              .AddInt64Property("price", 10)
+              .Build())));
   DocumentId document_one_id = put_result1.new_document_id;
   ICING_ASSERT_OK(
       AddToNumericIndex(document_one_id, "price", price_section_id, 10));
@@ -3190,6 +3661,7 @@ TEST_F(QueryProcessorTest, NumericFilterWithoutEnablingFeatureFails) {
   libtextclassifier3::StatusOr<QueryResults> result_or =
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(result_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3213,8 +3685,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   SectionId prop1_section_id = 0;
@@ -3231,11 +3702,13 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
   //   Doc2:
   //     prop1: "foo bar"
   //     prop2: ""
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result0,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "0")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "0")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id0 = put_result0.new_document_id;
   EXPECT_THAT(
       AddTokenToIndex(document_id0, prop1_section_id, term_match_type, "foo"),
@@ -3244,11 +3717,13 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
       AddTokenToIndex(document_id0, prop2_section_id, term_match_type, "bar"),
       IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result1,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id1 = put_result1.new_document_id;
   EXPECT_THAT(
       AddTokenToIndex(document_id1, prop1_section_id, term_match_type, "bar"),
@@ -3257,11 +3732,13 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
       AddTokenToIndex(document_id1, prop2_section_id, term_match_type, "foo"),
       IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result2,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "2")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(
       AddTokenToIndex(document_id2, prop1_section_id, term_match_type, "foo"),
@@ -3281,6 +3758,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE,
+                                    /*get_embedding_match_info=*/false,
                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
@@ -3291,6 +3769,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 
@@ -3299,6 +3778,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
@@ -3310,6 +3790,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(
       GetDocHitInfos(results.root_iterator.get()),
@@ -3324,6 +3805,7 @@ TEST_F(QueryProcessorTest, GroupingInSectionRestriction) {
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   /*get_embedding_match_info=*/false,
                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(
       GetDocHitInfos(results.root_iterator.get()),
@@ -3339,18 +3821,19 @@ TEST_F(QueryProcessorTest, ParseAdvancedQueryShouldSetSearchStats) {
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
   ASSERT_THAT(schema_store_->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/false),
               IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
   // namespaces populated.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult put_result,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
   DocumentId document_id = put_result.new_document_id;
 
   // Populate the index
@@ -3376,6 +3859,7 @@ TEST_F(QueryProcessorTest, ParseAdvancedQueryShouldSetSearchStats) {
       QueryResults results,
       query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
           fake_clock_.GetSystemTimeMilliseconds(), &search_stats));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -3385,6 +3869,41 @@ TEST_F(QueryProcessorTest, ParseAdvancedQueryShouldSetSearchStats) {
               Eq(kSearchStatsLatencyMs));
   EXPECT_THAT(search_stats.query_processor_query_visitor_latency_ms(),
               Eq(kSearchStatsLatencyMs));
+}
+
+TEST_F(QueryProcessorTest, UriFiltersIsNotTheRightMostNode) {
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false),
+              IsOk());
+  ICING_ASSERT_OK(document_store_->Put(
+      document_util::CreateDocumentWrapper(DocumentBuilder()
+                                               .SetKey("namespace", "uri1")
+                                               .SetSchema("email")
+                                               .Build())));
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("foo");
+  NamespaceDocumentUriGroup* uris = search_spec.add_document_uri_filters();
+  uris->set_namespace_("namespace");
+  uris->add_document_uris("uri1");
+  uris->add_document_uris("uri3");
+
+  QueryStatsProto::SearchStats search_stats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds(), &search_stats));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocHitInfoIterator::TrimmedNode trimmed_node,
+      std::move(*results.root_iterator).TrimRightMostNode());
+  EXPECT_THAT(trimmed_node.iterator_->ToString(), Eq("uri_iterator"));
 }
 
 }  // namespace
